@@ -33,14 +33,16 @@ const CHAPTERS = new Map([
  *
  * @param world world index
  * @param controls the scene's controls
+ * @param language the install's text table suffix; English when omitted
  * @returns the missions the quest and mission controls belong to, by id
  * @throws {FormatError} if a mission file is malformed
  */
 export const labelStory = async (
 	world: WorldIndex,
 	controls: readonly SceneControl[],
+	language = 'EN',
 ): Promise<MissionInfo[]> => {
-	const text = await world.text();
+	const text = await world.text(language);
 	const plain = (key: string | null): string | null => {
 		const value = key === null ? undefined : text(key);
 		return value === undefined ? null : stripMarkup(value);
