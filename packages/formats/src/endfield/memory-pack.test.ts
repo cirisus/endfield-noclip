@@ -225,3 +225,35 @@ test('reads compressed integers as IL2CPP metadata writes them', () => {
 	assert.equal(reader.compressedI32(), -0x80000000);
 	assert.throws(() => reader.byte(), FormatError);
 });
+
+test('reads path hashes and spline knots as schema-sized raw structs', () => {
+	const types: FakeType[] = [
+		{ name: 'StringPathHash', valueType: true, fields: [['hash', prim('long'), 0]] },
+		{
+			name: 'BezierKnot',
+			valueType: true,
+			fields: [
+				['x', prim('float'), 0],
+				['y', prim('float'), 4],
+			],
+		},
+		{ name: 'Container' },
+	];
+	types.push({
+		name: 'ContainerForMemoryPack',
+		wraps: def(types, 'Container'),
+		members: [
+			['path', def(types, 'StringPathHash')],
+			['knot', def(types, 'BezierKnot')],
+		],
+	});
+	const reader = new MemoryPackReader(new MemoryPackSchema(fakeRuntime(types)), () => null);
+	assert.deepEqual(
+		reader.decode(bytes([2, 1], [123n, 8], [0x3f800000, 4], [0x40000000, 4]), 'ContainerForMemoryPack'),
+		{
+			$type: 'ContainerForMemoryPack',
+			path: { $type: 'StringPathHash', hash: '123' },
+			knot: { $type: 'BezierKnot', x: 1, y: 2 },
+		},
+	);
+});
