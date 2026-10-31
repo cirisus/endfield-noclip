@@ -6,6 +6,17 @@ documented in [game-data](game-data/); this page covers the CLI and extraction p
 
 ## running it
 
+### OEM companion releases
+
+`pnpm extract oem --atlos /path/to/Atlos/talos --packages out --output out/releases` exports
+point metadata from the same local install as the complete packages. it resolves placements and
+NPC proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence,
+and labels supplemental quest states. generated content stays outside git.
+
+`pnpm extract oem-check out/releases/<release-id>` verifies every archive size, package generation
+and source fingerprint, point index and preview preset before publication. presets use the existing
+scene evaluator and story ordering; unknown runtime conditions remain explicit.
+
 node and pnpm come from mise (`mise.toml`); node runs the TypeScript sources directly, with no build
 step.
 

@@ -94,7 +94,7 @@ export class WorldIndex {
 	#stringPool: Promise<StringPool> | undefined;
 	#names: Promise<Map<string, string>> | undefined;
 	#english: Promise<Map<bigint, string>> | undefined;
-	#text: Promise<(key: string) => string | undefined> | undefined;
+	#text = new Map<string, Promise<(key: string) => string | undefined>>();
 	readonly #missions = new Map<string, Promise<MissionRuntime | undefined>>();
 	#chunkFiles: Promise<ChunkFile[]> | undefined;
 	readonly #mapConfigs = new Map<string, Promise<MapConfig | undefined>>();
@@ -264,13 +264,29 @@ export class WorldIndex {
 	}
 
 	/**
-	 * English text by text key (TextTable key → text id → I18nTextTable_EN), e.g. `e1m8_name`
+	 * text by text key (TextTable key → text id → localized table), with English fallback
 	 *
+	 * @param language the install's language table suffix, e.g. EN or CN
 	 * @returns a lookup giving the raw string, rich-text markup included, or `undefined` for an unknown key
 	 */
-	text(): Promise<(key: string) => string | undefined> {
-		this.#text ??= (async () => {
+	text(language = 'EN'): Promise<(key: string) => string | undefined> {
+		let pending = this.#text.get(language);
+		if (pending) {
+			return pending;
+		}
+		pending = (async () => {
 			const english = await this.#englishText();
+			const localized = new Map<bigint, string>();
+			if (language !== 'EN') {
+				const file = await this.vfs.find(VfsGroup.Table, `Data/TableCfg/I18nTextTable_${language}.bytes`);
+				if (file) {
+					for (const [key, value] of parseSparkTable(await this.vfs.readVerified(file)).entries) {
+						if (typeof key === 'bigint' && typeof value === 'string') {
+							localized.set(key, value);
+						}
+					}
+				}
+			}
 			const ids = new Map<string, bigint>();
 			for (const [key, value] of parseSparkTable(
 				await this.#read(VfsGroup.Table, 'Data/TableCfg/TextTable.bytes'),
@@ -281,10 +297,11 @@ export class WorldIndex {
 			}
 			return (key: string) => {
 				const id = ids.get(key);
-				return id === undefined ? undefined : english.get(id);
+				return id === undefined ? undefined : (localized.get(id) ?? english.get(id));
 			};
 		})();
-		return this.#text;
+		this.#text.set(language, pending);
+		return pending;
 	}
 
 	/**
