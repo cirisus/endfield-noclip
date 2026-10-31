@@ -72,6 +72,8 @@ const VECTORS = new Map<string, [string, number]>([
 
 /** structs serialized raw rather than through their wrapper (besides `*Ptr`) */
 const RAW_STRUCTS = new Set([
+	'StringPathHash',
+	'BezierKnot',
 	'GameplayTag',
 	'CameraControlStateInitialParam',
 	'PosRot',

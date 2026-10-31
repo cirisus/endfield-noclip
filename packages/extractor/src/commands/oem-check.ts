@@ -1,0 +1,103 @@
+import { readFile, stat } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+
+import { conditionVisible, resolveSceneValues } from '@endfield-noclip/package-format/conditions';
+import { isCatalog, isCompanion } from '@endfield-noclip/package-format/oem';
+import type { StatesInfo } from '@endfield-noclip/package-format/states';
+
+import { readCore } from './oem.ts';
+
+export const summary = 'validate every archive, point and authored preset: oem-check <release-directory>';
+
+export const run = async (args: string[]): Promise<void> => {
+	if (args.length !== 1) {
+		throw new Error(summary);
+	}
+	const root = resolve(args[0]);
+	const value: unknown = JSON.parse(await readFile(join(root, 'index.json'), 'utf8'));
+	if (!isCatalog(value)) {
+		throw new Error('invalid OEM catalog');
+	}
+	const catalog = value;
+	const cores = new Map<string, Awaited<ReturnType<typeof readCore>>>();
+	let archives = 0,
+		bytes = 0,
+		points = 0,
+		presets = 0,
+		unknown = 0;
+	for (const [scene, entry] of Object.entries(catalog.packages)) {
+		// oxlint-disable-next-line no-await-in-loop -- bound memory while opening scene cores
+		const core = await readCore(join(root, entry.path));
+		if (
+			core.scene.id !== scene ||
+			core.generation !== entry.generation ||
+			core.version !== entry.version ||
+			core.source.buildGuid !== catalog.source.buildGuid ||
+			core.source.contentHash !== catalog.source.contentHash
+		) {
+			throw new Error(`package mismatch: ${scene}`);
+		}
+		cores.set(scene, core);
+		for (const archive of core.archives) {
+			// oxlint-disable-next-line no-await-in-loop -- metadata-only verification, no archive bodies read
+			const size = (await stat(join(root, entry.path, archive.name))).size;
+			if (archive.size !== null && archive.size !== size) {
+				throw new Error(`archive size mismatch: ${scene}/${archive.name}`);
+			}
+			archives++;
+			bytes += size;
+		}
+	}
+	const seen = new Set<string>();
+	for (const [subregion, path] of Object.entries(catalog.files)) {
+		// oxlint-disable-next-line no-await-in-loop -- release each partition before loading the next
+		const partition: unknown = JSON.parse(await readFile(join(root, path), 'utf8'));
+		if (!isCompanion(partition) || partition.release !== catalog.release) {
+			throw new Error(`invalid companion: ${path}`);
+		}
+		const states = new Map<string, StatesInfo>();
+		for (const point of partition.points) {
+			if (seen.has(point.id) || point.subregion !== subregion || catalog.pointIndex[point.id] !== subregion) {
+				throw new Error(`point index mismatch: ${point.id}`);
+			}
+			seen.add(point.id);
+			points++;
+			unknown += Number(point.unknown.length > 0);
+			const base = cores.get(point.scene)?.states;
+			if (!base || !cores.get(point.scene)?.levels.some((l) => l.id === point.level && l.instances > 0)) {
+				throw new Error(`missing level: ${point.id}`);
+			}
+			let merged = states.get(point.scene);
+			if (!merged) {
+				merged = {
+					...base,
+					controls: [...new Map([...partition.controls, ...base.controls].map((c) => [c.id, c])).values()],
+				};
+				states.set(point.scene, merged);
+			}
+			for (const preset of point.presets) {
+				presets++;
+				if (
+					point.condition &&
+					conditionVisible(point.condition, resolveSceneValues(merged, preset.picks)) !== preset.satisfies
+				) {
+					throw new Error(`invalid preset: ${point.id}/${preset.id}`);
+				}
+			}
+		}
+	}
+	if (seen.size !== Object.keys(catalog.pointIndex).length) {
+		throw new Error('catalog contains points absent from its partitions');
+	}
+	console.log(
+		JSON.stringify({
+			release: catalog.release,
+			scenes: cores.size,
+			archives,
+			bytes,
+			points,
+			presets,
+			unknown,
+		}),
+	);
+};
