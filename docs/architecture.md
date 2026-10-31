@@ -33,6 +33,9 @@ those pages to game-data, never the reverse.
 
 ## data flow
 
+the optional [OEM integration](oem-integration.md) exports companion point metadata and connects an
+independent preview to OEM without changing the ordinary archive or marker formats.
+
 ```
 install (Endfield_Data)                      local, read-only
   │  VFS catalogs + chunks → HG bundles → Unity SerializedFiles, world data, tables

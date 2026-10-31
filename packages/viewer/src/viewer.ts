@@ -6,6 +6,7 @@ import {
 } from '@endfield-noclip/package-format/conditions';
 import type { LevelEnvironment, LevelInfo } from '@endfield-noclip/package-format/manifest';
 import { proximityValues } from '@endfield-noclip/package-format/proximity';
+import type { MissionInfo, SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
 import {
 	areasShownIn,
 	streamAreaValues,
@@ -312,6 +313,42 @@ const instanceRowKinds = (tree: TileTree, global: readonly ContentRef[]): Map<nu
 /** the running viewer */
 export class Viewer {
 	readonly camera = new Camera();
+	#baseStates: StatesInfo | null = null;
+	#cameraListeners = new Set<() => void>();
+
+	/** @param listener called after camera changes @returns unsubscribe */
+	subscribeCamera(listener: () => void): () => void {
+		this.#cameraListeners.add(listener);
+		return () => this.#cameraListeners.delete(listener);
+	}
+
+	/**
+	 * replaces OEM-only controls for the current point, retaining the original package's conditions.
+	 *
+	 * @param controls additional quest and mission states
+	 * @param missions their story labels
+	 */
+	setCompanion(controls: readonly SceneControl[], missions: readonly MissionInfo[]): void {
+		const pkg = this.scene?.pkg,
+			base = this.#baseStates;
+		if (!pkg || !base) {
+			return;
+		}
+		const byId = new Map(base.controls.map((c) => [c.id, c]));
+		for (const c of controls) {
+			if (!byId.has(c.id) && (c.kind === 'quest' || c.kind === 'mission') && c.derived === null) {
+				byId.set(c.id, c);
+			}
+		}
+		pkg.manifest.states = {
+			...base,
+			controls: [...byId.values()],
+			missions: [...new Map([...base.missions, ...missions].map((m) => [m.id, m])).values()],
+		};
+		this.#scenePicks = {};
+		this.#updateVisibility();
+		this.#emitState();
+	}
 	readonly controls: NoclipControls;
 	readonly options: ViewerOptions = structuredClone(DEFAULT_OPTIONS);
 	stats: ViewerStats;
@@ -529,6 +566,7 @@ export class Viewer {
 	): Promise<void> {
 		this.unload();
 		const pkg = await openViewerPackage(source, onProgress);
+		this.#baseStates = pkg.manifest.states;
 		const tree = buildTileTree(pkg.manifest, pkg.tree);
 
 		const textures = new TextureStore(this.#gfx.device, pkg.textures, {
@@ -697,6 +735,7 @@ export class Viewer {
 		this.#setReflection(this.#noReflection, 1);
 		this.#setShadowRamp(null);
 		this.scene = null;
+		this.#baseStates = null;
 		this.#scenePicks = {};
 		this.#sceneValues = {};
 		this.options.environmentPin = null;
@@ -1128,6 +1167,7 @@ export class Viewer {
 	 * @param distance how far back to stand, in metres
 	 */
 	flyToPoint(target: Vec3, distance: number): void {
+		this.#unsettledPose = null;
 		const back = Math.max(distance, 10);
 		const up = back * 0.6;
 		this.controls.flyTo({
@@ -1450,6 +1490,11 @@ export class Viewer {
 				1,
 			),
 		);
+		if (moved) {
+			for (const listener of this.#cameraListeners) {
+				listener();
+			}
+		}
 		this.#followStreamAreas();
 		const resized = this.#targets.update();
 		this.#blendEnvironment(false, dt);

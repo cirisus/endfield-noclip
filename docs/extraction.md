@@ -13,17 +13,6 @@ pipeline. per-topic pack stages have their own pages:
 
 ## running it
 
-### OEM companion releases
-
-`pnpm extract oem --atlos /path/to/Atlos/talos --packages out --output out/releases` exports
-point metadata from the same local install as the complete packages. it resolves placements and
-NPC proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence,
-and labels supplemental quest states. generated content stays outside git.
-
-`pnpm extract oem-check out/releases/<release-id>` verifies every archive size, package generation
-and source fingerprint, point index and preview preset before publication. presets use the existing
-scene evaluator and story ordering; unknown runtime conditions remain explicit.
-
 node and pnpm come from mise (`mise.toml`); node runs the TypeScript sources directly, with no build
 step.
 
@@ -35,12 +24,13 @@ pnpm extract --help
 ```
 
 `cli.ts` loads every file in `commands/` as a subcommand exporting `summary`, `usage` and
-`run(args)`, so a new command is a new file there; shared argument helpers live outside that
-directory, in `cli-args.ts`. run a command without arguments or with `--help` / `-h` for its usage,
-which works without a config or install. every command takes `--config <file>` (default
-`endfield.local.json` in the working directory) and, except for `init`, opens the install through
-`withContext` in `context.ts`, which mounts the VFS, builds the world index and creates the asset
-resolver on first use.
+`run(args)`, so a new command is a new file there. shared argument helpers live in `cli-args.ts`,
+outside `commands/`, because every file in that directory is treated as a command. each command
+exports its usage text; run it without arguments or with `--help` / `-h` for details. help works
+without a config or install, including `world find --help`. commands that read the install take
+`--config <file>` (default `endfield.local.json` in the working directory) and open the install
+through `withContext` in `context.ts`, which mounts the VFS, builds the world index and creates the
+asset resolver on first use.
 
 | command    | what it does                                                                                                                                                                                                                                                                                                                                                              |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -118,6 +108,17 @@ with `--class`, it selects objects of that class in matching SerializedFiles. `-
 `variants --areas` lists every selected chunk, including area zero. with `--json`, it adds a
 `selection` object of sorted area ids and chunk file names to the variants object, without trailing
 text.
+
+### OEM companion releases
+
+`pnpm extract oem --atlos /path/to/Atlos/talos --packages out --output out/releases` exports
+point metadata from the same local install as the complete packages. it resolves placements and
+NPC proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence,
+and labels supplemental quest states. generated content stays outside git.
+
+`pnpm extract oem-check out/releases/<release-id>` verifies every archive size, package generation
+and source fingerprint, point index and preview preset before publication. presets use the existing
+scene evaluator and story ordering; unknown runtime conditions remain explicit.
 
 ## local config and keys
 

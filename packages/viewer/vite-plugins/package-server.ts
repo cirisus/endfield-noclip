@@ -5,6 +5,14 @@ import { join } from 'node:path';
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 
 import sirv from 'sirv';
+
+/** @param root immutable local OEM releases @returns a static mount shared by dev and preview */
+export const oemReleaseServer = (root: string): Plugin => {
+	const mount = (server: { middlewares: Connect.Server }) => {
+		server.middlewares.use('/oem', sirv(root, { dev: true, etag: true, extensions: [] }));
+	};
+	return { name: 'oem-release-server', configureServer: mount, configurePreviewServer: mount };
+};
 import type { Connect, Plugin } from 'vite';
 
 import { DEV_PACKAGES_INDEX, DEV_PACKAGES_PREFIX, type DevPackage } from '../src/package/dev-packages.ts';

@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["https://oem-noclip.pages.dev", "https://opendfieldmap.org", "https://opendfieldmap.cn", "https://beta.opendfieldmap.org", "https://beta.opendfieldmap.cn"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["Range"],
+    "ExposeHeaders": ["Content-Range", "Content-Length", "Accept-Ranges", "ETag", "Last-Modified"],
+    "MaxAgeSeconds": 3600
+  }
+]
