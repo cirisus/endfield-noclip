@@ -1,0 +1,4 @@
+/*
+  Cross-Origin-Opener-Policy: unsafe-none
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

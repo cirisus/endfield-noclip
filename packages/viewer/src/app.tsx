@@ -3,6 +3,8 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { PackageSource } from './package/package-source.ts';
 import { CameraReadout } from './ui/camera-readout.tsx';
 import { LevelsPanel } from './ui/levels-panel.tsx';
+import { oemLaunch } from './ui/oem-launch.ts';
+import { OEMPreview } from './ui/oem-preview.tsx';
 import { type OpenPackage, PackagePanel } from './ui/package-panel.tsx';
 import { sourceFromParam } from './ui/package-param.ts';
 import { SceneControls } from './ui/scene-controls.tsx';
@@ -27,9 +29,16 @@ const setParam = (name: string, value: string | null): void => {
 };
 
 export const App = () => {
+	const [{ launch, launchError }] = useState(() => {
+		try {
+			return { launch: oemLaunch(), launchError: null };
+		} catch (err) {
+			return { launch: null, launchError: describeError(err) };
+		}
+	});
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [viewer, setViewer] = useState<Viewer | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(launchError);
 	const [current, setCurrent] = useState<OpenPackage | null>(null);
 	const [status, setStatus] = useState('');
 
@@ -71,7 +80,7 @@ export const App = () => {
 				}
 				setViewer(instance);
 				const param = new URL(location.href).searchParams.get(PACKAGE_PARAM);
-				if (param !== null) {
+				if (param !== null && launch === null && launchError === null) {
 					openInitial(instance, param);
 				}
 			})
@@ -84,7 +93,7 @@ export const App = () => {
 			abort.abort();
 			created?.destroy();
 		};
-	}, []);
+	}, [launch, launchError]);
 
 	// the shown level lives in the URL, so a reload or a shared link opens the same level
 	useEffect(() => {
@@ -100,7 +109,7 @@ export const App = () => {
 	}, [viewer]);
 
 	return (
-		<main className="app">
+		<main className={`app${launch ? ' oem-preview' : ''}`}>
 			<canvas ref={canvasRef} className="viewport" />
 			{error !== null && (
 				<div className="panel error" role="alert">
@@ -110,6 +119,7 @@ export const App = () => {
 			)}
 			{viewer !== null && (
 				<>
+					{launch && <OEMPreview viewer={viewer} launch={launch} />}
 					<div className="dock left">
 						<PackagePanel
 							current={current}
