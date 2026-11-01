@@ -1,6 +1,7 @@
 import type { Viewer } from '../viewer.ts';
 
 import { formatBytes, formatCount } from './format.ts';
+import { Panel } from './panel.tsx';
 import { useViewerStats } from './use-viewer.ts';
 
 /** frame timing, draw counts, memory and streaming counters */
@@ -30,7 +31,7 @@ export const StatsPanel = ({ viewer }: { viewer: Viewer }) => {
 		rows.push(['failed blobs', String(s.failed)]);
 	}
 	return (
-		<section className="panel stats" aria-label="statistics">
+		<Panel title="Statistics" label="statistics" className="stats">
 			{s.packageChanged && (
 				<div className="warning" role="alert">
 					<p>The package changed on disk. Streaming has stopped.</p>
@@ -50,6 +51,6 @@ export const StatsPanel = ({ viewer }: { viewer: Viewer }) => {
 			<p className="muted small">
 				{s.adapter} · {s.features.join(', ')}
 			</p>
-		</section>
+		</Panel>
 	);
 };

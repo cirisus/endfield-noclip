@@ -4,6 +4,7 @@ import { DEBUG_VIEWS } from '../render/frame-uniforms.ts';
 import { TONEMAPPERS } from '../render/post-process.ts';
 import type { Viewer, ViewerOptions } from '../viewer.ts';
 
+import { Panel } from './panel.tsx';
 import { useViewerState } from './use-viewer.ts';
 
 const HLOD_TIERS = [0, 1, 2] as const;
@@ -152,7 +153,7 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 		viewer.setOptions({ hlodTiers: next });
 	};
 	return (
-		<section className="panel settings" aria-label="display settings">
+		<Panel title="Display settings" label="display settings" className="settings">
 			<fieldset>
 				<legend>layers</legend>
 				<Toggle viewer={viewer} name="terrain" label="terrain" />
@@ -168,7 +169,10 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 				<Toggle viewer={viewer} name="wireframe" label="wireframe" />
 			</fieldset>
 			<fieldset>
-				<legend>look{viewer.environmentName === null ? '' : ` · ${viewer.environmentName}`}</legend>
+				<legend>look</legend>
+				{viewer.environmentName !== null && (
+					<p className="muted small environment-name">{viewer.environmentName}</p>
+				)}
 				<Toggle viewer={viewer} name="sky" label="sky" />
 				<Toggle viewer={viewer} name="heightFog" label="height and volumetric fog" />
 				<Toggle viewer={viewer} name="atmosphereFog" label="atmosphere fog" />
@@ -259,6 +263,6 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 			/>
 			<Toggle viewer={viewer} name="animate" label="animate" />
 			<Toggle viewer={viewer} name="continuous" label="render every frame" />
-		</section>
+		</Panel>
 	);
 };
