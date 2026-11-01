@@ -34,6 +34,11 @@ packs or renders correctly.
 
 ## look and lighting
 
+- photo filters: the exported colour LUTs and supported vignette overrides render; additional camera
+  effects, photo-profile bloom overrides and character-specific volumes do not. external-LUT
+  colour-space parity still needs an in-game comparison
+  ([photo filters](viewer/post-processing.md#photo-filters))
+
 - baked GI brightness is unverified against in-game shots; the native ambient scale is missing, and
   the lighting lookup has no jitter or forward-shifted clipmap centres. next: compare GPU clipmap
   samples with the bake at one point, and check clipmap seams (L0 repeats, L1 clamps)
