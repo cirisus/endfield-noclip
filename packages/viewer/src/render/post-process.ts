@@ -8,6 +8,7 @@ import { type Environment, evaluateSh } from './environment.ts';
 import type { DebugView } from './frame-uniforms.ts';
 import { LensFlares } from './lens-flare.ts';
 import { LightShafts } from './light-shafts.ts';
+import { PhotoLut } from './photo-filters.ts';
 import { ScreenSpaceReflections } from './screen-space-reflections.ts';
 import atmosphereWgsl from './shaders/atmosphere.wgsl?raw';
 import bloomWgsl from './shaders/bloom.wgsl?raw';
@@ -185,6 +186,8 @@ interface Sized {
 
 /** owns the post chain's targets, pipelines and uniforms */
 export class PostProcess {
+	/** the photo LUT applied after scene grading and tonemapping */
+	readonly photoLut: PhotoLut;
 	/** the post exposure the game's auto exposure picks; the caller steps it each frame */
 	readonly autoExposure: AutoExposure;
 	/** the antialiasing; the caller jitters the main pass with it */
@@ -353,6 +356,7 @@ export class PostProcess {
 			tonemap: pipeline('tonemap', tonemap, 'fs_tonemap', swapchainFormat),
 		};
 		const p = this.#pipelines;
+		this.photoLut = new PhotoLut(device, p.tonemap.getBindGroupLayout(2));
 		const lutPass = (target: GPURenderPipeline, view: GPUTextureView, reads: readonly number[]): Pass => {
 			const groups = [this.#uniformsGroup(target)];
 			if (reads.length > 0) {
@@ -1153,7 +1157,7 @@ export class PostProcess {
 		}
 		this.#run(encoder, 'tonemap', {
 			pipeline: this.#pipelines.tonemap,
-			groups: sized.tonemapGroups[resolved],
+			groups: [...sized.tonemapGroups[resolved], this.photoLut.group],
 			target: swapchain,
 		});
 	}
@@ -1173,6 +1177,7 @@ export class PostProcess {
 		this.#skyView.destroy();
 		this.#skyMean.destroy();
 		this.#uniforms.destroy();
+		this.photoLut.destroy();
 		this.celestial.destroy();
 		this.autoExposure.destroy();
 		this.taa.destroy();

@@ -24,6 +24,7 @@ import type {
 	VignetteSettings,
 	WindConfig,
 } from '@endfield-noclip/package-format/environment';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
 import type { Color, Vec2 } from '@endfield-noclip/package-format/values';
 
 import type { Vec3 } from '../scene/camera.ts';
@@ -31,6 +32,7 @@ import type { Vec3 } from '../scene/camera.ts';
 import { type ColorGradingInput, type Grading, NEUTRAL_GRADING, gradingLook } from './color-grading.ts';
 import { linearRgb, srgbToLinear } from './color.ts';
 import { type AutoExposureInput, type AutoExposureSettings, autoExposureLook } from './exposure.ts';
+import { photoProfile } from './photo-filters.ts';
 
 // #region profile input
 
@@ -1001,10 +1003,14 @@ const atmosphereFogLook = (source: EnvironmentInput, sunIntensity: number): Atmo
 
 /**
  * @param profile the level's environment profile, or `null` for the defaults
+ * @param filter optional photo overrides applied after scene volume blending
  * @returns the renderer's view of it
  */
-export const deriveEnvironment = (profile: EnvironmentInput | null): Environment => {
-	const source = profile ?? DEFAULT_PROFILE;
+export const deriveEnvironment = (
+	profile: EnvironmentInput | null,
+	filter?: PhotoFilter | null,
+): Environment => {
+	const source = photoProfile(profile ?? DEFAULT_PROFILE, filter ?? null);
 	const { light, sky, atmosphere, heightFog, volumetricFog } = source;
 	const intensity = exposedSunIntensity(light);
 	const color = linearRgb(light.directColor);
