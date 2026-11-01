@@ -5,6 +5,7 @@ import { CameraReadout } from './ui/camera-readout.tsx';
 import { LevelsPanel } from './ui/levels-panel.tsx';
 import { type OpenPackage, PackagePanel } from './ui/package-panel.tsx';
 import { sourceFromParam } from './ui/package-param.ts';
+import { PhotoFiltersPanel } from './ui/photo-filters.tsx';
 import { SceneControls } from './ui/scene-controls.tsx';
 import { FiltersPanel, PhotographyPanel, SettingsPanel } from './ui/settings-panel.tsx';
 import { StatsPanel } from './ui/stats-panel.tsx';
@@ -127,6 +128,8 @@ export const App = ({ overlay }: { overlay?: (viewer: Viewer, panel: HTMLElement
 					<div className="dock right">
 						{hosted && <div ref={setPointPanelRoot} className="host-panel" />}
 						{!hosted && <LevelsPanel viewer={viewer} />}
+						<PhotoFiltersPanel viewer={viewer} />
+						<LevelsPanel viewer={viewer} />
 						<SceneControls viewer={viewer} />
 						<PhotographyPanel viewer={viewer} />
 						<FiltersPanel viewer={viewer} />

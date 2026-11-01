@@ -109,3 +109,27 @@ existing differences in scene content, lighting and other post effects.
 
 the bottom camera readout shows focal length in millimetres and the selected f-number. it marks
 depth of field as off when disabled, and uses the same sensor-height conversion as the blur pass.
+### photo filters
+
+`pnpm extract filters --config endfield.local.json -o out/photo-filters.json` exports an optional
+photo library from the same install. open the viewer with
+`?package=map02&filters=/packages/photo-filters.json` to load its picker. `none` restores the
+scene's grading. the LUT contribution slider multiplies the authored lookup contribution only; it
+does not fade grading or vignette overrides. filters remain selected when changing levels.
+
+the final pass samples the exported colour strip after grading and tonemapping, in sRGB display
+space, interpolating adjacent blue slices. this follows URP's external-LUT convention; a pixel
+comparison with the game's photo mode remains outstanding. the linear BC7 format does not cause an
+automatic sRGB decode. only the selected LUT is allocated; changing contribution reuses it. debug
+material views bypass the post chain as before.
+
+active grading sections replace scene grading after spatial volume blending. supported vignette
+parameters keep the scene's non-overridden values. additional camera effects, bloom overrides and
+character-only profiles are listed as partial support rather than silently approximated. the
+underlying scene renderer's existing grading, bloom and vignette differences still apply.
+
+the library uses the separate `endfield-noclip.photo-filters` contract, version 1, in
+`package-format/photo-filters.ts`. its JSON contains names, grading and vignette overrides,
+unsupported-feature notes and base64 GPU-ready LUT blocks. it does not alter scene archives or their
+package version. extracted libraries are game content and remain outside git; a static host must
+serve the exported JSON separately. the viewer never reads game files or imports decoders.

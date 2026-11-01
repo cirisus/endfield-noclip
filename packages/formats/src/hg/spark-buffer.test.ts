@@ -308,3 +308,39 @@ test('decodes bool, byte, float and double fields with natural alignment', () =>
 test('rejects unsupported field types', () => {
 	assert.throws(() => parseSparkTable(buildBeanTable(42)), /unsupported spark type 42 in LevelDescData\.id/);
 });
+
+test('reads byte-sized booleans before aligned fields and rejects invalid values', () => {
+	const b = new Buffer();
+	const header = [b.u32(12), b.u32(0), b.u32(0)];
+	b.u32(1);
+	b.u8(SparkType.Bean);
+	b.u32(1);
+	b.cString('Filter');
+	b.u32(2);
+	b.cString('enabled');
+	b.u8(SparkType.Bool);
+	b.cString('order');
+	b.u8(SparkType.Int);
+	b.patch(header[1], b.pos);
+	b.u8(SparkType.Map);
+	b.cString('Filters');
+	b.u8(SparkType.Int);
+	b.u8(SparkType.Bean);
+	b.u32(1);
+	b.align(4);
+	const bean = b.pos;
+	b.u8(1);
+	b.u32(17);
+	b.patch(header[2], b.pos);
+	b.u32(1);
+	const slot = b.u32(0);
+	b.u32(1);
+	b.patch(slot, b.pos);
+	b.u32(5);
+	b.u32(bean);
+	assert.deepEqual(parseSparkTable(new Uint8Array(b.bytes)).entries, [[5, { enabled: true, order: 17 }]]);
+	b.bytes[bean] = 0;
+	assert.deepEqual(parseSparkTable(new Uint8Array(b.bytes)).entries, [[5, { enabled: false, order: 17 }]]);
+	b.bytes[bean] = 2;
+	assert.throws(() => parseSparkTable(new Uint8Array(b.bytes)), /invalid spark boolean/);
+});
