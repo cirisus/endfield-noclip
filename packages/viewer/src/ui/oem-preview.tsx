@@ -15,12 +15,11 @@ import type { Viewer } from '../viewer.ts';
 
 import type { Launch } from './oem-launch.ts';
 import { PointConditions } from './point-conditions.tsx';
+import { TargetMarker } from './target-marker.tsx';
 
 /* oxlint-disable react/iframe-missing-sandbox -- trusted cross-origin OEM app needs scripts and a non-opaque messaging origin */
 
 /* oxlint-disable no-await-in-loop -- serialize scene changes so older loads cannot overwrite the newest target */
-const dot = (a: readonly number[], b: readonly number[]) => a.reduce((sum, v, i) => sum + v * b[i], 0);
-
 interface Request {
 	point: string;
 }
@@ -40,7 +39,6 @@ export const OEMPreview = ({
 	const [preset, setPreset] = useState('');
 	const [loading, setLoading] = useState(true);
 	const [status, setStatus] = useState('Opening OEM preview…');
-	const [, setPose] = useState(0);
 	const reply = useCallback(
 		(type: string, payload: object = {}) => {
 			window.opener?.postMessage(
@@ -70,7 +68,8 @@ export const OEMPreview = ({
 	useEffect(() => {
 		const abort = new AbortController();
 		let catalog: Catalog | null = null,
-			selected: Point | null = null;
+			selected: Point | null = null,
+			preparing: Point | null = null;
 		let desired: Request | null = { point: launch.point },
 			busy = false,
 			loaded = '';
@@ -82,6 +81,15 @@ export const OEMPreview = ({
 			...payload,
 		});
 		const minimap = () => {
+			if (!selected) {
+				if (preparing) {
+					iframe.current?.contentWindow?.postMessage(
+						envelope('minimap-target', { point: preparing }),
+						launch.origin,
+					);
+				}
+				return;
+			}
 			const camera = viewer.camera;
 			const ground = viewer.groundHeight;
 			iframe.current?.contentWindow?.postMessage(
@@ -148,6 +156,9 @@ export const OEMPreview = ({
 						if (!target || !pack) {
 							throw new Error('point has no scene package');
 						}
+						selected = null;
+						preparing = target;
+						minimap();
 						setStatus('Opening scene…');
 						const key = `${target.scene}/${pack.generation}`;
 						if (loaded !== key || viewer.scene?.pkg.manifest.generation !== pack.generation) {
@@ -175,6 +186,7 @@ export const OEMPreview = ({
 						viewer.setCompanion(companion.controls, companion.missions);
 						applyLoaded(target);
 						selected = target;
+						preparing = null;
 						setPoint(target);
 						setMetadata(companion);
 						viewer.flyToPoint(target.position, 10);
@@ -189,6 +201,7 @@ export const OEMPreview = ({
 							const message = error instanceof Error ? error.message : String(error);
 							setStatus(message);
 							selected = null;
+							preparing = null;
 							setPoint(null);
 							reply('error', { message, point: request.point });
 						}
@@ -228,8 +241,9 @@ export const OEMPreview = ({
 		window.addEventListener('message', receive);
 		window.addEventListener('resize', minimap, { signal: abort.signal });
 		const stop = viewer.subscribeCamera(() => {
-			minimap();
-			setPose((n) => n + 1);
+			if (selected) {
+				minimap();
+			}
 		});
 		reply('ready');
 		void drain();
@@ -242,13 +256,6 @@ export const OEMPreview = ({
 	const map = new URL('/minimap/', launch.origin);
 	map.searchParams.set('previewOrigin', location.origin);
 	map.searchParams.set('session', launch.session);
-	const camera = viewer.camera,
-		delta = point?.position.map((v, i) => v - camera.position[i]);
-	const depth = delta ? dot(delta, camera.forward()) : 0;
-	const aspect = window.innerWidth / window.innerHeight,
-		f = 1 / Math.tan(camera.fovY / 2);
-	const x = delta && depth > 0 ? 50 + ((dot(delta, camera.right()) * f) / aspect / depth) * 50 : 50;
-	const y = delta && depth > 0 ? 50 - ((dot(delta, camera.up()) * f) / depth) * 50 : 95;
 	return (
 		<>
 			{panelRoot &&
@@ -273,15 +280,7 @@ export const OEMPreview = ({
 				tabIndex={-1}
 			/>
 			{status && <output className="panel oem-status">{status}</output>}
-			{point && (
-				<div
-					className="oem-target"
-					style={{ left: `${Math.min(97, Math.max(3, x))}%`, top: `${Math.min(95, Math.max(5, y))}%` }}
-					aria-label={`Target ${point.id}`}
-				>
-					<span>◇</span>
-				</div>
-			)}
+			{point && <TargetMarker viewer={viewer} point={point} />}
 		</>
 	);
 };
