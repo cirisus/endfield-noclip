@@ -1,9 +1,28 @@
 [
   {
-    "AllowedOrigins": ["https://oem-noclip.pages.dev", "https://opendfieldmap.org", "https://opendfieldmap.cn", "https://beta.opendfieldmap.org", "https://beta.opendfieldmap.cn"],
-    "AllowedMethods": ["GET", "HEAD"],
-    "AllowedHeaders": ["Range"],
-    "ExposeHeaders": ["Content-Range", "Content-Length", "Accept-Ranges", "ETag", "Last-Modified"],
+    "AllowedOrigins": [
+      "https://opendfieldmap.org",
+      "https://opendfieldmap.cn",
+      "https://beta.opendfieldmap.org",
+      "https://beta.opendfieldmap.cn",
+      "https://oem-world.pages.dev",
+      "https://world.opendfieldmap.org",
+      "https://world.oem.re"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "HEAD"
+    ],
+    "AllowedHeaders": [
+      "Range"
+    ],
+    "ExposeHeaders": [
+      "Content-Range",
+      "Content-Length",
+      "Accept-Ranges",
+      "ETag",
+      "Last-Modified"
+    ],
     "MaxAgeSeconds": 3600
   }
 ]
