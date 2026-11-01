@@ -14,6 +14,7 @@ export interface Catalog {
 	packages: Record<string, { path: string; generation: string; version: number }>;
 	files: Record<string, string>;
 	pointIndex: Record<string, string>;
+	framing?: { version: 3; profile: 'completed'; points: number };
 }
 
 /** an authored, validated selection of scene values */
@@ -22,6 +23,15 @@ export interface Preset {
 	label: string;
 	picks: Record<string, number>;
 	satisfies: boolean;
+}
+
+/** A completed-profile camera pose bound to scene generation and effective visibility. */
+export interface PointView {
+	key: string;
+	position: Vec3;
+	yaw: number;
+	pitch: number;
+	clear: boolean;
 }
 
 /** point metadata, separate from map marker tuples and renderer archives */
@@ -38,6 +48,7 @@ export interface Point {
 	drivers: ControlDriver[];
 	unknown: string[];
 	presets: Preset[];
+	view?: PointView;
 	source: { path: string; kind: string; createState: number | null };
 }
 
@@ -61,6 +72,21 @@ const strings = (value: unknown): value is string[] =>
 	Array.isArray(value) && value.every((v) => typeof v === 'string');
 const relative = (value: string): boolean =>
 	!value.startsWith('/') && !value.includes('..') && /^[A-Za-z0-9_./-]+$/.test(value);
+/** @param value decoded pose @returns whether its framing key and camera values are valid */
+export const isPointView = (value: unknown): value is PointView =>
+	object(value) &&
+	typeof value.key === 'string' &&
+	/^noclip-point-view-v3:[a-f0-9]{64}$/.test(value.key) &&
+	Array.isArray(value.position) &&
+	value.position.length === 3 &&
+	value.position.every((v) => typeof v === 'number' && Number.isFinite(v)) &&
+	typeof value.yaw === 'number' &&
+	Number.isFinite(value.yaw) &&
+	typeof value.pitch === 'number' &&
+	Number.isFinite(value.pitch) &&
+	Math.abs(value.pitch) <= Math.PI / 2 &&
+	typeof value.clear === 'boolean';
+
 const validPoint = (value: unknown): value is Point => {
 	if (
 		!object(value) ||
@@ -69,7 +95,8 @@ const validPoint = (value: unknown): value is Point => {
 		!Array.isArray(value.position) ||
 		value.position.length !== 3 ||
 		!value.position.every((v) => typeof v === 'number' && Number.isFinite(v)) ||
-		!strings(value.unknown)
+		!strings(value.unknown) ||
+		(value.view !== undefined && !isPointView(value.view))
 	) {
 		return false;
 	}
@@ -138,7 +165,12 @@ export const isCatalog = (value: unknown): value is Catalog => {
 		) &&
 		dictionary(value.files) &&
 		Object.values(value.files).every(relative) &&
-		dictionary(value.pointIndex)
+		dictionary(value.pointIndex) &&
+		(value.framing === undefined ||
+			(object(value.framing) &&
+				value.framing.version === 3 &&
+				value.framing.profile === 'completed' &&
+				Number.isInteger(value.framing.points)))
 	);
 };
 

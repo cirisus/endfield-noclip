@@ -27,7 +27,7 @@ it('keeps the wide view in open space and turns around an opaque wall', () => {
 	assert.notEqual(pose.yaw, open.yaw);
 	assert.equal(Math.hypot(pose.position[0], pose.position[2]), 10);
 });
-it('shortens the view in a low room rather than placing the camera through its ceiling', () => {
+it('uses a flat angle beneath a low ceiling without collapsing the viewing distance', () => {
 	const pose = pointPose(
 		[0, 0, 0],
 		[
@@ -45,12 +45,41 @@ it('shortens the view in a low room rather than placing the camera through its c
 		() => 0,
 	);
 	assert.ok(pose.position[1] < 1);
-	assert.ok(Math.hypot(pose.position[0], pose.position[2]) < 10);
+	assert.ok(Math.hypot(pose.position[0], pose.position[2]) >= 10);
+	assert.equal(pose.clear, true);
 });
 it('rejects terrain along the sight line, not only beneath the camera', () => {
 	const pose = pointPose([0, 0, 0], [], (_x, z) => (z < -0.5 && z > -1 ? 8 : 0));
 	assert.notEqual(pose.yaw, 0);
 });
-it('uses a close fallback when no sampled view can clear the terrain', () => {
-	assert.deepEqual(pointPose([0, 0, 0], [], () => 100).position, [0, 0.6, -0.6]);
+it('raises the focus above local terrain and never collapses the camera onto the point', () => {
+	const p = pointPose([0, 0, 0], [], () => 0.5);
+	assert.ok(p.position[1] > 0.5);
+	assert.ok(Math.hypot(p.position[0], p.position[2]) >= 10);
+});
+
+it('keeps underground targets beneath the terrain above their cave', () => {
+	const p = pointPose([0, 0, 0], [], () => 100);
+	assert.ok(p.position[1] < 10);
+	assert.equal(p.clear, true);
+});
+
+it('keeps at least ten metres away when walls block every candidate', () => {
+	const walls: [[number, number, number], [number, number, number], [number, number, number]][] = [];
+	for (const axis of [0, 2]) {
+		for (const side of [-1, 1]) {
+			const a: [number, number, number] = [-1, -100, -1],
+				b: [number, number, number] = [1, -100, 1],
+				c: [number, number, number] = [1, 100, 1],
+				d: [number, number, number] = [-1, 100, -1];
+			a[axis] = side;
+			b[axis] = side;
+			c[axis] = side;
+			d[axis] = side;
+			walls.push([a, b, c], [a, c, d]);
+		}
+	}
+	const view = pointPose([0, 0, 0], walls, () => 0);
+	assert.equal(view.clear, false);
+	assert.ok(Math.hypot(view.position[0], view.position[2]) >= 10);
 });
