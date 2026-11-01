@@ -1,6 +1,6 @@
 /**
  * free-flight camera controls: WASD to move, mouse look under pointer lock (or drag), E/R or Space up, Q/F or
- * C/Shift down, right mouse to boost, Alt to creep, wheel to zoom, Ctrl+wheel to change the base speed.
+ * C/Shift down, right mouse to boost, Tab/Alt to creep, wheel to zoom, Ctrl+wheel to change the base speed.
  *
  * @module
  */
@@ -45,6 +45,8 @@ const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 export class NoclipControls {
 	/** base speed, m/s */
 	speed = 40;
+	/** optional ground elevation in Unity metres; null keeps fixed-speed flight. hosts sample this. */
+	groundHeight: number | null = null;
 	/** speed applied in the last update, m/s */
 	effectiveSpeed = 0;
 
@@ -72,6 +74,36 @@ export class NoclipControls {
 			(event) => {
 				if (isTyping(event.target) || event.metaKey || event.ctrlKey) {
 					return;
+				}
+				if (event.code === 'Tab') {
+					// preserve focus navigation outside flight, including panel controls.
+					const flying =
+						document.pointerLockElement === element ||
+						this.#dragging ||
+						[
+							'KeyW',
+							'KeyA',
+							'KeyS',
+							'KeyD',
+							'KeyE',
+							'KeyR',
+							'KeyQ',
+							'KeyF',
+							'KeyC',
+							'Space',
+							'ArrowUp',
+							'ArrowDown',
+							'ArrowLeft',
+							'ArrowRight',
+							'PageUp',
+							'PageDown',
+							'ShiftLeft',
+							'ShiftRight',
+						].some((code) => this.#keys.has(code));
+					if (!flying) {
+						return;
+					}
+					event.preventDefault();
 				}
 				this.#keys.add(event.code);
 				if (event.code === 'Space' || event.code.startsWith('Arrow')) {
@@ -250,11 +282,19 @@ export class NoclipControls {
 			key('KeyQ', 'KeyF', 'KeyC', 'PageDown', 'ShiftLeft', 'ShiftRight');
 
 		let speed = this.speed;
-		if (this.#boosting) {
-			speed *= BOOST;
+		const adaptive = this.groundHeight !== null && Number.isFinite(this.groundHeight);
+		if (adaptive && this.groundHeight !== null) {
+			const height = Math.max(0, camera.position[1] - this.groundHeight);
+			const t = Math.min(1, Math.max(0, (height - 5) / 95));
+			// keep the stored Ctrl+wheel preference as a trim around the default 40;
+			// only ordinary adaptive flight is capped. explicit boost remains faster.
+			const cruise = 10 + 40 * t * t * (3 - 2 * t);
+			speed = Math.min(50, cruise * (this.speed / 40));
 		}
-		if (this.#keys.has('AltLeft') || this.#keys.has('AltRight')) {
+		if (this.#keys.has('Tab') || this.#keys.has('AltLeft') || this.#keys.has('AltRight')) {
 			speed *= CREEP;
+		} else if (this.#boosting) {
+			speed *= BOOST;
 		}
 		this.effectiveSpeed = speed;
 
@@ -265,6 +305,13 @@ export class NoclipControls {
 			target[i] = (f[i] * forward + r[i] * strafe) * speed;
 		}
 		target[1] += lift * speed;
+		const magnitude = Math.hypot(...target);
+		if (adaptive && magnitude > speed) {
+			// diagonal or combined horizontal/vertical input shares the cruise cap.
+			for (let i = 0; i < 3; i++) {
+				target[i] *= speed / magnitude;
+			}
+		}
 		const blend = 1 - Math.exp(-dt / SMOOTHING);
 		for (let i = 0; i < 3; i++) {
 			this.#velocity[i] += (target[i] - this.#velocity[i]) * blend;
