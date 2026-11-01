@@ -34,9 +34,9 @@ packs or renders correctly.
 
 ## look and lighting
 
-- photo filters: the exported colour LUTs and supported vignette overrides render; additional camera
-  effects, photo-profile bloom overrides and character-specific volumes do not. external-LUT
-  colour-space parity still needs an in-game comparison
+- photo filters: exported colour LUTs, vignette and high-quality bloom overrides render, along with
+  Black and Gold's additive sprite particles. particle noise and character-specific lighting volumes
+  remain unsupported. external-LUT colour-space parity still needs an in-game comparison
   ([photo filters](viewer/post-processing.md#photo-filters))
 
 - baked GI brightness is unverified against in-game shots; the native ambient scale is missing, and
