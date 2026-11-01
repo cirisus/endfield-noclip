@@ -37,6 +37,10 @@ packs or renders correctly.
 - photographic depth of field and authored post-focus transparency are available; moving-object
   reprojection, per-particle transparency sorting and packed intermediate precision still differ
   ([photography](viewer/post-processing.md#photography))
+- photo filters: the exported colour LUTs and supported vignette overrides render; additional camera
+  effects, photo-profile bloom overrides and character-specific volumes do not. external-LUT
+  colour-space parity still needs an in-game comparison
+  ([photo filters](viewer/post-processing.md#photo-filters))
 
 - baked GI brightness is unverified against in-game shots; the native ambient scale is missing, and
   the lighting lookup has no jitter or forward-shifted clipmap centres. next: compare GPU clipmap
