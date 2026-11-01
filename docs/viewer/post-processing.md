@@ -109,7 +109,8 @@ depth of field as off when disabled, and uses the same sensor-height conversion 
 photo library from the same install. open the viewer with
 `?package=map02&filters=/packages/photo-filters.json` to load its picker. `none` restores the
 scene's grading. the LUT contribution slider multiplies the authored lookup contribution only; it
-does not fade grading or vignette overrides. filters remain selected when changing levels.
+does not fade grading, bloom, vignette or particle effects. filters remain selected when changing
+levels.
 
 the final pass samples the exported colour strip after grading and tonemapping, in sRGB display
 space, interpolating adjacent blue slices. this follows URP's external-LUT convention; a pixel
@@ -117,13 +118,30 @@ comparison with the game's photo mode remains outstanding. the linear BC7 format
 automatic sRGB decode. only the selected LUT is allocated; changing contribution reuses it. debug
 material views bypass the post chain as before.
 
-active grading sections replace scene grading after spatial volume blending. supported vignette
-parameters keep the scene's non-overridden values. additional camera effects, bloom overrides and
-character-only profiles are listed as partial support rather than silently approximated. the
-underlying scene renderer's existing grading, bloom and vignette differences still apply.
+active grading sections replace scene grading after spatial volume blending. supported vignette and
+high-quality bloom parameters keep the scene's non-overridden values, including bloom tint. the
+scene's bloom and vignette toggles still apply. Warm and Pale now use their authored bloom
+overrides; their character-only lighting volume needs a character shading path and remains
+unsupported.
+
+Black and Gold also exports its additive particle emitter and BC7 sprite atlas. the viewer reuses
+the scene particle evaluator for emission, lifetime curves, size, rotation, colour and atlas frames.
+the effect is anchored at the camera's first selection pose; switching away and back resumes that
+anchor and clock rather than making the particles follow the camera. it draws depth-tested HDR
+billboards before temporal AA, bloom and grading, cancelling post exposure when the source material
+requests it. only selected emitters allocate textures and buffers; animation requests frames without
+repeating scene selection. the shared evaluator's 1024-particle cap still applies. Unity's noise
+module is not evaluated and remains in the filter's partial-support notice. this path accepts only
+simple additive, view-aligned billboards without gravity, bursts, pivot offsets or extra motion
+modules; other materials and emitters are reported by the extractor.
+
+the underlying scene renderer's existing grading, bloom and vignette differences still apply.
 
 the library uses the separate `endfield-noclip.photo-filters` contract, version 1, in
-`package-format/photo-filters.ts`. its JSON contains names, grading and vignette overrides,
-unsupported-feature notes and base64 GPU-ready LUT blocks. it does not alter scene archives or their
-package version. extracted libraries are game content and remain outside git; a static host must
-serve the exported JSON separately. the viewer never reads game files or imports decoders.
+`package-format/photo-filters.ts`. its JSON contains names, grading, vignette and optional bloom
+overrides, optional particle emitters and texture mips, unsupported-feature notes and base64
+GPU-ready LUT blocks. older version-1 libraries without bloom or effects still load; re-export to
+obtain those additions. the loader checks supported particle layouts and bounds texture dimensions,
+mip sizes and samplers before GPU allocation. it does not alter scene archives or their package
+version. extracted libraries are game content and remain outside git; a static host must serve the
+exported JSON separately. the viewer never reads game files or imports decoders.
