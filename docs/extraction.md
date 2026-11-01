@@ -107,6 +107,10 @@ trailing text.
 point metadata from the same local install as the complete packages. it resolves placements and
 NPC proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence,
 and labels supplemental quest states. generated content stays outside git.
+the MemoryPack reader also handles unmanaged pairs of Unity Vector3 values used by Dijiang's
+specific level data. it reads the adjacent values without an object header, following the
+[MemoryPack unmanaged format](https://github.com/Cysharp/MemoryPack#binary-wire-format-specification);
+other tuple layouts remain explicit errors until their field layout is verified.
 
 `pnpm extract oem-check out/releases/<release-id>` verifies every archive size, package generation
 and source fingerprint, point index and preview preset before publication. presets use the existing

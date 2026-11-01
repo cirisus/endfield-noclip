@@ -1,19 +1,27 @@
+import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 import type { Companion, Point } from '@endfield-noclip/package-format/oem';
+
+import type { Viewer } from '../viewer.ts';
+
+import { useViewerState } from './use-viewer.ts';
 
 /** prerequisites and story presets for the selected OEM point, using the viewer's panel styles */
 export const PointConditions = ({
+	viewer,
 	point,
 	companion,
 	preset,
 	disabled,
 	onPreset,
 }: {
+	viewer: Viewer;
 	point: Point;
 	companion: Companion;
 	preset: string;
 	disabled: boolean;
 	onPreset: (id: string) => void;
 }) => {
+	useViewerState(viewer);
 	const requirement = (id: string, mask: number): string => {
 		const control = companion.controls.find((c) => c.id === id);
 		const name = companion.labels['en-US']?.[id] ?? control?.name ?? id;
@@ -27,7 +35,7 @@ export const PointConditions = ({
 		<section className="panel scene-controls oem-point-conditions" aria-label="point prerequisites">
 			<header>
 				<h2>Preview</h2>
-				<button disabled={disabled} onClick={() => onPreset('default')}>
+				<button disabled={disabled} onClick={() => onPreset('completed')}>
 					Reset
 				</button>
 			</header>
@@ -58,9 +66,15 @@ export const PointConditions = ({
 					conditions only.
 				</p>
 			)}
+			{point.condition && !conditionVisible(point.condition, viewer.sceneValues) && (
+				<p className="muted small">
+					The selected preview state does not satisfy this point's recorded prerequisite.
+				</p>
+			)}
 			<label className="scene-choice">
 				<span>Preview state</span>
 				<select value={preset} disabled={disabled} onChange={(event) => onPreset(event.currentTarget.value)}>
+					<option value="completed">Completed tasks and facilities</option>
 					{point.presets.map((p) => (
 						<option key={p.id} value={p.id}>
 							{p.id === 'default' ? 'Viewer defaults' : p.label}
