@@ -113,3 +113,20 @@ viewer remains a development tool; it does not own World domains or frontend dep
 upload and verify a complete data release before updating World's catalog configuration. frontend
 source pins and data release ids are independent: new renderer builds must still validate package
 versions, generations and source fingerprints. no build or offline export publishes automatically.
+
+## camera-driven level changes
+
+the host can call `showLevel(id, { fly: false })` to change level visibility while keeping the
+free camera and controls. `load(source, level, progress, { preserveCamera: true })` similarly
+replaces a package without setting its overview pose. the host owns cross-scene coordinate
+registration, route validation and overlap rules. `controls.flying` suppresses automatic routing
+during point and overview flights. the ordinary standalone calls retain their existing flight behavior.
+
+`oem-navigation <baked-release> -o <releases> --config <config>` adds `navigation.json` to a new
+immutable release, hard-linking the existing model archives and retaining every baked point pose.
+it reads `MapRegionTable` from the same game build, exports tier volumes and explicit scene/level
+routes plus the source `isSeamless` flag, and binds all package generations. unsupported shapes
+fail export; `oem-check` verifies the binding. independent scenes without tier volumes use a conservative verified gameplay-point footprint
+expanded by 10 m, rather than their much larger decorative content bounds. outside that footprint
+there is no automatic-entry evidence; no floor heights are invented. navigation is optional for older
+manual-only releases. rebaking also preserves and rebinds an existing navigation companion.
