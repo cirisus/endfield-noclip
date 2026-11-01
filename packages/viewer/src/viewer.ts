@@ -1528,6 +1528,9 @@ export class Viewer {
 				throw new RangeError('photo LUT contribution must be between 0 and 1');
 			}
 			this.#post.photoLut.set(filter, patch.photoLutStrength ?? this.options.photoLutStrength);
+			if (patch.photoFilter !== undefined && patch.photoFilter !== this.options.photoFilter) {
+				this.#post.photoParticles.set(filter, this.camera);
+			}
 		}
 		Object.assign(this.options, patch);
 		this.options.aperture = Number.isFinite(this.options.aperture)
@@ -1691,7 +1694,7 @@ export class Viewer {
 			dt,
 			{ metering: changed || settling },
 		);
-		const render = changed || settling || adapting;
+		const render = changed || settling || adapting || (post.debugView === 'lit' && this.#post.photoParticles.active);
 		if (render && options.animate) {
 			this.#time += dt;
 			this.#windClock += windClockRate(this.#environment.wind) * dt;
