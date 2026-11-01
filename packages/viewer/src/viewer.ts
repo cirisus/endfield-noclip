@@ -551,11 +551,13 @@ export class Viewer {
 	 * @param initialLevel id of the level to show first; when absent from the package, the first level with
 	 *   content is shown
 	 * @param onProgress loading phases for the UI
+	 * @param loadOptions preserveCamera keeps the live camera and streams around it instead of an overview
 	 */
 	async load(
 		source: PackageSource,
 		initialLevel: string | null,
 		onProgress: (phase: string) => void,
+		loadOptions: { preserveCamera?: boolean } = {},
 	): Promise<void> {
 		this.unload();
 		const pkg = await openViewerPackage(source, onProgress);
@@ -695,10 +697,12 @@ export class Viewer {
 		this.#lights.setLights(pkg.lights.lights);
 		this.#updateVisibility();
 		this.#applyEnvironment();
-		if (this.#level !== null) {
+		if (this.#level !== null && !loadOptions.preserveCamera) {
 			this.#focusCells = this.#cellIds(this.#level);
 		}
-		if (this.#level === null) {
+		if (loadOptions.preserveCamera) {
+			this.#unsettledPose = null;
+		} else if (this.#level === null) {
 			const pose = this.#overviewPose();
 			if (pose !== null) {
 				this.#setPose(pose);
@@ -1276,8 +1280,9 @@ export class Viewer {
 	 * being drawn and is evicted as the budget needs.
 	 *
 	 * @param id level id
+	 * @param options fly false changes visibility without moving the camera or its active controls
 	 */
-	showLevel(id: string): void {
+	showLevel(id: string, options: { fly?: boolean } = {}): void {
 		const level = this.#levelInfo(id);
 		if (level === undefined || this.scene === null) {
 			return;
@@ -1286,7 +1291,12 @@ export class Viewer {
 		this.#updateVisibility();
 		this.#post.autoExposure.reset();
 		this.#applyEnvironment();
-		this.#flyOver(level);
+		if (options.fly === false) {
+			this.#focusCells = null;
+			this.#unsettledPose = null;
+		} else {
+			this.#flyOver(level);
+		}
 		this.#emitState();
 	}
 

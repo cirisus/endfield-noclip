@@ -8,6 +8,7 @@ import {
 	groupsShown,
 	resolveSceneValues,
 } from '@endfield-noclip/package-format/conditions';
+import { isNavigation, matchesNavigation } from '@endfield-noclip/package-format/navigation';
 import {
 	isCatalog,
 	isCompanion,
@@ -334,6 +335,13 @@ export const run = async (args: string[]): Promise<void> => {
 		const target = join(destination, catalog.files[id]);
 		await mkdir(dirname(target), { recursive: true });
 		await writeFile(target, JSON.stringify(partition));
+	}
+	if (catalog.navigation) {
+		const navigation: unknown = JSON.parse(await readFile(join(root, catalog.navigation), 'utf8'));
+		if (!isNavigation(navigation) || !matchesNavigation(navigation, catalog)) {
+			throw new Error('invalid navigation companion');
+		}
+		await writeFile(join(destination, catalog.navigation), JSON.stringify({ ...navigation, release }));
 	}
 	await writeFile(
 		join(destination, 'index.json'),

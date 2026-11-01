@@ -7,6 +7,7 @@ import {
 	conditionVisible,
 	resolveSceneValues,
 } from '@endfield-noclip/package-format/conditions';
+import { isNavigation, matchesNavigation } from '@endfield-noclip/package-format/navigation';
 import { isCatalog, isCompanion } from '@endfield-noclip/package-format/oem';
 import type { StatesInfo } from '@endfield-noclip/package-format/states';
 import { completedProgressionPicks } from '@endfield-noclip/package-format/story';
@@ -62,6 +63,16 @@ export const run = async (args: string[]): Promise<void> => {
 			}
 			archives++;
 			bytes += size;
+		}
+	}
+	if (catalog.navigation) {
+		const data: unknown = JSON.parse(await readFile(join(root, catalog.navigation), 'utf8'));
+		if (
+			!isNavigation(data) ||
+			!matchesNavigation(data, catalog) ||
+			data.routes.some((r) => !cores.get(r.scene)?.levels.some((l) => l.id === r.level))
+		) {
+			throw new Error('navigation release/source/level mismatch');
 		}
 	}
 	const seen = new Set<string>();

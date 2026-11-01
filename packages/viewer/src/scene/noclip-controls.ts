@@ -206,6 +206,11 @@ export class NoclipControls {
 		this.#velocity = [0, 0, 0];
 	}
 
+	/** @returns whether an automatic point or overview flight is still running */
+	get flying(): boolean {
+		return this.#flight !== null;
+	}
+
 	/** cancels an automatic flight and its residual movement before a camera cut */
 	cancelFlight(): void {
 		this.#flight = null;

@@ -14,6 +14,8 @@ export interface Catalog {
 	packages: Record<string, { path: string; generation: string; version: number }>;
 	files: Record<string, string>;
 	pointIndex: Record<string, string>;
+	/** source-authored routing and floor volumes, relative to this catalog */
+	navigation?: string;
 	framing?: { version: 3; profile: 'completed'; points: number };
 }
 
@@ -166,6 +168,8 @@ export const isCatalog = (value: unknown): value is Catalog => {
 		dictionary(value.files) &&
 		Object.values(value.files).every(relative) &&
 		dictionary(value.pointIndex) &&
+		(value.navigation === undefined ||
+			(typeof value.navigation === 'string' && relative(value.navigation))) &&
 		(value.framing === undefined ||
 			(object(value.framing) &&
 				value.framing.version === 3 &&
