@@ -138,3 +138,17 @@ display settings and statistics use separate title, action and body slots. a hos
 own panel shell around the same controls; without a provider the standalone viewer uses its existing
 panel styling with explicit headings. keep the body mounted when collapsing it, so control filters
 and disclosure state survive. renderer bindings, values and scene logic stay in the existing controls.
+
+### adaptive free flight
+
+World can supply `viewer.controls.groundHeight` from its existing low-frequency ground sample. with
+a finite elevation, ordinary movement eases from 10 m/s within 5 m of the ground to 50 m/s at 100 m
+clearance. `controls.speed` remains the persisted Ctrl+wheel trim (40 is neutral); normal adaptive
+speed is capped at 50 m/s after that trim. `null` keeps standalone fixed-speed behavior. the
+existing velocity smoothing also eases changes in the sampled ground elevation. this does not change
+automatic point/overview flight timing or rendering.
+
+hold Tab or Alt for one-fifth speed, or right mouse for fivefold boost. slow takes priority when
+both are held; releasing it restores the other held modifier. Tab is captured only during flight
+(pointer lock, drag look, or held movement keys), preserving ordinary UI focus navigation. blur,
+pointer cancellation and leaving pointer lock clear the modifiers.
