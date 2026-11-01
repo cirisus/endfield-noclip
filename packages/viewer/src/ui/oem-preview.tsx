@@ -21,9 +21,7 @@ import { TargetMarker } from './target-marker.tsx';
 /* oxlint-disable react/iframe-missing-sandbox -- trusted cross-origin OEM app needs scripts and a non-opaque messaging origin */
 
 /* oxlint-disable no-await-in-loop -- serialize scene changes so older loads cannot overwrite the newest target */
-interface Request {
-	point: string;
-}
+type Request = { point: string } | { region: string; subregion: string };
 /** existing viewer with an OEM launch bridge and a passive, OEM-owned minimap */
 export const OEMPreview = ({
 	viewer,
@@ -35,6 +33,7 @@ export const OEMPreview = ({
 	panelRoot: HTMLElement | null;
 }) => {
 	const iframe = useRef<HTMLIFrameElement>(null);
+	const regions = useRef<HTMLIFrameElement>(null);
 	const [point, setPoint] = useState<Point | null>(null);
 	const [metadata, setMetadata] = useState<Companion | null>(null);
 	const [preset, setPreset] = useState('');
@@ -77,10 +76,13 @@ export const OEMPreview = ({
 		let catalog: Catalog | null = null,
 			selected: Point | null = null,
 			preparing: Point | null = null;
-		let desired: Request | null = { point: launch.point },
+		let desired: Request | null = launch.point
+				? { point: launch.point }
+				: { region: launch.region, subregion: launch.subregion },
 			busy = false,
 			loaded = '';
 		const companions = new Map<string, Companion>();
+		let pointTarget = true;
 		const envelope = (type: string, payload: object = {}) => ({
 			version: OEM_VERSION,
 			session: launch.session,
@@ -91,7 +93,7 @@ export const OEMPreview = ({
 			if (!selected) {
 				if (preparing) {
 					iframe.current?.contentWindow?.postMessage(
-						envelope('minimap-target', { point: preparing }),
+						envelope('minimap-target', { point: preparing, target: pointTarget }),
 						launch.origin,
 					);
 				}
@@ -101,6 +103,7 @@ export const OEMPreview = ({
 			const ground = viewer.groundHeight;
 			iframe.current?.contentWindow?.postMessage(
 				envelope('camera', {
+					target: pointTarget,
 					point: selected,
 					position: camera.position,
 					forward: camera.forward(),
@@ -141,7 +144,7 @@ export const OEMPreview = ({
 							}
 							catalog = value;
 						}
-						const partition = catalog.pointIndex[request.point],
+						const partition = 'point' in request ? catalog.pointIndex[request.point] : request.subregion,
 							file = catalog.files[partition];
 						if (!file) {
 							throw new Error('point is not in this OEM release');
@@ -158,12 +161,21 @@ export const OEMPreview = ({
 						if (desired || abort.signal.aborted) {
 							continue;
 						}
-						const target = companion.points.find((p) => p.id === request.point),
+						const target = companion.points.find((p) =>
+								'point' in request
+									? p.id === request.point
+									: p.region === request.region && p.subregion === request.subregion,
+							),
 							pack = target && catalog.packages[target.scene];
 						if (!target || !pack) {
 							throw new Error('point has no scene package');
 						}
+						const animate =
+							selected !== null &&
+							viewer.scene?.pkg.manifest.scene.id === target.scene &&
+							viewer.scene.pkg.manifest.generation === pack.generation;
 						selected = null;
+						pointTarget = 'point' in request;
 						preparing = target;
 						minimap();
 						setStatus('Opening scene…');
@@ -192,21 +204,40 @@ export const OEMPreview = ({
 						}
 						viewer.setCompanion(companion.controls, companion.missions);
 						applyLoaded(target);
-						setStatus('Finding a clear view…');
-						framing = new AbortController();
-						await viewer.framePoint(target.position, framing.signal);
+						pointTarget = 'point' in request;
+						if (pointTarget) {
+							setStatus('Finding a clear view…');
+							framing = new AbortController();
+							await viewer.framePoint(target.position, framing.signal, { baked: target.view, animate });
+						} else {
+							viewer.flyToLevel(target.level);
+						}
 						if (desired || abort.signal.aborted) {
 							continue;
 						}
 						selected = target;
 						preparing = null;
-						setPoint(target);
+						setPoint(pointTarget ? target : null);
 						setMetadata(companion);
 						const url = new URL(location.href);
-						url.searchParams.set('point', target.id);
+						url.searchParams.delete('package');
+						url.searchParams.delete('level');
+						if (pointTarget) {
+							url.searchParams.set('point', target.id);
+							url.searchParams.delete('region');
+							url.searchParams.delete('subregion');
+						} else {
+							url.searchParams.delete('point');
+							url.searchParams.set('region', target.region);
+							url.searchParams.set('subregion', target.subregion);
+						}
 						url.searchParams.set('release', catalog.release);
 						history.replaceState(null, '', url);
 						setStatus('');
+						regions.current?.contentWindow?.postMessage(
+							envelope('region-state', { region: target.region, subregion: target.subregion }),
+							launch.origin,
+						);
 						minimap();
 					} catch (error) {
 						if (!abort.signal.aborted && !desired) {
@@ -215,7 +246,8 @@ export const OEMPreview = ({
 							selected = null;
 							preparing = null;
 							setPoint(null);
-							reply('error', { message, point: request.point });
+							reply('error', { message, point: 'point' in request ? request.point : '' });
+							regions.current?.contentWindow?.postMessage(envelope('region-error'), launch.origin);
 						}
 					}
 				}
@@ -236,6 +268,54 @@ export const OEMPreview = ({
 				data.session !== launch.session ||
 				!('type' in data)
 			) {
+				return;
+			}
+			if (event.source === regions.current?.contentWindow) {
+				if (
+					data.type === 'overlay-layout' &&
+					'rects' in data &&
+					Array.isArray(data.rects) &&
+					data.rects.length <= 32
+				) {
+					const rects = data.rects;
+					if (
+						rects.every(
+							(r) =>
+								Array.isArray(r) &&
+								r.length === 4 &&
+								r.every((v) => typeof v === 'number' && Number.isFinite(v)) &&
+								r[0] >= 0 &&
+								r[1] >= 0 &&
+								r[2] <= innerWidth &&
+								r[3] <= innerHeight &&
+								r[2] > r[0] &&
+								r[3] > r[1],
+						)
+					) {
+						const path = rects.map((r) => `M${r[0]} ${r[1]}H${r[2]}V${r[3]}H${r[0]}Z`).join(' ');
+						if (regions.current) {
+							regions.current.style.clipPath = path ? `path('${path}')` : 'inset(100%)';
+						}
+					}
+					return;
+				}
+
+				if (data.type === 'regions-ready' && selected) {
+					regions.current?.contentWindow?.postMessage(
+						envelope('region-state', { region: selected.region, subregion: selected.subregion }),
+						launch.origin,
+					);
+				} else if (
+					data.type === 'open-region' &&
+					'region' in data &&
+					'subregion' in data &&
+					typeof data.region === 'string' &&
+					typeof data.subregion === 'string'
+				) {
+					framing?.abort();
+					desired = { region: data.region, subregion: data.subregion };
+					void drain();
+				}
 				return;
 			}
 			if (event.source === iframe.current?.contentWindow && data.type === 'minimap-ready') {
@@ -270,8 +350,17 @@ export const OEMPreview = ({
 	const map = new URL('/minimap/', launch.origin);
 	map.searchParams.set('previewOrigin', location.origin);
 	map.searchParams.set('session', launch.session);
+	const regionURL = new URL(map);
+	regionURL.pathname = '/minimap/regions.html';
 	return (
 		<>
+			<iframe
+				ref={regions}
+				className="oem-regions"
+				sandbox="allow-scripts allow-same-origin"
+				src={regionURL.href}
+				title="OEM regions"
+			/>
 			{panelRoot &&
 				point &&
 				metadata &&

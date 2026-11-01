@@ -71,6 +71,12 @@ export const PointConditions = ({
 					The selected preview state does not satisfy this point's recorded prerequisite.
 				</p>
 			)}
+			{point.view && !point.view.clear && (
+				<p className="muted small">
+					No unobstructed view was confirmed. The saved view keeps a usable inspection distance; the target
+					marker remains available.
+				</p>
+			)}
 			<label className="scene-choice">
 				<span>Preview state</span>
 				<select value={preset} disabled={disabled} onChange={(event) => onPreset(event.currentTarget.value)}>

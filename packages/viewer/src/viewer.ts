@@ -6,6 +6,7 @@ import {
 } from '@endfield-noclip/package-format/conditions';
 import type { LevelEnvironment, LevelInfo } from '@endfield-noclip/package-format/manifest';
 import { proximityValues } from '@endfield-noclip/package-format/proximity';
+import type { PointView } from '@endfield-noclip/package-format/oem';
 import type { MissionInfo, SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
 import {
 	areasShownIn,
@@ -1171,13 +1172,32 @@ export class Viewer {
 	/**
 	 * @param target authored OEM point
 	 * @param signal cancels a superseded point's geometry reads and camera cut
+	 * @param options release-bound pose and whether this is a same-scene animated transition
 	 * @returns when nearby opaque geometry has been checked and the new view applied
 	 */
-	async framePoint(target: Vec3, signal: AbortSignal): Promise<void> {
+	async framePoint(
+		target: Vec3,
+		signal: AbortSignal,
+		options?: { baked?: PointView; animate: boolean },
+	): Promise<void> {
+		signal.throwIfAborted();
 		const scene = this.scene;
 		if (!scene) {
 			return;
 		}
+		this.#unsettledPose = null;
+		const initial: CameraPose = {
+			position: [target[0], target[1] + 6, target[2] - 10],
+			yaw: 0,
+			pitch: -Math.atan2(6, 10),
+		};
+		if (options?.animate) {
+			this.controls.flyTo(initial);
+		} else {
+			this.controls.cancelFlight();
+			this.#setPose(initial);
+		}
+		this.#dirty = true;
 		const states = scene.pkg.manifest.states;
 		const areas = states.streamAreas;
 		let picks = this.#scenePicks;
@@ -1194,7 +1214,7 @@ export class Viewer {
 			conditionResults(states, resolveSceneValues(states, picks)),
 		);
 		const key = await pointViewKey(scene.pkg.manifest.generation, this.level, target, shown);
-		let pose = readPointView(key);
+		let pose = options?.baked?.key === key ? options.baked : readPointView(key);
 		if (pose === null) {
 			const triangles = await pointTriangles(scene.pkg, this.#pool, target, shown, signal);
 			let pendingTerrain = false;
@@ -1212,9 +1232,12 @@ export class Viewer {
 			return;
 		}
 		this.#unsettledPose = null;
-		// A camera cut avoids animating through intervening walls or other floors.
-		this.controls.cancelFlight();
-		this.#setPose(pose);
+		if (options?.animate) {
+			this.controls.flyTo(pose);
+		} else {
+			this.controls.cancelFlight();
+			this.#setPose(pose);
+		}
 		this.#dirty = true;
 	}
 
