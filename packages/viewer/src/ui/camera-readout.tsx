@@ -17,7 +17,7 @@ export const CameraReadout = ({ viewer }: { viewer: Viewer }) => {
 				<span className="muted">speed</span> {speed.toFixed(0)} m/s
 			</p>
 			<p className="muted small">
-				click to look · WASD move · E/R up · Q/F/shift down · right mouse boost · alt slow · wheel zoom ·
+				click to look · WASD move · E/R up · Q/F/shift down · right mouse boost · tab/alt slow · wheel zoom ·
 				ctrl+wheel speed · esc release
 			</p>
 		</section>

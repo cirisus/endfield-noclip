@@ -155,3 +155,81 @@ it('ends drag look when the left button is released while right boost remains he
 	controls.update(0.1);
 	assert.equal(controls.effectiveSpeed, 40);
 });
+
+it('adapts ordinary flight to ground clearance without overwriting the stored speed trim', () => {
+	controls.groundHeight = 1000;
+	const sample = (height: number): number => {
+		camera.position[1] = 1000 + height;
+		controls.update(0.016);
+		return controls.effectiveSpeed;
+	};
+	assert.equal(sample(-10), 10);
+	assert.equal(sample(5), 10);
+	assert.ok(sample(30) > 10 && sample(30) < sample(60));
+	assert.equal(sample(100), 50);
+	assert.equal(sample(10000), 50);
+	assert.ok(Math.abs(sample(5.01) - sample(5)) < 0.001);
+	assert.ok(Math.abs(sample(100) - sample(99.99)) < 0.001);
+	controls.speed = 20;
+	assert.equal(sample(5), 5);
+	assert.equal(sample(100), 25);
+	controls.speed = 5000;
+	assert.equal(sample(5), 50);
+	assert.equal(controls.speed, 5000);
+	controls.groundHeight = null;
+	controls.update(0.016);
+	assert.equal(controls.effectiveSpeed, 5000);
+});
+
+it('slows while Tab is held in flight, takes priority over boost and restores on release', () => {
+	doc.pointerLockElement = element;
+	controls.groundHeight = 0;
+	camera.position[1] = 100;
+	send(win, 'keydown', { code: 'KeyW' });
+	const regularZ = camera.position[2];
+	controls.update(1);
+	assert.ok(camera.position[2] - regularZ > 49);
+	send(element, 'mousedown', { button: 2 });
+	assert.equal(send(win, 'keydown', { code: 'Tab' }).defaultPrevented, true);
+	const slowZ = camera.position[2];
+	controls.update(1);
+	assert.equal(controls.effectiveSpeed, 10);
+	assert.ok(camera.position[2] - slowZ < 11);
+	send(win, 'keyup', { code: 'Tab' });
+	controls.update(0.1);
+	assert.equal(controls.effectiveSpeed, 250);
+	send(win, 'mouseup', { button: 2 });
+	controls.update(0.1);
+	assert.equal(controls.effectiveSpeed, 50);
+	send(win, 'keydown', { code: 'Tab' });
+	send(win, 'blur');
+	controls.update(0.1);
+	assert.equal(controls.effectiveSpeed, 50);
+});
+
+it('preserves idle Tab navigation and ignores Tab in form fields', () => {
+	assert.equal(send(win, 'keydown', { code: 'Tab' }).defaultPrevented, false);
+	controls.update(0.1);
+	assert.equal(controls.effectiveSpeed, 40);
+	const input = new TypingElement();
+	const event = new Event('keydown', { cancelable: true });
+	Object.assign(event, { code: 'Tab' });
+	Object.defineProperty(event, 'target', { value: input });
+	doc.pointerLockElement = element;
+	win.dispatchEvent(event);
+	controls.update(0.1);
+	assert.equal(event.defaultPrevented, false);
+	assert.equal(controls.effectiveSpeed, 40);
+});
+
+it('keeps combined movement inside the adaptive speed cap', () => {
+	controls.groundHeight = 0;
+	camera.position[1] = 100;
+	const before = [...camera.position];
+	for (const code of ['KeyW', 'KeyD', 'Space']) {
+		send(win, 'keydown', { code });
+	}
+	controls.update(1);
+	const travelled = Math.hypot(...camera.position.map((value, i) => value - before[i]));
+	assert.ok(travelled > 49 && travelled <= 50);
+});
