@@ -69,6 +69,8 @@ import { WaterRenderer } from './render/water-renderer.ts';
 import { wetnessParams } from './render/wetness.ts';
 import { Camera, type Vec3 } from './scene/camera.ts';
 import { type CameraPose, NoclipControls } from './scene/noclip-controls.ts';
+import { pointViewKey, readPointView, writePointView } from './scene/point-view-cache.ts';
+import { pointPose, pointTriangles } from './scene/point-view.ts';
 import { type TileTree, buildTileTree } from './scene/tile-tree.ts';
 import { type MeshSelection, MeshSelector, streamWholeTexture } from './streaming/mesh-selection.ts';
 import { Selector } from './streaming/selection.ts';
@@ -1163,6 +1165,56 @@ export class Viewer {
 			yaw: 0,
 			pitch: -Math.atan2(up, back),
 		});
+		this.#dirty = true;
+	}
+
+	/**
+	 * @param target authored OEM point
+	 * @param signal cancels a superseded point's geometry reads and camera cut
+	 * @returns when nearby opaque geometry has been checked and the new view applied
+	 */
+	async framePoint(target: Vec3, signal: AbortSignal): Promise<void> {
+		const scene = this.scene;
+		if (!scene) {
+			return;
+		}
+		const states = scene.pkg.manifest.states;
+		const areas = states.streamAreas;
+		let picks = this.#scenePicks;
+		if (areas && this.options.streamAreas) {
+			let zones = zonesAt(areas, target);
+			if (zones.size === 0) {
+				zones = zonesAround(areas, target);
+			}
+			picks = { ...streamAreaValues(areas, areasShownIn(areas, zones)), ...picks };
+		}
+		const shown = groupsShown(
+			states,
+			this.#level?.tag ?? null,
+			conditionResults(states, resolveSceneValues(states, picks)),
+		);
+		const key = await pointViewKey(scene.pkg.manifest.generation, this.level, target, shown);
+		let pose = readPointView(key);
+		if (pose === null) {
+			const triangles = await pointTriangles(scene.pkg, this.#pool, target, shown, signal);
+			let pendingTerrain = false;
+			pose = pointPose(target, triangles, (x, z) => {
+				const height = this.#groundHeight(x, z);
+				pendingTerrain ||= height === undefined;
+				return height ?? null;
+			});
+			if (!pendingTerrain && !signal.aborted && this.scene === scene) {
+				writePointView(key, pose);
+			}
+		}
+		signal.throwIfAborted();
+		if (this.scene !== scene) {
+			return;
+		}
+		this.#unsettledPose = null;
+		// A camera cut avoids animating through intervening walls or other floors.
+		this.controls.cancelFlight();
+		this.#setPose(pose);
 		this.#dirty = true;
 	}
 

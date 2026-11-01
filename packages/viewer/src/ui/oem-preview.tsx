@@ -73,6 +73,7 @@ export const OEMPreview = ({
 	const applyLoaded = useEffectEvent((target: Point) => apply(target));
 	useEffect(() => {
 		const abort = new AbortController();
+		let framing: AbortController | null = null;
 		let catalog: Catalog | null = null,
 			selected: Point | null = null,
 			preparing: Point | null = null;
@@ -191,11 +192,16 @@ export const OEMPreview = ({
 						}
 						viewer.setCompanion(companion.controls, companion.missions);
 						applyLoaded(target);
+						setStatus('Finding a clear view…');
+						framing = new AbortController();
+						await viewer.framePoint(target.position, framing.signal);
+						if (desired || abort.signal.aborted) {
+							continue;
+						}
 						selected = target;
 						preparing = null;
 						setPoint(target);
 						setMetadata(companion);
-						viewer.flyToPoint(target.position, 10);
 						const url = new URL(location.href);
 						url.searchParams.set('point', target.id);
 						url.searchParams.set('release', catalog.release);
@@ -240,6 +246,7 @@ export const OEMPreview = ({
 				return;
 			}
 			if (data.type === 'open-point') {
+				framing?.abort();
 				desired = { point: data.point };
 				void drain();
 			}
@@ -255,6 +262,7 @@ export const OEMPreview = ({
 		void drain();
 		return () => {
 			abort.abort();
+			framing?.abort();
 			stop();
 			window.removeEventListener('message', receive);
 		};

@@ -205,6 +205,12 @@ export class NoclipControls {
 		this.#velocity = [0, 0, 0];
 	}
 
+	/** cancels an automatic flight and its residual movement before a camera cut */
+	cancelFlight(): void {
+		this.#flight = null;
+		this.#velocity = [0, 0, 0];
+	}
+
 	/**
 	 * @param dt seconds since the last update
 	 * @returns whether the camera moved
