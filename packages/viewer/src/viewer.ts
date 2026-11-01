@@ -968,6 +968,11 @@ export class Viewer {
 
 	// #region camera and levels
 
+	/** @returns terrain height beneath the camera, or `null` off terrain or while its pages load */
+	get groundHeight(): number | null {
+		return this.#groundHeight(this.camera.position[0], this.camera.position[2]) ?? null;
+	}
+
 	/**
 	 * @param x world x
 	 * @param z world z
