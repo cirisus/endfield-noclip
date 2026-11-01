@@ -103,7 +103,7 @@ it('zooms the lens, clamps both ends and invalidates an otherwise stationary vie
 	assert.equal(controls.update(0.1), true);
 	assert.equal(controls.update(0.1), false);
 	for (const [deltaY, degrees] of [
-		[-100000, 20],
+		[-100000, (2 * Math.atan(24 / (2 * 250)) * 180) / Math.PI],
 		[100000, 100],
 	]) {
 		send(element, 'wheel', { deltaY, deltaMode: 0, ctrlKey: false });

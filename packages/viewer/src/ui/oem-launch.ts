@@ -4,6 +4,8 @@ export interface Launch {
 	catalog: string;
 	release: string;
 	point: string;
+	region: string;
+	subregion: string;
 	origin: string;
 	session: string;
 }
@@ -32,6 +34,8 @@ export const oemLaunch = (): Launch | null => {
 		catalog: url.href,
 		release: p.get('release') ?? '',
 		point: p.get('point') ?? '',
+		region: p.get('region') ?? '',
+		subregion: p.get('subregion') ?? '',
 		origin,
 		session: p.get('session') ?? '',
 	};

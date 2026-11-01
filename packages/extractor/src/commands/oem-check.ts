@@ -1,9 +1,23 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { conditionVisible, resolveSceneValues } from '@endfield-noclip/package-format/conditions';
+import {
+	conditionResults,
+	groupsShown,
+	conditionVisible,
+	resolveSceneValues,
+} from '@endfield-noclip/package-format/conditions';
 import { isCatalog, isCompanion } from '@endfield-noclip/package-format/oem';
 import type { StatesInfo } from '@endfield-noclip/package-format/states';
+import { completedProgressionPicks } from '@endfield-noclip/package-format/story';
+import {
+	areasShownIn,
+	streamAreaValues,
+	zonesAt,
+	zonesAround,
+} from '@endfield-noclip/package-format/stream-areas';
+
+import { pointViewKey } from '../../../viewer/src/scene/point-view-cache.ts';
 
 import { readCore } from './oem.ts';
 
@@ -24,7 +38,9 @@ export const run = async (args: string[]): Promise<void> => {
 		bytes = 0,
 		points = 0,
 		presets = 0,
-		unknown = 0;
+		unknown = 0,
+		views = 0,
+		fallbackViews = 0;
 	for (const [scene, entry] of Object.entries(catalog.packages)) {
 		// oxlint-disable-next-line no-await-in-loop -- bound memory while opening scene cores
 		const core = await readCore(join(root, entry.path));
@@ -75,6 +91,42 @@ export const run = async (args: string[]): Promise<void> => {
 				};
 				states.set(point.scene, merged);
 			}
+			if (catalog.framing) {
+				if (!point.view) {
+					throw new Error(`missing baked view: ${point.id}`);
+				}
+				const level = cores.get(point.scene)!.levels.find((l) => l.id === point.level)!;
+				let picks = completedProgressionPicks(merged.controls);
+				const areas = merged.streamAreas;
+				if (areas) {
+					let zones = zonesAt(areas, point.position);
+					if (zones.size === 0) {
+						zones = zonesAround(areas, point.position);
+					}
+					picks = { ...streamAreaValues(areas, areasShownIn(areas, zones)), ...picks };
+				}
+				const shown = groupsShown(
+					merged,
+					level.tag,
+					conditionResults(merged, resolveSceneValues(merged, picks)),
+				);
+				// oxlint-disable-next-line no-await-in-loop -- validate each point against the exact selected profile
+				const key = await pointViewKey(
+					cores.get(point.scene)!.generation,
+					point.level,
+					point.position,
+					shown,
+				);
+				if (
+					point.view.key !== key ||
+					Math.hypot(point.view.position[0] - point.position[0], point.view.position[2] - point.position[2]) <
+						9.999
+				) {
+					throw new Error(`invalid baked view binding or distance: ${point.id}`);
+				}
+				views++;
+				fallbackViews += Number(!point.view.clear);
+			}
 			for (const preset of point.presets) {
 				presets++;
 				if (
@@ -85,6 +137,9 @@ export const run = async (args: string[]): Promise<void> => {
 				}
 			}
 		}
+	}
+	if (catalog.framing && catalog.framing.points !== views) {
+		throw new Error('baked view coverage mismatch');
 	}
 	if (seen.size !== Object.keys(catalog.pointIndex).length) {
 		throw new Error('catalog contains points absent from its partitions');
@@ -98,6 +153,8 @@ export const run = async (args: string[]): Promise<void> => {
 			points,
 			presets,
 			unknown,
+			views,
+			fallbackViews,
 		}),
 	);
 };

@@ -87,14 +87,19 @@ export const pointPose = (
 	target: Vec3,
 	triangles: readonly Triangle[],
 	ground: (x: number, z: number) => number | null,
-): CameraPose => {
-	for (const back of [10, 6, 3, 1.5]) {
-		for (const slope of [0.35, 0.15, 0.6, 1]) {
+): CameraPose & { clear: boolean } => {
+	const sampled = ground(target[0], target[2]);
+	// Underground points are framed within their cave, not lifted onto the terrain above it.
+	const underground = sampled !== null && sampled > target[1] + 3;
+	const surface = underground ? null : sampled;
+	const focus: Vec3 = [target[0], Math.max(target[1], surface ?? target[1]) + 0.6, target[2]];
+	for (const back of [10]) {
+		for (const slope of [0.35, 0.15, 0.6, 1, 0.05, 0]) {
 			for (let heading = 0; heading < 16; heading++) {
 				const yaw = (heading * Math.PI) / 8;
 				const position: Vec3 = [
 					target[0] - Math.sin(yaw) * back,
-					target[1] + back * slope,
+					focus[1] + back * slope,
 					target[2] - Math.cos(yaw) * back,
 				];
 				// a small bundle tests the lens clearance as well as the central sight line.
@@ -105,7 +110,7 @@ export const pointPose = (
 					[position[0], position[1] + 0.35, position[2]],
 					[position[0], position[1] - 0.35, position[2]],
 				];
-				if (eyes.some((eye) => blocked(target, eye, triangles))) {
+				if (eyes.some((eye) => blocked(focus, eye, triangles))) {
 					continue;
 				}
 				let below = false;
@@ -114,21 +119,26 @@ export const pointPose = (
 					const t = step / steps,
 						x = target[0] + (position[0] - target[0]) * t,
 						z = target[2] + (position[2] - target[2]) * t;
-					const y = ground(x, z);
+					const y = underground ? null : ground(x, z);
 					// points may sit directly on the ground; grow the clearance away from the target.
-					if (y !== null && target[1] + (position[1] - target[1]) * t < y + 0.1 * Math.min(1, back * t)) {
+					if (y !== null && focus[1] + (position[1] - focus[1]) * t < y + 0.1 * Math.min(1, back * t)) {
 						below = true;
 						break;
 					}
 				}
 				if (!below) {
-					return { position, yaw, pitch: -Math.atan(slope) };
+					return { position, yaw, pitch: -Math.atan2(position[1] - target[1], back), clear: true };
 				}
 			}
 		}
 	}
-	// no proven view exists (e.g. an authored point buried inside a mesh). Stay close rather than behind a distant wall.
-	return { position: [target[0], target[1] + 0.6, target[2] - 0.6], yaw: 0, pitch: -Math.PI / 4 };
+	// Preserve a usable inspection distance even when the authored point is buried in solid geometry.
+	return {
+		position: [target[0], target[1] + 6, target[2] - 10],
+		yaw: 0,
+		pitch: -Math.atan2(6, 10),
+		clear: false,
+	};
 };
 
 /**
@@ -141,7 +151,7 @@ export const pointPose = (
  */
 export const pointTriangles = async (
 	pkg: ViewerPackage,
-	pool: DecodePool,
+	pool: Pick<DecodePool, 'run'>,
 	target: Vec3,
 	shown: readonly boolean[],
 	signal: AbortSignal,
@@ -219,6 +229,14 @@ export const pointTriangles = async (
 				const at = row * ROW_WORDS;
 				const center = block.origin.map((v, i) => v + rows[at + 12 + i]);
 				if (!near(center, [rows[at + 16], rows[at + 17], rows[at + 18]])) {
+					continue;
+				}
+				const extents = [rows[at + 16], rows[at + 17], rows[at + 18]];
+				// Small geometry containing the target can be the collectible itself, not an occluder.
+				if (
+					extents.every((e) => e <= 1.5) &&
+					center.every((v, i) => Math.abs(v - target[i]) <= extents[i] + 0.05)
+				) {
 					continue;
 				}
 				for (const draw of chain.draws) {

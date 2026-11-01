@@ -98,7 +98,7 @@ export const App = () => {
 
 	// the shown level lives in the URL, so a reload or a shared link opens the same level
 	useEffect(() => {
-		if (viewer === null) {
+		if (viewer === null || launch !== null) {
 			return;
 		}
 		return viewer.subscribe(() => {
@@ -107,7 +107,7 @@ export const App = () => {
 				setParam(LEVEL_PARAM, viewer.level);
 			}
 		});
-	}, [viewer]);
+	}, [viewer, launch]);
 
 	return (
 		<main className={`app${launch ? ' oem-preview' : ''}`}>
@@ -122,18 +122,21 @@ export const App = () => {
 				<>
 					{launch && <OEMPreview viewer={viewer} launch={launch} panelRoot={pointPanelRoot} />}
 					<div className="dock left">
-						<PackagePanel
-							current={current}
-							status={status}
-							onOpen={(source, param) => open(viewer, source, param)}
-						/>
-						<StatsPanel viewer={viewer} />
+						{!launch && (
+							<PackagePanel
+								current={current}
+								status={status}
+								onOpen={(source, param) => open(viewer, source, param)}
+							/>
+						)}
+						{!launch && <StatsPanel viewer={viewer} />}
 					</div>
 					<div className="dock right">
 						{launch && <div ref={setPointPanelRoot} className="oem-point-panel-host" />}
-						<LevelsPanel viewer={viewer} />
+						{!launch && <LevelsPanel viewer={viewer} />}
 						<SceneControls viewer={viewer} />
 						<SettingsPanel viewer={viewer} />
+						{launch && <StatsPanel viewer={viewer} />}
 					</div>
 					<div className="dock bottom">
 						<CameraReadout viewer={viewer} />
