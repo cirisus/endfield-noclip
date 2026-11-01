@@ -40,6 +40,11 @@ packs or renders correctly.
 
 ## lighting and post-processing
 
+- photo filters: the exported colour LUTs and supported vignette overrides render; additional camera
+  effects, photo-profile bloom overrides and character-specific volumes do not. external-LUT
+  colour-space parity still needs an in-game comparison
+  ([photo filters](viewer/post-processing.md#photo-filters))
+
 - baked GI ([irradiance](game-data/irradiance.md), [ambient](game-data/lighting.md#ambient)):
   brightness is unchecked against in-game shots; the native scalar on all diffuse ambient, the
   specular ambient's scale (taken as `indirectSpecularFactor`) and the volume's default SH aren't

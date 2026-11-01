@@ -6,6 +6,7 @@ import {
 } from '@endfield-noclip/package-format/conditions';
 import type { LevelEnvironment, LevelInfo } from '@endfield-noclip/package-format/manifest';
 import { proximityValues } from '@endfield-noclip/package-format/proximity';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
 import {
 	areasShownIn,
 	streamAreaValues,
@@ -78,6 +79,10 @@ import { type ResidentInstances, StreamManager } from './streaming/stream-manage
 
 /** user-facing switches */
 export interface ViewerOptions {
+	/** exported photo filter id, or null for the scene's own look */
+	photoFilter: string | null;
+	/** multiplier of the authored external LUT contribution, 0–1 */
+	photoLutStrength: number;
 	terrain: boolean;
 	/** draw the terrain's baked albedo and normal pages; off (or without BC textures) shows stand-in colours */
 	terrainSurface: boolean;
@@ -161,6 +166,8 @@ export interface ViewerOptions {
 
 /** defaults for {@link ViewerOptions} */
 export const DEFAULT_OPTIONS: ViewerOptions = {
+	photoFilter: null,
+	photoLutStrength: 1,
 	terrain: true,
 	terrainSurface: true,
 	terrainSplat: true,
@@ -363,6 +370,7 @@ export class Viewer {
 	#wetness: Float32Array = wetnessParams(undefined);
 	/** the shown level's base environment, which the volumes blend over */
 	#baseEnvironment: LevelEnvironment | null = null;
+	#photoFilters: readonly PhotoFilter[] = [];
 	/** what the environment was last blended for */
 	#blendEye: Vec3 = [Infinity, Infinity, Infinity];
 	#blendSettings = '';
@@ -860,7 +868,7 @@ export class Viewer {
 	#blendEnvironment(force: boolean, dt: number): void {
 		const options = this.options;
 		const eye = this.camera.position;
-		const settings = `${options.environmentVolumes}|${options.environmentPin}|${this.#conditionResults.join()}`;
+		const settings = `${options.photoFilter}|${options.environmentVolumes}|${options.environmentPin}|${this.#conditionResults.join()}`;
 		const last = this.#blendEye;
 		if (
 			!force &&
@@ -891,13 +899,15 @@ export class Viewer {
 						{ fades: this.#fades, dt },
 					);
 		const profile = blended?.profile ?? null;
-		const key = blended?.key ?? '';
+		let key = blended?.key ?? '';
 		this.#appliedVolumes = blended?.applied ?? [];
+		const filter = this.#photoFilters.find((entry) => entry.id === options.photoFilter) ?? null;
+		key += `|photo:${filter?.id ?? ''}`;
 		if (key === this.#blendKey) {
 			return;
 		}
 		this.#blendKey = key;
-		this.#environment = deriveEnvironment(profile);
+		this.#environment = deriveEnvironment(profile, filter);
 		this.#celestial = celestialLook(profile);
 		this.#wetness = wetnessParams(profile?.rain);
 		this.#post.celestial.setLook(this.#celestial);
@@ -1355,6 +1365,24 @@ export class Viewer {
 
 	/** @param patch options to change */
 	setOptions(patch: Partial<ViewerOptions>): void {
+		if (
+			patch.photoFilter !== undefined &&
+			patch.photoFilter !== null &&
+			!this.#photoFilters.some((filter) => filter.id === patch.photoFilter)
+		) {
+			throw new Error(`unknown photo filter ${patch.photoFilter}`);
+		}
+		if (patch.photoFilter !== undefined || patch.photoLutStrength !== undefined) {
+			const id = patch.photoFilter === undefined ? this.options.photoFilter : patch.photoFilter;
+			const filter = this.#photoFilters.find((entry) => entry.id === id) ?? null;
+			if (
+				patch.photoLutStrength !== undefined &&
+				(!Number.isFinite(patch.photoLutStrength) || patch.photoLutStrength < 0 || patch.photoLutStrength > 1)
+			) {
+				throw new RangeError('photo LUT contribution must be between 0 and 1');
+			}
+			this.#post.photoLut.set(filter, patch.photoLutStrength ?? this.options.photoLutStrength);
+		}
 		Object.assign(this.options, patch);
 		this.#targets.renderScale = Math.min(1, Math.max(0.25, this.options.renderScale));
 		this.#post.taa.enabled = this.options.antialiasing;
@@ -1368,6 +1396,19 @@ export class Viewer {
 			this.scene.stream.options.budgetBytes = this.options.budgetMiB * 2 ** 20;
 		}
 		this.#dirty = true;
+		this.#emitState();
+	}
+
+	/** @returns the installed photo library, without copying its texture payloads */
+	get photoFilters(): readonly PhotoFilter[] {
+		return this.#photoFilters;
+	}
+
+	/** @param filters validated filters exported from an install; replaces the current library */
+	setPhotoFilters(filters: readonly PhotoFilter[]): void {
+		this.setOptions({ photoFilter: null });
+		this.#photoFilters = filters;
+		this.#blendKey = '';
 		this.#emitState();
 	}
 

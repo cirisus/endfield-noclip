@@ -209,6 +209,17 @@ booleans. code: [serialized-file.ts](../packages/formats/src/unity/serialized-fi
 [values.ts](../packages/formats/src/unity/values.ts),
 [plain-object.ts](../packages/formats/src/unity/plain-object.ts).
 
+## photo library
+
+`pnpm extract filters --config endfield.local.json -o out/photo-filters.json` reads
+`SnapshotFilterTable` and its referenced prefabs from the local install. names come from the
+install's English text table. it reuses the asset resolver, environment-phase, TypeTree and texture
+decoders, retaining BC7 blocks without transcoding. SRP overrides retain their individual override
+flags; unsupported components are reported per filter. missing references and unsupported LUT
+formats fail the export. the output is separate from scene packages, so adding a library does not
+require re-packing maps. usage and remaining differences are in
+[photo filters](viewer/post-processing.md#photo-filters).
+
 ## decoders
 
 `formats` modules validate layouts while decoding and throw on a mismatch. the linked game-data

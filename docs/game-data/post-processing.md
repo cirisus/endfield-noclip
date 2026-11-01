@@ -124,7 +124,20 @@ variant, and what selects it and what the extra fields do isn't read.
 mixer, shadows/midtones/highlights, lift/gamma/gain, split toning, colour curves); each sub-section
 that's off reads as its neutral default. the game bakes grading and curve into a LogC LUT, with its
 HG-specific contrast and its modified-ACES curve (the only tonemapper the game ships besides none;
-every profile sets `tonemappingMode` 5). no shipped profile enables the external lookup texture.
+every profile sets `tonemappingMode` 5). no shipped scene profile enables the external lookup texture.
+
+### photo filters
+
+`SnapshotFilterTable` identifies each photo filter's volume prefab and, optionally, an additional
+camera effect. the prefab can carry both an environment phase and an SRP post-processing profile.
+the phase's active colour-grading section replaces the scene's grading; inactive lighting and fog
+sections leave the scene alone. SRP parameters apply only when their override flag is set.
+
+the checked install has 15 filters, each referencing a linear-sampled BC7 lookup texture: a 32³
+colour cube stored as a 1024×32 strip. red varies along each slice, green along its rows and blue
+across slices. these are external display-colour lookups rather than the internal HDR LogC LUT. Warm
+and Pale also carry vignette, bloom and character-volume settings; Black and Gold references an
+additional camera effect. item unlocks control availability in the game, not the LUT data.
 
 ## open
 
