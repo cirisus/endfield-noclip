@@ -1,4 +1,6 @@
-import type { ColorGradingConfig, VignetteSettings } from './environment.ts';
+import type { BloomSettings, ColorGradingConfig, VignetteSettings } from './environment.ts';
+import type { ParticleSystemInfo } from './particles.ts';
+import type { TextureSampler } from './textures.ts';
 
 /** a separately exported photo library; scene package versions are unchanged */
 export interface PhotoFilters {
@@ -22,6 +24,20 @@ export interface PhotoFilter {
 	grading: ColorGradingConfig | null;
 	/** only the SRP fields whose override flag is set */
 	vignette: Partial<VignetteSettings> | null;
+	/** only overridden high-quality bloom parameters; absent in older exports */
+	bloom?: Partial<
+		Pick<
+			BloomSettings,
+			| 'resolutionHighQuality'
+			| 'thresholdHighQuality'
+			| 'intensityHighQuality'
+			| 'scatterHighQuality'
+			| 'tint'
+			| 'blendMode'
+		>
+	> | null;
+	/** stationary effects spawned at the camera when this look is first selected */
+	effects?: PhotoEffect[];
 	/** external colour cube; absent when the authored look has no lookup */
 	lut: {
 		/** WebGPU sampling format, without automatic sRGB decoding */
@@ -33,4 +49,26 @@ export interface PhotoFilter {
 		/** authored blend weight in display-colour space, 0–1 */
 		contribution: number;
 	} | null;
+}
+
+/** a simple additive, view-aligned particle emitter, evaluated by the shared particle kernel */
+export interface PhotoEffect {
+	/** prefab renderer name, for deterministic random seeds */
+	name: string;
+	/** emitter-to-prefab transform, column-major */
+	matrix: number[];
+	/** authored emission, motion, lifetime, size, colour and atlas settings */
+	particles: ParticleSystemInfo;
+	/** linear HDR tint including intensity; alpha includes the material's opacity */
+	tint: [number, number, number, number];
+	/** cancels post exposure for emission, as the source material requests */
+	ignorePostExposure: boolean;
+	/** mip chain passed to WebGPU without transcoding; each level is base64 encoded */
+	texture: {
+		width: number;
+		height: number;
+		format: 'bc7-rgba-unorm' | 'bc7-rgba-unorm-srgb';
+		sampler: TextureSampler;
+		levels: string[];
+	};
 }

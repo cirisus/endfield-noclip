@@ -14,6 +14,7 @@ import type { PhotoFilter, PhotoFilters } from '@endfield-noclip/package-format/
 import { withContext } from '../context.ts';
 import { loadTexture } from '../game/asset-decode.ts';
 import type { ObjectRef } from '../game/assets.ts';
+import { loadPhotoEffects } from '../game/photo-effects.ts';
 import { readPrefabEnvironmentVolumes } from '../game/prefab-environment.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
@@ -74,10 +75,13 @@ export const run = async (args: string[]): Promise<void> => {
 				unsupported: [],
 				grading: null,
 				vignette: null,
+				bloom: null,
 				lut: null,
 			};
 			if (field('filterEffectPath') !== '') {
-				filter.unsupported.push('additional camera effect');
+				const result = await loadPhotoEffects(context, field('filterEffectPath'));
+				filter.effects = result.effects;
+				filter.unsupported.push(...result.unsupported);
 			}
 			const volumes = await readPrefabEnvironmentVolumes(resolver, root, {
 				position: [0, 0, 0],
@@ -175,7 +179,7 @@ export const run = async (args: string[]): Promise<void> => {
 								continue;
 							}
 							const componentName = stringField(raw, 'm_Name');
-							if (componentName !== 'Vignette') {
+							if (componentName !== 'Vignette' && componentName !== 'Bloom') {
 								filter.unsupported.push(componentName);
 								continue;
 							}
@@ -183,9 +187,34 @@ export const run = async (args: string[]): Promise<void> => {
 								keepPPtr: () => false,
 								dropField: (key) => key.startsWith('m_') || key === 'active',
 							});
-							filter.vignette = Object.fromEntries(
+							const overrides = Object.fromEntries(
 								Object.entries(value).filter(([key]) => isObject(raw[key]) && raw[key].overrideState),
 							);
+							if (componentName === 'Vignette') {
+								filter.vignette = overrides;
+							} else {
+								const supported = new Set([
+									'resolutionHighQuality',
+									'thresholdHighQuality',
+									'intensityHighQuality',
+									'scatterHighQuality',
+									'tint',
+									'blendMode',
+								]);
+								filter.bloom = Object.fromEntries(
+									Object.entries(overrides).filter(([key]) => supported.has(key)),
+								);
+								for (const key of [
+									'bloomUpsampleAdditive',
+									'characterBloomControl',
+									'anamorphic',
+									'dirtIntensity',
+								]) {
+									if (overrides[key]) {
+										filter.unsupported.push(`bloom ${key}`);
+									}
+								}
+							}
 						}
 					}
 				}

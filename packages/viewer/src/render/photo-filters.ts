@@ -3,10 +3,201 @@ import type { PhotoFilter, PhotoFilters } from '@endfield-noclip/package-format/
 import { textureLevelLayout } from '@endfield-noclip/package-format/textures';
 
 import { NEUTRAL_GRADING } from './color-grading.ts';
-import type { EnvironmentInput } from './environment.ts';
+import type { EnvironmentInput, PostInput } from './environment.ts';
 
 const object = (value: unknown): value is Record<string, unknown> =>
 	value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const vector = (value: unknown, size: number): value is number[] =>
+	Array.isArray(value) && value.length === size && value.every(finite);
+const list = (value: unknown, check: (item: unknown) => boolean): boolean =>
+	Array.isArray(value) && value.length > 0 && value.length <= 256 && value.every(check);
+
+const curve = (value: unknown): boolean =>
+	value === null ||
+	(object(value) &&
+		finite(value.preWrapMode) &&
+		finite(value.postWrapMode) &&
+		list(
+			value.keys,
+			(key) =>
+				object(key) &&
+				['time', 'value', 'inSlope', 'outSlope', 'weightedMode', 'inWeight', 'outWeight'].every((k) =>
+					finite(key[k]),
+				),
+		));
+const minMax = (value: unknown): boolean =>
+	object(value) &&
+	finite(value.mode) &&
+	[0, 1, 2, 3].includes(value.mode) &&
+	finite(value.scalar) &&
+	finite(value.min) &&
+	curve(value.curve) &&
+	curve(value.minCurve) &&
+	(value.mode === 0 || value.mode === 3 || value.curve !== null) &&
+	(value.mode !== 2 || value.minCurve !== null);
+const zero = (value: unknown): boolean =>
+	object(value) && minMax(value) && value.mode === 0 && value.scalar === 0;
+const curves = (value: unknown): value is unknown[] =>
+	Array.isArray(value) && value.length === 3 && value.every(minMax);
+const gradient = (value: unknown): boolean =>
+	value === null ||
+	(object(value) &&
+		typeof value.fixed === 'boolean' &&
+		list(value.colorKeys, (key) => object(key) && finite(key.time) && vector(key.color, 3)) &&
+		list(value.alphaKeys, (key) => object(key) && finite(key.time) && finite(key.alpha)));
+const color = (value: unknown): boolean =>
+	object(value) &&
+	finite(value.mode) &&
+	[0, 1, 2, 3, 4].includes(value.mode) &&
+	vector(value.max, 4) &&
+	vector(value.min, 4) &&
+	gradient(value.maxGradient) &&
+	gradient(value.minGradient) &&
+	(value.mode === 0 || value.mode === 2 || value.maxGradient !== null) &&
+	(value.mode !== 3 || value.minGradient !== null);
+
+// this pass handles simple zero-gravity billboards, not arbitrary scene particle materials.
+const particles = (value: unknown): boolean => {
+	if (
+		!object(value) ||
+		value.renderMode !== 0 ||
+		value.alignment !== 0 ||
+		value.stretch !== null ||
+		value.velocity !== null ||
+		value.drag !== null ||
+		value.ringBuffer !== null ||
+		!Array.isArray(value.bursts) ||
+		value.bursts.length !== 0 ||
+		!vector(value.pivot, 3) ||
+		value.pivot.some((v) => v !== 0) ||
+		!vector(value.meshWeights, 1) ||
+		value.meshWeights[0] <= 0 ||
+		value.mesh !== 0 ||
+		typeof value.shapeScaling !== 'boolean' ||
+		typeof value.looping !== 'boolean' ||
+		!finite(value.duration) ||
+		value.duration <= 0 ||
+		!finite(value.startDelay) ||
+		value.startDelay < 0 ||
+		!finite(value.simulationSpeed) ||
+		value.simulationSpeed < 0 ||
+		!finite(value.maxParticles) ||
+		!Number.isInteger(value.maxParticles) ||
+		value.maxParticles < 0 ||
+		!minMax(value.startLifetime) ||
+		!minMax(value.startSpeed) ||
+		!minMax(value.rate) ||
+		!zero(value.gravityModifier) ||
+		!color(value.startColor) ||
+		(value.colorOverLifetime !== null && !color(value.colorOverLifetime)) ||
+		!curves(value.startSize) ||
+		!curves(value.startRotation) ||
+		!zero(value.startRotation[0]) ||
+		!zero(value.startRotation[1]) ||
+		(value.sizeOverLifetime !== null && !curves(value.sizeOverLifetime)) ||
+		(value.rotationOverLifetime !== null &&
+			(!curves(value.rotationOverLifetime) ||
+				!zero(value.rotationOverLifetime[0]) ||
+				!zero(value.rotationOverLifetime[1])))
+	) {
+		return false;
+	}
+	const shape = value.shape;
+	if (
+		shape !== null &&
+		(!object(shape) ||
+			!finite(shape.kind) ||
+			![0, 2, 4, 5, 8, 10].includes(shape.kind) ||
+			![
+				'radius',
+				'radiusThickness',
+				'angle',
+				'length',
+				'arc',
+				'randomDirection',
+				'sphericalDirection',
+				'randomPosition',
+			].every((k) => finite(shape[k])) ||
+			!['position', 'rotation', 'scale'].every((k) => vector(shape[k], 3)))
+	) {
+		return false;
+	}
+	const sheet = value.textureSheet;
+	return (
+		sheet === null ||
+		(object(sheet) &&
+			vector(sheet.tiles, 2) &&
+			sheet.tiles.every((v) => Number.isInteger(v) && v >= 1 && v <= 64) &&
+			(sheet.row === null ||
+				(finite(sheet.row) &&
+					Number.isInteger(sheet.row) &&
+					sheet.row >= -2 &&
+					sheet.row < sheet.tiles[1])) &&
+			(sheet.frameOverTime === null || minMax(sheet.frameOverTime)) &&
+			minMax(sheet.startFrame) &&
+			['fps', 'cycles', 'uvChannels'].every((k) => finite(sheet[k])))
+	);
+};
+
+const effect = (value: unknown): boolean => {
+	if (
+		!object(value) ||
+		typeof value.name !== 'string' ||
+		!vector(value.matrix, 16) ||
+		!vector(value.tint, 4) ||
+		typeof value.ignorePostExposure !== 'boolean' ||
+		!particles(value.particles)
+	) {
+		return false;
+	}
+	const source = value.texture;
+	if (
+		!object(source) ||
+		(source.format !== 'bc7-rgba-unorm' && source.format !== 'bc7-rgba-unorm-srgb') ||
+		!finite(source.width) ||
+		!finite(source.height) ||
+		![source.width, source.height].every((n) => Number.isInteger(n) && n >= 4 && n <= 2048 && n % 4 === 0) ||
+		!Array.isArray(source.levels) ||
+		source.levels.length === 0 ||
+		source.levels.length > Math.floor(Math.log2(Math.max(source.width, source.height))) + 1
+	) {
+		return false;
+	}
+	const sampler = source.sampler;
+	if (
+		!object(sampler) ||
+		!['addressModeU', 'addressModeV', 'addressModeW'].every((k) =>
+			['repeat', 'clamp-to-edge', 'mirror-repeat'].some((v) => v === sampler[k]),
+		) ||
+		!['magFilter', 'minFilter', 'mipmapFilter'].every(
+			(k) => sampler[k] === 'nearest' || sampler[k] === 'linear',
+		) ||
+		sampler.mipBias !== 0 ||
+		!finite(sampler.maxAnisotropy) ||
+		!Number.isInteger(sampler.maxAnisotropy) ||
+		sampler.maxAnisotropy < 1 ||
+		sampler.maxAnisotropy > 16 ||
+		(sampler.maxAnisotropy > 1 &&
+			[sampler.magFilter, sampler.minFilter, sampler.mipmapFilter].some((v) => v !== 'linear'))
+	) {
+		return false;
+	}
+	const size = {
+		kind: '2d' as const,
+		format: source.format,
+		width: source.width,
+		height: source.height,
+		depthOrArrayLayers: 1,
+	};
+	return source.levels.every(
+		(data, level) =>
+			typeof data === 'string' &&
+			data.length <= 6_000_000 &&
+			Uint8Array.fromBase64(data).byteLength === textureLevelLayout(size, level).byteLength,
+	);
+};
 
 const matches = (template: unknown, value: unknown): boolean => {
 	if (typeof template === 'number') {
@@ -35,6 +226,15 @@ const VIGNETTE_DEFAULT: VignetteSettings = {
 	rounded: false,
 	blink: false,
 	opacity: 1,
+};
+
+const BLOOM_DEFAULT: NonNullable<PostInput['bloom']> = {
+	resolutionHighQuality: 2,
+	thresholdHighQuality: 1,
+	intensityHighQuality: 0,
+	scatterHighQuality: 0.5,
+	tint: [1, 1, 1, 1],
+	blendMode: 2,
 };
 
 /**
@@ -66,6 +266,12 @@ export const parsePhotoFilters = (value: unknown): PhotoFilters => {
 		}
 		ids.add(filter.id);
 		if (
+			filter.effects !== undefined &&
+			(!Array.isArray(filter.effects) || filter.effects.length > 4 || !filter.effects.every(effect))
+		) {
+			throw new Error(`invalid effects for ${filter.id}`);
+		}
+		if (
 			filter.grading !== null &&
 			(!matches(NEUTRAL_GRADING, filter.grading) ||
 				!object(filter.grading) ||
@@ -85,6 +291,15 @@ export const parsePhotoFilters = (value: unknown): PhotoFilters => {
 			throw new Error(`invalid vignette for ${filter.id}`);
 		}
 		const lut = filter.lut;
+		if (
+			filter.bloom != null &&
+			(!object(filter.bloom) ||
+				!Object.entries(filter.bloom).every(
+					([key, v]) => Object.hasOwn(BLOOM_DEFAULT, key) && matches(Reflect.get(BLOOM_DEFAULT, key), v),
+				))
+		) {
+			throw new Error(`invalid bloom for ${filter.id}`);
+		}
 		if (lut !== null) {
 			if (
 				!object(lut) ||
@@ -130,11 +345,15 @@ export const photoProfile = (profile: EnvironmentInput, filter: PhotoFilter | nu
 		...profile,
 		colorGrading: filter.grading ?? profile.colorGrading,
 		post:
-			filter.vignette === null
+			filter.vignette === null && filter.bloom == null
 				? profile.post
 				: {
 						...post,
-						vignette: { ...VIGNETTE_DEFAULT, ...post.vignette, ...filter.vignette },
+						vignette:
+							filter.vignette === null
+								? post.vignette
+								: { ...VIGNETTE_DEFAULT, ...post.vignette, ...filter.vignette },
+						bloom: filter.bloom == null ? post.bloom : { ...BLOOM_DEFAULT, ...post.bloom, ...filter.bloom },
 					},
 	};
 };
