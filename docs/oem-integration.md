@@ -130,3 +130,11 @@ fail export; `oem-check` verifies the binding. independent scenes without tier v
 expanded by 10 m, rather than their much larger decorative content bounds. outside that footprint
 there is no automatic-entry evidence; no floor heights are invented. navigation is optional for older
 manual-only releases. rebaking also preserves and rebinds an existing navigation companion.
+
+## hosted panel presentation
+
+`Panel`, `PanelProvider` and `PanelProps` are part of the viewer host interface. scene conditions,
+display settings and statistics use separate title, action and body slots. a host can provide its
+own panel shell around the same controls; without a provider the standalone viewer uses its existing
+panel styling with explicit headings. keep the body mounted when collapsing it, so control filters
+and disclosure state survive. renderer bindings, values and scene logic stay in the existing controls.
