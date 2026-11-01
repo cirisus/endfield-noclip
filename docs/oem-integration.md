@@ -62,7 +62,14 @@ all messages include `version: 1`, `session`, and `type`. receivers check the ex
 | viewer → opener | `state` | `point`, `preset`, `unknown` |
 | viewer → opener | `error` | `point`, `message` |
 | minimap → viewer | `minimap-ready` | none |
-| viewer → minimap | `camera` | selected `point`, Unity `position`, `forward` |
+| viewer → minimap | `camera` | selected `point`, Unity `position`, `forward`, optional `view: { groundY, fovY, aspect }` |
+
+the minimap fits an approximate perspective footprint using height above local terrain, pitch, lens
+FOV and the OEM coordinate transform's local scale, with continuous zoom clamped to 0–4. absent or
+above-camera terrain falls back to the target's height (interiors and terrain holes); near-ground
+and near-horizon views stay bounded. it remains north-up and centered on the camera, so it does not
+reproduce the perspective view's exact footprint. older camera messages without `view` keep zoom 3;
+malformed optional view data is rejected. lens changes and viewport resizes also refresh the map.
 
 scene loads are serialized and only the newest pending target is committed. the viewer checks the
 actual loaded package's source, version, generation and level before applying companion state. a
