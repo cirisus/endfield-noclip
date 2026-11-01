@@ -10,8 +10,10 @@ existing panel, heading and scene-choice styles. both inherit their host applica
 
 ## generate a release
 
-use packages and metadata from the same local install. pack all five complete scenes first:
-`map01`, `map02`, `indie_dg005`, `indie_dg007`, `indie_dg016`. then run:
+use packages and metadata from the same local install. pack all seven complete scenes first:
+`map01`, `map02`, `indie_dg005`, `indie_dg007`, `indie_dg016`, `base01_lv001` and
+`dung01_wrdg001`. the last two cover Dijiang and Valley's Aberrants; `base01` and `dung01` are
+logical map ids, not streaming scenes. then run:
 
 ```sh
 pnpm extract oem --config endfield.local.json --atlos /path/to/Atlos/talos --packages out --output out/releases
@@ -22,6 +24,11 @@ the command rejects incompatible package versions, source fingerprints, partial 
 placements and unresolved point ids. NPC proxies resolve their level through NpcProxyTable, not a
 coordinate search or identifier prefix. output lives under a content-derived release id; the
 catalog is written last. publish only directories holding a complete `index.json`.
+after an incompatible package-format change, repack all seven scenes and export a new release before
+switching the main site's catalog URL. an older release keeps its original package version; changing
+its catalog's version fields cannot upgrade its archives.
+partitions and their region membership come from OEM's `src/data/map/region.json`, including DJ_1
+and ES_1. point placement still comes from the game's exact entity id and LevelConfig scene path.
 
 the release contains a catalog, one companion JSON per OEM subregion and the referenced package
 archives. it excludes debug output. generated releases and game-derived metadata stay outside git.
@@ -43,8 +50,13 @@ runtime locks and spawn scripts remain unknown even after a known quest prerequi
 this is an authored preview, not the state of a logged-in player.
 
 the viewer merges supplemental controls into the package's original controls without changing its
-visibility formulas. selecting another point replaces companion controls and resets story picks;
-rendering options remain. target markers locate points whose gameplay model is not represented.
+visibility formulas. OEM previews initially set quests and missions to completed and facilities,
+Control Nexus and cabin slots to their maximum available levels, keeping derived gates automatic.
+manual story presets remain selectable; the panel reports when the selected state does not satisfy
+the point's recorded prerequisite. selecting another point restores completed progression and replaces
+companion controls; rendering options remain. target markers locate points whose gameplay model is
+not represented. authored world positions can differ from manually positioned OEM facility icons;
+the preview keeps the authored coordinates rather than moving the scene target to match the icon.
 
 ## launch and messages
 
@@ -81,6 +93,8 @@ actual loaded package's source, version, generation and level before applying co
 mismatch stops point preview rather than guessing. the iframe is passive: selected-point floor,
 north up, camera centered, selected target and the existing locator artwork. camera movement never
 commands the main map or invokes the game locator backend.
+offscreen targets keep their original OEM icon pinned at the minimap's rectangle edge, with padding
+for the artwork and sub-icon. the icon returns to its real map position when it enters the viewport.
 
 ## local verification
 

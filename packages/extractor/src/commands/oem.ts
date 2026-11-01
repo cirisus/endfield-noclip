@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { zstdDecompressSync } from 'node:zlib';
@@ -144,7 +144,15 @@ export const run = async (args: string[]): Promise<void> => {
 	const atlos = resolve(values.atlos),
 		packages = resolve(values.packages),
 		output = resolve(values.output);
-	const sceneIds = ['map01', 'map02', 'indie_dg005', 'indie_dg007', 'indie_dg016'];
+	const sceneIds = [
+		'map01',
+		'map02',
+		'indie_dg005',
+		'indie_dg007',
+		'indie_dg016',
+		'base01_lv001',
+		'dung01_wrdg001',
+	];
 	const cores = new Map<string, PackageManifest>();
 	for (const scene of sceneIds) {
 		cores.set(scene, await readCore(join(packages, scene)));
@@ -205,13 +213,30 @@ export const run = async (args: string[]): Promise<void> => {
 		);
 		const proxyLevels = node(proxyTable.dataTable);
 		const game = new GameState();
-		const subregions = (await readdir(join(atlos, 'src/data/marker/data')))
-			.filter((f) => /^(VL|WL)_\d+\.json$/.test(f))
-			.toSorted();
+		const regionConfig: unknown = JSON.parse(await readFile(join(atlos, 'src/data/map/region.json'), 'utf8'));
+		if (!regionConfig || typeof regionConfig !== 'object' || Array.isArray(regionConfig)) {
+			throw new Error('invalid OEM region configuration');
+		}
+		const subregions = new Map<string, string>();
+		for (const [region, config] of Object.entries(regionConfig)) {
+			if (
+				!config ||
+				typeof config !== 'object' ||
+				!('subregions' in config) ||
+				!Array.isArray(config.subregions)
+			) {
+				throw new Error(`invalid subregions for ${region}`);
+			}
+			for (const subregion of config.subregions) {
+				if (typeof subregion !== 'string' || !/^[A-Z]+_\d+$/.test(subregion) || subregions.has(subregion)) {
+					throw new Error(`invalid or duplicate OEM subregion: ${String(subregion)}`);
+				}
+				subregions.set(subregion, region);
+			}
+		}
 		const partitions = new Map<string, Point[]>();
-		for (const file of subregions) {
-			const subregion = file.slice(0, -5),
-				region = subregion.startsWith('VL_') ? 'Valley_4' : 'Wuling';
+		for (const [subregion, region] of [...subregions].toSorted(([a], [b]) => a.localeCompare(b))) {
+			const file = `${subregion}.json`;
 			const rows: unknown = JSON.parse(await readFile(join(atlos, 'src/data/marker/data', file), 'utf8'));
 			if (!Array.isArray(rows)) {
 				throw new Error(`invalid marker partition ${file}`);

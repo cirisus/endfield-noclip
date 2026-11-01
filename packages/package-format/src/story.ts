@@ -19,6 +19,40 @@ const PROCESSING = 2;
 const COMPLETED = 3;
 
 /**
+ * @param controls the merged scene and companion controls
+ * @returns overrides beyond scene defaults for completed quests and maximum facilities; derived gates keep
+ *   their formulas
+ */
+export const completedProgressionPicks = (controls: readonly SceneControl[]): Record<string, number> => {
+	const progression = new Set([
+		'controlNexus',
+		'cabin',
+		'cabinLevel',
+		'settlement',
+		'poi',
+		'factoryRegion',
+		'facility',
+		'doodadGroups',
+	]);
+	const picks: Record<string, number> = {};
+	for (const control of controls) {
+		if (control.derived !== null) {
+			continue;
+		}
+		let value: number | undefined;
+		if (control.kind === 'quest' || control.kind === 'mission') {
+			value = COMPLETED;
+		} else if (progression.has(control.kind)) {
+			value = control.values.at(-1)?.value;
+		}
+		if (value !== undefined && value !== control.default && control.values.some((v) => v.value === value)) {
+			picks[control.id] = value;
+		}
+	}
+	return picks;
+};
+
+/**
  * @param controls a package's controls
  * @param missions mission ids in story order
  * @param point where the story stands
