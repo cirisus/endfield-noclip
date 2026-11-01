@@ -220,7 +220,8 @@ button {
 	text-align: start;
 }
 
-.settings {
+.settings,
+.settings > .panel-body {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
@@ -247,6 +248,11 @@ button {
 		min-width: 0;
 		max-width: 100%;
 	}
+}
+
+.environment-name {
+	flex-basis: 100%;
+	overflow-wrap: anywhere;
 }
 
 /* the environment volumes in effect, lowest priority first */

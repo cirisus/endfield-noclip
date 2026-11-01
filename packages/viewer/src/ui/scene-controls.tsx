@@ -20,6 +20,7 @@ import { volumeCondition, volumeLevelTag } from '../render/environment-blend.ts'
 import type { Viewer } from '../viewer.ts';
 
 import { Drivers } from './drivers.tsx';
+import { Panel } from './panel.tsx';
 import { useViewerState } from './use-viewer.ts';
 import { WaterLevels } from './water-levels.tsx';
 
@@ -419,11 +420,16 @@ export const SceneControls = ({ viewer }: { viewer: Viewer }) => {
 			),
 		).join(' or ');
 	return (
-		<section className="panel scene-controls" aria-label="scene conditions">
-			<header>
-				<h2>Scene conditions</h2>
-				<button onClick={() => viewer.resetSceneValues()}>Reset</button>
-			</header>
+		<Panel
+			title="Scene conditions"
+			label="scene conditions"
+			className="scene-controls"
+			actions={
+				<button type="button" onClick={() => viewer.resetSceneValues()}>
+					Reset
+				</button>
+			}
+		>
 			<label className="control-search" htmlFor={searchId}>
 				Filter controls
 				<input
@@ -499,6 +505,6 @@ export const SceneControls = ({ viewer }: { viewer: Viewer }) => {
 					);
 				})}
 			</details>
-		</section>
+		</Panel>
 	);
 };
