@@ -58,6 +58,21 @@ companion controls; rendering options remain. target markers locate points whose
 not represented. authored world positions can differ from manually positioned OEM facility icons;
 the preview keeps the authored coordinates rather than moving the scene target to match the icon.
 
+point framing reads nearby detail instances and opaque mesh triangles under the selected progression,
+then tries sixteen headings, several elevations and shorter distances. sight-line bundles keep the
+lens away from walls; resident terrain heights also reject views through hills. streaming-area gates
+are evaluated at the target, not the previous camera. a camera cut avoids flying through intervening
+walls, and a superseded point cancels its reads before applying a pose. this is best-effort framing:
+transparent or alpha-tested surfaces, unavailable terrain pages, missing meshes and points authored
+inside solid geometry cannot provide a visibility guarantee. if every candidate is blocked, the
+preview uses a close view and retains the target marker.
+checked poses persist in browser storage (up to 512 entries), keyed by the framing algorithm version,
+package generation, level, target coordinates and effective visibility groups. a hit skips geometry
+reads, decoding and sight-line tests. results calculated before required terrain pages arrive are
+not persisted. decoded nearby geometry is also reused within the opened package, bounded to 64 MiB;
+cancellation does not retain rejected reads. first visits still compute a view locally; no offline
+pose catalog is included in the release.
+
 ## launch and messages
 
 an OEM link supplies `oem` (catalog URL), `release`, `point`, `origin` (OEM origin) and `session`.
