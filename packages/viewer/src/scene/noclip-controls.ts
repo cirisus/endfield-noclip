@@ -1,6 +1,6 @@
 /**
  * free-flight camera controls: WASD to move, mouse look under pointer lock (or drag), E/R or Space up, Q/F or
- * C down, Shift to boost, Alt to creep, wheel to change the base speed.
+ * C/Shift down, right mouse to boost, Alt to creep, wheel to zoom, Ctrl+wheel to change the base speed.
  *
  * @module
  */
@@ -13,6 +13,8 @@ const MAX_PITCH = Math.PI / 2 - 0.001;
 const SMOOTHING = 0.08;
 const BOOST = 5;
 const CREEP = 0.2;
+const MIN_FOV = (20 * Math.PI) / 180;
+const MAX_FOV = (100 * Math.PI) / 180;
 
 /** a camera pose to fly to */
 export interface CameraPose {
@@ -51,7 +53,8 @@ export class NoclipControls {
 	#velocity: Vec3 = [0, 0, 0];
 	#flight: Flight | null = null;
 	#dragging = false;
-	#looked = false;
+	#boosting = false;
+	#changed = false;
 	#abort = new AbortController();
 
 	/**
@@ -77,7 +80,44 @@ export class NoclipControls {
 			{ signal },
 		);
 		window.addEventListener('keyup', (event) => this.#keys.delete(event.code), { signal });
-		window.addEventListener('blur', () => this.#keys.clear(), { signal });
+		const release = () => {
+			this.#keys.clear();
+			this.#boosting = false;
+			this.#dragging = false;
+		};
+		window.addEventListener('blur', release, { signal });
+		element.addEventListener('pointercancel', release, { signal });
+		document.addEventListener(
+			'pointerlockchange',
+			() => {
+				if (document.pointerLockElement !== element) {
+					release();
+				}
+			},
+			{ signal },
+		);
+		// Mouse events retain individual button changes when left and right are held together.
+		element.addEventListener(
+			'mousedown',
+			(event) => {
+				if (event.button === 2) {
+					this.#boosting = true;
+				}
+			},
+			{ signal },
+		);
+		window.addEventListener(
+			'mouseup',
+			(event) => {
+				if (event.button === 0) {
+					this.#dragging = false;
+				}
+				if (event.button === 2) {
+					this.#boosting = false;
+				}
+			},
+			{ signal },
+		);
 
 		element.addEventListener(
 			'pointerdown',
@@ -94,7 +134,16 @@ export class NoclipControls {
 			},
 			{ signal },
 		);
-		element.addEventListener('pointerup', () => (this.#dragging = false), { signal });
+		window.addEventListener(
+			'pointerup',
+			(event) => {
+				if (event.button === 0) {
+					this.#dragging = false;
+				}
+			},
+			{ signal },
+		);
+		element.addEventListener('contextmenu', (event) => event.preventDefault(), { signal });
 		element.addEventListener(
 			'pointermove',
 			(event) => {
@@ -108,7 +157,18 @@ export class NoclipControls {
 			'wheel',
 			(event) => {
 				event.preventDefault();
-				this.speed = Math.min(5000, Math.max(0.5, this.speed * 1.15 ** (-event.deltaY / 100)));
+				const pixels =
+					event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1);
+				if (event.ctrlKey) {
+					this.speed = Math.min(5000, Math.max(0.5, this.speed * 1.15 ** (-pixels / 100)));
+				} else {
+					const fov = Math.min(
+						MAX_FOV,
+						Math.max(MIN_FOV, 2 * Math.atan(Math.tan(camera.fovY / 2) * 1.15 ** (pixels / 100))),
+					);
+					this.#changed ||= fov !== camera.fovY;
+					camera.fovY = fov;
+				}
 			},
 			{ signal, passive: false },
 		);
@@ -119,7 +179,7 @@ export class NoclipControls {
 		camera.yaw = wrapAngle(camera.yaw + dx * LOOK_SENSITIVITY);
 		camera.pitch = Math.min(MAX_PITCH, Math.max(-MAX_PITCH, camera.pitch - dy * LOOK_SENSITIVITY));
 		this.#flight = null;
-		this.#looked = true;
+		this.#changed = true;
 	}
 
 	/**
@@ -151,8 +211,8 @@ export class NoclipControls {
 	 */
 	update(dt: number): boolean {
 		const camera = this.#camera;
-		let moved = this.#looked;
-		this.#looked = false;
+		let moved = this.#changed;
+		this.#changed = false;
 
 		const flight = this.#flight;
 		if (flight !== null) {
@@ -173,10 +233,12 @@ export class NoclipControls {
 		const key = (...codes: string[]): number => (codes.some((code) => this.#keys.has(code)) ? 1 : 0);
 		const forward = key('KeyW', 'ArrowUp') - key('KeyS', 'ArrowDown');
 		const strafe = key('KeyD', 'ArrowRight') - key('KeyA', 'ArrowLeft');
-		const lift = key('KeyE', 'KeyR', 'Space', 'PageUp') - key('KeyQ', 'KeyF', 'KeyC', 'PageDown');
+		const lift =
+			key('KeyE', 'KeyR', 'Space', 'PageUp') -
+			key('KeyQ', 'KeyF', 'KeyC', 'PageDown', 'ShiftLeft', 'ShiftRight');
 
 		let speed = this.speed;
-		if (this.#keys.has('ShiftLeft') || this.#keys.has('ShiftRight')) {
+		if (this.#boosting) {
 			speed *= BOOST;
 		}
 		if (this.#keys.has('AltLeft') || this.#keys.has('AltRight')) {
