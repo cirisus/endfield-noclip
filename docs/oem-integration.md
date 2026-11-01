@@ -1,8 +1,8 @@
 # OEM integration
 
 the ordinary package/level viewer remains available. OEM adds an opt-in static companion release, an
-explicit point launch, a cross-window bridge and an iframe containing the OEM-owned minimap. no game
-account, collection record or locator credential is transferred.
+explicit point launch and a cross-window bridge to the Atlos-owned World app. no game account,
+collection record or locator credential is transferred.
 
 the main OEM detail contains only a link, reusing its existing divider and action styles. the point
 prerequisite panel and preset selector live in the preview's right dock, using the viewer's existing
@@ -79,63 +79,25 @@ poses persist up to 512 entries, keyed by framing version, package generation, l
 visibility groups. decoded nearby geometry is reused up to 64 MiB per opened package. cancellation
 never applies a stale pose. results obtained before required terrain pages arrive are not persisted.
 
-OEM launches hide the package and level panels; standalone noclip retains them. region navigation
-uses OEM's shared UIOverlay and region components in a transparent full-viewport frame. its hit
-region is clipped to the actual buttons, submenu and tooltip rectangles, so other pixels allow
-pointer input through to WebGPU. submenus remain below the minimap and scroll when needed. switching
-region/subregion opens an overview, clears point markers and the point panel, and records the region
-in the share URL; selecting a main-site point restores the point view. no main-site region is
-mutated.
+## World host
 
-## launch and messages
+Atlos owns the World application, OEM navigation, condition panel, minimap and region overlay.
+`@endfield-noclip/viewer/host` exports `ViewerApp`, `Viewer`, `httpSource` and `useViewerState`;
+`@endfield-noclip/viewer/style.css` supplies the existing renderer panel styles. pass an `overlay`
+render function to `ViewerApp` to receive the initialized viewer and its right-hand panel portal.
+the host owns navigation in that mode; package/level URL handling and their panels remain available
+in the ordinary standalone app. the host must use the same React instance as the renderer.
 
-an OEM link supplies `oem` (catalog URL), `release`, `point`, `origin` (OEM origin) and `session`.
-production data must come from `cdn.opendfieldmap.org`; local HTTP development is also allowed.
-standalone links work without an opener and default to the `.org` minimap. query input never
-supplies arbitrary executable code, minimap hosts or scene transforms.
-
-all messages include `version: 1`, `session`, and `type`. receivers check the exact origin and
-source:
-
-| direction            | type                                             | payload                                                                                                                        |
-| -------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| viewer → opener      | `ready`                                          | none; sender may now flush its pending command                                                                                 |
-| opener → viewer      | `open-point`                                     | `point`                                                                                                                        |
-| viewer → opener      | `state`                                          | `point`, `preset`, `unknown`                                                                                                   |
-| viewer → opener      | `error`                                          | `point`, `message`                                                                                                             |
-| minimap → viewer     | `minimap-ready`                                  | none                                                                                                                           |
-| viewer → minimap     | `minimap-target`                                 | selected `point`; begin map loading while its 3D package loads                                                                 |
-| viewer → minimap     | `camera`                                         | selected `point`, Unity `position`, `forward`, optional `view: { groundY, fovY, aspect }`, `target: false` for region overview |
-| OEM overlay → viewer | `regions-ready`, `open-region`, `overlay-layout` | session-bound region/subregion choice and finite viewport rectangles                                                           |
-| viewer → OEM overlay | `region-state`, `region-error`                   | accepted selection or failed navigation                                                                                        |
-
-the minimap fits an approximate perspective footprint using height above local terrain, pitch, lens
-FOV and the OEM coordinate transform's local scale, with 1.5× magnification and continuous zoom
-clamped to 0–5. absent or above-camera terrain falls back to the target's height (interiors and
-terrain holes); near-ground and near-horizon views stay bounded. it remains north-up and centered on
-the camera, so it does not reproduce the perspective view's exact footprint. older camera messages
-without `view` keep zoom 3; malformed optional view data is rejected. lens changes and viewport
-resizes also refresh the map. camera samples are coalesced to one draw per iframe animation frame.
-the condition panel is outside the camera render loop; the 3D target updates its position directly.
-the minimap cursor has no heading transition delay and stops its initial pulse after movement or
-turning. target preparation starts map tiles and artwork before the 3D package is ready, without
-displaying a fictitious camera.
-
-scene loads are serialized and only the newest pending target is committed. the viewer checks the
-actual loaded package's source, version, generation and level before applying companion state. a
-mismatch stops point preview rather than guessing. the iframe is passive: selected-point floor,
-north up, camera centered, selected target and the existing locator artwork. camera movement never
-commands the main map or invokes the game locator backend. offscreen targets keep their original OEM
-icon pinned at the minimap's rectangle edge, with padding for the artwork and sub-icon. the icon
-returns to its real map position when it enters the viewport.
+World uses a fixed source revision and a separately pinned data catalog. package generation/source
+validation and the precomputed pose binding remain required. the host shares the existing package
+format conditions and story evaluator rather than implementing another condition engine.
 
 ## local verification
 
 `NOCLIP_RELEASES` can override the local release root (default `out/releases`); Vite dev and preview
-serve it at `/oem/`. set OEM's `VITE_NOCLIP_VIEWER_URL` and `VITE_NOCLIP_CATALOG_URL` to the local
-viewer and immutable catalog before starting OEM. its dev server proxies `/minimap/` to the minimap
-app on port 5176. production deployments include the minimap in the complete OEM artifact on both
-hosts.
+serve it at `/oem/`. set OEM's `VITE_WORLD_URL` and `VITE_WORLD_CATALOG_URL` to the local
+viewer and immutable catalog before starting OEM. World owns its own local development server and
+directly composes the OEM map UI.
 
 desktop WebGPU and the existing keyboard/mouse controls are the initial acceptance platform. the
 ordinary GPU-start error remains visible in unsupported browsers. no touch-flight or WebGL fallback
@@ -143,17 +105,11 @@ is added.
 
 ## deployment
 
-`pnpm build` creates the frontend; `wrangler.toml` describes the independent `oem-noclip` Pages
-project. use its default `pages.dev` hostname initially. package archives belong on R2, not Pages.
-copy a complete release to the existing bucket's `noclip/releases/<release>/` prefix with rclone's
-`--immutable` option. inspect a `--dry-run` first; do not use deletion or `sync` for publication.
+World is an independently deployed Pages application owned by Atlos (`apps/world`), with the title
+`World - Open Endfield Map`. its frontend is built and deployed separately from the OEM main site.
+scene archives and companions remain immutable data releases on R2. this repository's ordinary
+viewer remains a development tool; it does not own World domains or frontend deployment.
 
-`deployment/r2-cors.json` is the required read/range policy, to merge with the bucket's existing
-rules rather than replace unrelated consumers. expose Content-Range and validators; verify real
-browser range reads, including a request with Origin. `_headers` preserves opener communication. the
-minimap route must allow framing by the preview origin; avoid imposing cross-origin isolation that
-severs the opener. no SharedArrayBuffer is required.
-
-after uploading, verify archive sizes, source/generation, a range response and each scene; only then
-pin OEM's catalog environment variable and deploy its complete `.cn`/`.org` artifacts. keep the
-previous release for rollback. building, exporting and local testing never publish or push code.
+upload and verify a complete data release before updating World's catalog configuration. frontend
+source pins and data release ids are independent: new renderer builds must still validate package
+versions, generations and source fingerprints. no build or offline export publishes automatically.
