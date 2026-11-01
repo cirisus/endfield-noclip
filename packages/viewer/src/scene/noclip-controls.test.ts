@@ -53,6 +53,14 @@ afterEach(() => {
 	}
 });
 
+it('cancels a previous flight before an automatic camera cut', () => {
+	controls.flyTo({ position: [100, 100, 100], yaw: 1, pitch: 0.5 });
+	controls.cancelFlight();
+	camera.position = [1, 2, 3];
+	controls.update(0.016);
+	assert.deepEqual(camera.position, [1, 2, 3]);
+});
+
 it('makes either shift key descend at base speed, while right mouse boosts held movement', () => {
 	for (const code of ['ShiftLeft', 'ShiftRight']) {
 		send(win, 'keydown', { code });
