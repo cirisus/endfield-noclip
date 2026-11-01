@@ -41,6 +41,7 @@ export const App = () => {
 	const [error, setError] = useState<string | null>(launchError);
 	const [current, setCurrent] = useState<OpenPackage | null>(null);
 	const [status, setStatus] = useState('');
+	const [pointPanelRoot, setPointPanelRoot] = useState<HTMLDivElement | null>(null);
 
 	const open = (target: Viewer, source: PackageSource, param: string | null): void => {
 		setParam(PACKAGE_PARAM, param);
@@ -119,7 +120,7 @@ export const App = () => {
 			)}
 			{viewer !== null && (
 				<>
-					{launch && <OEMPreview viewer={viewer} launch={launch} />}
+					{launch && <OEMPreview viewer={viewer} launch={launch} panelRoot={pointPanelRoot} />}
 					<div className="dock left">
 						<PackagePanel
 							current={current}
@@ -129,6 +130,7 @@ export const App = () => {
 						<StatsPanel viewer={viewer} />
 					</div>
 					<div className="dock right">
+						{launch && <div ref={setPointPanelRoot} className="oem-point-panel-host" />}
 						<LevelsPanel viewer={viewer} />
 						<SceneControls viewer={viewer} />
 						<SettingsPanel viewer={viewer} />

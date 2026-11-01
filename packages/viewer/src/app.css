@@ -378,6 +378,10 @@ button {
 	max-width: 480px;
 }
 
+.oem-point-panel-host:empty {
+	display: none;
+}
+
 .oem-target {
 	position: absolute;
 	translate: -50% -50%;
