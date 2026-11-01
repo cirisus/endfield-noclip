@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { it } from 'node:test';
 
 import type { SceneControl } from './states.ts';
-import { storyPointPicks, storyPoints } from './story.ts';
+import { completedProgressionPicks, storyPointPicks, storyPoints } from './story.ts';
 
 const control = (
 	kind: 'quest' | 'mission',
@@ -32,6 +32,48 @@ const CONTROLS = [
 	control('quest', 'e1m2_q#x', 'e1m2', null),
 ];
 const MISSIONS = ['e1m1', 'e1m2'];
+
+it('completes quests at their completed state and maximizes facilities without overriding derived or runtime gates', () => {
+	const quest = {
+		...control('quest', 'a', 'e1m1', 1),
+		default: 0,
+		values: [0, 2, 3, 5].map((value) => ({ value, label: String(value) })),
+	};
+	const facility: SceneControl = {
+		...quest,
+		kind: 'facility',
+		id: 'facility:a',
+		default: 0,
+		values: [0, 2, 7].map((value) => ({ value, label: String(value) })),
+	};
+	const controls = [
+		quest,
+		{ ...quest, id: 'quest:already-completed', default: 3 },
+		facility,
+		{ ...facility, id: 'facility:derived', derived: 0 },
+		{ ...facility, kind: 'area' as const, id: 'area:1' },
+		{ ...facility, kind: 'controlNexus' as const, id: 'controlNexus:a' },
+		{ ...facility, kind: 'cabinLevel' as const, id: 'cabinLevel:a' },
+		{
+			...facility,
+			kind: 'cabin' as const,
+			id: 'cabin:a',
+			values: [
+				{ value: 0, label: 'empty' },
+				{ value: 1, label: 'built' },
+			],
+		},
+	];
+	const before = structuredClone(controls);
+	assert.deepEqual(completedProgressionPicks(controls), {
+		'quest:a': 3,
+		'facility:a': 7,
+		'controlNexus:a': 7,
+		'cabinLevel:a': 7,
+		'cabin:a': 1,
+	});
+	assert.deepEqual(controls, before);
+});
 
 it('a story point completes what came before it and leaves what follows unstarted', () => {
 	assert.deepEqual(storyPointPicks(CONTROLS, MISSIONS, { mission: 0, step: 5 }), {

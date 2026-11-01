@@ -6,6 +6,7 @@ import {
 	type Companion,
 	type Point,
 } from '@endfield-noclip/package-format/oem';
+import { completedProgressionPicks } from '@endfield-noclip/package-format/story';
 
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -50,17 +51,22 @@ export const OEMPreview = ({
 	);
 	const apply = useCallback(
 		(target: Point, presetId?: string) => {
-			const chosen =
-				target.presets.find((p) => p.id === presetId) ??
-				target.presets.find((p) => p.satisfies) ??
-				target.presets[0];
-			if (!chosen) {
-				throw new Error('point has no preview preset');
+			let id: string, picks: Record<string, number>;
+			if (presetId === undefined || presetId === 'completed') {
+				id = 'completed';
+				picks = completedProgressionPicks(viewer.scene?.pkg.manifest.states.controls ?? []);
+			} else {
+				const chosen = target.presets.find((p) => p.id === presetId);
+				if (!chosen) {
+					throw new Error('point has no preview preset');
+				}
+				id = chosen.id;
+				picks = chosen.picks;
 			}
 			viewer.resetSceneValues();
-			viewer.setSceneValues(chosen.picks);
-			setPreset(chosen.id);
-			reply('state', { point: target.id, preset: chosen.id, unknown: target.unknown });
+			viewer.setSceneValues(picks);
+			setPreset(id);
+			reply('state', { point: target.id, preset: id, unknown: target.unknown });
 		},
 		[viewer, reply],
 	);
@@ -263,6 +269,7 @@ export const OEMPreview = ({
 				metadata &&
 				createPortal(
 					<PointConditions
+						viewer={viewer}
 						point={point}
 						companion={metadata}
 						preset={preset}
