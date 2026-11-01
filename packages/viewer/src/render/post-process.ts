@@ -8,6 +8,7 @@ import type { DebugView } from './frame-uniforms.ts';
 import { LensFlares } from './lens-flare.ts';
 import { LightShafts } from './light-shafts.ts';
 import { PhotoLut } from './photo-filters.ts';
+import { PhotoParticles } from './photo-particles.ts';
 import { ScreenSpaceReflections } from './screen-space-reflections.ts';
 import atmosphereWgsl from './shaders/atmosphere.wgsl?raw';
 import bloomWgsl from './shaders/bloom.wgsl?raw';
@@ -180,6 +181,8 @@ interface Sized {
 export class PostProcess {
 	/** the photo LUT applied after scene grading and tonemapping */
 	readonly photoLut: PhotoLut;
+	/** stationary particle effects owned by the selected photo look */
+	readonly photoParticles: PhotoParticles;
 	/** the post exposure the game's auto exposure picks; the caller steps it each frame */
 	readonly autoExposure: AutoExposure;
 	/** the antialiasing; the caller jitters the main pass with it */
@@ -343,6 +346,7 @@ export class PostProcess {
 		};
 		const p = this.#pipelines;
 		this.photoLut = new PhotoLut(device, p.tonemap.getBindGroupLayout(2));
+		this.photoParticles = new PhotoParticles(device);
 		const lutPass = (target: GPURenderPipeline, view: GPUTextureView, reads: readonly number[]): Pass => {
 			const groups = [this.#uniformsGroup(target)];
 			if (reads.length > 0) {
@@ -1052,6 +1056,13 @@ export class PostProcess {
 			]);
 		});
 		if (settings.debugView === 'lit') {
+			this.photoParticles.encode(encoder, {
+				target: sized.sceneView,
+				depth: scene.depth,
+				camera,
+				aspect: width / height,
+				exposure: postExposure(settings, this.autoExposure),
+			});
 			this.#lightShafts.encode(encoder, {
 				camera,
 				aspect: width / height,
@@ -1096,6 +1107,7 @@ export class PostProcess {
 		this.#skyView.destroy();
 		this.#uniforms.destroy();
 		this.photoLut.destroy();
+		this.photoParticles.destroy();
 		this.celestial.destroy();
 		this.autoExposure.destroy();
 		this.taa.destroy();
