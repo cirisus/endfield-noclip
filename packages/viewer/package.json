@@ -3,6 +3,10 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
+	"exports": {
+		"./host": "./src/host.ts",
+		"./style.css": "./src/app.css"
+	},
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
