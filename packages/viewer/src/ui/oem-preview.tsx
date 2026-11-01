@@ -7,12 +7,14 @@ import {
 	type Point,
 } from '@endfield-noclip/package-format/oem';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { httpSource } from '../package/package-source.ts';
 import type { Viewer } from '../viewer.ts';
 
 import type { Launch } from './oem-launch.ts';
+import { PointConditions } from './point-conditions.tsx';
 
 /* oxlint-disable react/iframe-missing-sandbox -- trusted cross-origin OEM app needs scripts and a non-opaque messaging origin */
 
@@ -21,19 +23,54 @@ const dot = (a: readonly number[], b: readonly number[]) => a.reduce((sum, v, i)
 
 interface Request {
 	point: string;
-	preset?: string;
 }
 /** existing viewer with an OEM launch bridge and a passive, OEM-owned minimap */
-export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch }) => {
+export const OEMPreview = ({
+	viewer,
+	launch,
+	panelRoot,
+}: {
+	viewer: Viewer;
+	launch: Launch;
+	panelRoot: HTMLElement | null;
+}) => {
 	const iframe = useRef<HTMLIFrameElement>(null);
 	const [point, setPoint] = useState<Point | null>(null);
+	const [metadata, setMetadata] = useState<Companion | null>(null);
+	const [preset, setPreset] = useState('');
+	const [loading, setLoading] = useState(true);
 	const [status, setStatus] = useState('Opening OEM preview…');
 	const [, setPose] = useState(0);
+	const reply = useCallback(
+		(type: string, payload: object = {}) => {
+			window.opener?.postMessage(
+				{ version: OEM_VERSION, session: launch.session, type, ...payload },
+				launch.origin,
+			);
+		},
+		[launch],
+	);
+	const apply = useCallback(
+		(target: Point, presetId?: string) => {
+			const chosen =
+				target.presets.find((p) => p.id === presetId) ??
+				target.presets.find((p) => p.satisfies) ??
+				target.presets[0];
+			if (!chosen) {
+				throw new Error('point has no preview preset');
+			}
+			viewer.resetSceneValues();
+			viewer.setSceneValues(chosen.picks);
+			setPreset(chosen.id);
+			reply('state', { point: target.id, preset: chosen.id, unknown: target.unknown });
+		},
+		[viewer, reply],
+	);
+	const applyLoaded = useEffectEvent((target: Point) => apply(target));
 	useEffect(() => {
 		const abort = new AbortController();
 		let catalog: Catalog | null = null,
-			selected: Point | null = null,
-			active: Request | null = null;
+			selected: Point | null = null;
 		let desired: Request | null = { point: launch.point },
 			busy = false,
 			loaded = '';
@@ -44,11 +81,6 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 			type,
 			...payload,
 		});
-		const reply = (type: string, payload: object = {}) => {
-			if (window.opener) {
-				window.opener.postMessage(envelope(type, payload), launch.origin);
-			}
-		};
 		const minimap = () => {
 			const camera = viewer.camera;
 			iframe.current?.contentWindow?.postMessage(
@@ -63,28 +95,16 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 			}
 			return response.json();
 		};
-		const apply = (target: Point, presetId?: string) => {
-			const preset =
-				target.presets.find((p) => p.id === presetId) ??
-				target.presets.find((p) => p.satisfies) ??
-				target.presets[0];
-			if (!preset) {
-				throw new Error('point has no preview preset');
-			}
-			viewer.resetSceneValues();
-			viewer.setSceneValues(preset.picks);
-			reply('state', { point: target.id, preset: preset.id, unknown: target.unknown });
-		};
 		const drain = async () => {
 			if (busy) {
 				return;
 			}
 			busy = true;
+			setLoading(true);
 			try {
 				while (desired && !abort.signal.aborted) {
 					const request = desired;
 					desired = null;
-					active = request;
 					try {
 						if (!catalog) {
 							const value = await read(launch.catalog);
@@ -140,19 +160,16 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 							viewer.showLevel(target.level);
 						}
 						viewer.setCompanion(companion.controls, companion.missions);
-						apply(target, request.preset);
+						applyLoaded(target);
 						selected = target;
 						setPoint(target);
+						setMetadata(companion);
 						viewer.flyToPoint(target.position, 10);
 						const url = new URL(location.href);
 						url.searchParams.set('point', target.id);
 						url.searchParams.set('release', catalog.release);
 						history.replaceState(null, '', url);
-						setStatus(
-							target.unknown.length
-								? 'Known story prerequisites applied; some runtime conditions remain unknown.'
-								: '',
-						);
+						setStatus('');
 						minimap();
 					} catch (error) {
 						if (!abort.signal.aborted && !desired) {
@@ -166,6 +183,7 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 				}
 			} finally {
 				busy = false;
+				setLoading(false);
 			}
 		};
 		const receive = (event: MessageEvent<unknown>) => {
@@ -193,15 +211,6 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 				desired = { point: data.point };
 				void drain();
 			}
-			if (data.type === 'apply-preset' && 'preset' in data && typeof data.preset === 'string') {
-				if (busy) {
-					if (active?.point === data.point || desired?.point === data.point) {
-						desired = { point: data.point, preset: data.preset };
-					}
-				} else if (selected?.id === data.point) {
-					apply(selected, data.preset);
-				}
-			}
 		};
 		window.addEventListener('message', receive);
 		const stop = viewer.subscribeCamera(() => {
@@ -215,7 +224,7 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 			stop();
 			window.removeEventListener('message', receive);
 		};
-	}, [viewer, launch]);
+	}, [viewer, launch, reply]);
 	const map = new URL('/minimap/', launch.origin);
 	map.searchParams.set('previewOrigin', location.origin);
 	map.searchParams.set('session', launch.session);
@@ -228,6 +237,19 @@ export const OEMPreview = ({ viewer, launch }: { viewer: Viewer; launch: Launch 
 	const y = delta && depth > 0 ? 50 - ((dot(delta, camera.up()) * f) / depth) * 50 : 95;
 	return (
 		<>
+			{panelRoot &&
+				point &&
+				metadata &&
+				createPortal(
+					<PointConditions
+						point={point}
+						companion={metadata}
+						preset={preset}
+						disabled={loading}
+						onPreset={(id) => apply(point, id)}
+					/>,
+					panelRoot,
+				)}
 			<iframe
 				ref={iframe}
 				className="oem-minimap"

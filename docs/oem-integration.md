@@ -4,6 +4,10 @@ the ordinary package/level viewer remains available. OEM adds an opt-in static c
 an explicit point launch, a cross-window bridge and an iframe containing the OEM-owned minimap.
 no game account, collection record or locator credential is transferred.
 
+the main OEM detail contains only a link, reusing its existing divider and action styles. the
+point prerequisite panel and preset selector live in the preview's right dock, using the viewer's
+existing panel, heading and scene-choice styles. both inherit their host application's typography.
+
 ## generate a release
 
 use packages and metadata from the same local install. pack all five complete scenes first:
@@ -55,7 +59,6 @@ all messages include `version: 1`, `session`, and `type`. receivers check the ex
 | --- | --- | --- |
 | viewer → opener | `ready` | none; sender may now flush its pending command |
 | opener → viewer | `open-point` | `point` |
-| opener → viewer | `apply-preset` | `point`, `preset` |
 | viewer → opener | `state` | `point`, `preset`, `unknown` |
 | viewer → opener | `error` | `point`, `message` |
 | minimap → viewer | `minimap-ready` | none |
