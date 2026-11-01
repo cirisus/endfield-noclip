@@ -111,12 +111,12 @@ text.
 
 ### OEM companion releases
 
-`pnpm extract oem --atlos /path/to/Atlos/talos --packages out --output out/releases` exports
-point metadata from the same local install as the complete packages. it resolves placements and
-NPC proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence,
-and labels supplemental quest states. generated content stays outside git.
-the MemoryPack reader also handles unmanaged pairs of Unity Vector3 values used by Dijiang's
-specific level data. it reads the adjacent values without an object header, following the
+`pnpm extract oem --atlos /path/to/Atlos/talos --packages out --output out/releases` exports point
+metadata from the same local install as the complete packages. it resolves placements and NPC
+proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence, and
+labels supplemental quest states. generated content stays outside git. the MemoryPack reader also
+handles unmanaged pairs of Unity Vector3 values used by Dijiang's specific level data. it reads the
+adjacent values without an object header, following the
 [MemoryPack unmanaged format](https://github.com/Cysharp/MemoryPack#binary-wire-format-specification);
 other tuple layouts remain explicit errors until their field layout is verified.
 
@@ -610,3 +610,10 @@ to entities and chunk files, and `assets.json` says why an asset didn't convert.
   ([asset conversion](#asset-conversion-and-workers)).
 - LevelData with populated blackbox settings isn't read ([MemoryPack data](#memorypack-data)).
 - texture formats without a WebGPU equivalent aren't convertible ([texture](#asset-classes)).
+
+`pnpm extract oem-views out/releases/<base> -o out/releases --cache out/framing/<base>` computes
+every point's completed-profile view without WebGPU, sharing CPU decode jobs with the browser
+workers. checkpoint files support resuming. the command writes a new immutable release, linking
+archives from the immutable input on the same filesystem and writing its catalog last; never bake
+into the input release. validate the result with `oem-check` before changing the OEM catalog URL.
+see [offline framing](oem-precompute.md) for coverage, distance and network details.

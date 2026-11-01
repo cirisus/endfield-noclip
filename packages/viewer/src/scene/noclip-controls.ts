@@ -13,7 +13,8 @@ const MAX_PITCH = Math.PI / 2 - 0.001;
 const SMOOTHING = 0.08;
 const BOOST = 5;
 const CREEP = 0.2;
-const MIN_FOV = (20 * Math.PI) / 180;
+// 250 mm at a full-frame-equivalent 24 mm sensor height.
+const MIN_FOV = 2 * Math.atan(24 / (2 * 250));
 const MAX_FOV = (100 * Math.PI) / 180;
 
 /** a camera pose to fly to */
