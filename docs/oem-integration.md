@@ -62,6 +62,7 @@ all messages include `version: 1`, `session`, and `type`. receivers check the ex
 | viewer → opener | `state` | `point`, `preset`, `unknown` |
 | viewer → opener | `error` | `point`, `message` |
 | minimap → viewer | `minimap-ready` | none |
+| viewer → minimap | `minimap-target` | selected `point`; begin map loading while its 3D package loads |
 | viewer → minimap | `camera` | selected `point`, Unity `position`, `forward`, optional `view: { groundY, fovY, aspect }` |
 
 the minimap fits an approximate perspective footprint using height above local terrain, pitch, lens
@@ -70,6 +71,10 @@ above-camera terrain falls back to the target's height (interiors and terrain ho
 and near-horizon views stay bounded. it remains north-up and centered on the camera, so it does not
 reproduce the perspective view's exact footprint. older camera messages without `view` keep zoom 3;
 malformed optional view data is rejected. lens changes and viewport resizes also refresh the map.
+camera samples are coalesced to one draw per iframe animation frame. the condition panel is outside
+the camera render loop; the 3D target updates its position directly. the minimap cursor has no
+heading transition delay and stops its initial pulse after movement or turning. target preparation
+starts map tiles and artwork before the 3D package is ready, without displaying a fictitious camera.
 
 scene loads are serialized and only the newest pending target is committed. the viewer checks the
 actual loaded package's source, version, generation and level before applying companion state. a
