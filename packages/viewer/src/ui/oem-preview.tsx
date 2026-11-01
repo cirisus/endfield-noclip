@@ -83,8 +83,21 @@ export const OEMPreview = ({
 		});
 		const minimap = () => {
 			const camera = viewer.camera;
+			const ground = viewer.groundHeight;
 			iframe.current?.contentWindow?.postMessage(
-				envelope('camera', { point: selected, position: camera.position, forward: camera.forward() }),
+				envelope('camera', {
+					point: selected,
+					position: camera.position,
+					forward: camera.forward(),
+					view: {
+						groundY:
+							ground !== null && ground < camera.position[1]
+								? ground
+								: (selected?.position[1] ?? camera.position[1]),
+						fovY: camera.fovY,
+						aspect: window.innerWidth / Math.max(1, window.innerHeight),
+					},
+				}),
 				launch.origin,
 			);
 		};
@@ -213,6 +226,7 @@ export const OEMPreview = ({
 			}
 		};
 		window.addEventListener('message', receive);
+		window.addEventListener('resize', minimap, { signal: abort.signal });
 		const stop = viewer.subscribeCamera(() => {
 			minimap();
 			setPose((n) => n + 1);
