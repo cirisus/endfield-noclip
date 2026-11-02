@@ -40,6 +40,10 @@ import { buildTileTree } from '../../../viewer/src/scene/tile-tree.ts';
 export const summary =
 	'bake every completed-profile point view into a new immutable release: oem-views <release> -o <releases> --cache <work-directory>';
 
+/** command usage, available without opening the install */
+export const usage =
+	'usage: oem-views <release> -o <releases> --cache <work-directory> [--scenes map01,map02] [--subregions WL_1,WL_2]';
+
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
 		args,

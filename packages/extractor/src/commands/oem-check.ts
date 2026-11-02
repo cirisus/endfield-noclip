@@ -24,6 +24,9 @@ import { readCore } from './oem.ts';
 
 export const summary = 'validate every archive, point and authored preset: oem-check <release-directory>';
 
+/** command usage, available without opening the install */
+export const usage = 'usage: oem-check <release-directory>';
+
 export const run = async (args: string[]): Promise<void> => {
 	if (args.length !== 1) {
 		throw new Error(summary);
