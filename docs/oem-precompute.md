@@ -27,12 +27,12 @@ remain intact. generated packages, checkpoints and game-derived companion data s
 
 ## framing contract
 
-algorithm v6 compares sixteen headings and several elevations while retaining at least 10 m horizontal
+algorithm v7 compares sixteen headings and several elevations while retaining at least 10 m horizontal
 viewing distance. at the first feasible elevation it ranks clear candidates by nearby occlusion
 across a 5 by 3 inspection-frustum grid (5 m forward depth). fewer blocked samples win;
 oblique headings break ties. all rays share a per-point triangle spatial index. this avoids choosing a wall-hugging view just because the point
-itself is visible, without changing the user's lens. v3/v4/v5 catalogs remain readable, but their pose
-keys cannot satisfy v6 requests; rebake to restore the zero-computation path.
+itself is visible, without changing the user's lens. v3/v4/v5/v6 catalogs remain readable, but their pose
+keys cannot satisfy v7 requests; rebake to restore the zero-computation path.
 it focuses above the target floor, handles cave points beneath the terrain and
 ignores small geometry enclosing the collectible itself. all-candidate failures compare 32 headings at 10/16/22 m and three elevations, using a
 5 by 3 target-neighbourhood grid to favour an enclosure's opening and reject foreground walls.
@@ -80,3 +80,8 @@ with at least 3 m lens clearance, trying 10, 16 and 22 m target distances. the s
 target after the state change. destructible placements retain intact/destroyed visibility and explicit
 `reward_entities` gates; unrelated nearby boxes are not removed. debris, damage and intermediate
 physics are not simulated. ambiguous reward owners remain unresolved.
+
+clear interior views also check nearby obstruction controls. an entrance view takes precedence only
+when its complete original obstruction fits, the revealed target is visible, and surrounding wall/ceiling
+samples show more open space at the camera than the original interior pose. an already open exterior
+view is retained on ties, so a nearby door alone does not pull the camera into another room.
