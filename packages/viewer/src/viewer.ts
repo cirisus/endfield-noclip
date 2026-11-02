@@ -1996,6 +1996,23 @@ export class Viewer {
 					refract.end();
 				}
 			},
+			afterDepthOfField: (screenEncoder, target, copy) => {
+				if (!hasScene || !this.#meshes.hasAfterDof) {
+					return;
+				}
+				copy();
+				const afterFocus = screenEncoder.beginRenderPass({
+					label: 'after depth of field',
+					colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
+					depthStencilAttachment: this.#targets.readOnlyDepthAttachment(),
+				});
+				afterFocus.setBindGroup(0, this.#frameBindGroup, [uniforms.offset]);
+				draws += this.#meshes.encodeAfterDof(afterFocus, {
+					...this.#targets.scene,
+					background: this.#targets.scene.radiance,
+				});
+				afterFocus.end();
+			},
 			frameGroup: { group: this.#frameBindGroup, offset: uniforms.offset },
 		});
 		this.#profiler.resolve(encoder);

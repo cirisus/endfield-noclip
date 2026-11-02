@@ -466,8 +466,9 @@ struct Accumulated {
 // alpha-blended materials (`transparent` in materials.ts), shaded like opaque ones. the opacity is the alpha
 // the alpha test would read, times `_BaseColor.a`. the weight favours nearer layers a little, so the front
 // pane of overlapping glass shows more; it stays at most 1 so the half-float sum can't overflow
-@fragment
-fn fs_transparent(in: VertexOut) -> Accumulated {
+override after_dof: bool = false;
+
+fn transparent_layer(in: VertexOut) -> Accumulated {
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let bias = frame.params.y;
@@ -484,13 +485,24 @@ fn fs_transparent(in: VertexOut) -> Accumulated {
 	let distance = length(in.rel) / 20.0;
 	let weight = alpha * max(0.01, 1.0 / (1.0 + distance * distance));
 	var out: Accumulated;
-	out.sum = vec4f(shaded.radiance.rgb * weight, weight);
+	out.sum = select(vec4f(shaded.radiance.rgb * weight, weight), vec4f(shaded.radiance.rgb * alpha, alpha), after_dof);
 	out.revealage = vec4f(alpha);
 	// premultiplied glass (detail2.z) adds its whole radiance: the alpha-weighted share above, the rest as glow
 	let premultiplied = select(0.0, 1.0, draw.detail2.z > 0.5);
 	out.glow = vec4f(shaded.radiance.rgb * (1.0 - alpha) * premultiplied, 0.0);
 	out.distance = vec4f(layer_distance_code(length(in.rel)) * weight);
 	return out;
+}
+
+@fragment
+fn fs_transparent(in: VertexOut) -> Accumulated {
+	return transparent_layer(in);
+}
+
+@fragment
+fn fs_after_dof(in: VertexOut) -> @location(0) vec4f {
+	let layer = transparent_layer(in);
+	return vec4f(layer.sum.rgb + layer.glow.rgb, layer.revealage.x);
 }
 
 fn shade(in: VertexOut, wet: bool) -> Shaded {

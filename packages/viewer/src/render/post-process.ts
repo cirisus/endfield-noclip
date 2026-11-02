@@ -1000,6 +1000,7 @@ export class PostProcess {
 			 * it
 			 */
 			screenEffects: (encoder: GPUCommandEncoder, target: GPUTextureView, copy: () => void) => void;
+			afterDepthOfField: (encoder: GPUCommandEncoder, target: GPUTextureView, copy: () => void) => void;
 			/** the main pass's frame group and its uniforms' offset, which the water pass lights with */
 			frameGroup: { group: GPUBindGroup; offset: number };
 		},
@@ -1114,6 +1115,14 @@ export class PostProcess {
 					},
 				});
 			}
+		}
+		input.afterDepthOfField(encoder, sized.sceneView, () => {
+			encoder.copyTextureToTexture({ texture: sized.scene }, { texture: scene.radianceTexture }, [
+				width,
+				height,
+			]);
+		});
+		if (settings.debugView === 'lit') {
 			// the game draws the flare after the shafts, which don't see it
 			this.lensFlares.encode(encoder, { camera, width, height });
 		}
