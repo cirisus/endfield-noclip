@@ -1,4 +1,5 @@
 import type { VignetteSettings } from '@endfield-noclip/package-format/environment';
+import type { MinMaxCurveInfo } from '@endfield-noclip/package-format/particles';
 import type { PhotoFilter, PhotoFilters } from '@endfield-noclip/package-format/photo-filters';
 import { textureLevelLayout } from '@endfield-noclip/package-format/textures';
 
@@ -27,7 +28,7 @@ const curve = (value: unknown): boolean =>
 					finite(key[k]),
 				),
 		));
-const minMax = (value: unknown): boolean =>
+const minMax = (value: unknown): value is MinMaxCurveInfo =>
 	object(value) &&
 	finite(value.mode) &&
 	[0, 1, 2, 3].includes(value.mode) &&
@@ -65,9 +66,10 @@ const particles = (value: unknown): boolean => {
 		value.renderMode !== 0 ||
 		value.alignment !== 0 ||
 		value.stretch !== null ||
-		value.velocity !== null ||
-		value.drag !== null ||
-		value.speedLimit != null ||
+		!object(value.motion) ||
+		value.motion.kind !== 'free' ||
+		value.motion.velocity !== null ||
+		value.motion.clamp !== null ||
 		value.ringBuffer !== null ||
 		!Array.isArray(value.bursts) ||
 		value.bursts.length !== 0 ||
@@ -76,21 +78,27 @@ const particles = (value: unknown): boolean => {
 		!vector(value.meshWeights, 1) ||
 		value.meshWeights[0] <= 0 ||
 		value.mesh !== 0 ||
-		typeof value.shapeScaling !== 'boolean' ||
+		typeof value.sizedByScale !== 'boolean' ||
 		typeof value.looping !== 'boolean' ||
 		!finite(value.duration) ||
 		value.duration <= 0 ||
-		!finite(value.startDelay) ||
-		value.startDelay < 0 ||
+		!object(value.startDelay) ||
+		!minMax(value.startDelay) ||
+		![0, 3].includes(value.startDelay.mode) ||
+		value.startDelay.scalar < 0 ||
+		value.startDelay.min < 0 ||
 		!finite(value.simulationSpeed) ||
 		value.simulationSpeed < 0 ||
 		!finite(value.maxParticles) ||
 		!Number.isInteger(value.maxParticles) ||
 		value.maxParticles < 0 ||
+		!finite(value.emissionBound) ||
+		!Number.isInteger(value.emissionBound) ||
+		value.emissionBound < 0 ||
 		!minMax(value.startLifetime) ||
-		!minMax(value.startSpeed) ||
+		!minMax(value.motion.startSpeed) ||
 		!minMax(value.rate) ||
-		!zero(value.gravityModifier) ||
+		!zero(value.motion.gravityModifier) ||
 		!color(value.startColor) ||
 		(value.colorOverLifetime !== null && !color(value.colorOverLifetime)) ||
 		!curves(value.startSize) ||
@@ -247,7 +255,7 @@ export const parsePhotoFilters = (value: unknown): PhotoFilters => {
 	if (
 		!object(value) ||
 		value.format !== 'endfield-noclip.photo-filters' ||
-		value.version !== 1 ||
+		value.version !== 2 ||
 		!Array.isArray(value.filters) ||
 		value.filters.length > 64
 	) {

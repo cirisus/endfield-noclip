@@ -3,8 +3,7 @@ import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { Context } from '../context.ts';
 
 import type { AssetResolver, ObjectRef } from './assets.ts';
-
-const QUAD_PATH = 'Packages/com.hg.render-pipelines/Runtime/RenderPipelineResources/Mesh/Quad.fbx';
+import { RENDER_PIPELINE_QUAD_PATH } from './builtin-resources.ts';
 
 /**
  * @param context the install's world index
@@ -15,12 +14,12 @@ export const findParticleQuad = async (
 	context: Pick<Context, 'world'>,
 	resolver: AssetResolver,
 ): Promise<ObjectRef | null> => {
-	const [hash] = await context.world.hashesOf(QUAD_PATH);
+	const [hash] = await context.world.hashesOf(RENDER_PIPELINE_QUAD_PATH);
 	if (hash === undefined) {
 		return null;
 	}
 	try {
-		return await resolver.findUnique({ hash, path: QUAD_PATH }, UnityClass.Mesh);
+		return await resolver.findUnique({ hash, path: RENDER_PIPELINE_QUAD_PATH }, UnityClass.Mesh);
 	} catch {
 		return null;
 	}
