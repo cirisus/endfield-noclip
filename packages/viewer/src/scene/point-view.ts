@@ -6,12 +6,14 @@ import type { DecodePool } from '../package/decode-pool.ts';
 import type { DecodedGeometry, DecodedInstances } from '../package/decode-protocol.ts';
 import { CORE_ARCHIVE_INDEX, type ViewerPackage } from '../package/viewer-package.ts';
 import { RowKind, ROW_WORDS } from '../render/instance-rows.ts';
+import { LookFlags, materialLooks } from '../render/materials.ts';
 
 import type { Vec3 } from './camera.ts';
 import type { CameraPose } from './noclip-controls.ts';
 
 // only resolved decodes are shared: cancelling one target must not poison later reads.
 const decodedCache = new WeakMap<ViewerPackage, Map<number, DecodedInstances | DecodedGeometry>>();
+const opaqueCache = new WeakMap<ViewerPackage, boolean[]>();
 const size = (v: DecodedInstances | DecodedGeometry): number =>
 	v.kind === 'instances'
 		? v.rows.byteLength + v.cull.byteLength + v.runs.byteLength
@@ -157,6 +159,19 @@ export const pointTriangles = async (
 	signal: AbortSignal,
 ): Promise<Triangle[]> => {
 	const radius = 16;
+	let opaque = opaqueCache.get(pkg);
+	if (!opaque) {
+		opaque = materialLooks(pkg.materials).map(
+			(look) =>
+				look.drawn &&
+				!look.unsupported &&
+				!look.transparent &&
+				!look.relight &&
+				look.screen === null &&
+				(look.flags & LookFlags.Effect) === 0,
+		);
+		opaqueCache.set(pkg, opaque);
+	}
 	const near = (center: readonly number[], extent: readonly number[]): boolean =>
 		center.every((v, i) => Math.abs(v - target[i]) <= radius + extent[i]);
 	const read = async (blob: number): Promise<ArrayBuffer> => {
@@ -240,12 +255,11 @@ export const pointTriangles = async (
 					continue;
 				}
 				for (const draw of chain.draws) {
-					if (draw.role !== DrawRole.Lit || draw.lod !== 0) {
+					if (draw.role !== DrawRole.Lit || draw.lod !== 0 || draw.particles !== null) {
 						continue;
 					}
-					const entry = pkg.geometries.entries[draw.geometry],
-						material = pkg.materials.entries[draw.material];
-					if (entry?.status !== 'ready' || material?.status !== 'ready' || material.blend !== 'opaque') {
+					const entry = pkg.geometries.entries[draw.geometry];
+					if (entry?.status !== 'ready' || !opaque[draw.material]) {
 						continue;
 					}
 					let mesh = meshes.get(entry.blob);
