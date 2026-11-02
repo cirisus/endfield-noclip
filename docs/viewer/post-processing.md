@@ -82,10 +82,22 @@ foreground and background radius limits are 10 pixels at a 1440-pixel render hei
 shaping input is 0.3. a separate water-depth pass prevents focusing through water to its bed.
 camera-relative reprojection includes the current and previous antialiasing jitter. camera cuts,
 lens edits, resizing and disabling the effect invalidate history; disabling it releases its render
-targets. no new scene-package fields or downloads are required.
+targets. the lens effect itself needs no new scene resources.
 
-current limits: reprojection accounts for camera motion, not moving-object motion. transparent
-materials do not have the game's separate after-DoF classification. the viewer uses half-float
-intermediates throughout, so rounding differs from packed colour intermediates. no same-pose in-game
-image comparison has established pixel-identical output. these limits are independent of the
+materials with an authored queue from 3660 through 3740 draw after focus blur and before lens flares
+and TAA, including when focus blur is disabled. these layers leave the ordinary transparent pass;
+they use direct premultiplied blending, retaining additive emission, rather than weighted OIT.
+instances sort by queue then descending camera distance. particle instances currently share their
+emitter's sorting distance. multiply and refraction retain their own blend modes. scene depth stays
+read-only, and refraction samples a separate copy made after focus blur. unsupported materials keep
+their diagnostic appearance.
+
+the packer retains `renderQueue` in ready material records. earlier version-49 packages without that
+optional field retain their previous transparent path; repack to enable authored post-focus ordering.
+no material name or shader-name heuristic substitutes for the queue.
+
+current limits: reprojection accounts for camera motion, not moving-object motion. the viewer uses
+half-float intermediates throughout, so rounding differs from packed colour intermediates. validation
+is against recovered code and data plus GPU execution; it does not establish pixel-identical output.
+these limits are independent of the
 existing differences in scene content, lighting and other post effects.

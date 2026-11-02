@@ -148,3 +148,7 @@ neighbours to limit silhouette bleeding. temporal filtering clips reprojected co
 current neighbourhood and rejects opposite-sign focus history. the effect precedes motion blur,
 after-DoF transparencies, lens flare and temporal antialiasing. see the
 [viewer implementation and remaining differences](../viewer/post-processing.md#photography).
+
+post-focus transparency is selected by authored render queues 3660–3740 inclusive. it uses the
+forward transparent shader passes and runs after depth of field, before lens flare and TAA; being
+transparent alone does not select this stage.

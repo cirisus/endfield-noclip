@@ -454,6 +454,9 @@ each is one zstd frame (level 9) around JSON. entry `i` has id `i`. an entry is 
 
 ### materials
 
+ready material records optionally retain the authored `renderQueue`. its absence in older version-49
+packages means the queue is unknown; readers must not infer it from material names.
+
 each material is its cull mode and its `surface`: the extractor's interpretation of its serialized
 state ([material and shader](game-data/assets.md#material-and-shader), decoded as
 [extraction.md](extraction.md#asset-classes) describes) into what it draws

@@ -40,8 +40,8 @@ packs or renders correctly.
 
 ## lighting and post-processing
 
-- photographic depth of field is available, but moving-object reprojection and after-DoF transparent
-  classification are not reproduced; same-pose in-game comparisons remain outstanding
+- photographic depth of field and authored post-focus transparency are available; moving-object
+  reprojection, per-particle transparency sorting and packed intermediate precision still differ
   ([photography](viewer/post-processing.md#photography))
 
 - baked GI ([irradiance](game-data/irradiance.md), [ambient](game-data/lighting.md#ambient)):
