@@ -79,17 +79,75 @@ const blocked = (start: Vec3, end: Vec3, triangles: readonly Triangle[]): boolea
 	return false;
 };
 
+// The extra context rays share one spatial index per point; they must not each
+// scan all nearby detail triangles during a whole-map bake.
+type Occluders = { min: Vec3; max: Vec3; triangles?: readonly Triangle[]; children?: Occluders[] };
+const indexTriangles = (triangles: readonly Triangle[]): Occluders => {
+	const min: Vec3 = [Infinity, Infinity, Infinity],
+		max: Vec3 = [-Infinity, -Infinity, -Infinity];
+	for (const triangle of triangles) {
+		for (const vertex of triangle) {
+			for (let axis = 0; axis < 3; axis++) {
+				min[axis] = Math.min(min[axis], vertex[axis]);
+				max[axis] = Math.max(max[axis], vertex[axis]);
+			}
+		}
+	}
+	if (triangles.length <= 16) {
+		return { min, max, triangles };
+	}
+	let axis = 0;
+	for (let i = 1; i < 3; i++) {
+		if (max[i] - min[i] > max[axis] - min[axis]) {
+			axis = i;
+		}
+	}
+	const ordered = triangles.toSorted(
+		(a, b) => a[0][axis] + a[1][axis] + a[2][axis] - b[0][axis] - b[1][axis] - b[2][axis],
+	);
+	const middle = Math.floor(ordered.length / 2);
+	return {
+		min,
+		max,
+		children: [indexTriangles(ordered.slice(0, middle)), indexTriangles(ordered.slice(middle))],
+	};
+};
+const intersects = (start: Vec3, end: Vec3, node: Occluders): boolean => {
+	let near = 0,
+		far = 1;
+	for (let axis = 0; axis < 3; axis++) {
+		const direction = end[axis] - start[axis];
+		if (Math.abs(direction) < 1e-10) {
+			if (start[axis] < node.min[axis] || start[axis] > node.max[axis]) {
+				return false;
+			}
+		} else {
+			const a = (node.min[axis] - start[axis]) / direction;
+			const b = (node.max[axis] - start[axis]) / direction;
+			near = Math.max(near, Math.min(a, b));
+			far = Math.min(far, Math.max(a, b));
+			if (near > far) {
+				return false;
+			}
+		}
+	}
+	return node.triangles
+		? blocked(start, end, node.triangles)
+		: (node.children ?? []).some((child) => intersects(start, end, child));
+};
+
 /**
  * @param target authored point, in Unity coordinates
  * @param triangles nearby visible opaque scenery
  * @param ground terrain height, null where unknown or absent
- * @returns the widest clear view, or a close view when every direction is blocked
+ * @returns a clear view with nearby context, or the distance-preserving fallback
  */
 export const pointPose = (
 	target: Vec3,
 	triangles: readonly Triangle[],
 	ground: (x: number, z: number) => number | null,
 ): CameraPose & { clear: boolean } => {
+	const occluders = indexTriangles(triangles);
 	const sampled = ground(target[0], target[2]);
 	// Underground points are framed within their cave, not lifted onto the terrain above it.
 	const underground = sampled !== null && sampled > target[1] + 3;
@@ -97,6 +155,8 @@ export const pointPose = (
 	const focus: Vec3 = [target[0], Math.max(target[1], surface ?? target[1]) + 0.6, target[2]];
 	for (const back of [10]) {
 		for (const slope of [0.35, 0.15, 0.6, 1, 0.05, 0]) {
+			let best: (CameraPose & { clear: boolean }) | null = null;
+			let bestScore = Infinity;
 			for (let heading = 0; heading < 16; heading++) {
 				const yaw = (heading * Math.PI) / 8;
 				const position: Vec3 = [
@@ -112,7 +172,7 @@ export const pointPose = (
 					[position[0], position[1] + 0.35, position[2]],
 					[position[0], position[1] - 0.35, position[2]],
 				];
-				if (eyes.some((eye) => blocked(focus, eye, triangles))) {
+				if (eyes.some((eye) => intersects(focus, eye, occluders))) {
 					continue;
 				}
 				let below = false;
@@ -129,8 +189,37 @@ export const pointPose = (
 					}
 				}
 				if (!below) {
-					return { position, yaw, pitch: -Math.atan2(position[1] - target[1], back), clear: true };
+					// A clear centre ray alone can leave half the image filled by a nearby wall.
+					// Sample a fixed inspection frustum, independent of the user's saved lens.
+					const pitch = -Math.atan2(position[1] - target[1], back);
+					const forward: Vec3 = [
+						Math.sin(yaw) * Math.cos(pitch),
+						Math.sin(pitch),
+						Math.cos(yaw) * Math.cos(pitch),
+					];
+					const right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)];
+					const up = cross(forward, right);
+					let score = 0;
+					for (const x of [-0.8, -0.4, 0, 0.4, 0.8]) {
+						for (const y of [-0.4, 0, 0.4]) {
+							const component = (axis: number) =>
+								position[axis] + 5 * (forward[axis] + right[axis] * x + up[axis] * y);
+							const end: Vec3 = [component(0), component(1), component(2)];
+							if (intersects(position, end, occluders)) {
+								score++;
+							}
+						}
+					}
+					// Prefer oblique views only as a tie-breaker; visibility always wins.
+					score += 0.01 * Math.abs(Math.cos(2 * yaw));
+					if (score < bestScore - 1e-8) {
+						bestScore = score;
+						best = { position, yaw, pitch, clear: true };
+					}
 				}
+			}
+			if (best) {
+				return best;
 			}
 		}
 	}

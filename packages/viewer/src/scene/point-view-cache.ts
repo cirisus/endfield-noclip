@@ -1,7 +1,7 @@
 import type { Vec3 } from './camera.ts';
 import type { CameraPose } from './noclip-controls.ts';
 
-const PREFIX = 'noclip-point-view-v3:';
+const PREFIX = 'noclip-point-view-v4:';
 const LIMIT = 512;
 
 /**

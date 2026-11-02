@@ -42,7 +42,7 @@ export const summary =
 
 /** command usage, available without opening the install */
 export const usage =
-	'usage: oem-views <release> -o <releases> --cache <work-directory> [--scenes map01,map02] [--subregions WL_1,WL_2]';
+	'usage: oem-views <release> -o <releases> --cache <work-directory> [--scenes map01,map02] [--subregions WL_1,WL_2] [--points <id>,<id>]';
 
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
@@ -53,6 +53,7 @@ export const run = async (args: string[]): Promise<void> => {
 			cache: { type: 'string' },
 			scenes: { type: 'string' },
 			subregions: { type: 'string' },
+			points: { type: 'string' },
 		},
 	});
 	if (positionals.length !== 1 || !values.output || !values.cache) {
@@ -66,6 +67,7 @@ export const run = async (args: string[]): Promise<void> => {
 		throw new Error('invalid source OEM release');
 	}
 	const catalog = raw;
+	const points = values.points ? new Set(values.points.split(',')) : null;
 	const scenes = values.scenes ? new Set(values.scenes.split(',')) : null;
 	const subregions = values.subregions ? new Set(values.subregions.split(',')) : null;
 	if (subregions && [...subregions].some((id) => !Object.hasOwn(catalog.files, id))) {
@@ -82,6 +84,12 @@ export const run = async (args: string[]): Promise<void> => {
 			throw new Error(`invalid companion ${id}`);
 		}
 		partitions.set(id, value);
+	}
+	if (
+		points &&
+		[...points].some((id) => ![...partitions.values()].some((p) => p.points.some((point) => point.id === id)))
+	) {
+		throw new Error('unknown framing point');
 	}
 	const decoder: Pick<DecodePool, 'run'> = {
 		async run<J extends DecodeJob>(job: J): Promise<Extract<Decoded, { kind: J['kind'] }>> {
@@ -209,7 +217,7 @@ export const run = async (args: string[]): Promise<void> => {
 					continue;
 				}
 				const rows = partition.points
-					.filter((p) => p.scene === scene)
+					.filter((p) => p.scene === scene && (!points || points.has(p.id)))
 					.toSorted(
 						(a, b) =>
 							Math.floor(a.position[0] / 64) - Math.floor(b.position[0] / 64) ||
@@ -305,7 +313,7 @@ export const run = async (args: string[]): Promise<void> => {
 			}
 		}
 	}
-	if (scenes || subregions) {
+	if (scenes || subregions || points) {
 		console.log(
 			JSON.stringify({
 				scenes: scenes ? [...scenes] : null,
@@ -349,7 +357,7 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	await writeFile(
 		join(destination, 'index.json'),
-		JSON.stringify({ ...catalog, release, framing: { version: 3, profile: 'completed', points: count } }),
+		JSON.stringify({ ...catalog, release, framing: { version: 4, profile: 'completed', points: count } }),
 	);
 	console.log(
 		JSON.stringify({
