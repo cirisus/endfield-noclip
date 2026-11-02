@@ -6,9 +6,9 @@ import {
 } from '@endfield-noclip/package-format/conditions';
 import type { LevelEnvironment, LevelInfo } from '@endfield-noclip/package-format/manifest';
 import type { PointView } from '@endfield-noclip/package-format/oem';
-import { proximityValues } from '@endfield-noclip/package-format/proximity';
 import type { MissionInfo, SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
 import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
+import { proximityValues } from '@endfield-noclip/package-format/proximity';
 import {
 	areasShownIn,
 	streamAreaValues,
@@ -1522,7 +1522,7 @@ export class Viewer {
 			}
 			this.#post.photoLut.set(filter, patch.photoLutStrength ?? this.options.photoLutStrength);
 			if (patch.photoFilter !== undefined && patch.photoFilter !== this.options.photoFilter) {
-				this.#post.photoParticles.set(filter, this.camera);
+				this.#post.photoParticles.set(filter, this.camera, this.#time);
 			}
 		}
 		Object.assign(this.options, patch);
@@ -1687,7 +1687,11 @@ export class Viewer {
 			dt,
 			{ metering: changed || settling },
 		);
-		const render = changed || settling || adapting || (post.debugView === 'lit' && this.#post.photoParticles.active);
+		const render =
+			changed ||
+			settling ||
+			adapting ||
+			(options.animate && post.debugView === 'lit' && this.#post.photoParticles.active);
 		if (render && options.animate) {
 			this.#time += dt;
 		}
