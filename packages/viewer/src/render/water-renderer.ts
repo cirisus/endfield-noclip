@@ -205,6 +205,7 @@ export class WaterRenderer {
 			primitive,
 			depthStencil: { format: WATER_DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
 		});
+
 		this.#surfaces = device.createBuffer({
 			label: 'water surfaces',
 			size: this.#surfaceData.byteLength,
@@ -494,6 +495,42 @@ export class WaterRenderer {
 		pass.setBindGroup(1, context.sky);
 		pass.setBindGroup(2, group);
 		pass.setBindGroup(3, context.postUniforms);
+		this.#draw(pass);
+		pass.end();
+	}
+
+	/**
+	 * records the nearest visible water surface for photography. opaque occluders remain in the scene depth and
+	 * are combined with this target by the focus pass; no water lighting is evaluated here.
+	 *
+	 * @param encoder this frame's encoder
+	 * @param target a depth32float view at the render size; cleared even when there is no water
+	 * @param context the same frame and uniforms used to draw water colour
+	 */
+	encodeDepth(encoder: GPUCommandEncoder, target: GPUTextureView, context: WaterContext): void {
+		const pass = encoder.beginRenderPass({
+			label: 'water photography depth',
+			colorAttachments: [],
+			depthStencilAttachment: {
+				view: target,
+				depthClearValue: 0,
+				depthLoadOp: 'clear',
+				depthStoreOp: 'store',
+			},
+		});
+		const group = this.#bindGroup(context);
+		if (group !== null && this.#draws.length > 0) {
+			pass.setPipeline(this.#depthPipeline);
+			pass.setBindGroup(0, context.frame.group, [context.frame.offset]);
+			pass.setBindGroup(1, context.sky);
+			pass.setBindGroup(2, group);
+			pass.setBindGroup(3, context.postUniforms);
+			this.#draw(pass);
+		}
+		pass.end();
+	}
+
+	#draw(pass: GPURenderPassEncoder): void {
 		for (const { geometry, slot } of this.#draws) {
 			pass.setVertexBuffer(0, geometry.vertices, 0, geometry.positionBytes);
 			pass.setVertexBuffer(1, geometry.vertices, geometry.normalOffset ?? 0);

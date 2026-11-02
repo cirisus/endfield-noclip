@@ -40,6 +40,10 @@ packs or renders correctly.
 
 ## lighting and post-processing
 
+- photographic depth of field is available, but moving-object reprojection and after-DoF transparent
+  classification are not reproduced; same-pose in-game comparisons remain outstanding
+  ([photography](viewer/post-processing.md#photography))
+
 - baked GI ([irradiance](game-data/irradiance.md), [ambient](game-data/lighting.md#ambient)):
   brightness is unchecked against in-game shots; the native scalar on all diffuse ambient, the
   specular ambient's scale (taken as `indirectSpecularFactor`) and the volume's default SH aren't

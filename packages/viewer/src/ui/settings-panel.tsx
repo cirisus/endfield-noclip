@@ -42,6 +42,7 @@ const Slider = ({
 		| 'budgetMiB'
 		| 'textureBias'
 		| 'exposure'
+		| 'aperture'
 		| 'renderScale';
 	label: string;
 	min: number;
@@ -63,7 +64,7 @@ const Slider = ({
 				onChange={(event) => viewer.setOptions({ [name]: Number(event.currentTarget.value) })}
 			/>
 			<output htmlFor={id}>
-				{viewer.options[name]} {unit}
+				{name === 'aperture' ? `f/${viewer.options[name].toFixed(1)}` : `${viewer.options[name]} ${unit}`}
 			</output>
 		</div>
 	);
@@ -263,6 +264,43 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 			/>
 			<Toggle viewer={viewer} name="animate" label="animate" />
 			<Toggle viewer={viewer} name="continuous" label="render every frame" />
+		</Panel>
+	);
+};
+
+/** photographic lens controls, using the same panel and form styles as the scene controls */
+export const PhotographyPanel = ({ viewer }: { viewer: Viewer }) => {
+	useViewerState(viewer);
+	const id = useId();
+	return (
+		<Panel title="Photography" label="photography" className="settings">
+			<Toggle viewer={viewer} name="depthOfField" label="depth of field" />
+			<Slider viewer={viewer} name="aperture" label="aperture" min={1.4} max={32} step={0.1} unit="f" />
+			<div className="slider">
+				<label htmlFor={id}>focus distance</label>
+				<input
+					id={id}
+					type="range"
+					min={-1}
+					max={4}
+					step={0.01}
+					value={Math.log10(viewer.options.focusDistance)}
+					onChange={(event) => viewer.setOptions({ focusDistance: 10 ** Number(event.currentTarget.value) })}
+				/>
+				<input
+					type="number"
+					aria-label="focus distance in metres"
+					min={0.1}
+					max={10000}
+					step={0.1}
+					value={Number(viewer.options.focusDistance.toFixed(2))}
+					onChange={(event) => {
+						if (event.currentTarget.value !== '') {
+							viewer.setOptions({ focusDistance: event.currentTarget.valueAsNumber });
+						}
+					}}
+				/>
+			</div>
 		</Panel>
 	);
 };
