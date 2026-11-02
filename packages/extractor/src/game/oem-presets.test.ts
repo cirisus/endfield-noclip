@@ -6,14 +6,14 @@ import type { SceneControl, StatesInfo } from '@endfield-noclip/package-format/s
 
 import { pointPresets } from './oem-presets.ts';
 
-const quest = (id: string, step: number | null): SceneControl => ({
+const quest = (id: string, step: number | null): SceneControl & { kind: 'quest' } => ({
 	kind: 'quest',
 	id: `quest:${id}`,
 	name: id,
 	story: step === null ? null : { mission: 'e1m1', step },
 	rule: null,
 	assumption: 'story finished',
-	drivers: [],
+	followsCamera: false,
 	levelTags: [],
 	derived: null,
 	default: 3,
@@ -24,6 +24,8 @@ const states = (controls: SceneControl[]): StatesInfo => ({
 	conditionalSets: [],
 	groups: [],
 	streamAreas: null,
+	proximities: [],
+	mainStory: ['e1m1'],
 	missions: [{ id: 'e1m1', name: 'mission', category: 'main', chapter: null, episode: null, levelId: null }],
 });
 
@@ -66,6 +68,37 @@ test('rejects an impossible reversed quest ordering', () => {
 	});
 	assert.equal(
 		p.some((entry) => entry.satisfies),
+		false,
+	);
+});
+
+test('uses the packed main story order for prerequisites spanning missions', () => {
+	const s = states([
+		{ ...quest('early_q#1', 1), story: { mission: 'early', step: 1 } },
+		{ ...quest('late_q#1', 1), story: { mission: 'late', step: 1 } },
+	]);
+	s.mainStory = ['early', 'late'];
+	s.missions = s.mainStory.map((id) => ({ ...s.missions[0], id, name: id }));
+	assert.equal(
+		pointPresets(s, {
+			alternatives: [
+				[
+					{ control: 'quest:early_q#1', mask: 8 },
+					{ control: 'quest:late_q#1', mask: 4 },
+				],
+			],
+		}).some((p) => p.satisfies),
+		true,
+	);
+	assert.equal(
+		pointPresets(s, {
+			alternatives: [
+				[
+					{ control: 'quest:early_q#1', mask: 1 },
+					{ control: 'quest:late_q#1', mask: 8 },
+				],
+			],
+		}).some((p) => p.satisfies),
 		false,
 	);
 });

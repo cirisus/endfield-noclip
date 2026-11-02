@@ -12,7 +12,7 @@ import {
 	type PackageManifest,
 } from '@endfield-noclip/package-format/manifest';
 import type { Catalog, Companion, Point } from '@endfield-noclip/package-format/oem';
-import type { SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
+import type { SceneControl, ScriptControl, StatesInfo } from '@endfield-noclip/package-format/states';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { fromUint8Array, openArchive } from '@mary-ext/czar';
@@ -20,7 +20,7 @@ import { fromUint8Array, openArchive } from '@mary-ext/czar';
 import { withContext } from '../context.ts';
 import { GameState, type GameCondition } from '../game/game-state.ts';
 import { pointPresets } from '../game/oem-presets.ts';
-import { labelStory } from '../game/story.ts';
+import { labelStory, mainStoryOrder } from '../game/story.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
 /* oxlint-disable no-await-in-loop -- one stateful decoder and bounded archive copies; never decode concurrently */
@@ -301,7 +301,10 @@ export const run = async (args: string[]): Promise<void> => {
 					position: vec(row.position),
 					condition: prerequisite,
 					locks: pointLocks,
-					drivers: core.states.controls.find((c) => c.id === `script:${id}`)?.drivers ?? [],
+					drivers:
+						core.states.controls.find(
+							(c): c is ScriptControl => c.kind === 'script' && c.id === `script:${id}`,
+						)?.drivers ?? [],
 					unknown,
 					presets: [],
 					source: {
@@ -336,7 +339,8 @@ export const run = async (args: string[]): Promise<void> => {
 				names = await labelStory(ctx.world, controls, language);
 			labels[locale] = Object.fromEntries(
 				controls.map((c) => {
-					const mission = names.find((m) => m.id === c.story?.mission)?.name;
+					const story = c.kind === 'quest' || c.kind === 'mission' ? c.story : null;
+					const mission = names.find((m) => m.id === story?.mission)?.name;
 					return [c.id, c.kind === 'quest' && mission ? `${mission}: ${c.name}` : c.name];
 				}),
 			);
@@ -352,10 +356,12 @@ export const run = async (args: string[]): Promise<void> => {
 						byId.set(c.id, c);
 					}
 				}
+				const combinedMissions = [...new Map([...base.missions, ...missions].map((m) => [m.id, m])).values()];
 				const states: StatesInfo = {
 					...base,
 					controls: [...byId.values()],
-					missions: [...new Map([...base.missions, ...missions].map((m) => [m.id, m])).values()],
+					missions: combinedMissions,
+					mainStory: mainStoryOrder(combinedMissions),
 				};
 				const key = `${p.scene}:${JSON.stringify(p.condition)}`;
 				let choices = presets.get(key);

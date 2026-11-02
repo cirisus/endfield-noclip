@@ -1,7 +1,7 @@
 import { conditionVisible, resolveSceneValues } from '@endfield-noclip/package-format/conditions';
 import type { Preset } from '@endfield-noclip/package-format/oem';
 import type { ConditionalSetInfo, StatesInfo } from '@endfield-noclip/package-format/states';
-import { storyOrder, storyPointPicks, storyPoints } from '@endfield-noclip/package-format/story';
+import { storyPlace, storyPointPicks, storyPoints } from '@endfield-noclip/package-format/story';
 
 /**
  * finds story-consistent candidates using the viewer's existing story-point semantics. unknown, unplaceable
@@ -22,23 +22,21 @@ export const pointPresets = (states: StatesInfo, condition: ConditionalSetInfo |
 	const required = new Set(condition.alternatives.flatMap((alt) => alt.map((r) => r.control)));
 	const missions = [
 		...new Set(
-			states.controls.filter((c) => required.has(c.id)).flatMap((c) => (c.story ? [c.story.mission] : [])),
+			states.controls
+				.filter((c) => required.has(c.id))
+				.flatMap((c) => {
+					const story = storyPlace(c);
+					return story === null ? [] : [story.mission];
+				}),
 		),
 	];
-	const main = states.missions
-		.filter((m) => m.category === 'main' && storyOrder(m.id) !== null)
-		.toSorted((a, b) => {
-			const aa = storyOrder(a.id)!,
-				bb = storyOrder(b.id)!;
-			return aa[0] - bb[0] || aa[1] - bb[1];
-		})
-		.map((m) => m.id);
+	const main = states.mainStory;
 	const groups = missions
 		.map((id) => (main.includes(id) ? main : [id]))
 		.filter((ids, i, all) => all.findIndex((other) => other.join() === ids.join()) === i);
 	let candidates: { picks: Record<string, number>; labels: string[] }[] = [{ picks: {}, labels: [] }];
 	for (const ids of groups) {
-		const choices = storyPoints(states.controls, ids).map(({ point, mission, quest }) => ({
+		const choices = storyPoints(states.controls, ids).map(({ point, mission, quests }) => ({
 			picks: Object.fromEntries(
 				Object.entries(storyPointPicks(states.controls, ids, point)).map(([id, v]) => [
 					id,
@@ -48,7 +46,7 @@ export const pointPresets = (states: StatesInfo, condition: ConditionalSetInfo |
 			label:
 				point === null
 					? 'Story finished'
-					: `${states.missions.find((m) => m.id === mission)?.name ?? mission}: ${quest?.name ?? 'mission start'} (${mission}:${point.step})`,
+					: `${states.missions.find((m) => m.id === mission)?.name ?? mission}: ${quests.map((q) => q.name).join(', ') || 'mission start'} (${mission}:${point.step})`,
 		}));
 		const next = candidates.flatMap((base) =>
 			choices.map((choice) => ({
