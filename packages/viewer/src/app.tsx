@@ -6,7 +6,7 @@ import { LevelsPanel } from './ui/levels-panel.tsx';
 import { type OpenPackage, PackagePanel } from './ui/package-panel.tsx';
 import { sourceFromParam } from './ui/package-param.ts';
 import { SceneControls } from './ui/scene-controls.tsx';
-import { PhotographyPanel, SettingsPanel } from './ui/settings-panel.tsx';
+import { FiltersPanel, PhotographyPanel, SettingsPanel } from './ui/settings-panel.tsx';
 import { StatsPanel } from './ui/stats-panel.tsx';
 import { Viewer } from './viewer.ts';
 
@@ -129,6 +129,7 @@ export const App = ({ overlay }: { overlay?: (viewer: Viewer, panel: HTMLElement
 						{!hosted && <LevelsPanel viewer={viewer} />}
 						<SceneControls viewer={viewer} />
 						<PhotographyPanel viewer={viewer} />
+						<FiltersPanel viewer={viewer} />
 						<SettingsPanel viewer={viewer} />
 						{hosted && <StatsPanel viewer={viewer} />}
 					</div>
