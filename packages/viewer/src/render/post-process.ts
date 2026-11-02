@@ -1,8 +1,9 @@
-import { type SceneTextures, HDR_FORMAT } from '../gfx/render-targets.ts';
+import { type SceneTextures, DEPTH_FORMAT, HDR_FORMAT } from '../gfx/render-targets.ts';
 import type { Camera } from '../scene/camera.ts';
 
 import { AutoExposure } from './auto-exposure.ts';
 import { CelestialLayer } from './celestial.ts';
+import { DepthOfField } from './depth-of-field.ts';
 import { type Environment, evaluateSh } from './environment.ts';
 import type { DebugView } from './frame-uniforms.ts';
 import { LensFlares } from './lens-flare.ts';
@@ -60,6 +61,9 @@ export type Tonemapper = (typeof TONEMAPPERS)[number];
 export interface PostSettings {
 	/** exposure compensation, EV */
 	exposure: number;
+	depthOfField: boolean;
+	aperture: number;
+	focusDistance: number;
 	/** follow the game's auto exposure on top of the compensation */
 	autoExposure: boolean;
 	tonemapper: Tonemapper;
@@ -89,6 +93,7 @@ const effectiveSettings = (settings: PostSettings): PostSettings => {
 		exposure: 0,
 		autoExposure: false,
 		tonemapper: 'none',
+		depthOfField: false,
 		heightFog: false,
 		atmosphereFog: false,
 		flowNoise: false,
@@ -146,6 +151,8 @@ interface Sized {
 	/** the composited scene at the render size, which the temporal resolve reads */
 	scene: GPUTexture;
 	sceneView: GPUTextureView;
+	waterDepth: GPUTexture | null;
+	waterDepthView: GPUTextureView | null;
 	/** views of the temporal histories, the antialiased scene at the output size */
 	historyViews: [GPUTextureView, GPUTextureView];
 	/**
@@ -189,6 +196,7 @@ export class PostProcess {
 	/** the sun's lens flare; the caller sets its look and textures */
 	readonly lensFlares: LensFlares;
 	#lightShafts: LightShafts;
+	#focus: DepthOfField | null = null;
 	#device: GPUDevice;
 	#uniforms: GPUBuffer;
 	#data = new Float32Array(POST_BYTES / 4);
@@ -456,7 +464,9 @@ export class PostProcess {
 			outputPixels * 8 * (2 / 3) +
 			this.taa.bytes +
 			this.reflections.bytes +
-			this.#lightShafts.bytes
+			(this.#lightShafts.bytes +
+				(this.#focus?.bytes ?? 0) +
+				(sized.waterDepth === null ? 0 : sized.width * sized.height * 4))
 		);
 	}
 
@@ -565,6 +575,8 @@ export class PostProcess {
 	}
 
 	#releaseSized(sized: Sized): void {
+		this.#focus?.release();
+		sized.waterDepth?.destroy();
 		for (const texture of [
 			sized.aoDepth,
 			sized.ao,
@@ -728,6 +740,8 @@ export class PostProcess {
 			aoBlurred,
 			scene: sceneTexture,
 			sceneView,
+			waterDepth: null,
+			waterDepthView: null,
 			historyViews: [histories[0].createView(), histories[1].createView()],
 			down,
 			blurred,
@@ -1054,8 +1068,48 @@ export class PostProcess {
 				aspect: width / height,
 				look: this.#environment.lightShaft,
 			});
+			if (settings.depthOfField) {
+				this.#focus ??= new DepthOfField(this.#device);
+				if (sized.waterDepth === null) {
+					sized.waterDepth = this.#device.createTexture({
+						label: 'photography water depth',
+						size: [width, height],
+						format: DEPTH_FORMAT,
+						usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+					});
+					sized.waterDepthView = sized.waterDepth.createView();
+				}
+				water.encodeDepth(encoder, sized.waterDepthView!, {
+					scene,
+					background: scene.radiance,
+					frame: input.frameGroup,
+					postUniforms: this.#skyLayoutGroups.uniforms,
+					sky: this.#skyLayoutGroups.sky,
+					version: sized.version,
+				});
+				this.#focus.encode(encoder, {
+					camera,
+					jitter: this.taa.jitter,
+					scene: sized.scene,
+					depth: scene.depth,
+					waterDepth: sized.waterDepthView!,
+					settings: {
+						aperture: settings.aperture,
+						focusDistance: settings.focusDistance,
+						nearRadius: 10,
+						farRadius: 10,
+						temporalFactor: 0.3,
+					},
+				});
+			}
 			// the game draws the flare after the shafts, which don't see it
 			this.lensFlares.encode(encoder, { camera, width, height });
+		}
+		if (!settings.depthOfField || settings.debugView !== 'lit') {
+			this.#focus?.release();
+			sized.waterDepth?.destroy();
+			sized.waterDepth = null;
+			sized.waterDepthView = null;
 		}
 		const resolved = this.taa.encode(encoder, { camera, postGroup: sized.passes.taa });
 		if (settings.autoExposure) {
@@ -1083,6 +1137,11 @@ export class PostProcess {
 		});
 	}
 
+	/** discards photography history after a camera cut or scene replacement */
+	resetFocus(): void {
+		this.#focus?.reset();
+	}
+
 	/** frees the chain's GPU resources */
 	destroy(): void {
 		if (this.#sized !== null) {
@@ -1099,5 +1158,6 @@ export class PostProcess {
 		this.reflections.destroy();
 		this.#lightShafts.destroy();
 		this.lensFlares.destroy();
+		this.#focus?.destroy();
 	}
 }

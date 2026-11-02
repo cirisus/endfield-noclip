@@ -34,6 +34,10 @@ packs or renders correctly.
 
 ## look and lighting
 
+- photographic depth of field is available, but moving-object reprojection and after-DoF transparent
+  classification are not reproduced; same-pose in-game comparisons remain outstanding
+  ([photography](viewer/post-processing.md#photography))
+
 - baked GI brightness is unverified against in-game shots; the native ambient scale is missing, and
   the lighting lookup has no jitter or forward-shifted clipmap centres. next: compare GPU clipmap
   samples with the bake at one point, and check clipmap seams (L0 repeats, L1 clamps)
