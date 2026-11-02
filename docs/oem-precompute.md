@@ -16,7 +16,8 @@ not WebGPU, textures or an account. points are grouped by scene and tile to reus
 scene's active progression and target streaming areas participate. checkpoint JSON is written
 atomically every 100 points and after each partition; restarting rechecks the versioned keys.
 `--scenes map01,map02` and `--subregions WL_1,WL_2` restrict a run to checkpoint preparation without
-publishing a partial catalog. disjoint scene/partition runs can run in parallel; finish with the
+publishing a partial catalog. `--points <id>,<id>` prepares individual regression cases in the
+same checkpoint format. disjoint scene/partition runs can run in parallel; finish with the
 unrestricted command to assemble complete coverage.
 
 publication requires the output and input to share a filesystem: immutable archives are hard-linked,
@@ -26,8 +27,13 @@ remain intact. generated packages, checkpoints and game-derived companion data s
 
 ## framing contract
 
-algorithm v3 tries sixteen headings and several elevations while retaining at least 10 m horizontal
-viewing distance. it focuses above the target floor, handles cave points beneath the terrain and
+algorithm v4 compares sixteen headings and several elevations while retaining at least 10 m horizontal
+viewing distance. at the first feasible elevation it ranks clear candidates by nearby occlusion
+across a 5 by 3 inspection-frustum grid (5 m forward depth). fewer blocked samples win;
+oblique headings break ties. all rays share a per-point triangle spatial index. this avoids choosing a wall-hugging view just because the point
+itself is visible, without changing the user's lens. v3 catalogs remain readable, but their pose
+keys cannot satisfy v4 requests; rebake to restore the zero-computation path.
+it focuses above the target floor, handles cave points beneath the terrain and
 ignores small geometry enclosing the collectible itself. all-candidate failures retain the south 10
 m / up 6 m view with `clear: false`, so neither the exporter nor UI claims guaranteed visibility.
 transparent surfaces, unavailable geometry and points embedded in solid objects remain limitations.
