@@ -7,7 +7,7 @@ export interface PhotoFilters {
 	/** separate from the scene package contract */
 	format: 'endfield-noclip.photo-filters';
 	/** incompatible photo-library changes increment this version */
-	version: 1;
+	version: 2;
 	/** table order, with names resolved from the install */
 	filters: PhotoFilter[];
 }
@@ -57,8 +57,8 @@ export interface PhotoEffect {
 	name: string;
 	/** emitter-to-prefab transform, column-major */
 	matrix: number[];
-	/** authored closed-form settings; speed limiting is outside this simple emitter contract */
-	particles: Omit<ParticleSystemInfo, 'speedLimit'>;
+	/** current scene particle settings; only free motion without gravity or clamping is supported */
+	particles: ParticleSystemInfo;
 	/** linear HDR tint including intensity; alpha includes the material's opacity */
 	tint: [number, number, number, number];
 	/** cancels post exposure for emission, as the source material requests */

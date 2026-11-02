@@ -133,7 +133,8 @@ unsupported.
 Black and Gold also exports its additive particle emitter and BC7 sprite atlas. the viewer reuses
 the scene particle evaluator for emission, lifetime curves, size, rotation, colour and atlas frames.
 the effect is anchored at the camera's first selection pose; switching away and back resumes that
-anchor and clock rather than making the particles follow the camera. it draws depth-tested HDR
+anchor rather than making the particles follow the camera. its clock is the viewer's rendered-frame
+animation time; the Animate switch pauses it with the scene. it draws depth-tested HDR
 billboards before temporal AA, bloom and grading, cancelling post exposure when the source material
 requests it. only selected emitters allocate textures and buffers; animation reuses scene selection
 unless visible scene particles need updating too. the shared evaluator's 1024-particle cap still
@@ -144,11 +145,12 @@ extractor.
 
 the underlying scene renderer's existing grading, bloom and vignette differences still apply.
 
-the library uses the separate `endfield-noclip.photo-filters` contract, version 1, in
+the library uses the separate `endfield-noclip.photo-filters` contract, version 2, in
 `package-format/photo-filters.ts`. its JSON contains names, grading, vignette and optional bloom
 overrides, optional particle emitters and texture mips, unsupported-feature notes and base64
-GPU-ready LUT blocks. older version-1 libraries without bloom or effects still load; re-export to
-obtain those additions. the loader checks supported particle layouts and bounds texture dimensions,
+GPU-ready LUT blocks. version 2 uses the v49 particle motion union, emission bounds, per-emitter
+delay and resolved scale. version-1 libraries are rejected and must be re-exported. the loader checks
+supported particle layouts and bounds texture dimensions,
 mip sizes and samplers before GPU allocation. it does not alter scene archives or their package
 version. extracted libraries are game content and remain outside git; a static host must serve the
 exported JSON separately. the viewer never reads game files or imports decoders.

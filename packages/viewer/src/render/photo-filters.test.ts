@@ -23,16 +23,15 @@ const effect = (): PhotoEffect => ({
 		renderMode: 0,
 		alignment: 0,
 		stretch: null,
-		shapeScaling: false,
+		sizedByScale: true,
 		duration: 5,
 		looping: true,
-		startDelay: 0,
+		startDelay: constant(0),
 		maxParticles: 10,
+		emissionBound: 6,
 		simulationSpeed: 1,
 		startLifetime: constant(2),
-		startSpeed: constant(1),
 		rate: constant(3),
-		gravityModifier: constant(0),
 		startSize: [constant(1), constant(1), constant(1)],
 		startRotation: [constant(0), constant(0), constant(0)],
 		startColor: { mode: 0, max: [1, 1, 1, 1], min: [1, 1, 1, 1], maxGradient: null, minGradient: null },
@@ -40,8 +39,13 @@ const effect = (): PhotoEffect => ({
 		sizeOverLifetime: null,
 		rotationOverLifetime: null,
 		shape: null,
-		velocity: null,
-		drag: null,
+		motion: {
+			kind: 'free',
+			startSpeed: constant(1),
+			gravityModifier: constant(0),
+			velocity: null,
+			clamp: null,
+		},
 		ringBuffer: null,
 		textureSheet: null,
 		pivot: [0, 0, 0],
@@ -82,13 +86,13 @@ const filter = (): PhotoFilter => ({
 });
 const library = (filters: PhotoFilter[]) => ({
 	format: 'endfield-noclip.photo-filters',
-	version: 1,
+	version: 2,
 	filters,
 });
 
 test('rejects incompatible libraries, duplicate ids, malformed grading and invalid GPU payload sizes', () => {
 	assert.equal(parsePhotoFilters(library([filter()])).filters.length, 1);
-	assert.throws(() => parsePhotoFilters({ ...library([]), version: 2 }), /unsupported/);
+	assert.throws(() => parsePhotoFilters({ ...library([]), version: 1 }), /unsupported/);
 	assert.throws(() => parsePhotoFilters(library([filter(), filter()])), /invalid photo filter/);
 	assert.throws(
 		() => parsePhotoFilters(library([{ ...filter(), lut: { ...filter().lut!, data: '' } }])),
@@ -157,12 +161,27 @@ test('rejects malformed effect transforms, particle curves, texture mips and uns
 	const badCurve = effect();
 	badCurve.particles.startSize[0] = { ...constant(1), mode: 1, curve: null };
 	assert.throws(() => parse(badCurve), /invalid effects/);
+	const delayed = effect();
+	delayed.particles.startDelay = { ...constant(2), mode: 3, min: 1 };
+	assert.equal(parse(delayed).filters[0].effects?.length, 1);
+	delayed.particles.startDelay = constant(-1);
+	assert.throws(() => parse(delayed), /invalid effects/);
 	const badMotion = effect();
-	badMotion.particles.gravityModifier = constant(1);
+	badMotion.particles.motion = {
+		kind: 'free',
+		startSpeed: constant(1),
+		gravityModifier: constant(1),
+		velocity: null,
+		clamp: null,
+	};
 	assert.throws(() => parse(badMotion), /invalid effects/);
-	const speedLimited = {
-		...effect(),
-		particles: { ...effect().particles, speedLimit: { limit: constant(1), dampen: 1 } },
+	const speedLimited = effect();
+	speedLimited.particles.motion = {
+		kind: 'free',
+		startSpeed: constant(1),
+		gravityModifier: constant(0),
+		velocity: null,
+		clamp: { kind: 'limit', limit: constant(1), dampen: 1 },
 	};
 	assert.throws(() => parse(speedLimited), /invalid effects/);
 	const badMip = effect();
