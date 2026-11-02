@@ -825,6 +825,7 @@ export const loadInteractiveFacilities = async (
 	// doors drawn open or closed: interactives of door templates whose model has door poses, by key. region
 	// walls, by key, are drawn while their construction area is locked
 	const doorPoses = new Map<string, DoorPoses>();
+	const destructible = new Set<string>();
 	// other interactives with view states drawn as they rest, by key: campfires locked or activated, and those
 	// the player's presence changes away or near, within `radius`
 	const interactiveLooks = new Map<
@@ -841,7 +842,7 @@ export const loadInteractiveFacilities = async (
 	{
 		const templateKinds = new Map<
 			string,
-			| { kind: 'door' | 'regionWall' }
+			| { kind: 'door' | 'regionWall' | 'destruction' }
 			| { kind: 'telescopic'; pieces: number }
 			| { kind: 'other'; campfire: boolean; keys: PlayerKey[]; animator: AnimatorStart | null }
 		>();
@@ -885,6 +886,9 @@ export const loadInteractiveFacilities = async (
 					data,
 					async () => {
 						const decoded = reader.decode(await read(data), TEMPLATE_ROOT);
+						if (hasComponent(decoded, ['_InteractiveDestructibleComponentDataForMemoryPack'])) {
+							return { kind: 'destruction' as const };
+						}
 						if (hasComponent(decoded, DOOR_COMPONENTS)) {
 							return { kind: 'door' as const };
 						}
@@ -907,6 +911,9 @@ export const loadInteractiveFacilities = async (
 				);
 				templateKinds.set(data, kind);
 			}
+			if (kind.kind === 'destruction') {
+				destructible.add(key);
+			}
 			if (kind.kind === 'regionWall') {
 				regionWalls.add(key);
 			}
@@ -914,8 +921,9 @@ export const loadInteractiveFacilities = async (
 				telescopic.set(key, { pieces: kind.pieces, prefab: forms[0].prefab });
 			}
 			// a doodad-group shell draws nothing itself; its forms attach to it instead
-			if (kind.kind === 'other' && !doodads.has(key)) {
-				const { campfire, keys } = kind;
+			if ((kind.kind === 'other' || kind.kind === 'destruction') && !doodads.has(key)) {
+				const campfire = kind.kind === 'other' && kind.campfire;
+				const keys = kind.kind === 'other' ? kind.keys : [];
 				const lookKey = `${model} ${campfire} ${keys.map((entry) => entry.key).join()}`;
 				let looks = looksByModel.get(lookKey);
 				if (looks === undefined) {
@@ -928,8 +936,8 @@ export const loadInteractiveFacilities = async (
 					looksByModel.set(lookKey, looks);
 				}
 				if (looks !== null) {
-					const radius = looks.near === null ? null : Math.max(...kind.keys.map((entry) => entry.radius));
-					interactiveLooks.set(key, { looks, campfire: kind.campfire, radius });
+					const radius = looks.near === null ? null : Math.max(...keys.map((entry) => entry.radius));
+					interactiveLooks.set(key, { looks, campfire, radius });
 				} else if (kind.animator !== null) {
 					animatorStarts.set(key, kind.animator);
 				}
@@ -1050,13 +1058,54 @@ export const loadInteractiveFacilities = async (
 			}
 		});
 	};
+	const rewards = new Map<string, string>();
+	const ambiguousRewards = new Set<string>();
+	for (const { row } of placed) {
+		if (!destructible.has(row.template)) {
+			continue;
+		}
+		const control = `destruction:${row.id}`;
+		progressions.push({
+			kind: 'destruction',
+			id: control,
+			name: `${row.template} (${Math.round(row.position[0])}, ${Math.round(row.position[2])})`,
+			rule: null,
+			assumption: 'intact until destroyed; debris and damage are not simulated',
+			followsCamera: false,
+			levelTags: [],
+			values: [
+				{ value: 0, label: 'intact' },
+				{ value: 1, label: 'destroyed' },
+			],
+			default: 0,
+			derived: null,
+		});
+		for (const parameter of [...row.componentProperties.values()].flat()) {
+			if (parameter.key !== 'reward_entities') {
+				continue;
+			}
+			for (const atom of parameter.values) {
+				if (atom.bits <= 0n) {
+					continue;
+				}
+				const reward = atom.bits.toString();
+				if (rewards.has(reward) && rewards.get(reward) !== control) {
+					ambiguousRewards.add(reward);
+				}
+				rewards.set(reward, control);
+			}
+		}
+	}
+	for (const reward of ambiguousRewards) {
+		rewards.delete(reward);
+	}
 	const scriptControls = new Map<string, ScriptControl>();
 	for (const { path, levelId, levelTag, row, created } of placed) {
 		// a row created later also needs its level's `created` control on, and one a level script shows and hides
 		// its script control
 		const logicId = row.id.toString();
 		const switches: string[] = [];
-		if (created !== null) {
+		if (created !== null && !rewards.has(logicId)) {
 			switches.push(created);
 		}
 		if (scripted.has(logicId)) {
@@ -1076,13 +1125,14 @@ export const loadInteractiveFacilities = async (
 				derived: null,
 			}));
 		}
+		const destruction = destructible.has(row.template) ? `destruction:${row.id}` : null;
+		const reward = rewards.get(logicId);
 		// a blight core shows while its erosion root loads, so both go when the core is destroyed
 		const erosion = erosionCores.get(logicId);
-		const switchRequirements = switches.map((control) => ({ control, mask: 2 }));
 		const gate = (visibility: ConditionalSetInfo): ConditionalSetInfo => {
 			const alternatives =
 				erosion === undefined ? visibility.alternatives : allOf(visibility.alternatives, erosion);
-			return { alternatives: alternatives.map((requirements) => requirements.concat(switchRequirements)) };
+			return { alternatives: alternatives.map((requirements) => requirements.concat(gates)) };
 		};
 		const template = authored.get(row.template);
 		if (template === undefined) {

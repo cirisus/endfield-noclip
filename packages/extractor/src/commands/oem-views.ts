@@ -359,7 +359,7 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	await writeFile(
 		join(destination, 'index.json'),
-		JSON.stringify({ ...catalog, release, framing: { version: 5, profile: 'completed', points: count } }),
+		JSON.stringify({ ...catalog, release, framing: { version: 6, profile: 'completed', points: count } }),
 	);
 	console.log(
 		JSON.stringify({

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
 
-import { pointPose } from './point-view.ts';
+import { pointPose, pointFrameFits, pointBlocked } from './point-view.ts';
 
 it('keeps the wide view in open space and turns around an opaque wall', () => {
 	const target: [number, number, number] = [0, 0, 0];
@@ -143,4 +143,40 @@ it('frames the opening of an enclosure when the collectible itself is occluded',
 	const pose = pointPose([0, 0, 0], triangles, () => -1);
 	assert.equal(pose.clear, false);
 	assert.ok(pose.position[2] < -10, JSON.stringify(pose));
+});
+
+it('frames a closed door completely as well as its revealed target', () => {
+	const min: [number, number, number] = [-3, 0, -8];
+	const max: [number, number, number] = [3, 5, -7.5];
+	// Ten metres from the target still leaves the lens only two metres from this door.
+	assert.equal(pointFrameFits({ position: [0, 3, -10], yaw: 0, pitch: 0 }, min, max), false);
+	assert.equal(pointFrameFits({ position: [0, 3, -16], yaw: 0, pitch: 0 }, min, max), true);
+	// Back-facing and cropped views must not pass simply because their centre ray is clear.
+	assert.equal(pointFrameFits({ position: [0, 3, -16], yaw: Math.PI, pitch: 0 }, min, max), false);
+	assert.equal(pointFrameFits({ position: [8, 3, -16], yaw: 0, pitch: 0 }, min, max), false);
+	const pose = pointPose([0, 0, 0], [], () => null, {
+		context: false,
+		distances: [10, 16, 22],
+		accept: (p) =>
+			pointFrameFits(p, min, max) &&
+			pointBlocked(
+				p.position,
+				[0, 0, 0],
+				[
+					[
+						[-3, 0, -8],
+						[3, 0, -8],
+						[3, 5, -8],
+					],
+					[
+						[-3, 0, -8],
+						[3, 5, -8],
+						[-3, 5, -8],
+					],
+				],
+			),
+	});
+	assert.equal(pose.clear, true);
+	assert.equal(pointFrameFits(pose, min, max), true);
+	assert.ok(Math.hypot(pose.position[0], pose.position[2]) >= 16 - 1e-9);
 });

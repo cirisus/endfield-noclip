@@ -105,6 +105,8 @@ export interface VisibilityGroup {
  * - `cabinLevel`: a built growth chamber's level, which unlocks its planting boxes
  * - `created`: one level's interactives the game creates during play rather than with the level (by the server
  *   or a level script), shown (1) or not (0)
+ * - `destruction`: a destructible interactive, intact (0) or destroyed (1); authored reward entities show after
+ *   destruction
  * - `door`: an interactive door, closed (0) or open (1); derived from its cabin slot for a Dijiang cabin's door
  * - `area`: a stream area, shown (1) or hidden (0). unless the user picks a value, a viewer sets it from the
  *   camera (see {@link StreamAreasInfo}); its `default` is only what holds without a camera
@@ -133,6 +135,7 @@ export type SceneControlKind =
 	| 'cabin'
 	| 'cabinLevel'
 	| 'created'
+	| 'destruction'
 	| 'door'
 	| 'bridge'
 	| 'area'
