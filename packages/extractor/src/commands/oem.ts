@@ -28,6 +28,9 @@ import { VfsGroup } from '../hg/vfs.ts';
 export const summary =
 	'export an immutable OEM companion release: oem --atlos <talos> --packages <dir> -o <dir>';
 
+/** command usage, available without opening the install */
+export const usage = 'usage: oem --atlos <talos> --packages <dir> -o <releases>';
+
 type Node = { [key: string]: MemoryPackValue };
 const node = (v: MemoryPackValue | undefined): Node => {
 	if (v === null || typeof v !== 'object' || Array.isArray(v)) {
