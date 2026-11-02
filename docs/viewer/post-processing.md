@@ -61,3 +61,25 @@ URP's vignette (post profile `vignette`) in HDR before grading.
 `colorGradingConfig` as [described](../game-data/post-processing.md#colour-grading-and-tonemapping).
 where the game bakes grading and curve into a LogC LUT, the viewer evaluates them per pixel. it also
 offers Khronos PBR Neutral and a clamp, for separating lighting errors from grading.
+
+## photography
+
+[`render/depth-of-field.ts`](../../packages/viewer/src/render/depth-of-field.ts) adds optional
+physical defocus before lens flare and temporal antialiasing. the photography panel controls
+aperture (f/1.4–f/32) and focus-plane distance in metres; the existing lens controls still determine
+focal length. `Viewer.focusAt` focuses on a world point along the camera's forward axis, rejecting
+points behind the near plane. this changes photography settings, not the environment profile.
+
+photography uses a full-resolution circular filter, with separate foreground coverage and background
+filtering. the 24 mm sensor height agrees with the focal-length readout at any aspect ratio.
+foreground and background radius limits are 10 pixels at a 1440-pixel render height; the temporal
+shaping input is 0.3. a separate water-depth pass prevents focusing through water to its bed.
+camera-relative reprojection includes the current and previous antialiasing jitter. camera cuts,
+lens edits, resizing and disabling the effect invalidate history; disabling it releases its render
+targets. no new scene-package fields or downloads are required.
+
+current limits: reprojection accounts for camera motion, not moving-object motion. transparent
+materials do not have the game's separate after-DoF classification. the viewer uses half-float
+intermediates throughout, so rounding differs from packed colour intermediates. no same-pose in-game
+image comparison has established pixel-identical output. these limits are independent of the
+existing differences in scene content, lighting and other post effects.

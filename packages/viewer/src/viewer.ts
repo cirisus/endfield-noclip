@@ -5,8 +5,8 @@ import {
 	resolveSceneValues,
 } from '@endfield-noclip/package-format/conditions';
 import type { LevelEnvironment, LevelInfo } from '@endfield-noclip/package-format/manifest';
-import { proximityValues } from '@endfield-noclip/package-format/proximity';
 import type { PointView } from '@endfield-noclip/package-format/oem';
+import { proximityValues } from '@endfield-noclip/package-format/proximity';
 import type { MissionInfo, SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
 import {
 	areasShownIn,
@@ -127,6 +127,12 @@ export interface ViewerOptions {
 	renderScale: number;
 	/** exposure compensation on top of the level's exposure, EV */
 	exposure: number;
+	/** enable photographic foreground and background defocus */
+	depthOfField: boolean;
+	/** photographic f-number */
+	aperture: number;
+	/** focus plane distance along the camera forward axis, metres */
+	focusDistance: number;
 	/** adapt the exposure to the view as the game's auto exposure does */
 	autoExposure: boolean;
 	tonemapper: Tonemapper;
@@ -188,6 +194,9 @@ export const DEFAULT_OPTIONS: ViewerOptions = {
 	antialiasing: true,
 	renderScale: 1,
 	exposure: 0,
+	depthOfField: false,
+	aperture: 32,
+	focusDistance: 10,
 	autoExposure: true,
 	tonemapper: 'game',
 	sky: true,
@@ -1133,6 +1142,7 @@ export class Viewer {
 		this.camera.pitch = pitch;
 		// a cut: the last frames show somewhere else
 		this.#post.taa.reset();
+		this.#post.resetFocus();
 		this.#post.reflections.reset();
 		this.#fog.reset();
 	}
@@ -1473,13 +1483,44 @@ export class Viewer {
 		this.#dirty = true;
 	}
 
+	/**
+	 * focuses on a world-space point using its distance along the optical axis.
+	 *
+	 * @param point Unity world position
+	 * @returns false if the point is behind the near plane or has invalid coordinates
+	 */
+	focusAt(point: Vec3): boolean {
+		const forward = this.camera.forward();
+		const distance = point.reduce((sum, value, i) => sum + (value - this.camera.position[i]) * forward[i], 0);
+		if (!Number.isFinite(distance) || distance < this.camera.near) {
+			return false;
+		}
+		this.setOptions({ depthOfField: true, focusDistance: distance });
+		return true;
+	}
+
 	/** @param patch options to change */
 	setOptions(patch: Partial<ViewerOptions>): void {
 		Object.assign(this.options, patch);
+		this.options.aperture = Number.isFinite(this.options.aperture)
+			? Math.min(32, Math.max(1.4, this.options.aperture))
+			: DEFAULT_OPTIONS.aperture;
+		this.options.focusDistance = Number.isFinite(this.options.focusDistance)
+			? Math.min(10000, Math.max(0.1, this.options.focusDistance))
+			: DEFAULT_OPTIONS.focusDistance;
+		if (
+			patch.depthOfField !== undefined ||
+			patch.aperture !== undefined ||
+			patch.focusDistance !== undefined
+		) {
+			this.#post.resetFocus();
+			this.#post.taa.reset();
+		}
 		this.#targets.renderScale = Math.min(1, Math.max(0.25, this.options.renderScale));
 		this.#post.taa.enabled = this.options.antialiasing;
 		if (patch.debugView !== undefined || patch.antialiasing !== undefined) {
 			this.#post.taa.reset();
+			this.#post.resetFocus();
 		}
 		if (patch.streamAreas !== undefined) {
 			this.#updateVisibility();
@@ -1596,7 +1637,7 @@ export class Viewer {
 		// the temporal antialiasing converges over a few more jittered frames of the same view
 		let settling = false;
 		if (changed) {
-			this.#settleFrames = options.antialiasing ? SETTLE_FRAMES : 0;
+			this.#settleFrames = options.antialiasing || options.depthOfField ? SETTLE_FRAMES : 0;
 		} else if (this.#settleFrames > 0) {
 			this.#settleFrames--;
 			settling = true;
@@ -1971,6 +2012,9 @@ export class Viewer {
 		const options = this.options;
 		return {
 			exposure: options.exposure,
+			depthOfField: options.depthOfField,
+			aperture: options.aperture,
+			focusDistance: options.focusDistance,
 			autoExposure: options.autoExposure && this.scene !== null,
 			tonemapper: options.tonemapper,
 			sky: options.sky,
