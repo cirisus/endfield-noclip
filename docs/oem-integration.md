@@ -30,6 +30,11 @@ version fields cannot upgrade its archives. partitions and their region membersh
 `src/data/map/region.json`, including DJ_1 and ES_1. point placement still comes from the game's
 exact entity id and LevelConfig scene path.
 
+OEM exports use the current package's control union, terrain layout and interpreted material
+surfaces. prerequisite presets follow the extractor's main-story order; framing uses the renderer's
+opaque material looks and leaves played particles out of static occlusion. rebuilding after a package
+version change regenerates companions and view bindings with the new scene generations.
+
 the release contains a catalog, one companion JSON per OEM subregion and the referenced package
 archives. it excludes debug output. generated releases and game-derived metadata stay outside git.
 rerunning the same release into an occupied destination fails rather than overwriting it.
