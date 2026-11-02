@@ -12,6 +12,7 @@ it('accepts versioned clear and fallback views but rejects malformed camera valu
 		clear: true,
 	};
 	assert.equal(isPointView(view), true);
+	assert.equal(isPointView({ ...view, key: 'noclip-point-view-v4:' + 'a'.repeat(64) }), true);
 	assert.equal(isPointView({ ...view, clear: false }), true);
 	for (const value of [
 		{ ...view, position: [1, 2] },
