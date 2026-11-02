@@ -24,3 +24,23 @@ it('accepts versioned clear and fallback views but rejects malformed camera valu
 		assert.equal(isPointView(value), false);
 	}
 });
+
+it('validates obstruction replay metadata without accepting arbitrary state values', () => {
+	const view = {
+		key: 'noclip-point-view-v5:' + 'b'.repeat(64),
+		position: [0, 3, -10],
+		yaw: 0,
+		pitch: 0,
+		clear: true,
+	};
+	const interaction = { control: 'door:1', label: 'Door', before: 0, after: 1 };
+	assert.equal(isPointView({ ...view, interactions: [interaction] }), true);
+	for (const invalid of [
+		{ ...interaction, after: 32 },
+		{ ...interaction, before: -1 },
+		{ ...interaction, after: 0 },
+		{ ...interaction, label: null },
+	]) {
+		assert.equal(isPointView({ ...view, interactions: [invalid] }), false);
+	}
+});

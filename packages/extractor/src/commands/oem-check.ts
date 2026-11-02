@@ -138,6 +138,18 @@ export const run = async (args: string[]): Promise<void> => {
 				) {
 					throw new Error(`invalid baked view binding or distance: ${point.id}`);
 				}
+				for (const interaction of point.view.interactions ?? []) {
+					const control = merged.controls.find((entry) => entry.id === interaction.control);
+					if (
+						!control ||
+						control.derived !== null ||
+						resolveSceneValues(merged, picks)[control.id] !== interaction.before ||
+						!control.values.some((option) => option.value === interaction.after) ||
+						!point.view.clear
+					) {
+						throw new Error(`invalid obstruction preview: ${point.id}`);
+					}
+				}
 				views++;
 				fallbackViews += Number(!point.view.clear);
 			}

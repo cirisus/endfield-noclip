@@ -16,7 +16,7 @@ export interface Catalog {
 	pointIndex: Record<string, string>;
 	/** source-authored routing and floor volumes, relative to this catalog */
 	navigation?: string;
-	framing?: { version: 3 | 4; profile: 'completed'; points: number };
+	framing?: { version: 3 | 4 | 5; profile: 'completed'; points: number };
 }
 
 /** an authored, validated selection of scene values */
@@ -34,6 +34,8 @@ export interface PointView {
 	yaw: number;
 	pitch: number;
 	clear: boolean;
+	/** Only source-backed controls proven to obstruct this view before interaction. */
+	interactions?: { control: string; label: string; before: number; after: number }[];
 }
 
 /** point metadata, separate from map marker tuples and renderer archives */
@@ -78,7 +80,7 @@ const relative = (value: string): boolean =>
 export const isPointView = (value: unknown): value is PointView =>
 	object(value) &&
 	typeof value.key === 'string' &&
-	/^noclip-point-view-v[34]:[a-f0-9]{64}$/.test(value.key) &&
+	/^noclip-point-view-v[345]:[a-f0-9]{64}$/.test(value.key) &&
 	Array.isArray(value.position) &&
 	value.position.length === 3 &&
 	value.position.every((v) => typeof v === 'number' && Number.isFinite(v)) &&
@@ -87,7 +89,23 @@ export const isPointView = (value: unknown): value is PointView =>
 	typeof value.pitch === 'number' &&
 	Number.isFinite(value.pitch) &&
 	Math.abs(value.pitch) <= Math.PI / 2 &&
-	typeof value.clear === 'boolean';
+	typeof value.clear === 'boolean' &&
+	(value.interactions === undefined ||
+		(Array.isArray(value.interactions) &&
+			value.interactions.length <= 1 &&
+			value.interactions.every(
+				(item) =>
+					object(item) &&
+					typeof item.control === 'string' &&
+					typeof item.label === 'string' &&
+					Number.isInteger(item.before) &&
+					Number(item.before) >= 0 &&
+					Number(item.before) < 32 &&
+					Number.isInteger(item.after) &&
+					Number(item.after) >= 0 &&
+					Number(item.after) < 32 &&
+					item.before !== item.after,
+			)));
 
 const validPoint = (value: unknown): value is Point => {
 	if (
@@ -172,7 +190,7 @@ export const isCatalog = (value: unknown): value is Catalog => {
 			(typeof value.navigation === 'string' && relative(value.navigation))) &&
 		(value.framing === undefined ||
 			(object(value.framing) &&
-				(value.framing.version === 3 || value.framing.version === 4) &&
+				[3, 4, 5].includes(Number(value.framing.version)) &&
 				value.framing.profile === 'completed' &&
 				Number.isInteger(value.framing.points)))
 	);
