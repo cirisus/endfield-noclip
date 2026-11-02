@@ -227,7 +227,7 @@ export class DepthOfField {
 		// the viewer's focal-length readout fixes the sensor height at 24 mm. fitting that same sensor
 		// vertically preserves framing on any aspect ratio, instead of changing FOV when enabling DoF.
 		const coefficients = focusCoefficients({
-			focalLength: 12 / Math.tan(camera.fovY / 2),
+			focalLength: camera.focalLength,
 			aperture: settings.aperture,
 			focusDistance: settings.focusDistance,
 			sensorSpan: 24,
