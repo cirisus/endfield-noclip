@@ -24,7 +24,7 @@ import {
 	zonesAt,
 	zonesAround,
 } from '@endfield-noclip/package-format/stream-areas';
-import { isTerrainHole, terrainHeight } from '@endfield-noclip/package-format/terrain';
+import { isTerrainHole, TERRAIN_PAGE_SAMPLES, terrainHeight } from '@endfield-noclip/package-format/terrain';
 import { tileAt, tileId } from '@endfield-noclip/package-format/tiles';
 
 import { decodeData } from '../../../viewer/src/package/decode-data.ts';
@@ -157,12 +157,12 @@ export const run = async (args: string[]): Promise<void> => {
 					if (!node || !samples) {
 						continue;
 					}
-					const side = terrain.pageSize,
+					const side = TERRAIN_PAGE_SAMPLES,
 						spacing = node.size / (side - 1),
 						fx = Math.min(side - 1, Math.max(0, (x - node.minX) / spacing)),
 						fz = Math.min(side - 1, Math.max(0, (z - node.minZ) / spacing));
 					const sample = samples[Math.round(fz) * side + Math.round(fx)];
-					return isTerrainHole(terrain, sample) ? null : terrainHeight(terrain, sample);
+					return isTerrainHole(sample) ? null : terrainHeight(terrain, sample);
 				}
 				return null;
 			};
