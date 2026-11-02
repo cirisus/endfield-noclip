@@ -1058,6 +1058,7 @@ export class PostProcess {
 		});
 		if (settings.debugView === 'lit') {
 			this.photoParticles.encode(encoder, {
+				time: settings.time,
 				target: sized.sceneView,
 				depth: scene.depth,
 				camera,

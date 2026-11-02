@@ -1,5 +1,5 @@
 import type { PhotoEffect, PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
-import { textureLevelLayout } from '@endfield-noclip/package-format/textures';
+import { TEXTURE_FORMATS, textureLevelLayout } from '@endfield-noclip/package-format/textures';
 
 import { HDR_FORMAT } from '../gfx/render-targets.ts';
 import type { Camera, Vec3 } from '../scene/camera.ts';
@@ -72,8 +72,9 @@ export class PhotoParticles {
 	/**
 	 * @param filter selected look, or null to release its GPU resources
 	 * @param camera the spawn pose; selecting an existing look resumes its original anchor and clock
+	 * @param time the viewer's rendered-frame animation clock, in seconds
 	 */
-	set(filter: PhotoFilter | null, camera: Camera): void {
+	set(filter: PhotoFilter | null, camera: Camera, time: number): void {
 		const effects = filter?.effects ?? [];
 		if (effects.length && !this.#device.features.has('texture-compression-bc')) {
 			throw new Error('photo particles require BC texture support');
@@ -90,13 +91,14 @@ export class PhotoParticles {
 				right: camera.right(),
 				up: camera.up(),
 				forward: camera.forward(),
-				start: performance.now() / 1000,
+				start: time,
 			};
 			this.#anchors.set(filter, anchor);
 		}
 		this.#anchor = anchor;
 		for (const effect of effects) {
 			const source = effect.texture;
+			const block = TEXTURE_FORMATS[source.format];
 			const texture = this.#device.createTexture({
 				size: [source.width, source.height],
 				format: source.format,
@@ -105,17 +107,15 @@ export class PhotoParticles {
 			});
 			for (const [level, data] of source.levels.entries()) {
 				const layout = textureLevelLayout({ ...source, kind: '2d', depthOrArrayLayers: 1 }, level);
+				// BC tail mips copy a full block even when their logical size is one or two texels.
 				this.#device.queue.writeTexture({ texture, mipLevel: level }, Uint8Array.fromBase64(data), layout, [
-					layout.width,
-					layout.height,
+					(layout.bytesPerRow / block.blockBytes) * block.blockWidth,
+					layout.rowsPerImage * block.blockHeight,
 				]);
 			}
 			this.#emitters.push({
 				effect,
-				simulation: new ParticleSimulation(
-					{ ...effect.particles, speedLimit: null },
-					hashText(`${filter.id}/${effect.name}`),
-				),
+				simulation: new ParticleSimulation(effect.particles, hashText(`${filter.id}/${effect.name}`)),
 				texture,
 				buffer: this.#device.createBuffer({
 					size: this.#rows.byteLength,
@@ -138,6 +138,7 @@ export class PhotoParticles {
 			target: GPUTextureView;
 			depth: GPUTextureView;
 			camera: Camera;
+			time: number;
 			aspect: number;
 			exposure: number;
 		},
@@ -151,13 +152,13 @@ export class PhotoParticles {
 			up = camera.up(),
 			forward = camera.forward();
 		const f = 1 / Math.tan(camera.fovY / 2);
-		const elapsed = performance.now() / 1000 - anchor.start;
+		const elapsed = input.time - anchor.start;
 		for (const emitter of this.#emitters) {
 			const { effect, simulation } = emitter;
 			const m = effect.matrix;
 			const local: Vec3 = [0, 0, 0];
 			const relative: Vec3 = [0, 0, 0];
-			const scale = effect.particles.shapeScaling ? 1 : Math.hypot(m[0], m[1], m[2]);
+			const scale = effect.particles.sizedByScale ? Math.hypot(m[0], m[1], m[2]) : 1;
 			const exposure = effect.ignorePostExposure ? 1 / Math.max(input.exposure, 1e-6) : 1;
 			const tiles = effect.particles.textureSheet?.tiles ?? [1, 1];
 			const count = simulation.evaluate(
