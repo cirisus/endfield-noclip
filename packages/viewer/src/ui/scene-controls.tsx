@@ -63,8 +63,8 @@ const SECTIONS: { kinds: SceneControlKind[]; title: string; note: string | null;
 		open: false,
 	},
 	{
-		kinds: ['door', 'bridge'],
-		title: 'Doors and bridges',
+		kinds: ['door', 'bridge', 'destruction'],
+		title: 'Doors, bridges and destructibles',
 		note: null,
 		open: false,
 	},

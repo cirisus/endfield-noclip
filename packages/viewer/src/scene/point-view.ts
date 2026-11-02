@@ -159,7 +159,7 @@ export const pointPose = (
 	target: Vec3,
 	triangles: readonly Triangle[],
 	ground: (x: number, z: number) => number | null,
-	options?: { context: boolean },
+	options?: { context: boolean; distances?: readonly number[]; accept?: (pose: CameraPose) => boolean },
 ): CameraPose & { clear: boolean } => {
 	const occluders = indexTriangles(triangles);
 	const sampled = ground(target[0], target[2]);
@@ -167,7 +167,7 @@ export const pointPose = (
 	const underground = sampled !== null && sampled > target[1] + 3;
 	const surface = underground ? null : sampled;
 	const focus: Vec3 = [target[0], Math.max(target[1], surface ?? target[1]) + 0.6, target[2]];
-	for (const back of [10]) {
+	for (const back of options?.distances ?? [10]) {
 		for (const slope of [0.35, 0.15, 0.6, 1, 0.05, 0]) {
 			let best: (CameraPose & { clear: boolean }) | null = null;
 			let bestScore = Infinity;
@@ -186,6 +186,12 @@ export const pointPose = (
 					[position[0], position[1] + 0.35, position[2]],
 					[position[0], position[1] - 0.35, position[2]],
 				];
+				if (
+					options?.accept &&
+					!options.accept({ position, yaw, pitch: -Math.atan2(position[1] - target[1], back) })
+				) {
+					continue;
+				}
 				if (eyes.some((eye) => intersects(focus, eye, occluders))) {
 					continue;
 				}
@@ -405,6 +411,11 @@ export const pointTriangles = async (
 				const extents = [rows[at + 16], rows[at + 17], rows[at + 18]];
 				// Small geometry containing the target can be the collectible itself, not an occluder.
 				if (
+					!pkg.manifest.states.conditionalSets[
+						pkg.manifest.states.groups[ref.group].condition ?? -1
+					]?.alternatives.some((requirements) =>
+						requirements.some((r) => r.control.startsWith('destruction:') && (r.mask & 1) !== 0),
+					) &&
 					extents.every((e) => e <= 1.5) &&
 					center.every((v, i) => Math.abs(v - target[i]) <= extents[i] + 0.05)
 				) {
@@ -483,3 +494,31 @@ export const pointTriangles = async (
 /** @returns whether opaque geometry blocks the point's inspection sight line */
 export const pointBlocked = (eye: Vec3, target: Vec3, triangles: readonly Triangle[]): boolean =>
 	blocked(eye, [target[0], target[1] + 0.6, target[2]], triangles);
+
+/**
+ * checks that the complete original obstruction fits a conservative inspection frustum.
+ *
+ * @param pose candidate camera in Unity coordinates
+ * @param min minimum world-space corner of the obstruction
+ * @param max maximum world-space corner of the obstruction
+ * @returns whether all corners fit with at least three metres of lens clearance
+ */
+export const pointFrameFits = ({ position, yaw, pitch }: CameraPose, min: Vec3, max: Vec3): boolean => {
+	for (const x of [min[0], max[0]]) {
+		for (const y of [min[1], max[1]]) {
+			for (const z of [min[2], max[2]]) {
+				const dx = x - position[0],
+					dy = y - position[1],
+					dz = z - position[2];
+				const horizontal = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+				const depth = horizontal * Math.cos(pitch) + dy * Math.sin(pitch);
+				const across = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+				const up = dy * Math.cos(pitch) - horizontal * Math.sin(pitch);
+				if (depth < 3 || Math.abs(across) > depth * 0.65 || Math.abs(up) > depth * 0.4) {
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+};
