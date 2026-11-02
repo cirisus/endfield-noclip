@@ -168,7 +168,11 @@ export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 	const read = (ref: TypeRef, pos: number): [SparkValue, number] => {
 		switch (ref.type) {
 			case SparkType.Bool: {
-				return [u8(pos) !== 0, pos + 1];
+				const value = u8(pos);
+				if (value > 1) {
+					throw new FormatError(`invalid spark boolean ${value}`);
+				}
+				return [value !== 0, pos + 1];
 			}
 			case SparkType.Byte: {
 				return [u8(pos), pos + 1];

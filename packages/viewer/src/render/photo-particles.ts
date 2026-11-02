@@ -112,7 +112,10 @@ export class PhotoParticles {
 			}
 			this.#emitters.push({
 				effect,
-				simulation: new ParticleSimulation(effect.particles, hashText(`${filter.id}/${effect.name}`)),
+				simulation: new ParticleSimulation(
+					{ ...effect.particles, speedLimit: null },
+					hashText(`${filter.id}/${effect.name}`),
+				),
 				texture,
 				buffer: this.#device.createBuffer({
 					size: this.#rows.byteLength,
