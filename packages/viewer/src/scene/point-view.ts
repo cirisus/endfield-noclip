@@ -159,7 +159,11 @@ export const pointPose = (
 	target: Vec3,
 	triangles: readonly Triangle[],
 	ground: (x: number, z: number) => number | null,
-	options?: { context: boolean; distances?: readonly number[]; accept?: (pose: CameraPose) => boolean },
+	options?: {
+		context: boolean;
+		distances?: readonly number[];
+		accept?: (pose: CameraPose) => boolean;
+	},
 ): CameraPose & { clear: boolean } => {
 	const occluders = indexTriangles(triangles);
 	const sampled = ground(target[0], target[2]);
@@ -188,7 +192,11 @@ export const pointPose = (
 				];
 				if (
 					options?.accept &&
-					!options.accept({ position, yaw, pitch: -Math.atan2(position[1] - target[1], back) })
+					!options.accept({
+						position,
+						yaw,
+						pitch: -Math.atan2(position[1] - target[1], back),
+					})
 				) {
 					continue;
 				}
@@ -289,7 +297,12 @@ export const pointPose = (
 				score += 0.02 * Math.abs(slope - 0.15) + 0.001 * Math.abs(back - 16);
 				if (score < contextScore - 1e-8) {
 					contextScore = score;
-					context = { position, yaw, pitch: -Math.atan2(position[1] - target[1], back), clear: false };
+					context = {
+						position,
+						yaw,
+						pitch: -Math.atan2(position[1] - target[1], back),
+						clear: false,
+					};
 				}
 			}
 		}
@@ -521,4 +534,29 @@ export const pointFrameFits = ({ position, yaw, pitch }: CameraPose, min: Vec3, 
 		}
 	}
 	return true;
+};
+
+/**
+ * measures nearby walls and ceilings independently of camera heading; floor is deliberately excluded.
+ *
+ * @param position camera position
+ * @param triangles visible opaque geometry around the target
+ * @returns blocked samples, with lower values preferring an open approach over a room interior
+ */
+export const pointEnclosure = (position: Vec3, triangles: readonly Triangle[]): number => {
+	const index = indexTriangles(triangles);
+	let score = Number(intersects(position, [position[0], position[1] + 6, position[2]], index));
+	for (const rise of [0, Math.SQRT1_2]) {
+		for (let heading = 0; heading < 8; heading++) {
+			const yaw = (heading * Math.PI) / 4;
+			const horizontal = Math.sqrt(1 - rise * rise);
+			const end: Vec3 = [
+				position[0] + 6 * horizontal * Math.sin(yaw),
+				position[1] + 6 * rise,
+				position[2] + 6 * horizontal * Math.cos(yaw),
+			];
+			score += Number(intersects(position, end, index));
+		}
+	}
+	return score;
 };

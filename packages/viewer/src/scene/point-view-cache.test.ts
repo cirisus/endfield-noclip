@@ -5,7 +5,7 @@ import { pointViewKey, readPointView, writePointView } from './point-view-cache.
 
 it('invalidates saved views when geometry, point, level or effective visibility changes', async () => {
 	const key = await pointViewKey('gen', 'a', [0, 0, 0], [true, false]);
-	assert.ok(key.startsWith('noclip-point-view-v6:'));
+	assert.ok(key.startsWith('noclip-point-view-v7:'));
 	assert.equal(await pointViewKey('gen', 'a', [0, 0, 0], [true, false]), key);
 	for (const changed of [
 		pointViewKey('new', 'a', [0, 0, 0], [true, false]),
