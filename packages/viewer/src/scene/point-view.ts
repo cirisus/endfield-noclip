@@ -43,7 +43,7 @@ const remember = (pkg: ViewerPackage, blob: number, value: DecodedInstances | De
 	decodedCache.set(pkg, cache);
 };
 
-type Triangle = [Vec3, Vec3, Vec3];
+export type Triangle = [Vec3, Vec3, Vec3] & { group?: number };
 const cross = (a: Vec3, b: Vec3): Vec3 => [
 	a[1] * b[2] - a[2] * b[1],
 	a[2] * b[0] - a[0] * b[2],
@@ -83,34 +83,47 @@ const blocked = (start: Vec3, end: Vec3, triangles: readonly Triangle[]): boolea
 // scan all nearby detail triangles during a whole-map bake.
 type Occluders = { min: Vec3; max: Vec3; triangles?: readonly Triangle[]; children?: Occluders[] };
 const indexTriangles = (triangles: readonly Triangle[]): Occluders => {
-	const min: Vec3 = [Infinity, Infinity, Infinity],
-		max: Vec3 = [-Infinity, -Infinity, -Infinity];
-	for (const triangle of triangles) {
-		for (const vertex of triangle) {
+	// Compute triangle bounds once. Partition the owned index in place instead of
+	// sorting triangle vertices again at every tree depth (dominant in full bakes).
+	const entries = triangles.map((triangle) => ({
+		triangle,
+		min: [0, 1, 2].map((axis) => Math.min(triangle[0][axis], triangle[1][axis], triangle[2][axis])),
+		max: [0, 1, 2].map((axis) => Math.max(triangle[0][axis], triangle[1][axis], triangle[2][axis])),
+	}));
+	const build = (first: number, end: number): Occluders => {
+		const min: Vec3 = [Infinity, Infinity, Infinity],
+			max: Vec3 = [-Infinity, -Infinity, -Infinity];
+		for (let i = first; i < end; i++) {
+			const entry = entries[i];
 			for (let axis = 0; axis < 3; axis++) {
-				min[axis] = Math.min(min[axis], vertex[axis]);
-				max[axis] = Math.max(max[axis], vertex[axis]);
+				min[axis] = Math.min(min[axis], entry.min[axis]);
+				max[axis] = Math.max(max[axis], entry.max[axis]);
 			}
 		}
-	}
-	if (triangles.length <= 16) {
-		return { min, max, triangles };
-	}
-	let axis = 0;
-	for (let i = 1; i < 3; i++) {
-		if (max[i] - min[i] > max[axis] - min[axis]) {
-			axis = i;
+		if (end - first <= 16) {
+			return { min, max, triangles: entries.slice(first, end).map((entry) => entry.triangle) };
 		}
-	}
-	const ordered = triangles.toSorted(
-		(a, b) => a[0][axis] + a[1][axis] + a[2][axis] - b[0][axis] - b[1][axis] - b[2][axis],
-	);
-	const middle = Math.floor(ordered.length / 2);
-	return {
-		min,
-		max,
-		children: [indexTriangles(ordered.slice(0, middle)), indexTriangles(ordered.slice(middle))],
+		let axis = 0;
+		for (let i = 1; i < 3; i++) {
+			if (max[i] - min[i] > max[axis] - min[axis]) {
+				axis = i;
+			}
+		}
+		const middle = min[axis] + max[axis];
+		let split = first;
+		for (let i = first; i < end; i++) {
+			if (entries[i].min[axis] + entries[i].max[axis] < middle) {
+				[entries[split], entries[i]] = [entries[i], entries[split]];
+				split++;
+			}
+		}
+		// Coincident bounds need a balanced split too, and cannot benefit from sorting.
+		if (split - first < (end - first) / 16 || end - split < (end - first) / 16) {
+			split = Math.floor((first + end) / 2);
+		}
+		return { min, max, children: [build(first, split), build(split, end)] };
 	};
+	return build(0, entries.length);
 };
 const intersects = (start: Vec3, end: Vec3, node: Occluders): boolean => {
 	let near = 0,
@@ -146,6 +159,7 @@ export const pointPose = (
 	target: Vec3,
 	triangles: readonly Triangle[],
 	ground: (x: number, z: number) => number | null,
+	options?: { context: boolean },
 ): CameraPose & { clear: boolean } => {
 	const occluders = indexTriangles(triangles);
 	const sampled = ground(target[0], target[2]);
@@ -223,13 +237,65 @@ export const pointPose = (
 			}
 		}
 	}
-	// Preserve a usable inspection distance even when the authored point is buried in solid geometry.
-	return {
-		position: [target[0], target[1] + 6, target[2] - 10],
-		yaw: 0,
-		pitch: -Math.atan2(6, 10),
-		clear: false,
-	};
+	if (options?.context === false) {
+		return {
+			position: [target[0], target[1] + 6, target[2] - 10],
+			yaw: 0,
+			pitch: -Math.atan2(6, 10),
+			clear: false,
+		};
+	}
+	// Enclosed collectibles may never have a clear centre ray. Show the opening
+	// and surrounding contents instead of returning an arbitrary compass bearing.
+	let context: (CameraPose & { clear: boolean }) | null = null;
+	let contextScore = Infinity;
+	for (const back of [16, 22, 10]) {
+		for (const slope of [0.15, 0.05, 0.35]) {
+			for (let heading = 0; heading < 32; heading++) {
+				const yaw = (heading * Math.PI) / 16;
+				const position: Vec3 = [
+					target[0] - Math.sin(yaw) * back,
+					focus[1] + slope * back,
+					target[2] - Math.cos(yaw) * back,
+				];
+				const floor = underground ? null : ground(position[0], position[2]);
+				if (floor !== null && position[1] < floor + 0.5) {
+					continue;
+				}
+				const right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)];
+				let score = 0;
+				for (const x of [-2, -1, 0, 1, 2]) {
+					for (const y of [0.2, 1.2, 2.2]) {
+						const end: Vec3 = [target[0] + x * right[0], target[1] + y, target[2] + x * right[2]];
+						if (intersects(position, end, occluders)) {
+							score++;
+						}
+						const near: Vec3 = [
+							position[0] + (end[0] - position[0]) * 0.3,
+							position[1] + (end[1] - position[1]) * 0.3,
+							position[2] + (end[2] - position[2]) * 0.3,
+						];
+						if (intersects(position, near, occluders)) {
+							score += 2;
+						}
+					}
+				}
+				score += 0.02 * Math.abs(slope - 0.15) + 0.001 * Math.abs(back - 16);
+				if (score < contextScore - 1e-8) {
+					contextScore = score;
+					context = { position, yaw, pitch: -Math.atan2(position[1] - target[1], back), clear: false };
+				}
+			}
+		}
+	}
+	return (
+		context ?? {
+			position: [target[0], target[1] + 6, target[2] - 10],
+			yaw: 0,
+			pitch: -Math.atan2(6, 10),
+			clear: false,
+		}
+	);
 };
 
 /**
@@ -246,8 +312,9 @@ export const pointTriangles = async (
 	target: Vec3,
 	shown: readonly boolean[],
 	signal: AbortSignal,
+	options?: { radius: number },
 ): Promise<Triangle[]> => {
-	const radius = 16;
+	const radius = options?.radius ?? 16;
 	let opaque = opaqueCache.get(pkg);
 	if (!opaque) {
 		opaque = materialLooks(pkg.materials).map(
@@ -401,6 +468,7 @@ export const pointTriangles = async (
 									Math.max(...tri.map((v) => v[axis])) >= target[axis] - radius,
 							)
 						) {
+							tri.group = ref.group;
 							triangles.push(tri);
 						}
 					}
@@ -411,3 +479,7 @@ export const pointTriangles = async (
 	signal.throwIfAborted();
 	return triangles;
 };
+
+/** @returns whether opaque geometry blocks the point's inspection sight line */
+export const pointBlocked = (eye: Vec3, target: Vec3, triangles: readonly Triangle[]): boolean =>
+	blocked(eye, [target[0], target[1] + 0.6, target[2]], triangles);

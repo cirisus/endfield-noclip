@@ -110,3 +110,37 @@ it('favours an oblique context view over a clear but wall-hugging centre ray', (
 		pose,
 	);
 });
+
+it('frames the opening of an enclosure when the collectible itself is occluded', () => {
+	const triangles: [[number, number, number], [number, number, number], [number, number, number]][] = [];
+	const wall = (
+		axis: number,
+		value: number,
+		min: [number, number, number],
+		max: [number, number, number],
+	) => {
+		const other = axis === 0 ? [1, 2] : axis === 1 ? [0, 2] : [0, 1];
+		const a: [number, number, number] = [...min],
+			b: [number, number, number] = [...min],
+			c: [number, number, number] = [...max],
+			d: [number, number, number] = [...max];
+		for (const v of [a, b, c, d]) {
+			v[axis] = value;
+		}
+		b[other[0]] = max[other[0]];
+		d[other[0]] = min[other[0]];
+		triangles.push([a, b, c], [a, c, d]);
+	};
+	wall(0, -2.5, [-2.5, -1, -4], [2.5, 4, 4]);
+	wall(0, 2.5, [-2.5, -1, -4], [2.5, 4, 4]);
+	wall(2, 4, [-2.5, -1, -4], [2.5, 4, 4]);
+	wall(1, 4, [-2.5, -1, -4], [2.5, 4, 4]);
+	for (const axis of [0, 1, 2]) {
+		for (const side of [-1, 1]) {
+			wall(axis, side, [-1, -1, -1], [1, 1, 1]);
+		}
+	}
+	const pose = pointPose([0, 0, 0], triangles, () => -1);
+	assert.equal(pose.clear, false);
+	assert.ok(pose.position[2] < -10, JSON.stringify(pose));
+});

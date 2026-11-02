@@ -1,7 +1,9 @@
+import { isPointView, type PointView } from '@endfield-noclip/package-format/oem';
+
 import type { Vec3 } from './camera.ts';
 import type { CameraPose } from './noclip-controls.ts';
 
-const PREFIX = 'noclip-point-view-v4:';
+const PREFIX = 'noclip-point-view-v5:';
 const LIMIT = 512;
 
 /**
@@ -26,7 +28,9 @@ export const pointViewKey = async (
  * @param key versioned point-view key
  * @returns validated local pose, or null when unavailable; blocked storage never prevents preview
  */
-export const readPointView = (key: string): CameraPose | null => {
+export const readPointView = (
+	key: string,
+): (CameraPose & Partial<Pick<PointView, 'clear' | 'interactions'>>) | null => {
 	try {
 		const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
 		if (
@@ -45,7 +49,13 @@ export const readPointView = (key: string): CameraPose | null => {
 		) {
 			return null;
 		}
+		if ('interactions' in value && !isPointView({ ...value, key })) {
+			return null;
+		}
+		const candidate = { ...value, key };
+		const metadata = isPointView(candidate) ? candidate : null;
 		return {
+			...(metadata ? { clear: metadata.clear, interactions: metadata.interactions } : {}),
 			position: [value.position[0], value.position[1], value.position[2]],
 			yaw: value.yaw,
 			pitch: value.pitch,
