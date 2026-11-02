@@ -141,6 +141,8 @@ export interface MaterialLook {
 	 * never alpha-tested or shadow-casting
 	 */
 	transparent: boolean;
+	/** authored queue for layers composited after depth of field, otherwise null */
+	afterDof: number | null;
 	/** the faces the game culls, for unmirrored instances */
 	cull: MaterialCull;
 	/** whether the material draws into shadow maps */
@@ -290,6 +292,7 @@ const emptyLook = ({ drawn }: { drawn: boolean }): MaterialLook => {
 		unsupported: false,
 		cutout: false,
 		transparent: false,
+		afterDof: null,
 		cull: 'none',
 		castsShadows: true,
 		textures: SLOTS.map(() => -1),
@@ -470,6 +473,11 @@ export const materialLooks = (materials: MaterialTable): MaterialLook[] => {
 				break;
 			}
 		}
+		const look = looks[entry.id];
+		const queue = entry.renderQueue;
+		if (look.transparent && !look.unsupported && queue !== undefined && queue >= 3660 && queue <= 3740) {
+			look.afterDof = queue;
+		}
 	}
 	return looks;
 };
@@ -499,6 +507,7 @@ const effectMaterialLook = (
 	unsupported: false,
 	cutout: false,
 	transparent: true,
+	afterDof: null,
 	cull: (flags & LookFlags.EffectDecal) !== 0 ? 'front' : cull,
 	castsShadows: false,
 	textures: effect.textures,

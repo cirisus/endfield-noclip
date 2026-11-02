@@ -27,6 +27,8 @@ export interface MeshBucket {
 	 * none), so each layer draws a prefix of the bucket; reset every frame
 	 */
 	rows: number[][];
+	/** camera distances parallel to rows, only allocated for sorted post-focus layers */
+	distances: number[][] | null;
 	/**
 	 * the highest priority of an instance this frame: its projected height, px, scaled by the caster priority
 	 * in cast-only buckets. textures stream by it
@@ -407,17 +409,22 @@ export class MeshSelector {
 							for (const rows of bucket.rows) {
 								rows.length = 0;
 							}
+							for (const distances of bucket.distances ?? []) {
+								distances.length = 0;
+							}
 							bucket.pixels = 0;
 							bucket.nearest = Infinity;
 							buckets.push(bucket);
 						}
 						if (slot.particles === null) {
 							bucket.rows[group].push(row);
+							bucket.distances?.[group].push(distance);
 						} else {
 							const particles = this.#particles.rows(instances, i, slot.particles, frame, view.particles);
 							selection.particles = true;
 							for (const particle of particles) {
 								bucket.rows[group].push(particle);
+								bucket.distances?.[group].push(distance);
 							}
 						}
 						if (priority > bucket.pixels) {
@@ -598,6 +605,10 @@ export class MeshSelector {
 				mirrored: mirrored === 1,
 				castOnly,
 				rows: Array.from({ length: SHADOW_LAYERS + 1 }, () => []),
+				distances:
+					this.#looks[material].afterDof === null
+						? null
+						: Array.from({ length: SHADOW_LAYERS + 1 }, () => []),
 				pixels: 0,
 				nearest: Infinity,
 				first: 0,

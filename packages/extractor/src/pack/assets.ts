@@ -592,7 +592,7 @@ export const convertAssets = async (input: AssetConversionInput): Promise<AssetC
 			unsupportedMaterials[key] = (unsupportedMaterials[key] ?? 0) + 1;
 			materialDebug[id].unsupported = surface.reason;
 		}
-		return { id, status: 'ready', cull: material.cull, surface };
+		return { id, status: 'ready', cull: material.cull, renderQueue: material.renderQueue, surface };
 	});
 	// #endregion
 

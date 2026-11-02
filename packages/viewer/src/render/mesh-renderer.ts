@@ -167,6 +167,20 @@ const TRANSPARENT_PHASES: readonly DrawPhase[] = [
 	{ key: 'mesh/mist-volume', range: 'mistVolume', textured: true, shadow: false, streams: 'all' },
 ];
 
+const AFTER_DOF_PHASES: readonly DrawPhase[] = TRANSPARENT_PHASES.map((phase) => ({
+	...phase,
+	key: `${phase.key}/after-dof`,
+}));
+const AFTER_DOF_TARGETS: GPUColorTargetState[] = [
+	{
+		format: HDR_FORMAT,
+		blend: {
+			color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+			alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
+		},
+	},
+];
+
 /**
  * lit decals that change only the surface's normal, roughness or occlusion, run between the main and the
  * transparent pass: they add the change in the surface's light to the radiance
@@ -254,7 +268,16 @@ class VertexBindings {
 	}
 }
 
+interface SortedDraw {
+	index: number;
+	first: number;
+	distance: number;
+	queue: number;
+	phase: DrawPhase;
+}
+
 interface PreparedDraw {
+	afterDof: boolean;
 	geometry: ResidentGeometry;
 	indexCount: number;
 	firstIndex: number;
@@ -409,6 +432,7 @@ export class MeshRenderer {
 	#foamBehindStart = 0;
 	/** prepared draws in {@link DrawRange} order; entries past {@link #drawCount} are reused next frame */
 	#draws: PreparedDraw[] = [];
+	#afterDof: SortedDraw[] = [];
 	#drawCount = 0;
 	/** indices of the first alpha-tested draw, the first stencil mask and the first alpha-blended draw */
 	#cutoutStart = 0;
@@ -592,6 +616,15 @@ export class MeshRenderer {
 			fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 			depthStencil: { format: format.depth, depthWriteEnabled: false, depthCompare: DEPTH_COMPARE },
 		});
+		prepare(AFTER_DOF_PHASES[0], {
+			fragment: {
+				module,
+				entryPoint: 'fs_after_dof',
+				constants: { after_dof: 1 },
+				targets: AFTER_DOF_TARGETS,
+			},
+			depthStencil: { format: format.depth, depthWriteEnabled: false, depthCompare: DEPTH_COMPARE },
+		});
 		const [shadowOpaque, shadowCutout] = SHADOW_PHASES;
 		prepare(shadowOpaque, { depthStencil: SHADOW_DEPTH_STATE });
 		prepare(shadowCutout, {
@@ -647,6 +680,18 @@ export class MeshRenderer {
 					vertex: { ...vertex(uvFormat), module: effectModule, entryPoint: 'vs_effect' },
 					primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
 					fragment: { module: effectModule, entryPoint, targets: TRANSPARENT_TARGETS },
+					depthStencil: { format: format.depth, depthWriteEnabled: false, depthCompare },
+				}));
+				describe(`${phase.key}/after-dof`, (cullMode, uvFormat) => ({
+					layout,
+					vertex: { ...vertex(uvFormat), module: effectModule, entryPoint: 'vs_effect' },
+					primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
+					fragment: {
+						module: effectModule,
+						entryPoint: `${entryPoint}_after_dof`,
+						constants: { after_dof: 1 },
+						targets: AFTER_DOF_TARGETS,
+					},
 					depthStencil: { format: format.depth, depthWriteEnabled: false, depthCompare },
 				}));
 			}
@@ -946,6 +991,7 @@ export class MeshRenderer {
 
 	/** draws nothing this frame */
 	clear(): void {
+		this.#afterDof.length = 0;
 		this.#drawCount = 0;
 		this.instanceCount = 0;
 		this.triangles = 0;
@@ -1224,6 +1270,7 @@ export class MeshRenderer {
 			const draw = this.#draws[d];
 			if (draw === undefined) {
 				this.#draws[d] = {
+					afterDof: look.afterDof !== null,
 					geometry: resident,
 					indexCount: range.indexCount,
 					firstIndex: range.firstIndex,
@@ -1238,6 +1285,7 @@ export class MeshRenderer {
 					stencil: look.stencil,
 				};
 			} else {
+				draw.afterDof = look.afterDof !== null;
 				draw.geometry = resident;
 				draw.indexCount = range.indexCount;
 				draw.firstIndex = range.firstIndex;
@@ -1250,6 +1298,31 @@ export class MeshRenderer {
 				draw.uvFormat = resident.uvFormat;
 				draw.effect = effect;
 				draw.stencil = look.stencil;
+			}
+			if (look.afterDof !== null && bucket.distances !== null) {
+				let phase = AFTER_DOF_PHASES[0];
+				if (look.screen === 'multiply') {
+					phase = MULTIPLY_PHASES[0];
+				} else if (look.screen === 'refract') {
+					phase = REFRACT_PHASES[0];
+				} else if (b >= mistVolumeFrom) {
+					phase = AFTER_DOF_PHASES[4];
+				} else if (b >= mistFrom) {
+					phase = AFTER_DOF_PHASES[3];
+				} else if (b >= decalFrom) {
+					phase = AFTER_DOF_PHASES[2];
+				} else if (b >= effectFrom) {
+					phase = AFTER_DOF_PHASES[1];
+				}
+				let first = bucket.first;
+				for (const distances of bucket.distances) {
+					for (const distance of distances) {
+						if (first >= bucket.first + bucket.count) {
+							break;
+						}
+						this.#afterDof.push({ index: d, first: first++, distance, queue: look.afterDof, phase });
+					}
+				}
 			}
 			d++;
 			if (look.castsShadows) {
@@ -1275,6 +1348,7 @@ export class MeshRenderer {
 			}
 		}
 		this.#drawCount = d;
+		this.#afterDof.sort((a, b) => a.queue - b.queue || b.distance - a.distance);
 		// ranges that start at or past the last bucket (empty ones, or draws past the cap) start at the end
 		if (cutoutFrom === bucketCount) {
 			this.#cutoutStart = d;
@@ -1371,6 +1445,27 @@ export class MeshRenderer {
 		return this.#encode(pass, TRANSPARENT_PHASES);
 	}
 
+	/** whether the current selection includes layers drawn after focus blur */
+	get hasAfterDof(): boolean {
+		return this.#afterDof.length > 0;
+	}
+
+	/**
+	 * composites authored post-focus layers in queue and back-to-front order.
+	 *
+	 * @param pass a single HDR target with scene depth read-only and frame group bound
+	 * @param inputs main-pass textures; background must be a separate copy for refraction
+	 * @returns draw calls issued
+	 */
+	encodeAfterDof(pass: GPURenderPassEncoder, inputs: EffectInputs): number {
+		this.#bindEffects(this.#effectStart, this.#drawCount, inputs);
+		let draws = 0;
+		for (const draw of this.#afterDof) {
+			draws += this.#encode(pass, [draw.phase], -1, draw);
+		}
+		return draws;
+	}
+
 	/**
 	 * adds the light that relit decals change to the main pass's radiance. call between the main pass and
 	 * {@link encodeTransparent}.
@@ -1462,7 +1557,12 @@ export class MeshRenderer {
 	 * encodes the phases in order; nothing if any phase's pipeline isn't ready. `layer` limits each draw to the
 	 * rows that shadow layer draws, or is -1 for all of them
 	 */
-	#encode(pass: GPURenderPassEncoder, phases: readonly DrawPhase[], layer = -1): number {
+	#encode(
+		pass: GPURenderPassEncoder,
+		phases: readonly DrawPhase[],
+		layer = -1,
+		selected?: SortedDraw,
+	): number {
 		if (this.#drawCount === 0) {
 			return 0;
 		}
@@ -1546,6 +1646,10 @@ export class MeshRenderer {
 					break;
 				}
 			}
+			if (selected !== undefined) {
+				from = selected.index;
+				to = from + 1;
+			}
 			if (from === to) {
 				continue;
 			}
@@ -1557,7 +1661,10 @@ export class MeshRenderer {
 			let material: GPUBindGroup | null = null;
 			for (let i = from; i < to; i++) {
 				const draw = this.#draws[i];
-				const count = layer < 0 ? draw.count : draw.layerCounts[layer];
+				const count = selected !== undefined ? 1 : layer < 0 ? draw.count : draw.layerCounts[layer];
+				if (draw.afterDof && selected === undefined && !phase.shadow) {
+					continue;
+				}
 				// only an effect drawn outside the transparent pass would lack its group
 				if (draw.material === null || count === 0) {
 					continue;
@@ -1595,7 +1702,13 @@ export class MeshRenderer {
 					this.#bindStreams(pass, bindings, geometry, phase.streams);
 					pass.setIndexBuffer(geometry.indices, geometry.indexFormat);
 				}
-				pass.drawIndexed(draw.indexCount, count, draw.firstIndex, draw.baseVertex, draw.first);
+				pass.drawIndexed(
+					draw.indexCount,
+					count,
+					draw.firstIndex,
+					draw.baseVertex,
+					selected?.first ?? draw.first,
+				);
 				draws++;
 			}
 		}
