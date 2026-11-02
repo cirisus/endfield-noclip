@@ -17,6 +17,9 @@ const vector = (p: { x: number; y: number; z: number }): [number, number, number
 export const summary =
 	'add source-authored navigation to a baked OEM release: oem-navigation <release> -o <releases> --config <config>';
 
+/** command usage, available without opening the install */
+export const usage = 'usage: oem-navigation <release> -o <releases> --config <config>';
+
 /** @param args command arguments @returns after writing a new immutable release without copying model bytes */
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
