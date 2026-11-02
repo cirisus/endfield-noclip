@@ -32,8 +32,8 @@ import type { DecodeJob, DecodePool } from '../../../viewer/src/package/decode-p
 import type { Decoded } from '../../../viewer/src/package/decode-protocol.ts';
 import type { PackageSource } from '../../../viewer/src/package/package-source.ts';
 import { openViewerPackage } from '../../../viewer/src/package/viewer-package.ts';
+import { pointPreview } from '../../../viewer/src/scene/point-preview.ts';
 import { pointViewKey } from '../../../viewer/src/scene/point-view-cache.ts';
-import { pointPose, pointTriangles } from '../../../viewer/src/scene/point-view.ts';
 import { buildTileTree } from '../../../viewer/src/scene/tile-tree.ts';
 
 /* oxlint-disable no-await-in-loop -- process in scene order to bound memory and checkpoint deterministic output */
@@ -280,15 +280,17 @@ export const run = async (args: string[]): Promise<void> => {
 					let view = saved[point.id];
 					if (!view || view.key !== key) {
 						await prepareTerrain(point);
-						const triangles = await pointTriangles(
+						const pose = await pointPreview(
 							pkg,
 							decoder,
 							point.position,
-							shown,
+							states,
+							level.tag,
+							picks,
+							heightAt,
 							new AbortController().signal,
 						);
-						const pose = pointPose(point.position, triangles, heightAt);
-						view = { key, position: pose.position, yaw: pose.yaw, pitch: pose.pitch, clear: pose.clear };
+						view = { key, ...pose };
 						saved[point.id] = view;
 					}
 					point.view = view;
@@ -357,7 +359,7 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	await writeFile(
 		join(destination, 'index.json'),
-		JSON.stringify({ ...catalog, release, framing: { version: 4, profile: 'completed', points: count } }),
+		JSON.stringify({ ...catalog, release, framing: { version: 5, profile: 'completed', points: count } }),
 	);
 	console.log(
 		JSON.stringify({

@@ -71,8 +71,8 @@ import { WaterRenderer } from './render/water-renderer.ts';
 import { wetnessParams } from './render/wetness.ts';
 import { Camera, type Vec3 } from './scene/camera.ts';
 import { type CameraPose, NoclipControls } from './scene/noclip-controls.ts';
+import { pointPreview } from './scene/point-preview.ts';
 import { pointViewKey, readPointView, writePointView } from './scene/point-view-cache.ts';
-import { pointPose, pointTriangles } from './scene/point-view.ts';
 import { type TileTree, buildTileTree } from './scene/tile-tree.ts';
 import { type MeshSelection, MeshSelector, streamWholeTexture } from './streaming/mesh-selection.ts';
 import { Selector } from './streaming/selection.ts';
@@ -1203,11 +1203,11 @@ export class Viewer {
 		target: Vec3,
 		signal: AbortSignal,
 		options?: { baked?: PointView; animate: boolean },
-	): Promise<void> {
+	): Promise<PointView | null> {
 		signal.throwIfAborted();
 		const scene = this.scene;
 		if (!scene) {
-			return;
+			return null;
 		}
 		this.#unsettledPose = null;
 		const initial: CameraPose = {
@@ -1240,20 +1240,28 @@ export class Viewer {
 		const key = await pointViewKey(scene.pkg.manifest.generation, this.level, target, shown);
 		let pose = options?.baked?.key === key ? options.baked : readPointView(key);
 		if (pose === null) {
-			const triangles = await pointTriangles(scene.pkg, this.#pool, target, shown, signal);
 			let pendingTerrain = false;
-			pose = pointPose(target, triangles, (x, z) => {
-				const height = this.#groundHeight(x, z);
-				pendingTerrain ||= height === undefined;
-				return height ?? null;
-			});
+			pose = await pointPreview(
+				scene.pkg,
+				this.#pool,
+				target,
+				states,
+				this.#level?.tag ?? null,
+				picks,
+				(x, z) => {
+					const height = this.#groundHeight(x, z);
+					pendingTerrain ||= height === undefined;
+					return height ?? null;
+				},
+				signal,
+			);
 			if (!pendingTerrain && !signal.aborted && this.scene === scene) {
 				writePointView(key, pose);
 			}
 		}
 		signal.throwIfAborted();
 		if (this.scene !== scene) {
-			return;
+			return null;
 		}
 		this.#unsettledPose = null;
 		if (options?.animate) {
@@ -1263,6 +1271,7 @@ export class Viewer {
 			this.#setPose(pose);
 		}
 		this.#dirty = true;
+		return { key, clear: false, ...pose };
 	}
 
 	/**
