@@ -6,7 +6,7 @@ import { pointPose } from './point-view.ts';
 it('keeps the wide view in open space and turns around an opaque wall', () => {
 	const target: [number, number, number] = [0, 0, 0];
 	const open = pointPose(target, [], () => null);
-	assert.equal(open.yaw, 0);
+	assert.equal(open.yaw, Math.PI / 4);
 	const pose = pointPose(
 		target,
 		[
@@ -82,4 +82,31 @@ it('keeps at least ten metres away when walls block every candidate', () => {
 	const view = pointPose([0, 0, 0], walls, () => 0);
 	assert.equal(view.clear, false);
 	assert.ok(Math.hypot(view.position[0], view.position[2]) >= 10);
+});
+
+// The centre sight line is clear alongside x = 0.8, but the old south view
+// filled the right side with the wall. Keep the camera on the open side.
+it('favours an oblique context view over a clear but wall-hugging centre ray', () => {
+	const wall: [[number, number, number], [number, number, number], [number, number, number]][] = [
+		[
+			[0.8, -100, -100],
+			[0.8, 100, -100],
+			[0.8, 100, 100],
+		],
+		[
+			[0.8, -100, -100],
+			[0.8, 100, 100],
+			[0.8, -100, 100],
+		],
+	];
+	const pose = pointPose([0, 0, 0], wall, () => null);
+	assert.equal(pose.clear, true);
+	assert.ok(pose.position[0] < -5);
+	assert.ok(Math.abs(pose.position[2]) > 5);
+	assert.ok(Math.hypot(pose.position[0], pose.position[2]) >= 10 - 1e-9);
+	// Exercise internal spatial partitions as well as the tiny leaf case.
+	assert.deepEqual(
+		pointPose([0, 0, 0], Array.from({ length: 20 }, () => wall).flat(), () => null),
+		pose,
+	);
 });
