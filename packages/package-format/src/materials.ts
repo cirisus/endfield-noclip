@@ -18,6 +18,8 @@ export interface ReadyMaterial {
 	status: 'ready';
 	/** the faces the game culls */
 	cull: MaterialCull;
+	/** authored draw queue, including the after-depth-of-field range; absent in earlier packages */
+	renderQueue?: number;
 	/** what the material draws, interpreted by the extractor */
 	surface: MaterialSurface;
 }
