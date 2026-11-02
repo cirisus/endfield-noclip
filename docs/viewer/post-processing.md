@@ -95,3 +95,6 @@ half-float intermediates throughout, so rounding differs from packed colour inte
 is against recovered code and data plus GPU execution; it does not establish pixel-identical output.
 these limits are independent of the
 existing differences in scene content, lighting and other post effects.
+
+the bottom camera readout shows focal length in millimetres and the selected f-number. it marks
+depth of field as off when disabled, and uses the same sensor-height conversion as the blur pass.
