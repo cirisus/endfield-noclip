@@ -62,6 +62,11 @@ URP's vignette (post profile `vignette`) in HDR before grading.
 where the game bakes grading and curve into a LogC LUT, the viewer evaluates them per pixel. it also
 offers Khronos PBR Neutral and a clamp, for separating lighting errors from grading.
 
+the independent filters panel groups exposure compensation, automatic exposure, tonemapping, bloom
+and vignette. it uses the existing renderer options; resetting it restores only these five defaults.
+hosts can persist these settings through their normal view record. it shares panel chrome and form
+controls with photography and display settings.
+
 ## photography
 
 [`render/depth-of-field.ts`](../../packages/viewer/src/render/depth-of-field.ts) adds optional
