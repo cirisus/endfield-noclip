@@ -10,7 +10,7 @@ import type { DecodePool } from '../package/decode-pool.ts';
 import type { ViewerPackage } from '../package/viewer-package.ts';
 
 import type { Vec3 } from './camera.ts';
-import { pointBlocked, pointPose, pointTriangles } from './point-view.ts';
+import { pointBlocked, pointFrameFits, pointPose, pointTriangles } from './point-view.ts';
 
 /**
  * @param ground terrain sampler shared with ordinary point framing
@@ -29,6 +29,14 @@ export const pointPreview = async (
 	const visibility = (values: Readonly<Record<string, number>>) =>
 		groupsShown(states, levelTag, conditionResults(states, resolveSceneValues(states, values)));
 	const original = visibility(picks);
+	let triangles = await pointTriangles(pkg, pool, target, original, signal);
+	const visible = (shown: readonly boolean[]) =>
+		triangles.filter((triangle) => triangle.group !== undefined && shown[triangle.group]);
+	let initialTriangles = visible(original);
+	const initial = pointPose(target, initialTriangles, ground, { context: false });
+	if (initial.clear) {
+		return initial;
+	}
 	const values = resolveSceneValues(states, picks);
 	const candidates = states.controls.flatMap((control) => {
 		if (
@@ -37,7 +45,7 @@ export const pointPreview = async (
 		) {
 			return [];
 		}
-		const door = control.kind === 'door';
+		const door = control.kind === 'door' || control.kind === 'destruction';
 		const hide =
 			control.kind === 'script' &&
 			control.drivers.some(
@@ -54,7 +62,9 @@ export const pointPreview = async (
 			return [];
 		}
 		const shown = visibility({ ...picks, [control.id]: after });
-		const removed = new Set(original.flatMap((visible, group) => (visible && !shown[group] ? [group] : [])));
+		const removed = new Set(
+			original.flatMap((wasShown, group) => (wasShown && !shown[group] ? [group] : [])),
+		);
 		return removed.size === 0
 			? []
 			: [{ control: control.id, label: control.name, before, after, shown, removed }];
@@ -62,15 +72,6 @@ export const pointPreview = async (
 	const union = original.map(
 		(shown, group) => shown || candidates.some((candidate) => candidate.shown[group]),
 	);
-	let triangles = await pointTriangles(pkg, pool, target, union, signal);
-	const visible = (shown: readonly boolean[]) =>
-		triangles.filter((triangle) => triangle.group !== undefined && shown[triangle.group]);
-	let initialTriangles = visible(original);
-	const initial = pointPose(target, initialTriangles, ground, { context: false });
-	// A normal clear view needs no intervention or introductory state change.
-	if (initial.clear) {
-		return initial;
-	}
 	triangles = await pointTriangles(pkg, pool, target, union, signal, { radius: 26 });
 	initialTriangles = visible(original);
 	for (const candidate of candidates) {
@@ -80,10 +81,25 @@ export const pointPreview = async (
 		if (obstruction.length === 0) {
 			continue;
 		}
-		const after = pointPose(target, visible(candidate.shown), ground, { context: false });
+		const min: Vec3 = [Infinity, Infinity, Infinity],
+			max: Vec3 = [-Infinity, -Infinity, -Infinity];
+		for (const triangle of obstruction) {
+			for (const vertex of triangle) {
+				for (let axis = 0; axis < 3; axis++) {
+					min[axis] = Math.min(min[axis], vertex[axis]);
+					max[axis] = Math.max(max[axis], vertex[axis]);
+				}
+			}
+		}
+
+		const after = pointPose(target, visible(candidate.shown), ground, {
+			context: false,
+			distances: [10, 16, 22],
+			accept: (pose) => pointFrameFits(pose, min, max) && pointBlocked(pose.position, target, obstruction),
+		});
 		// Require both an actual blocked ray before and a clear inspection bundle after.
 		// Nearby doors or script groups alone are not evidence of an interaction link.
-		if (after.clear && pointBlocked(after.position, target, obstruction)) {
+		if (after.clear) {
 			return {
 				...after,
 				interactions: [

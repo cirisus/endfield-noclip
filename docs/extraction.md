@@ -1174,3 +1174,12 @@ workers. checkpoint files support resuming. the command writes a new immutable r
 archives from the immutable input on the same filesystem and writing its catalog last; never bake
 into the input release. validate the result with `oem-check` before changing the OEM catalog URL.
 see [offline framing](oem-precompute.md) for coverage, distance and network details.
+
+### destructible interactives
+
+placements with a destructible component receive an independent `destruction:<id>` control:
+intact (0, the default) or destroyed (1). intact geometry keeps its authored rest pose and all
+existing visibility requirements; destruction hides it. explicit `reward_entities` references
+replace the generic created-during-play gate on those rewards, showing them only after their
+unique parent is destroyed. ambiguous parent references are left unresolved. this models settled
+visibility only, not damage, debris, physics or explosion effects.

@@ -27,19 +27,19 @@ remain intact. generated packages, checkpoints and game-derived companion data s
 
 ## framing contract
 
-algorithm v5 compares sixteen headings and several elevations while retaining at least 10 m horizontal
+algorithm v6 compares sixteen headings and several elevations while retaining at least 10 m horizontal
 viewing distance. at the first feasible elevation it ranks clear candidates by nearby occlusion
 across a 5 by 3 inspection-frustum grid (5 m forward depth). fewer blocked samples win;
 oblique headings break ties. all rays share a per-point triangle spatial index. this avoids choosing a wall-hugging view just because the point
-itself is visible, without changing the user's lens. v3/v4 catalogs remain readable, but their pose
-keys cannot satisfy v5 requests; rebake to restore the zero-computation path.
+itself is visible, without changing the user's lens. v3/v4/v5 catalogs remain readable, but their pose
+keys cannot satisfy v6 requests; rebake to restore the zero-computation path.
 it focuses above the target floor, handles cave points beneath the terrain and
 ignores small geometry enclosing the collectible itself. all-candidate failures compare 32 headings at 10/16/22 m and three elevations, using a
 5 by 3 target-neighbourhood grid to favour an enclosure's opening and reject foreground walls.
 these context views keep `clear: false`: a useful entrance view does not prove the collectible visible.
 
 for an occluded point, the same pass can check a single source-backed obstruction control: a door
-opening, or an independent script group hidden by an extracted switch/combat driver. it requires a
+opening, a destructible object, or an independent script group hidden by an extracted switch/combat driver. it requires a
 blocked sight line through that group's geometry before interaction and a clear inspection bundle
 afterwards. unrelated nearby controls, quest-derived gates, unknown triggers and multi-step puzzles
 are not overridden. the bound pose carries the proven control and its before/after values; package
@@ -74,3 +74,9 @@ with geometry reuse and no terrain. that pilot is not a large-map runtime foreca
 used checkpoints, parallel partitions and recomputation after distance requirements changed, so its
 combined wall time is not a clean cold-run benchmark. v27 particle changes require fresh scene
 archives; new generations invalidate old pose bindings automatically.
+
+interaction framing checks the complete original obstruction against a conservative camera frustum
+with at least 3 m lens clearance, trying 10, 16 and 22 m target distances. the same pose must see the
+target after the state change. destructible placements retain intact/destroyed visibility and explicit
+`reward_entities` gates; unrelated nearby boxes are not removed. debris, damage and intermediate
+physics are not simulated. ambiguous reward owners remain unresolved.
