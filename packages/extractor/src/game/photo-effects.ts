@@ -7,8 +7,9 @@ import type { PhotoEffect } from '@endfield-noclip/package-format/photo-filters'
 import type { Context } from '../context.ts';
 import { convertTexture } from '../pack/textures.ts';
 
-import { loadMaterial, loadTexture } from './asset-decode.ts';
+import { loadTexture } from './asset-decode.ts';
 import type { ObjectRef } from './assets.ts';
+import { loadMaterial } from './material-load.ts';
 import { findParticleQuad } from './particle-quad.ts';
 import { readPrefabRenderers } from './prefab.ts';
 
@@ -41,11 +42,11 @@ export const loadPhotoEffects = async (
 			particles === null ||
 			particles.renderMode !== ParticleRenderMode.Billboard ||
 			particles.alignment !== ParticleAlignment.View ||
-			particles.gravityModifier.mode !== CurveMode.Constant ||
-			particles.gravityModifier.scalar !== 0 ||
-			particles.velocity !== null ||
-			particles.drag !== null ||
-			particles.speedLimit !== null ||
+			particles.motion.kind !== 'free' ||
+			particles.motion.gravityModifier.mode !== CurveMode.Constant ||
+			particles.motion.gravityModifier.scalar !== 0 ||
+			particles.motion.velocity !== null ||
+			particles.motion.clamp !== null ||
 			particles.ringBuffer !== null ||
 			particles.bursts.length !== 0 ||
 			particles.pivot.some((v) => v !== 0) ||
