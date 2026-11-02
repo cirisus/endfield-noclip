@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
 
-import { pointPose, pointFrameFits, pointBlocked } from './point-view.ts';
+import { pointPose, pointFrameFits, pointBlocked, pointEnclosure } from './point-view.ts';
 
 it('keeps the wide view in open space and turns around an opaque wall', () => {
 	const target: [number, number, number] = [0, 0, 0];
@@ -179,4 +179,22 @@ it('frames a closed door completely as well as its revealed target', () => {
 	assert.equal(pose.clear, true);
 	assert.equal(pointFrameFits(pose, min, max), true);
 	assert.ok(Math.hypot(pose.position[0], pose.position[2]) >= 16 - 1e-9);
+});
+
+it('distinguishes a clear indoor camera from an open approach without counting the floor', () => {
+	const roof: [[number, number, number], [number, number, number], [number, number, number]][] = [
+		[
+			[-5, 4, -5],
+			[5, 4, -5],
+			[5, 4, 5],
+		],
+		[
+			[-5, 4, -5],
+			[5, 4, 5],
+			[-5, 4, 5],
+		],
+	];
+	assert.ok(pointEnclosure([0, 2, 0], roof) > pointEnclosure([0, 2, -14], roof));
+	assert.equal(pointEnclosure([0, 6, 0], roof), 0);
+	assert.equal(pointEnclosure([0, 2, 0], []), 0);
 });
