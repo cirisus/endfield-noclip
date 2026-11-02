@@ -2,7 +2,7 @@ import { useId } from 'react';
 
 import { DEBUG_VIEWS } from '../render/frame-uniforms.ts';
 import { TONEMAPPERS } from '../render/post-process.ts';
-import type { Viewer, ViewerOptions } from '../viewer.ts';
+import { DEFAULT_OPTIONS, type Viewer, type ViewerOptions } from '../viewer.ts';
 
 import { Panel } from './panel.tsx';
 import { useViewerState } from './use-viewer.ts';
@@ -183,15 +183,11 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 				<Toggle viewer={viewer} name="water" label="water" />
 				<Toggle viewer={viewer} name="ao" label="ambient occlusion" />
 				<Toggle viewer={viewer} name="reflections" label="screen-space reflections" />
-				<Toggle viewer={viewer} name="bloom" label="bloom" />
-				<Toggle viewer={viewer} name="vignette" label="vignette" />
-				<Toggle viewer={viewer} name="autoExposure" label="auto exposure" />
 				<Toggle viewer={viewer} name="irradiance" label="irradiance volume" />
 				<Toggle viewer={viewer} name="localLights" label="local lights" />
 				<Toggle viewer={viewer} name="antialiasing" label="temporal AA" />
 			</fieldset>
 			<EnvironmentControls viewer={viewer} />
-			<Slider viewer={viewer} name="exposure" label="exposure" min={-4} max={4} step={0.25} unit="EV" />
 			<Slider
 				viewer={viewer}
 				name="renderScale"
@@ -201,7 +197,6 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 				step={0.05}
 				unit="×"
 			/>
-			<Choice viewer={viewer} name="tonemapper" label="tonemapper" choices={TONEMAPPERS} />
 			<Choice viewer={viewer} name="debugView" label="show" choices={DEBUG_VIEWS} />
 			<fieldset>
 				<legend>HLOD tiers</legend>
@@ -301,6 +296,40 @@ export const PhotographyPanel = ({ viewer }: { viewer: Viewer }) => {
 					}}
 				/>
 			</div>
+		</Panel>
+	);
+};
+
+/** post-processing controls shared by the standalone viewer and its host's panel chrome */
+export const FiltersPanel = ({ viewer }: { viewer: Viewer }) => {
+	useViewerState(viewer);
+	return (
+		<Panel
+			title="Filters"
+			label="filters"
+			className="settings"
+			actions={
+				<button
+					type="button"
+					onClick={() =>
+						viewer.setOptions({
+							exposure: DEFAULT_OPTIONS.exposure,
+							autoExposure: DEFAULT_OPTIONS.autoExposure,
+							tonemapper: DEFAULT_OPTIONS.tonemapper,
+							bloom: DEFAULT_OPTIONS.bloom,
+							vignette: DEFAULT_OPTIONS.vignette,
+						})
+					}
+				>
+					Reset
+				</button>
+			}
+		>
+			<Toggle viewer={viewer} name="autoExposure" label="auto exposure" />
+			<Slider viewer={viewer} name="exposure" label="exposure" min={-4} max={4} step={0.25} unit="EV" />
+			<Choice viewer={viewer} name="tonemapper" label="tonemapper" choices={TONEMAPPERS} />
+			<Toggle viewer={viewer} name="bloom" label="bloom" />
+			<Toggle viewer={viewer} name="vignette" label="vignette" />
 		</Panel>
 	);
 };
