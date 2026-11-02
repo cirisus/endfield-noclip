@@ -160,6 +160,11 @@ test('rejects malformed effect transforms, particle curves, texture mips and uns
 	const badMotion = effect();
 	badMotion.particles.gravityModifier = constant(1);
 	assert.throws(() => parse(badMotion), /invalid effects/);
+	const speedLimited = {
+		...effect(),
+		particles: { ...effect().particles, speedLimit: { limit: constant(1), dampen: 1 } },
+	};
+	assert.throws(() => parse(speedLimited), /invalid effects/);
 	const badMip = effect();
 	badMip.texture.levels = [Buffer.alloc(1).toString('base64')];
 	assert.throws(() => parse(badMip), /invalid effects/);

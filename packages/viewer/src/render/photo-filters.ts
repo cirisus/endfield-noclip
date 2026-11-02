@@ -67,6 +67,7 @@ const particles = (value: unknown): boolean => {
 		value.stretch !== null ||
 		value.velocity !== null ||
 		value.drag !== null ||
+		value.speedLimit != null ||
 		value.ringBuffer !== null ||
 		!Array.isArray(value.bursts) ||
 		value.bursts.length !== 0 ||

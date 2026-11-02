@@ -57,8 +57,8 @@ export interface PhotoEffect {
 	name: string;
 	/** emitter-to-prefab transform, column-major */
 	matrix: number[];
-	/** authored emission, motion, lifetime, size, colour and atlas settings */
-	particles: ParticleSystemInfo;
+	/** authored closed-form settings; speed limiting is outside this simple emitter contract */
+	particles: Omit<ParticleSystemInfo, 'speedLimit'>;
 	/** linear HDR tint including intensity; alpha includes the material's opacity */
 	tint: [number, number, number, number];
 	/** cancels post exposure for emission, as the source material requests */
