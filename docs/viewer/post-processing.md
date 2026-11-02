@@ -88,11 +88,12 @@ the scene particle evaluator for emission, lifetime curves, size, rotation, colo
 the effect is anchored at the camera's first selection pose; switching away and back resumes that
 anchor and clock rather than making the particles follow the camera. it draws depth-tested HDR
 billboards before temporal AA, bloom and grading, cancelling post exposure when the source material
-requests it. only selected emitters allocate textures and buffers; animation requests frames without
-repeating scene selection. the shared evaluator's 1024-particle cap still applies. Unity's noise
-module is not evaluated and remains in the filter's partial-support notice. this path accepts only
-simple additive, view-aligned billboards without gravity, bursts, pivot offsets or extra motion
-modules; other materials and emitters are reported by the extractor.
+requests it. only selected emitters allocate textures and buffers; animation reuses scene selection
+unless visible scene particles need updating too. the shared evaluator's 1024-particle cap still
+applies. Unity's noise module is not evaluated and remains in the filter's partial-support notice.
+this path accepts only simple additive, view-aligned billboards without gravity, speed limits,
+bursts, pivot offsets or extra motion modules; other materials and emitters are reported by the
+extractor.
 
 the underlying scene renderer's existing grading, bloom and vignette differences still apply.
 

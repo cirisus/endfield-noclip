@@ -20,6 +20,9 @@ import { VfsGroup } from '../hg/vfs.ts';
 
 export const summary = 'export the install’s photo filters and LUTs: filters [-o out/photo-filters.json]';
 
+/** command usage, available without opening the install */
+export const usage = 'usage: filters [-o out/photo-filters.json]';
+
 /**
  * @param args CLI arguments, including the local config and output path
  * @returns after writing a library; missing or unsupported assets fail explicitly
