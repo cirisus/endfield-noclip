@@ -2,6 +2,7 @@ import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import type { GroundArrival, GroundOptions, LocomotionOptions, Surface, Vec3, Wall } from '@oem/ganglia';
 
+import { completedWallState } from './air-wall-state.ts';
 import { navigationPortals } from './navigation-portals.ts';
 
 const object = (value: unknown): Record<string, unknown> => {
@@ -73,6 +74,9 @@ export const groundData = (
 	}
 	const release = string(query.release),
 		state = string(query.state);
+	if (query.progression !== undefined && query.progression !== 'completed') {
+		throw new Error('unsupported route progression snapshot');
+	}
 	const selected = new Set(list(query.assets).map(string));
 	const areas = new Set(list(query.areas).map(number));
 	if (!selected.size || !areas.size || [...areas].some((a) => !Number.isInteger(a) || a < 0 || a > 31)) {
@@ -195,14 +199,15 @@ export const groundData = (
 	}
 	const exclusionsList: Wall[] = list(walls.walls).map((value) => {
 		const wall = object(value);
-		// State changes belong to a runtime resolver, not an export-time defaultOn guess.
+		// resolve only the explicitly selected completed-progression snapshot.
+		// unsupported conditions and script-owned groups retain unresolved activation.
 		if (wall.state !== 'unknown') {
 			throw new Error('expected unresolved exported wall state');
 		}
 		return {
 			min: vector(wall.min),
 			max: vector(wall.max),
-			state: 'unknown',
+			state: query.progression === 'completed' ? completedWallState(wall) : 'unknown',
 			padding: number(wall.padding),
 			points: list(wall.points).map((pointValue) => {
 				const p = list(pointValue);
@@ -215,7 +220,8 @@ export const groundData = (
 	});
 	for (const value of list(walls.hazards)) {
 		const hazard = object(value);
-		if (hazard.kind !== 'repatriation' || hazard.state !== 'unknown') {
+		const hazardState = hazard.state;
+		if (hazard.kind !== 'repatriation' || (hazardState !== 'unknown' && hazardState !== 'active')) {
 			throw new Error('unsupported route hazard');
 		}
 		const polygon =
@@ -231,7 +237,7 @@ export const groundData = (
 		if (polygon && polygon.length < 3) {
 			throw new Error('invalid hazard polygon');
 		}
-		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: 'unknown', polygon });
+		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: hazardState, polygon });
 	}
 	const landings = new Map<string, Vec3>();
 	if (travel !== undefined) {
@@ -322,6 +328,7 @@ export const groundData = (
 		source,
 		scene: string(nav.scene),
 		state,
+		...(query.progression === 'completed' ? { progression: query.progression } : {}),
 		assets: [...selected],
 		areas: [...areas],
 		profileSource: query.profile === undefined ? 'most-common-character' : 'explicit',

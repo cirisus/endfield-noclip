@@ -47,7 +47,7 @@ const polygonOf = (shape: TypeTreeObject, min: number[], max: number[]) => {
 
 /**
  * @param data current metadata-decoded level data
- * @returns authored repatriation volumes with conservative world bounds and unresolved activation
+ * @returns authored repatriation volumes with conservative world bounds and source-resolved activation
  * @throws {FormatError} if a hazard cannot be mapped to its bounds or specific payload
  */
 export const routeHazards = (data: TypeTreeObject) => {
@@ -89,11 +89,14 @@ export const routeHazards = (data: TypeTreeObject) => {
 		}
 		const min = center.map((v, i) => v - size[i] / 2),
 			max = center.map((v, i) => v + size[i] / 2);
+		// the client enables unaddressed areas directly. their defaultOff field
+		// belongs to the addressed-area branch and cannot disable these reset zones.
+		const state = value.uniqueId === 0n && value.hasCondition === false ? 'active' : 'unknown';
 		return [
 			{
 				kind: 'repatriation',
 				slot,
-				state: 'unknown',
+				state,
 				min,
 				max,
 				polygon: polygonOf(value, min, max),

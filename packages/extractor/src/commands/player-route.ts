@@ -33,6 +33,7 @@ type Ground = {
 	coverage: unknown;
 	surfaces: Surface[];
 	options: GroundOptions;
+	build?: { bounds?: { min: [number, number]; max: [number, number] } };
 };
 type Collision = CollisionGeometry & {
 	records?: CollisionRecord[];
@@ -240,6 +241,8 @@ export const run = async (args: string[]): Promise<void> => {
 		maxFallingSpeed: numberField(settings, '_maxFallingSpeed'),
 		apexTime: numberField(settings, '_apexTime'),
 		maxHorizontalSpeed: numberField(settings, '_inAirMaxHorizontalSpeedSprint'),
+		airAcceleration: numberField(settings, '_inAirAcceleration'),
+		airDeceleration: numberField(settings, '_inAirDecelerationNoInputSprint'),
 	};
 	const maxSlope = numberField(settings, '_slopeLimit');
 	const runAirSpeed = numberField(settings, '_inAirMaxHorizontalSpeedRun');
@@ -260,6 +263,22 @@ export const run = async (args: string[]): Promise<void> => {
 			maxXZ[1] = Math.max(maxXZ[1], point[2]);
 		}
 	}
+	const builtBounds = ground.build?.bounds;
+	if (builtBounds !== undefined) {
+		if (
+			!builtBounds ||
+			![builtBounds.min, builtBounds.max].every(
+				(point) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite),
+			) ||
+			builtBounds.min.some((value, axis) => value > builtBounds.max[axis])
+		) {
+			throw new Error('invalid physical ground build bounds');
+		}
+		// empty air inside the selected collision build remains available to jump arcs.
+		// restricting the index to surface extrema can cut off a platform's outside edge.
+		minXZ.splice(0, 2, ...builtBounds.min);
+		maxXZ.splice(0, 2, ...builtBounds.max);
+	}
 	const maxDrop = maxY - minY;
 	const maximumDuration = jumpDuration(maxDrop, 0, { ...model, mode: 'jump' });
 	if (!maximumDuration || !Number.isFinite(maxDrop)) {
@@ -269,7 +288,14 @@ export const run = async (args: string[]): Promise<void> => {
 	diagnostics.model = { ...model, runAirSpeed };
 	console.log(JSON.stringify({ phase: 'collision-index', triangles: collision.indices.length / 3 }));
 	// The complete body and curved-arc chord inflation must remain in the indexed world.
-	const curveInflationMargin = (Math.max(model.gravity, model.fallingGravity) * 0.1 ** 2) / 8 + 0.01;
+	const curveInflationMargin =
+		(Math.hypot(
+			Math.max(model.gravity, model.fallingGravity),
+			Math.max(model.airAcceleration, model.airDeceleration),
+		) *
+			0.1 ** 2) /
+			8 +
+		0.01;
 	const padding = profile.radius + curveInflationMargin;
 	const bounds = {
 		min: [minXZ[0] - padding, minXZ[1] - padding] as [number, number],
