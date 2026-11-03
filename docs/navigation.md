@@ -25,7 +25,12 @@ resolution remain pending. version 1 exclusions are rejected because they omit t
 
 `movement-settings -o <file>` exports current player settings and modifiers, world settings, and
 AI navigation settings as separate, build-bound asset records. it intentionally reports unresolved
-motion validation. a jump-height limit alone cannot establish a valid directed connection: the
+motion validation. `characters` follows each character template's managed component references to
+export its capsule proxy and movement overrides; unused reference records are ignored. current
+extraction resolves 34 templates with five distinct capsule sizes. selecting a character does not
+yet resolve runtime collider overrides or active movement modifiers.
+
+a jump-height limit alone cannot establish a valid directed connection: the
 trajectory, player capsule, landing slope/support, swept collisions and reset zones must all pass.
 AI link limits are not player movement limits. descending and ascending connections must be verified
 independently; no implicit reverse jump or unlimited downward drop is added.
