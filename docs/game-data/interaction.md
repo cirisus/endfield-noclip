@@ -68,8 +68,11 @@ and its absolute vertical-difference limit. an authored 180-degree full angle su
 90-degree horizontal half-angle, rotated by entity yaw and the authored angle offset. a
 360-degree check retains its distance/height constraints without a facing sector.
 
-the current goal representation supports coincident primary/direction centers, upright rotations,
-positive scales and horizontal full angles up to 180 degrees or exactly 360 degrees. other shapes,
+sphere triggers with directional checking disabled support arbitrary entity rotations and positive
+nonuniform scales. their local centers use the complete authored transform, while the player-probe
+offset remains world-up. directional gates retain an upright-transform requirement, including
+360-degree gates, until their tilted height frame is represented. the current direction model supports
+coincident primary/direction centers and horizontal full angles up to 180 degrees or exactly 360 degrees. other shapes,
 separate centers, player-facing requirements and incompatible expressions remain unresolved.
 NPC interaction inputs and the various plant/resource families still require their own templates
 and instance properties. hint/outline distances from `InteractiveHintConfig` remain presentation
