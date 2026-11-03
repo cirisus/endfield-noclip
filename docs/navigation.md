@@ -177,14 +177,23 @@ visibility between action endpoints. limits bound candidate work and retained ed
 while successive jumps have no separate fixed hop-count cutoff. the graph and candidate
 set remain approximations to globally fastest continuous motion.
 
-the feasibility stage passes the complete interaction goal to Ganglia. verified action
-frontiers expand from reached ground and backward into goal-connected surfaces. charged
-work is balanced between both sides. bounded passes reuse standing support, ledge
+the feasibility stage passes the complete interaction goal to Ganglia. unresolved queries
+first propose region chains using broad cheap boundary-pair coverage and separately
+bounded physical arc validation. landing witnesses include diagonal boundary pullbacks,
+continuous surface interiors and intersections with the optimistic flight envelope.
+each still needs corrected support, actual timing and complete swept-body checks.
+verified action frontiers expand from reached ground and backward into goal-connected
+surfaces. charged work is balanced between both sides. bounded passes reuse standing support, ledge
 approaches, air openings and trajectories while increasing coverage. source-height and
 goal-height landing queries preserve intermediate steps. recursive spatial scheduling
-visits coarse regions before body-scale offsets. one query-wide budget covers discovery
-and subsequent shortcut work. continuous ground transfers are reused for the current target. action edges retain
-their validated support faces so a later projection cannot change graph attachment.
+visits coarse regions before body-scale offsets. the remaining frontier and shortcut
+work share a bounded query budget. the initial region proposal has separate bounded
+seed, pair and physical arc limits. continuous ground transfers are reused for the
+current target. overlapping patches
+can participate through proven supported ground approaches even without a shared
+navigation edge. immutable graph and wall checks are prepared once per planner, and
+query-specific endpoints and movement edges remain isolated between planning passes.
+action edges retain their validated support faces so a later projection cannot change graph attachment.
 
 source air acceleration and no-input deceleration bound early, late and braking control
 primitives. collision-checked air openings also allow outward-and-returning jumps below
