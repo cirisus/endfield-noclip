@@ -20,7 +20,9 @@ version 2 of this export also includes `hazards`: conservative bounds of ordinar
 reset zones. payload references are resolved independently of range slots; temporary zones can have
 no specific payload. the importer blocks these volumes even on otherwise connected navigation
 faces. default-off flags and condition records are retained without assuming that a scripted zone
-is inactive. bounds can over-reject routes around rotated or non-box zones; exact shape and state
+is inactive. upright polygon zones now include a world XZ footprint checked against the authored
+bounds. Ganglia uses the filled prism, including concave outlines, rather than its enclosing box.
+tilted/offset polygons and other shapes retain conservative bounds; their exact shape and state
 resolution remain pending. version 1 exclusions are rejected because they omit these hazards.
 
 `movement-settings -o <file>` exports current player settings and modifiers, world settings, and
@@ -179,6 +181,14 @@ same explicit state/area selection. a cell export does not implicitly include th
 consumers must combine global and intersecting cell inputs for their selected active
 states. the current map01 default global chunk contains 19 collider actors.
 
+`--layers <uint32>` selects an explicit actor-layer mask (all 32 layers by default).
+the mask is retained in `selection.layerMask`; excluded actors retain their poses,
+filters and asset bindings in `excludedActors`, without loading their geometry. use a
+matching movement export to determine the mask for the requested player mode. this
+does not infer runtime state or settle per-shape query options. malformed included
+geometry still fails, with its asset identity in the diagnostic. an empty cooked mesh
+is not silently replaced with render geometry.
+
 box, capsule, sphere, single mesh, compound and terrain records are decoded. enabled,
 trigger, surface and raw option fields are retained independently: a trigger is not a
 solid obstruction, and an absent AI polygon does not invalidate a collision floor.
@@ -209,3 +219,49 @@ a separate placement probe expanded the sample's regular shapes to 434,065 world
 triangles using 106 cooked meshes. the original preview target's vertical ray intersects
 an upward-facing surface near its marker height. this is a local placement cross-check;
 complex-mesh collision policy and complete world coverage still require separate validation.
+
+the southward descent example now has selected-layer collision inputs from both intersecting
+cells: 349 actor records, 273 after duplicate placements are merged, produce 874,000 regular
+shape/terrain triangles. a bounded build places the teleport and target on different connected
+surfaces. initial candidate arcs collide with the platform railing; moving takeoff behind the
+edge and using the reset zone's polygon admits geometric candidates. these are motion-model
+trials, not validated game routes: air-control dynamics, complete scene collision and landing
+state still require verification. no directed connection or view cache is published from them.
+
+## continuous ground queries and sustained sprint
+
+Ganglia alpha.7 prepares reusable topology and a support BVH with `createGroundPlanner`.
+`walk-routes` shares this preparation across target queries. Ground runs are traced through
+open 3D portals, with reconstructed support heights and wall checks. Coplanar centre and
+portal detours collapse, while terrain height breaks and required obstacle turns remain.
+Takeoff and landing split the ground runs. This is bounded any-angle simplification of
+selected corridors, with no proof of globally shortest continuous paths.
+
+A request may supply `locomotion: {speed, sprintSpeed, sprintAcceleration, stamina?}`.
+With a matching movement export, its default movement asset supplies run/sprint speeds
+and sprint acceleration. Sprint activation and natural recovery require an explicit resource policy; absence of a per-frame drain does not establish free activation.
+An explicit stamina policy contains capacity, initial, sprintDrain, recoveryRate,
+recoveryDelay and reserve, with an optional activationCost. Ganglia carries resource and recovery state
+through the whole journey and compares sprinting now with saving an activation for
+a later ground run;
+it does not infer costs from the separate evasive dash resource. Custom gameplay states
+and movement modifiers remain caller-owned. The scheduler is feasible, not globally
+optimal across every route and resource allocation.
+
+The development-only Atlos route inspection panel now consumes these continuous results,
+uses the shared host panel and displays English labels. The descent example remains a
+candidate: physical ground projection differs slightly from exact collision support,
+and complete collision coverage, air control and landing validation remain unresolved.
+Its preview has been refreshed independently of the point-view cache.
+
+
+The movement export now reads the current `GlobalConst` root-bean configuration using
+shared Spark decoding. `sustainedSprint` contains build-bound speed, acceleration and
+maximum-capacity activation/recovery inputs. The planning seed starts full, as requested.
+Regional movement/resource buffs are not applied. Normalized energy is measured in
+activation charges. Recovery during sprint and movement is explicit in the exported
+policy. Sustained gait pays one entry charge; a new activation pays again after a gait
+interruption. A `sprintThrough` whitelist preserves gait only for supported modes.
+Allocation search compares run-level choices with nondominated resource labels, capped
+at 256 with an explicit truncation flag. Interior activation-time optimization and
+resource-optimal selection across all spatial corridors remain unresolved.

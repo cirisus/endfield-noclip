@@ -468,7 +468,8 @@ packs or renders correctly.
   ground coverage remain unresolved. an AI navigation path is not proof of complete player passage;
   the example point's distant arrival and full visual acceptance are still unverified
 - version 2 exclusions also block reset-zone bounds, including payload-free temporary zones; current
-  full-map extraction found 400 volumes. exact trigger shapes and activation remain unresolved
+  full-map extraction found 400 volumes. upright unoffset polygon zones now export bounds-checked
+  filled footprints; other exact trigger shapes and activation remain unresolved
 - movement settings and 34 character capsule proxies can be exported separately from AI bake settings. directed jumps/drops still need
   player collision geometry, capsule/modifier resolution and trajectory/landing validation; they are
   not inferred from AI jump heights or admitted by vertical endpoint projection
@@ -511,3 +512,14 @@ packs or renders correctly.
   traversal collision validation are still pending.
   the same command accepts `global` to include global chunk inputs separately (19 actors
   in the map01 default global chunk); neither selection claims complete collision coverage.
+  explicit layer masks retain excluded actor metadata without forcing unrelated geometry cooks.
+  the southward descent example now has bounded physical ground and continuous capsule-sweep
+  trials. the package checks full linearly swept body volume; game motion, complete collision
+  coverage and landing states remain unresolved, so no traversal links have been authorized.
+
+- Ganglia alpha.7 removes ground centre/portal zigzags through portal-constrained
+  visibility tracing and retains terrain height changes. Reusable planner preparation
+  supports arbitrary endpoint queries. Sustained sprint speed/acceleration and optional
+  explicit stamina policies affect playback and arrival comparisons. Global continuous
+  shortest-path optimality, resource-optimal corridor search and full player dynamics
+  remain open. The English development route panel uses the existing host component.

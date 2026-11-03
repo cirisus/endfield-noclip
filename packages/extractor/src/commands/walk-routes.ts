@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 
-import { planGroundRoute } from '@oem/ganglia';
+import { createGroundPlanner } from '@oem/ganglia';
 
 import { groundData } from '../game/ground-data.ts';
 
@@ -51,9 +51,10 @@ export const run = async (args: string[]): Promise<void> => {
 		movement,
 	});
 	const binding = createHash('sha256').update(JSON.stringify(data)).digest('hex');
+	const planner = createGroundPlanner(data.surfaces, data.options);
 	const routes = data.targets.map((target) => ({
 		id: target.id,
-		...planGroundRoute(data.surfaces, data.arrivals, target.position, data.options),
+		...planner.plan(data.arrivals, target.position),
 	}));
 	await writeFile(values.data, JSON.stringify({ version: 1, binding, ...data }));
 	await writeFile(
