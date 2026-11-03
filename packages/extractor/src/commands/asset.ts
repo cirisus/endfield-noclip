@@ -3,11 +3,12 @@ import { parseArgs } from 'node:util';
 import { writeKtx2 } from '@endfield-noclip/formats/binary/ktx2';
 import { DrawFlags } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import { readCollisionMesh } from '@endfield-noclip/formats/unity/collision-mesh';
+import { readConvexMesh } from '@endfield-noclip/formats/unity/convex-mesh';
 import { ShaderPropertyFlags, ShaderPropertyType } from '@endfield-noclip/formats/unity/material';
 import type { DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { type DecodedTexture, toKtx2Texture } from '@endfield-noclip/formats/unity/texture';
-import { bytesField } from '@endfield-noclip/formats/unity/values';
+import { booleanField, bytesField } from '@endfield-noclip/formats/unity/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
@@ -35,7 +36,7 @@ export const summary = 'decode meshes, textures and materials; trace entity draw
 /** command usage, available without opening the install */
 export const usage = `usage:
   asset mesh <object> [-o file.glb]                   mesh summary; -o exports it alone as glTF
-  asset collision <object> [-o file.json]             cooked triangle collision geometry in local Unity coordinates
+  asset collision <object> [-o file.json]             cooked triangle/convex collision geometry in local Unity coordinates
   asset texture <object> [-o file.ktx2] [--zstd level]
                                                       texture summary; -o writes KTX2 (zstd per level if given)
   asset material <object>                             material record, classification and its textures
@@ -98,11 +99,15 @@ export const run = async (args: string[]): Promise<void> => {
 			case 'collision': {
 				const ref = await objectArg(UnityClass.Mesh);
 				const data = await resolver.read(ref);
-				const mesh = readCollisionMesh(bytesField(data, 'm_BakedTriangleCollisionMesh'));
+				const convex = booleanField(data, 'm_CollisionMeshConvex');
+				const mesh = convex
+					? readConvexMesh(bytesField(data, 'm_BakedConvexCollisionMesh'))
+					: readCollisionMesh(bytesField(data, 'm_BakedTriangleCollisionMesh'));
 				const build = await world.manifest();
 				console.log(
 					JSON.stringify({
 						vertices: mesh.vertices.length,
+						convex,
 						triangles: mesh.triangles.length,
 						bounds: mesh.bounds,
 					}),
@@ -120,6 +125,7 @@ export const run = async (args: string[]): Promise<void> => {
 										object: locateObject(ref),
 									},
 									coordinates: 'local-unity',
+									convex,
 									mesh,
 								},
 								jsonReplacer,

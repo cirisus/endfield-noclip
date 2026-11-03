@@ -91,17 +91,39 @@ test('imports only explicitly selected areas with matching build and clearance',
 test('resolves travel landing IDs only within the selected build and scene', () => {
 	const travel = { version: 1, source, points: [{ id: 'tp', scene: 'scene', position: [0.2, 0, 0.2] }] };
 	const query = { ...request, arrivals: [{ id: 'tp', state: 'available', cost: 5 }] };
-	assert.deepEqual(groundData(navigation, walls, query, travel).arrivals[0].position, [0.2, 0, 0.2]);
+	assert.deepEqual(groundData(navigation, walls, query, { travel }).arrivals[0].position, [0.2, 0, 0.2]);
 	assert.throws(
-		() => groundData(navigation, walls, query, { ...travel, source: { ...source, buildGuid: 'other' } }),
+		() =>
+			groundData(navigation, walls, query, {
+				travel: { ...travel, source: { ...source, buildGuid: 'other' } },
+			}),
 		/build/,
 	);
 	assert.throws(
 		() =>
 			groundData(navigation, walls, query, {
-				...travel,
-				points: [{ id: 'tp', scene: 'another', position: [0, 0, 0] }],
+				travel: {
+					...travel,
+					points: [{ id: 'tp', scene: 'another', position: [0, 0, 0] }],
+				},
 			}),
 		/array/,
+	);
+});
+
+test('uses a build-bound default capsule and preserves explicit profile overrides', () => {
+	const movement = { version: 1, source, defaultProfile: { radius: 0.35, height: 1.66 } };
+	const query = { ...request, profile: undefined };
+	const data = groundData(navigation, walls, query, { movement });
+	assert.deepEqual(data.options.profile, movement.defaultProfile);
+	assert.equal(data.profileSource, 'most-common-character');
+	assert.deepEqual(groundData(navigation, walls, request, { movement }).options.profile, request.profile);
+	assert.throws(() => groundData(navigation, walls, query), /provide a profile/);
+	assert.throws(
+		() =>
+			groundData(navigation, walls, query, {
+				movement: { ...movement, source: { ...source, buildGuid: 'other' } },
+			}),
+		/share/,
 	);
 });

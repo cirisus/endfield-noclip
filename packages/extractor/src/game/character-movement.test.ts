@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { characterMovement } from './character-movement.ts';
+import { characterMovement, commonCapsule } from './character-movement.ts';
 
 const component = (rid: bigint, radius: number) => ({
 	rid,
 	type: { class: 'CharacterMovementComponentData', ns: 'Beyond.Gameplay.Core' },
 	data: { proxyShape: { radius, height: 1.8 }, movementData: { _overrideStepOffset: -1 } },
 });
+
 const fixture = (components: bigint[]) => ({
 	data: { rid: 1n },
 	references: {
@@ -32,4 +33,13 @@ test('follows template references instead of taking unused movement records', ()
 	assert.throws(() => characterMovement(fixture([3n])), /capsule/);
 	assert.throws(() => characterMovement(fixture([2n, 3n])), /one character/);
 	assert.throws(() => characterMovement(fixture([99n])), /missing character component/);
+});
+
+test('chooses the common capsule independently of character order', () => {
+	const base = characterMovement(fixture([2n]));
+	const large = { ...base, proxyShape: { radius: 0.45, height: 2 } };
+	assert.deepEqual(commonCapsule([large, base, base]), base.proxyShape);
+	assert.deepEqual(commonCapsule([base, base, large]), base.proxyShape);
+	assert.deepEqual(commonCapsule([base, large]), large.proxyShape);
+	assert.throws(() => commonCapsule([]), /no character/);
 });

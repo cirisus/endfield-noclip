@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 
 import { withContext } from '../context.ts';
-import { characterMovement } from '../game/character-movement.ts';
+import { characterMovement, commonCapsule } from '../game/character-movement.ts';
 
 export const summary = 'export build-bound player movement settings separately from AI navigation settings';
 export const usage = 'movement-settings -o <file> --config <config>';
@@ -68,6 +68,7 @@ export const run = async (args: string[]): Promise<void> => {
 					motionValidation: 'unresolved',
 					assets,
 					characters,
+					defaultProfile: commonCapsule(characters),
 				},
 				(_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value),
 			),

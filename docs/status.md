@@ -476,6 +476,10 @@ packs or renders correctly.
 - movement settings and 34 character capsule proxies can be exported separately from AI bake settings. directed jumps/drops still need
   player collision geometry, capsule/modifier resolution and trajectory/landing validation; they are
   not inferred from AI jump heights or admitted by vertical endpoint projection
+- the most common capsule is the default when importing matching movement settings; explicit dimensions
+  can override it. factory regions are player-accessible and require physical ground coverage where
+  AI navigation omits them; the AI exclusion is not a player barrier
 - cooked collision decoding passed 107 triangle-mesh assets / 43,900 triangles in the example cell,
-  with bounds matching the asset records within 0.000006 m. one convex asset remains unsupported;
+  with bounds matching the asset records within 0.000006 m. its remaining convex asset now decodes
+  to a closed, outward-facing hull of 8 vertices / 12 triangles;
   collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated

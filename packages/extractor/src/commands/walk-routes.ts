@@ -8,7 +8,7 @@ import { groundData } from '../game/ground-data.ts';
 
 export const summary = 'plan selected ground routes and export source-bound inputs for Atlos';
 export const usage =
-	'walk-routes --navigation <file> --walls <file> --request <file> -o <routes> --data <ground-data> [--travel-points <file>]';
+	'walk-routes --navigation <file> --walls <file> --request <file> -o <routes> --data <ground-data> [--travel-points <file>] [--movement-settings <file>]';
 
 /**
  * @param args matching navigation/wall exports and explicit state/profile/arrival request
@@ -24,6 +24,7 @@ export const run = async (args: string[]): Promise<void> => {
 			output: { type: 'string', short: 'o' },
 			data: { type: 'string' },
 			'travel-points': { type: 'string' },
+			'movement-settings': { type: 'string' },
 		},
 	});
 	if (
@@ -42,7 +43,13 @@ export const run = async (args: string[]): Promise<void> => {
 	const travel: unknown = values['travel-points']
 		? JSON.parse(await readFile(values['travel-points'], 'utf8'))
 		: undefined;
-	const data = groundData(JSON.parse(input[0]), JSON.parse(input[1]), JSON.parse(input[2]), travel);
+	const movement: unknown = values['movement-settings']
+		? JSON.parse(await readFile(values['movement-settings'], 'utf8'))
+		: undefined;
+	const data = groundData(JSON.parse(input[0]), JSON.parse(input[1]), JSON.parse(input[2]), {
+		travel,
+		movement,
+	});
 	const binding = createHash('sha256').update(JSON.stringify(data)).digest('hex');
 	const routes = data.targets.map((target) => ({
 		id: target.id,
@@ -62,6 +69,7 @@ export const run = async (args: string[]): Promise<void> => {
 		JSON.stringify({
 			binding,
 			surfaces: data.surfaces.length,
+			profile: data.options.profile,
 			routes: routes.length,
 			complete: routes.filter((route) => route.status === 'complete').length,
 		}),
