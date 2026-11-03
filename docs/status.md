@@ -489,3 +489,10 @@ packs or renders correctly.
   import and type declarations are verified. game collision placement and full factory
   coverage are still pending; the current route CLI continues using selected Unity
   navigation surfaces. no implicit jump/drop links or view-cache rebuild were added.
+
+- movement devices: `traversal-devices` exports authored rope targets, launch/acceleration
+  parameter scopes and unresolved state. reciprocal rope pairs are explicit; the exporter
+  does not convert device pivots into ground or grant traversal without validation.
+
+  current exports contain 218 reciprocal rope pairs, 158 launch devices and 40 acceleration
+  devices across map01/map02; all selected rope endpoints pair by authored reference.

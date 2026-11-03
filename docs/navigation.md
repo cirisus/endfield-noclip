@@ -127,3 +127,33 @@ placement, layer/trigger selection and region ownership must be implemented befo
 new builder can replace that input. synthetic slope, step, headroom and gap checks do
 not establish complete game-world reachability. the runtime package root does not
 import the offline generator or WASM.
+
+## movement devices
+
+`traversal-devices <scene> -o <file>` exports placed `int_rope_port*`, `int_jumpmachine*`
+and `int_accelerate_buff` families. the output retains build identity, placement transforms,
+creation/progression conditions and separate template, variant and placement parameter scopes.
+these scopes are not flattened into an assumed runtime state. automatic-spawn references are
+counted separately; selected devices retain whether they are referenced by that list.
+
+rope pairs require reciprocal authored `target` references in the same level, with distinct
+heights. no proximity matching is used. each pair names ascent by rope and descent by drop,
+following the requested traversal rule; ground attachment, unlock state, trajectory and
+landing validation remain unresolved. pivots and rope render anchors are not automatically
+player stand positions. this catalogue does not add passable graph edges yet.
+
+launch device parameters retain height, free-jump/input controls and collision flags when
+authored; acceleration parameters retain their own duration/cooldown scopes. an acceleration
+buff is a timed movement state, not a permanent increase to all walking speeds. jump/launch
+segments will need time-based motion and collision policy; constant-speed ground sampling
+cannot be used as their physical animation. unknown parameters remain typed source values.
+
+regression references supplied by the user: [camp](https://oem.re/0jBW2ZB) to
+[target](https://oem.re/0mpNfFm), with a direct southward descent. this is a directed
+player traversal example, not permission to connect every cliff or add the reverse jump.
+
+current full-scene exports read 221 map01 files and 367 map02 files: 218 reciprocal rope
+pairs (60 / 158), 158 launch devices (59 / 99), and 40 acceleration devices (9 / 31).
+all selected rope endpoints have reciprocal targets. map02 has 32 automatic-spawn
+references; none name a selected movement device in this install. these are authored
+input counts, not proof that every device is unlocked or that its landing is safe.
