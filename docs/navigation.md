@@ -16,6 +16,20 @@ until its state resolver proves it inactive. Ganglia narrows these bounds using 
 radius/height and push distance. runtime state evaluation and other collision constraints remain
 necessary before claiming complete player routing.
 
+version 2 of this export also includes `hazards`: conservative bounds of ordinary and temporary
+reset zones. payload references are resolved independently of range slots; temporary zones can have
+no specific payload. the importer blocks these volumes even on otherwise connected navigation
+faces. default-off flags and condition records are retained without assuming that a scripted zone
+is inactive. bounds can over-reject routes around rotated or non-box zones; exact shape and state
+resolution remain pending. version 1 exclusions are rejected because they omit these hazards.
+
+`movement-settings -o <file>` exports current player settings and modifiers, world settings, and
+AI navigation settings as separate, build-bound asset records. it intentionally reports unresolved
+motion validation. a jump-height limit alone cannot establish a valid directed connection: the
+trajectory, player capsule, landing slope/support, swept collisions and reset zones must all pass.
+AI link limits are not player movement limits. descending and ascending connections must be verified
+independently; no implicit reverse jump or unlimited downward drop is added.
+
 `travel-points -o <file>` exports camp teleport landing positions from the current installation,
 resolving scene ownership through level configuration. positions of map icons are not substituted for
 landing positions. unmapped levels are reported separately. availability is unknown until supplied
@@ -24,7 +38,7 @@ maximum authored expansion bounds. their vertical centre is only a projection se
 ground height. these records are marked approximate and require ground projection; zero-valued
 factory-region origins are not used.
 
-all three exports include build GUID/content hash and contain local game-derived data; keep outputs
+these exports include build GUID/content hash and contain local game-derived data; keep outputs
 outside git. Ganglia owns graph search, multi-origin selection and route sampling. Atlos consumes its
 packed package. camera headings and baked views belong to this repository's extractor.
 
@@ -34,6 +48,9 @@ current map01 extraction decoded all 1,085 assets / 499,357 polygons. current wa
 map01 and 346 map02 walls. eleven map02 walls have the navigation-obstacle flag disabled, so an AI
 navmesh alone cannot be treated as proof of player passage. map travel data yielded 131 mapped camps
 and one unmapped test-level entry, plus six industrial-base centre seeds. these counts are extraction evidence, not runtime-state validation.
+the reset-volume export additionally found 108 map01 and 292 map02 volumes (including two temporary
+zones without payloads). full exports completed with the current metadata layout. player movement
+has not yet been reproduced or validated against a collision scene.
 
 for point 3500030763, the tested local area had no state-prefixed navigation assets within 180 m of
 the target. an initial graph found a long corridor, but it included area 3, whose player passage semantics
