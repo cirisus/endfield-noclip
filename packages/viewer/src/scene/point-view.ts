@@ -161,6 +161,8 @@ export const pointPose = (
 	ground: (x: number, z: number) => number | null,
 	options?: {
 		context: boolean;
+		headings?: readonly number[];
+		score?: (pose: CameraPose) => number;
 		distances?: readonly number[];
 		accept?: (pose: CameraPose) => boolean;
 	},
@@ -175,8 +177,8 @@ export const pointPose = (
 		for (const slope of [0.35, 0.15, 0.6, 1, 0.05, 0]) {
 			let best: (CameraPose & { clear: boolean }) | null = null;
 			let bestScore = Infinity;
-			for (let heading = 0; heading < 16; heading++) {
-				const yaw = (heading * Math.PI) / 8;
+			for (const yaw of options?.headings ??
+				Array.from({ length: 16 }, (_, heading) => (heading * Math.PI) / 8)) {
 				const position: Vec3 = [
 					target[0] - Math.sin(yaw) * back,
 					focus[1] + back * slope,
@@ -239,7 +241,9 @@ export const pointPose = (
 						}
 					}
 					// Prefer oblique views only as a tie-breaker; visibility always wins.
-					score += 0.01 * Math.abs(Math.cos(2 * yaw));
+					score += options?.score
+						? 0.1 * Math.max(0, Math.min(1, options.score({ position, yaw, pitch })))
+						: 0.01 * Math.abs(Math.cos(2 * yaw));
 					if (score < bestScore - 1e-8) {
 						bestScore = score;
 						best = { position, yaw, pitch, clear: true };
