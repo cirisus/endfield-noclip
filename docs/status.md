@@ -442,8 +442,9 @@ packs or renders correctly.
 - place global scenery by its own bounds instead of pulling it all into `assets/common`
 - port the game's path hash so lookups stop reverse-scanning the path-hash table (about a second
   each)
-- meshes: collision-only meshes (`m_CollisionMeshBaked`) and vertices in `m_CompressedMesh` are
-  rejected, leaving their instances as streaming boxes; PPtrs into Unity's built-in resources
+- render meshes: collision-only meshes (`m_CollisionMeshBaked`) and vertices in `m_CompressedMesh` are
+  rejected, leaving their instances as streaming boxes. a separate `asset collision` decoder reads
+  supported cooked triangle meshes for routing investigation; PPtrs into Unity's built-in resources
   resolve only for the Quad and Cube ([built-in meshes](game-data/assets.md#built-in-meshes));
   prefabs that fail with a `FormatError` are listed in the unsupported-prefab report and drawn as
   [stand-in](package-format.md#stand-ins) cubes ([assets](game-data/assets.md#mesh))
@@ -471,3 +472,6 @@ packs or renders correctly.
 - movement settings can be exported separately from AI bake settings. directed jumps/drops still need
   player collision geometry, capsule/modifier resolution and trajectory/landing validation; they are
   not inferred from AI jump heights or admitted by vertical endpoint projection
+- cooked collision decoding passed 107 triangle-mesh assets / 43,900 triangles in the example cell,
+  with bounds matching the asset records within 0.000006 m. one convex asset remains unsupported;
+  collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
