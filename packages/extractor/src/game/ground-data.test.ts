@@ -198,3 +198,50 @@ test('imports sustained sprint from matching movement data and retains explicit 
 	assert.equal(imported?.stamina?.activationCost, 0);
 	assert.equal(imported?.stamina?.sprintDrain, 2);
 });
+
+test('resolves only explicit completed mission gates and retains reset exclusions', () => {
+	const wall = {
+		min: [0.3, -0.1, 0.3],
+		max: [0.5, 2, 0.5],
+		state: 'unknown',
+		padding: 0,
+		points: [
+			[0.3, 0.3],
+			[0.5, 0.5],
+		],
+		scriptId: '0',
+		defaultOn: true,
+		condition: {
+			checkType: 1,
+			missionData: {
+				isRiseAny: false,
+				isDownAny: false,
+				riseReason: [{ id: 'mission', isQuest: false, detailState: 2, isSame: true }],
+				downReason: [{ id: 'mission', isQuest: false, detailState: 2, isSame: false }],
+			},
+		},
+	};
+	const exclusions = {
+		...walls,
+		walls: [wall],
+		hazards: [
+			{
+				kind: 'repatriation',
+				state: 'active',
+				min: [1, -1, 1],
+				max: [2, 2, 2],
+			},
+		],
+	};
+	assert.equal(groundData(navigation, exclusions, request).options.walls[0].state, 'unknown');
+	const resolved = groundData(navigation, exclusions, { ...request, progression: 'completed' });
+	assert.equal(resolved.progression, 'completed');
+	assert.deepEqual(
+		resolved.options.walls.map((value) => value.state),
+		['inactive', 'active'],
+	);
+	assert.throws(
+		() => groundData(navigation, exclusions, { ...request, progression: 'arbitrary' }),
+		/snapshot/,
+	);
+});

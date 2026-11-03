@@ -48,6 +48,27 @@ test('retains payload-free temporary reset zones', () => {
 	assert.equal(zones[0].state, 'unknown');
 });
 
+test('unaddressed reset zones follow the direct client enable branch regardless of defaultOff', () => {
+	for (const defaultOff of [false, true]) {
+		const shape = { functionType: 1, index: 0, uniqueId: 0n, hasCondition: false, defaultOff };
+		const area = {
+			baseData: [shape],
+			ranges: [{ m_center: [0, 0, 0], m_size: [2, 2, 2] }],
+			specificDatas: [payload],
+			functionAreaConditions: [],
+		};
+		assert.equal(routeHazards({ functionArea: area })[0].state, 'active');
+		assert.equal(
+			routeHazards({ functionArea: { ...area, baseData: [{ ...shape, uniqueId: 1n }] } })[0].state,
+			'unknown',
+		);
+		assert.equal(
+			routeHazards({ functionArea: { ...area, baseData: [{ ...shape, hasCondition: true }] } })[0].state,
+			'unknown',
+		);
+	}
+});
+
 test('exports an upright rotated hazard footprint while retaining unknown activation', () => {
 	const shape = {
 		functionType: 1,
