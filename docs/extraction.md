@@ -1189,3 +1189,7 @@ existing visibility requirements; destruction hides it. explicit `reward_entitie
 replace the generic created-during-play gate on those rewards, showing them only after their
 unique parent is destroyed. ambiguous parent references are left unresolved. this models settled
 visibility only, not damage, debris, physics or explosion effects.
+
+`traversal-devices <scene> -o <file>` exports build-bound rope pairing and movement-device
+parameter scopes; see [movement devices](navigation.md#movement-devices). its candidate
+connections still require grounded endpoints, active state and motion validation.
