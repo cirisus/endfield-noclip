@@ -10,7 +10,15 @@ import type { DecodePool } from '../package/decode-pool.ts';
 import type { ViewerPackage } from '../package/viewer-package.ts';
 
 import type { Vec3 } from './camera.ts';
-import { pointBlocked, pointEnclosure, pointFrameFits, pointPose, pointTriangles } from './point-view.ts';
+import type { CameraPose } from './noclip-controls.ts';
+import {
+	type Triangle,
+	pointBlocked,
+	pointEnclosure,
+	pointFrameFits,
+	pointPose,
+	pointTriangles,
+} from './point-view.ts';
 
 /**
  * @param ground terrain sampler shared with ordinary point framing
@@ -25,15 +33,28 @@ export const pointPreview = async (
 	picks: Readonly<Record<string, number>>,
 	ground: (x: number, z: number) => number | null,
 	signal: AbortSignal,
+	framing?: {
+		headings: readonly number[];
+		score: (pose: CameraPose, triangles: readonly Triangle[]) => number;
+	},
 ): Promise<Omit<PointView, 'key'>> => {
 	const visibility = (values: Readonly<Record<string, number>>) =>
 		groupsShown(states, levelTag, conditionResults(states, resolveSceneValues(states, values)));
 	const original = visibility(picks);
-	let triangles = await pointTriangles(pkg, pool, target, original, signal);
+	let triangles = await pointTriangles(pkg, pool, target, original, signal, { radius: framing ? 26 : 16 });
 	const visible = (shown: readonly boolean[]) =>
 		triangles.filter((triangle) => triangle.group !== undefined && shown[triangle.group]);
 	let initialTriangles = visible(original);
-	const initial = pointPose(target, initialTriangles, ground, { context: false });
+	const directed = framing?.headings.length
+		? pointPose(target, initialTriangles, ground, {
+				context: false,
+				headings: framing.headings,
+				score: (pose) => framing.score(pose, initialTriangles),
+			})
+		: null;
+	const initial = directed?.clear
+		? directed
+		: pointPose(target, initialTriangles, ground, { context: false });
 	// Only controls attached to nearby visible geometry can obstruct this approach.
 	// A clear interior view does not rule out a more useful entrance view.
 	const localControls = new Set(
@@ -86,7 +107,7 @@ export const pointPreview = async (
 		return initial;
 	}
 	// Initial clear views sit 10 m from the target. Their six-metre enclosure
-	// probes are already covered by the 16 m geometry read; zero cannot improve.
+	// probes are already covered by the initial geometry read; zero cannot improve.
 	const enclosure =
 		initial.clear && initial.position.every((v, axis) => Math.abs(v - target[axis]) + 6 <= 16)
 			? pointEnclosure(initial.position, initialTriangles)

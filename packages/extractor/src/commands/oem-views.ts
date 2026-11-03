@@ -35,6 +35,7 @@ import { openViewerPackage } from '../../../viewer/src/package/viewer-package.ts
 import { pointPreview } from '../../../viewer/src/scene/point-preview.ts';
 import { pointViewKey } from '../../../viewer/src/scene/point-view-cache.ts';
 import { buildTileTree } from '../../../viewer/src/scene/tile-tree.ts';
+import { arrivalFraming } from '../game/arrival-view.ts';
 
 /* oxlint-disable no-await-in-loop -- process in scene order to bound memory and checkpoint deterministic output */
 export const summary =
@@ -42,7 +43,7 @@ export const summary =
 
 /** command usage, available without opening the install */
 export const usage =
-	'usage: oem-views <release> -o <releases> --cache <work-directory> [--scenes map01,map02] [--subregions WL_1,WL_2] [--points <id>,<id>]';
+	'usage: oem-views <release> -o <releases> --cache <work-directory> [--scenes map01,map02] [--subregions WL_1,WL_2] [--points <id>,<id>] [--rebuild] [--arrival-routes routes.json]';
 
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
@@ -54,6 +55,8 @@ export const run = async (args: string[]): Promise<void> => {
 			scenes: { type: 'string' },
 			subregions: { type: 'string' },
 			points: { type: 'string' },
+			rebuild: { type: 'boolean', default: false },
+			'arrival-routes': { type: 'string' },
 		},
 	});
 	if (positionals.length !== 1 || !values.output || !values.cache) {
@@ -67,6 +70,43 @@ export const run = async (args: string[]): Promise<void> => {
 		throw new Error('invalid source OEM release');
 	}
 	const catalog = raw;
+	const arrivals = new Map<string, [number, number, number][]>();
+	let routeBinding = 'none';
+	if (values['arrival-routes']) {
+		const text = await readFile(resolve(values['arrival-routes']), 'utf8');
+		const data: unknown = JSON.parse(text);
+		if (
+			!data ||
+			typeof data !== 'object' ||
+			!('release' in data) ||
+			data.release !== catalog.release ||
+			!('routes' in data) ||
+			!Array.isArray(data.routes)
+		) {
+			throw new Error('arrival routes must bind the exact input release');
+		}
+		for (const row of data.routes) {
+			if (
+				!row ||
+				typeof row !== 'object' ||
+				typeof row.id !== 'string' ||
+				row.status !== 'complete' ||
+				!Array.isArray(row.points) ||
+				row.points.length < 1 ||
+				row.points.some(
+					(p: unknown) =>
+						!Array.isArray(p) ||
+						p.length !== 3 ||
+						!p.every((v: unknown) => typeof v === 'number' && Number.isFinite(v)),
+				) ||
+				arrivals.has(row.id)
+			) {
+				throw new Error('invalid or duplicate arrival route');
+			}
+			arrivals.set(row.id, row.points);
+		}
+		routeBinding = createHash('sha256').update('arrival-view-v2:').update(text).digest('hex');
+	}
 	const points = values.points ? new Set(values.points.split(',')) : null;
 	const scenes = values.scenes ? new Set(values.scenes.split(',')) : null;
 	const subregions = values.subregions ? new Set(values.subregions.split(',')) : null;
@@ -84,6 +124,11 @@ export const run = async (args: string[]): Promise<void> => {
 			throw new Error(`invalid companion ${id}`);
 		}
 		partitions.set(id, value);
+	}
+	for (const id of arrivals.keys()) {
+		if (![...partitions.values()].some((p) => p.points.some((point) => point.id === id))) {
+			throw new Error(`unknown arrival target ${id}`);
+		}
 	}
 	if (
 		points &&
@@ -231,7 +276,10 @@ export const run = async (args: string[]): Promise<void> => {
 				];
 				const states: StatesInfo = { ...pkg.manifest.states, controls },
 					completed = completedProgressionPicks(controls);
-				const checkpoint = join(cache, `${scene}-${subregion}.json`);
+				const checkpoint = join(
+					cache,
+					`${scene}-${subregion}${routeBinding === 'none' ? '' : '-' + routeBinding}.json`,
+				);
 				let saved: Record<string, NonNullable<Point['view']>> = {};
 				try {
 					const value: unknown = JSON.parse(await readFile(checkpoint, 'utf8'));
@@ -278,8 +326,13 @@ export const run = async (args: string[]): Promise<void> => {
 					);
 					const key = await pointViewKey(pkg.manifest.generation, point.level, point.position, shown);
 					let view = saved[point.id];
-					if (!view || view.key !== key) {
+					if (values.rebuild || !view || view.key !== key) {
 						await prepareTerrain(point);
+						const arrival = arrivals.get(point.id);
+						if (arrival && Math.hypot(...arrival.at(-1)!.map((v, axis) => v - point.position[axis])) > 1) {
+							throw new Error(`arrival route misses target ${point.id}`);
+						}
+						const framing = arrival ? arrivalFraming(arrival) : undefined;
 						const pose = await pointPreview(
 							pkg,
 							decoder,
@@ -289,6 +342,7 @@ export const run = async (args: string[]): Promise<void> => {
 							picks,
 							heightAt,
 							new AbortController().signal,
+							framing,
 						);
 						view = { key, ...pose };
 						saved[point.id] = view;
