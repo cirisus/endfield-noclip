@@ -329,8 +329,36 @@ const instanceRowKinds = (tree: TileTree, global: readonly ContentRef[]): Map<nu
 	return kinds;
 };
 
+/** transient GPU targets for a host overlay, after tonemapping */
+export interface OverlayFrame {
+	device: GPUDevice;
+	encoder: GPUCommandEncoder;
+	target: GPUTextureView;
+	format: GPUTextureFormat;
+	/** current opaque/cutout scene depth, reversed-Z; 0 is empty */
+	depth: GPUTextureView;
+	width: number;
+	height: number;
+	/** current depth-buffer projection jitter in NDC */
+	jitter: readonly [number, number];
+}
+
 /** the running viewer */
 export class Viewer {
+	#overlays = new Set<(frame: OverlayFrame) => void>();
+
+	/**
+	 * @param encode uses this frame's targets; refresh depth bindings when the view changes
+	 * @returns unregisters the overlay and invalidates the displayed frame; the host owns its GPU resources
+	 */
+	addOverlay(encode: (frame: OverlayFrame) => void): () => void {
+		this.#overlays.add(encode);
+		this.#dirty = true;
+		return () => {
+			this.#overlays.delete(encode);
+			this.#dirty = true;
+		};
+	}
 	readonly camera = new Camera();
 	#baseStates: StatesInfo | null = null;
 	#cameraListeners = new Set<() => void>();
@@ -1998,9 +2026,10 @@ export class Viewer {
 			}
 			transparent.end();
 		}
+		const output = this.#targets.swapchainView();
 		this.#post.encode(encoder, {
 			scene: this.#targets.scene,
-			swapchain: this.#targets.swapchainView(),
+			swapchain: output,
 			camera: this.camera,
 			width: this.#targets.width,
 			height: this.#targets.height,
@@ -2072,6 +2101,18 @@ export class Viewer {
 			},
 			frameGroup: { group: this.#frameBindGroup, offset: uniforms.offset },
 		});
+		for (const encode of this.#overlays) {
+			encode({
+				device,
+				encoder,
+				target: output,
+				format: this.#targets.colorFormat,
+				depth: this.#targets.scene.depth,
+				width: this.#targets.outputWidth,
+				height: this.#targets.outputHeight,
+				jitter: this.#post.taa.jitter,
+			});
+		}
 		this.#profiler.resolve(encoder);
 		this.#span('encode');
 		device.queue.submit([encoder.finish()]);
@@ -2287,6 +2328,7 @@ export class Viewer {
 	/** stops the loop and frees everything */
 	destroy(): void {
 		cancelAnimationFrame(this.#raf);
+		this.#overlays.clear();
 		this.unload();
 		this.controls.destroy();
 		this.#post.destroy();
