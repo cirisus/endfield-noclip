@@ -31,6 +31,8 @@ shows in game, with unchecked facts marked as such. how our code implements any 
 [package-format.md](package-format.md), and what it lacks in [status.md](status.md). links run from
 those pages to game-data, never the reverse.
 
+[ground navigation extraction](navigation.md) documents the experimental routing data exports and their limits.
+
 ## data flow
 
 the optional [OEM integration](oem-integration.md) exports companion point metadata and connects an

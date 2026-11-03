@@ -85,3 +85,29 @@ clear interior views also check nearby obstruction controls. an entrance view ta
 when its complete original obstruction fits, the revealed target is visible, and surrounding wall/ceiling
 samples show more open space at the camera than the original interior pose. an already open exterior
 view is retained on ties, so a nearby door alone does not pull the camera into another room.
+
+## arrival-route constraints
+
+`--arrival-routes <file>` accepts `{ release, routes: [{ id, status: "complete", points: [[x,y,z], ...] }] }`
+from a routing producer. the release must match the exact input catalog; duplicate/unknown point ids,
+non-finite positions and routes ending more than one metre from their target fail export. this is a
+trusted routing input: the exporter does not infer or certify player reachability from a polyline.
+
+arrival heading generation belongs to the extractor. it measures the final 24 m of route arc length
+and tries views 30/45 degrees either side of the direction back toward the arrival path, from beyond
+the destination. the longer window avoids a tiny final polygon edge reversing the apparent approach.
+the ordinary viewer geometry kernel checks those candidates and ranks final-approach visibility
+samples at 2/4/8/12/18/24 m as a tie-breaker, replacing the fixed compass preference; when none is clear it retains existing
+framing and interaction handling. input-route content hashes and the arrival algorithm version isolate offline checkpoints, including
+when reusing the same cache directory with changed routing inputs. input availability and state
+assumptions remain the routing producer's responsibility.
+
+`--rebuild` recomputes selected points even when checkpoint keys match. with no point/scene/partition
+filter it rebuilds the whole release; with a filter it remains checkpoint-only. final assembly still
+uses the existing immutable release writer and `oem-check`. no option publishes remotely.
+
+local experiments rebuilt point 3500030763 and validated assembly of a local 11,396-view release,
+with other matching views reused. the early 133.7-degree candidate used an area-3 corridor whose
+player passage semantics remain unverified; it is not an accepted route or final visual result.
+ordinary-area-only routing has so far established only a short local approach. no all-point routing
+bake, in-game traversal validation or browser screenshot comparison has been completed.

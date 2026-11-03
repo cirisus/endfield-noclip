@@ -481,3 +481,12 @@ packs or renders correctly.
   [progressions](game-data/scene-states.md#progressions))
 - weather/time state ids
 - runtime: BC texture support in Safari, the texture-array layer limit on Apple GPUs
+
+## ground routes and arrival framing
+
+- navigation topology, current air-wall geometry and teleport/base seeds can be exported and fed to
+  the Ganglia alpha package; route-bound camera candidates and forced cache rebuilding are available
+  ([navigation](navigation.md), [precompute](oem-precompute.md#arrival-route-constraints))
+- player area masks, dynamic-state selection, partial portals, detail heights and missing industrial
+  ground coverage remain unresolved. an AI navigation path is not proof of complete player passage;
+  the example point's distant arrival and full visual acceptance are still unverified
