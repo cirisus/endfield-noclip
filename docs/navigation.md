@@ -150,20 +150,32 @@ but its test arrival remains disconnected. native build failures abort the resul
 
 `player-route --ground <file> --collision <file> --movement-settings <file> --request <file>
 -o <result>` accepts a matching scene/source, arrival, target, optional interaction volume
-and wall exclusions. after ground search it discovers bounded model-based jumps/drops,
-including intermediate platforms, with physical support, capsule sweeps and air-wall checks.
+and wall exclusions. Ganglia's `planJumpRoute` compares bounded ground, jump and drop
+action combinations, including intermediate platforms, with physical support, capsule
+sweeps and air-wall checks. a successful ground route remains an incumbent while jump
+alternatives are searched. only a faster complete, resource-timed result replaces it.
 arcs exceeding the ordinary-run air speed require paid sprint entry. the full route then
 receives acceleration and resource scheduling. results retain source, coverage, model and
 truncation diagnostics. sampled discovery and prior corridor selection can miss valid routes.
 
-the current movement query passes the complete interaction goal to one Ganglia search.
+shortcut discovery covers exposed ledges before spending its budget on fine pullbacks.
+landings include continuous surface interiors, including large floors below a platform.
+ground-reachable transfers and isolated intermediate surfaces retain separate sampling
+and connection shares. slower, directly ground-visible airborne transfers are discarded.
+retained movement edges enter the same directed graph, with continuous supported ground
+visibility between action endpoints. limits bound candidate work and retained edges,
+while successive jumps have no separate fixed hop-count cutoff. the graph and candidate
+set remain approximations to globally fastest continuous motion.
+
+the feasibility stage passes the complete interaction goal to one Ganglia search.
 directed ground components share goal faces, removing the previous eight-face cutoff and
 repeated full collision searches. spatial bounds and height/distance heuristics propose
 region chains backward from the goal. only neighbouring transfers on proposed chains
 receive local standing and trajectory checks; rejected transfers trigger another chain.
 launch-region and landing-region diversity preserve short box-to-box hops and railing
-pullbacks. ordered local batches contain up to 8,000 candidates, with query-wide limits
-of 16,000 arc attempts and 64 retained links. source, body, slope, occupied-volume and air-wall constraints remain
+pullbacks. ordered local batches contain up to 8,000 candidates. each discovery stage
+reports its own limits of 16,000 arc attempts and 64 retained links. source, body,
+slope, occupied-volume and air-wall constraints remain
 mandatory. optimistic region bounds never establish a physical connection by themselves.
 local launch sampling is interleaved and landing samples are queried in 3D goal-distance
 order. candidate timing includes approach, flight and departure. difficult transfers defer
