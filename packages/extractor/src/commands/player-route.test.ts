@@ -12,8 +12,9 @@ const source = { buildGuid: 'build', contentHash: 'content' };
 const profile = { radius: 0.25, height: 1 };
 const selection = { sceneState: 0, area: 0 };
 const locomotion = { speed: 1, sprintSpeed: 2, sprintAcceleration: 1 };
-const fixture = () => ({
+const fixture = (bounds?: { min: number[]; max: number[] }) => ({
 	ground: {
+		...(bounds ? { build: { bounds } } : {}),
 		version: 1,
 		scene: 'scene',
 		source,
@@ -57,6 +58,8 @@ const fixture = () => ({
 					_apexTime: 0,
 					_inAirMaxHorizontalSpeedSprint: 2,
 					_inAirMaxHorizontalSpeedRun: 1,
+					_inAirAcceleration: 60,
+					_inAirDecelerationNoInputSprint: 10,
 					_slopeLimit: 45,
 				},
 			},
@@ -174,7 +177,7 @@ test('model-discovered jumps exceeding running air speed retain their sprint-ent
 	);
 	assert.ok(result.route.segments.some((segment: { mode: string }) => segment.mode === 'jump'));
 	const scope = result.diagnostics.collisionScope;
-	assert.ok(Math.abs(scope.padding - (0.25 + (10 * 0.1 ** 2) / 8 + 0.01)) < 1e-12);
+	assert.ok(Math.abs(scope.padding - (0.25 + (Math.hypot(10, 60) * 0.1 ** 2) / 8 + 0.01)) < 1e-12);
 	assert.deepEqual(scope.bounds.min, [-scope.padding, -scope.padding]);
 	assert.deepEqual(scope.bounds.max, [6 + scope.padding, 2 + scope.padding]);
 });
@@ -213,8 +216,8 @@ test('searches a many-face interaction goal once and retains the reachable landi
 	assert.equal(result.diagnostics.strategy, 'surface-action-graph');
 	assert.equal(result.diagnostics.searches.length, 2);
 	assert.ok(result.diagnostics.searches[0].goalFaces > 8);
-	assert.equal(result.diagnostics.searches[0].goalComponents, 1);
-	assert.equal(result.diagnostics.searches[0].targetReached, true);
+	assert.equal(result.diagnostics.searches[0].reason, 'reachable-frontier');
+	assert.ok(result.diagnostics.searches[0].accepted > 0);
 	const end = result.route.points.at(-1);
 	assert.ok(Math.hypot(end[0] - 5, end[1] - 1, end[2] - 1) <= 1.5 + 1e-8);
 });
@@ -263,4 +266,12 @@ test('compares jump-down actions even when the ground-only route already succeed
 	assert.ok(result.route.cost < result.diagnostics.baselineCost / 2);
 	assert.equal(result.diagnostics.selectedCost, result.route.cost);
 	assert.ok(result.route.segments.some((segment: { mode: string }) => segment.mode === 'jump'));
+});
+
+test('retains the selected physical build extent around empty air', async () => {
+	const result = await execute(fixture({ min: [-2, -3], max: [12, 13] }));
+	const scope = result.diagnostics.collisionScope;
+	assert.deepEqual(scope.bounds.min, [-2 - scope.padding, -3 - scope.padding]);
+	assert.deepEqual(scope.bounds.max, [12 + scope.padding, 13 + scope.padding]);
+	await assert.rejects(execute(fixture({ min: [2, 0], max: [1, 10] })), /build bounds/);
 });
