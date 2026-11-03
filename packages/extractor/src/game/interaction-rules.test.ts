@@ -277,3 +277,46 @@ test('an incompatible intermediate variant stays unresolved even if placement la
 	assert.equal(result.navigationGoal, null);
 	assert.ok(result.effective.unresolved.includes('typed-component-property-unresolved'));
 });
+
+test('a direction-free sphere retains rotated offset centers and nonuniform entity scale', () => {
+	const base = configuredTemplate([
+		field('interactive_direction_check', 1, ['0']),
+		field('center', 11, [bits(0), bits(1), bits(0)]),
+	]);
+	const row = { ...placement(), rotation: [90, 0, 0], scale: [2, 3, 4] };
+	const point = interactionPoint(row, 'level', base, interactionRules(base, source));
+	assert.ok(point.navigationGoal);
+	const position = point.navigationGoal.position;
+	assert.ok(Math.abs(position[0] - 1) < 1e-6);
+	assert.ok(Math.abs(position[1] - 1.6) < 1e-6);
+	assert.ok(Math.abs(position[2] - 6) < 1e-6);
+	assert.equal(point.navigationGoal.interaction.radius, 8.5);
+	assert.equal('facing' in point.navigationGoal.interaction, false);
+	assert.deepEqual(point.navigationGoal.source, source);
+});
+
+test('tilted direction gates remain unresolved even when their angular range is full', () => {
+	const changes = [
+		field('center', 11, [bits(0), bits(0), bits(0)]),
+		field('check_area_offset', 11, [bits(0), bits(0), bits(0)]),
+	];
+	const cone = configuredTemplate(changes);
+	const row = { ...placement(), rotation: [30, 50, 20] };
+	const unresolved = interactionPoint(row, 'level', cone, interactionRules(cone, source));
+	assert.equal(unresolved.navigationGoal, null);
+	assert.ok(unresolved.navigationUnresolved.includes('tilted-direction-gate-unresolved'));
+	const whole = configuredTemplate([...changes, field('check_angle', 5, [bits(360)])]);
+	const resolved = interactionPoint(row, 'level', whole, interactionRules(whole, source));
+	assert.equal(resolved.navigationGoal, null);
+	assert.ok(resolved.navigationUnresolved.includes('tilted-direction-gate-unresolved'));
+	const upright = interactionPoint(
+		{ ...row, rotation: [0, 50, 0] },
+		'level',
+		whole,
+		interactionRules(whole, source),
+	);
+	assert.ok(upright.navigationGoal);
+	assert.equal(upright.navigationGoal.interaction.radius, 2.5);
+	assert.equal(upright.navigationGoal.interaction.maxVertical, 3);
+	assert.equal('facing' in upright.navigationGoal.interaction, false);
+});
