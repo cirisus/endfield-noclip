@@ -490,7 +490,7 @@ packs or renders correctly.
 - `interaction-points` exports effective per-placement trigger ranges and directional gates.
   supported normal-channel sphere goals carry source identity and explicit unsupported cases
   ([interaction authoring](game-data/interaction.md)). map01/map02 exports cover 13,202 authored
-  interactives, with 11,286 effective trigger records and 8,732 supported standing-goal volumes.
+  interactives, with 11,286 effective trigger records and 10,507 supported standing-goal volumes.
   runtime availability, script changes and interaction visibility remain separate conditions.
 
 - navigation topology, current air-wall geometry and teleport/base seeds can be exported and fed to
@@ -513,7 +513,7 @@ packs or renders correctly.
   to a closed, outward-facing hull of 8 vertices / 12 triangles;
   collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
 
-- player ground build: Ganglia alpha.12 supplies padded collision-to-surface tiles with
+- player ground build: Ganglia alpha.13 supplies padded collision-to-surface tiles with
   profile clearance, detail heights, slope and directed step seams. `player-ground` collects
   selected physical inputs independently of factory AI exclusions. complex shapes, capsule
   axis interpretation and complete prefab/state coverage remain gaps. real VL2 tile seams
