@@ -523,3 +523,9 @@ packs or renders correctly.
   connections with sample times, and exposes timed journey sampling. unknown connections and
   air-wall intersections remain blocked. the extractor does not yet generate validated game
   trajectories, and has not rebuilt view caches using movement devices.
+
+- streamed collision inputs now decode actor/local shape poses, compound mesh ordering,
+  primitive dimensions, enabled/trigger flags and separate terrain bindings. the new
+  `collision-inputs` command requires an explicit cell/state/area and reports incomplete
+  world coverage. 134 real sample actors / 1,008 shapes decode; world geometry assembly,
+  heightmaps, layer policy and traversal collision validation are still pending.
