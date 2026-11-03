@@ -1,4 +1,5 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import { trsMatrix, transformPoint, unityEulerQuaternion } from '@endfield-noclip/formats/unity/transform';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import { arrayField, isObject, objectField, numberField } from '@endfield-noclip/formats/unity/values';
 
@@ -11,6 +12,37 @@ const vector = (value: unknown): [number, number, number] => {
 		throw new FormatError('invalid route hazard vector');
 	}
 	return [Number(value[0]), Number(value[1]), Number(value[2])];
+};
+
+const polygonOf = (shape: TypeTreeObject, min: number[], max: number[]) => {
+	if (shape.shapeType !== 3) {
+		return undefined;
+	}
+	const rotation = vector(shape.euler),
+		offset = vector(shape.offset);
+	// tilted or offset prisms need their full shape semantics; keep their conservative bounds.
+	if (rotation[0] !== 0 || rotation[2] !== 0 || offset.some((v) => v !== 0) || shape.bufferDistance !== 0) {
+		return undefined;
+	}
+	const matrix = trsMatrix(vector(shape.postion), unityEulerQuaternion(rotation), [1, 1, 1]);
+	const polygon = arrayField(shape, 'posList').map((p): [number, number] => {
+		if (!Array.isArray(p) || p.length !== 2 || !p.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+			throw new FormatError('invalid hazard polygon');
+		}
+		const world = transformPoint(matrix, [Number(p[0]), 0, Number(p[1])]);
+		return [world[0], world[2]];
+	});
+	if (
+		polygon.length < 3 ||
+		[0, 1].some(
+			(i) =>
+				Math.abs(Math.min(...polygon.map((p) => p[i])) - min[i * 2]) > 0.001 ||
+				Math.abs(Math.max(...polygon.map((p) => p[i])) - max[i * 2]) > 0.001,
+		)
+	) {
+		throw new FormatError('hazard polygon disagrees with exported bounds');
+	}
+	return polygon;
 };
 
 /**
@@ -55,15 +87,17 @@ export const routeHazards = (data: TypeTreeObject) => {
 		if (size.some((v) => v < 0)) {
 			throw new FormatError('negative route hazard bounds');
 		}
+		const min = center.map((v, i) => v - size[i] / 2),
+			max = center.map((v, i) => v + size[i] / 2);
 		return [
 			{
 				kind: 'repatriation',
 				slot,
 				state: 'unknown',
-				min: center.map((v, i) => v - size[i] / 2),
-				max: center.map((v, i) => v + size[i] / 2),
-				// preserve the precise authored shape for a future state/volume resolver. until then,
-				// using the bounds may reject safe routes but cannot turn a reset zone into a landing.
+				min,
+				max,
+				polygon: polygonOf(value, min, max),
+				// unsupported shapes retain conservative bounds and all inputs for a later resolver.
 				shape: value,
 				payload: specific ?? null,
 				conditions: arrayField(area, 'functionAreaConditions'),
