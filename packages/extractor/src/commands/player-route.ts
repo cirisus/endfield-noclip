@@ -5,14 +5,12 @@ import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { isObject, numberField } from '@endfield-noclip/formats/unity/values';
 
 import {
-	createGroundPlanner,
 	createGoalProjector,
-	findJumpConnections,
 	jumpDuration,
+	planJumpRoute,
 	projectPoint,
 	retimeGroundRoute,
 	type GroundArrival,
-	type GroundConnection,
 	type GroundOptions,
 	type InteractionGoal,
 	type LocomotionOptions,
@@ -60,7 +58,8 @@ type Request = {
 	walls: Wall[];
 };
 
-export const summary = 'plan a bounded physical-ground route with model-based jump discovery when needed';
+export const summary =
+	'compare bounded ground, jump and drop action combinations with physical collision checks';
 export const usage =
 	'player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result>';
 
@@ -234,20 +233,6 @@ export const run = async (args: string[]): Promise<void> => {
 		await emit({ status: 'unavailable', reason: 'target-region-unmapped' });
 		return;
 	}
-	console.log(JSON.stringify({ phase: 'ground-search', goalFaces: candidates.length }));
-	const initial = createGroundPlanner(ground.surfaces, options).plan([arrival], goal, {
-		interaction: request.interaction,
-	});
-	diagnostics.groundStatus = initial.status;
-	if (initial.status === 'complete') {
-		await emit({
-			status: 'candidate',
-			route: initial,
-			connections: [],
-			groundedTarget: initial.points.at(-1),
-		});
-		return;
-	}
 	const model = {
 		gravity: numberField(settings, '_gravity'),
 		fallingGravity: numberField(settings, '_fallingGravity'),
@@ -296,14 +281,10 @@ export const run = async (args: string[]): Promise<void> => {
 		{ bounds },
 	);
 	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
-	const discovery = findJumpConnections(ground.surfaces, world, {
-		profile,
-		portals: options.portals,
-		walls: options.walls,
-		from: start.position,
-		to: goal,
+	const result = planJumpRoute(ground.surfaces, world, [arrival], goal, {
+		...options,
 		interaction: request.interaction,
-		maxVertical: ground.options.maxVertical,
+		runAirSpeed,
 		maxSlope,
 		maxDrop,
 		maxHorizontalDistance,
@@ -312,23 +293,9 @@ export const run = async (args: string[]): Promise<void> => {
 		maxLinks: 64,
 		model,
 	});
-	const connections: GroundConnection[] = discovery.connections.map((connection) => {
-		const from = connection.points[0],
-			to = connection.points.at(-1)!;
-		const horizontalSpeed = Math.hypot(to[0] - from[0], to[2] - from[2]) / connection.times.at(-1)!;
-		return {
-			...connection,
-			...(horizontalSpeed > runAirSpeed + 1e-7 ? { requiredGait: 'sprint' as const } : {}),
-		};
-	});
-	diagnostics.strategy = 'lazy-region-links';
-	diagnostics.searches = [discovery.diagnostics];
-	diagnostics.truncated = discovery.diagnostics.truncated;
+	Object.assign(diagnostics, result.diagnostics);
+	const { route, connections } = result;
 	console.log(JSON.stringify({ phase: 'route-search', connections: connections.length }));
-	const route = createGroundPlanner(ground.surfaces, {
-		...options,
-		connections: [...(options.connections ?? []), ...connections],
-	}).plan([arrival], goal, { interaction: request.interaction });
 	if (route.status === 'complete') {
 		await emit({ status: 'candidate', route, connections, groundedTarget: route.points.at(-1) });
 	} else {
