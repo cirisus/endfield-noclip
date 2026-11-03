@@ -30,6 +30,12 @@ export its capsule proxy and movement overrides; unused reference records are ig
 extraction resolves 34 templates with five distinct capsule sizes. selecting a character does not
 yet resolve runtime collider overrides or active movement modifiers.
 
+the default planning capsule is the most common size in that build's character templates, exported
+as `defaultProfile`. equal counts prefer larger radius, then height. `walk-routes --movement-settings
+<file>` uses it when the request omits `profile`; explicit dimensions still override it. the movement
+export must match the navigation build, and the resolved dimensions are embedded in Atlos's bound
+dataset. Ganglia does not hardcode Endfield character sizes.
+
 a jump-height limit alone cannot establish a valid directed connection: the
 trajectory, player capsule, landing slope/support, swept collisions and reset zones must all pass.
 AI link limits are not player movement limits. descending and ascending connections must be verified
@@ -40,7 +46,9 @@ resolving scene ownership through level configuration. positions of map icons ar
 landing positions. unmapped levels are reported separately. availability is unknown until supplied
 by the caller's player state or explicit planning assumptions. the six non-main industrial-base areas are also exported using the horizontal centre of their
 maximum authored expansion bounds. their vertical centre is only a projection seed, never a claimed
-ground height. these records are marked approximate and require ground projection; zero-valued
+ground height. factory regions are player-accessible; absence from an AI navigation bake is missing
+coverage, never a player exclusion. buildings, holes, air walls and other physical constraints still
+apply inside those regions. these records are marked approximate and require ground projection; zero-valued
 factory-region origins are not used.
 
 these exports include build GUID/content hash and contain local game-derived data; keep outputs
@@ -78,8 +86,9 @@ install the checked-in Ganglia alpha archive with the workspace dependencies. th
 pnpm extract navmesh map01 -o /tmp/navigation.json --config endfield.local.json
 pnpm extract air-walls map01 -o /tmp/walls.json --config endfield.local.json
 pnpm extract travel-points -o /tmp/travel.json --config endfield.local.json
+pnpm extract movement-settings -o /tmp/movement.json --config endfield.local.json
 pnpm extract walk-routes --navigation /tmp/navigation.json --walls /tmp/walls.json \
-  --travel-points /tmp/travel.json --request /tmp/request.json \
+  --travel-points /tmp/travel.json --movement-settings /tmp/movement.json --request /tmp/request.json \
   -o /tmp/routes.json --data /tmp/ground-data.json
 pnpm extract oem-views out/releases/INPUT_RELEASE -o out/releases --cache out/framing \
   --arrival-routes /tmp/routes.json --rebuild

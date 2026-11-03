@@ -41,7 +41,13 @@ const vector = (value: unknown): Vec3 => {
  * @returns source-bound surfaces and queries; unknown walls remain blocked
  * @throws for mismatched builds, missing assets, unsupported transforms or invalid selections
  */
-export const groundData = (navigation: unknown, exclusions: unknown, request: unknown, travel?: unknown) => {
+export const groundData = (
+	navigation: unknown,
+	exclusions: unknown,
+	request: unknown,
+	inputs: { travel?: unknown; movement?: unknown } = {},
+) => {
+	const { travel, movement } = inputs;
 	const nav = object(navigation),
 		walls = object(exclusions),
 		query = object(request);
@@ -63,7 +69,23 @@ export const groundData = (navigation: unknown, exclusions: unknown, request: un
 	if (!selected.size || !areas.size || [...areas].some((a) => !Number.isInteger(a) || a < 0 || a > 31)) {
 		throw new Error('explicit assets and area whitelist required');
 	}
-	const profile = object(query.profile);
+	let defaultProfile: unknown;
+	if (movement !== undefined) {
+		const settings = object(movement),
+			movementSource = object(settings.source);
+		if (
+			settings.version !== 1 ||
+			source.buildGuid !== movementSource.buildGuid ||
+			source.contentHash !== movementSource.contentHash
+		) {
+			throw new Error('movement settings must share the navigation build');
+		}
+		defaultProfile = settings.defaultProfile;
+	}
+	if (query.profile === undefined && defaultProfile === undefined) {
+		throw new Error('provide a profile or build-bound movement settings');
+	}
+	const profile = object(query.profile ?? defaultProfile);
 	const radius = number(profile.radius),
 		height = number(profile.height);
 	const speed = number(query.speed),
@@ -206,6 +228,7 @@ export const groundData = (navigation: unknown, exclusions: unknown, request: un
 		state,
 		assets: [...selected],
 		areas: [...areas],
+		profileSource: query.profile === undefined ? 'most-common-character' : 'explicit',
 		surfaces,
 		options,
 		arrivals,
