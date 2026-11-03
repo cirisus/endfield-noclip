@@ -157,3 +157,30 @@ pairs (60 / 158), 158 launch devices (59 / 99), and 40 acceleration devices (9 /
 all selected rope endpoints have reciprocal targets. map02 has 32 automatic-spawn
 references; none name a selected movement device in this install. these are authored
 input counts, not proof that every device is unlocked or that its landing is safe.
+
+## streamed collision inputs
+
+`collision-inputs <scene> <x> <z> --scene-state <n> --area <n> -o <file>` exports
+ECS collider actors for an explicit chunk selection. actor poses are in Unity world
+coordinates; compound shape poses are local to the actor. primitive dimensions already
+belong to collision geometry, so renderer scale must not be applied again. mesh shapes
+retain their own scale and ordered asset bindings, separately from the render mesh.
+
+box, capsule, sphere, single mesh, compound and terrain records are decoded. enabled,
+trigger, surface and raw option fields are retained independently: a trigger is not a
+solid obstruction, and an absent AI polygon does not invalidate a collision floor.
+compound complex-mesh inputs remain separate from regular shapes; their query policy
+must be resolved before baking. terrain records retain heightmap bindings and scale,
+not fabricated flat ground. malformed counts and missing asset bindings fail the export.
+
+one current cell sample decoded 134 actors with 1,008 shapes (869 mesh and 139 box),
+four complex-mesh records and four terrain records. this verifies record framing, not
+world navigation. the exported coverage is explicitly incomplete: global chunks, Mono
+colliders, interactive prefabs, foliage, heightmap reconstruction and player layer/option
+policy still need integration. do not interpret this cell catalogue as a complete collision
+world or use missing coverage to authorize a jump/drop.
+
+a separate placement probe expanded the sample's regular shapes to 434,065 world-space
+triangles using 106 cooked meshes. the original preview target's vertical ray intersects
+an upward-facing surface near its marker height. this is a local placement cross-check;
+complex meshes and terrain coverage still require separate validation.
