@@ -49,7 +49,7 @@ export const groundData = (navigation: unknown, exclusions: unknown, request: un
 		wallSource = object(walls.source);
 	if (
 		nav.version !== 1 ||
-		walls.version !== 1 ||
+		walls.version !== 2 ||
 		nav.scene !== walls.scene ||
 		string(source.buildGuid) !== wallSource.buildGuid ||
 		string(source.contentHash) !== wallSource.contentHash
@@ -149,6 +149,13 @@ export const groundData = (navigation: unknown, exclusions: unknown, request: un
 			}),
 		};
 	});
+	for (const value of list(walls.hazards)) {
+		const hazard = object(value);
+		if (hazard.kind !== 'repatriation' || hazard.state !== 'unknown') {
+			throw new Error('unsupported route hazard');
+		}
+		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: 'unknown' });
+	}
 	const landings = new Map<string, Vec3>();
 	if (travel !== undefined) {
 		const table = object(travel),
