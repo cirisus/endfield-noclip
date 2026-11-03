@@ -143,7 +143,7 @@ enclosures in this selected-solid pipeline. those enclosures carry unknown world
 exclusions and remain non-walkable. they can substantially overblock. malformed nonempty
 cooks still fail decoding.
 
-the alpha.12 packed builder constructs padded tiles, clips their cores and connects
+the alpha.13 packed builder constructs padded tiles, clips their cores and connects
 directed seams. near-boundary Float32 vertices snap to exact core planes while retaining
 detail-plane heights. a real VL2 build produced 69,963 surfaces and 7,114 validated seams,
 but its test arrival remains disconnected. native build failures abort the result.

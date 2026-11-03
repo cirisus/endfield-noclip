@@ -466,8 +466,8 @@ export const interactionGoal = (point: {
 	if (rules.trigger.shape !== 2) {
 		unresolved.push('unsupported-trigger-shape');
 	}
-	if (point.rotation[0] !== 0 || point.rotation[2] !== 0) {
-		unresolved.push('tilted-interaction-transform');
+	if (rules.direction.enabled && (point.rotation[0] !== 0 || point.rotation[2] !== 0)) {
+		unresolved.push('tilted-direction-gate-unresolved');
 	}
 	if (point.scale.some((value) => !Number.isFinite(value) || value <= 0)) {
 		unresolved.push('unsupported-interaction-scale');
