@@ -210,11 +210,57 @@ test('searches a many-face interaction goal once and retains the reachable landi
 	data.collision.indices = [0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6];
 	const result = await execute(data, { target: [5, 1, 1], interaction: { radius: 1.5 } });
 	assert.equal(result.status, 'candidate');
-	assert.equal(result.diagnostics.strategy, 'lazy-region-links');
-	assert.equal(result.diagnostics.searches.length, 1);
+	assert.equal(result.diagnostics.strategy, 'surface-action-graph');
+	assert.equal(result.diagnostics.searches.length, 2);
 	assert.ok(result.diagnostics.searches[0].goalFaces > 8);
 	assert.equal(result.diagnostics.searches[0].goalComponents, 1);
 	assert.equal(result.diagnostics.searches[0].targetReached, true);
 	const end = result.route.points.at(-1);
 	assert.ok(Math.hypot(end[0] - 5, end[1] - 1, end[2] - 1) <= 1.5 + 1e-8);
+});
+
+test('compares jump-down actions even when the ground-only route already succeeds', async () => {
+	const data = fixture();
+	const floor = (id: string, x0: number, x1: number, y: number, z0: number, z1: number) => ({
+		id,
+		vertices: [
+			[x0, y, z0],
+			[x1, y, z0],
+			[x1, y, z1],
+			[x0, y, z1],
+		],
+	});
+	data.ground.surfaces = [
+		floor('upper', 0, 4, 4, -2, 2),
+		{
+			id: 'ramp',
+			vertices: [
+				[0, 4, 2],
+				[4, 4, 2],
+				[4, 0, 20],
+				[0, 0, 20],
+			],
+		},
+		floor('back', 0, 15, 0, 20, 24),
+		floor('lower', 7, 15, 0, -2, 20),
+	];
+	const triangles = data.ground.surfaces.flatMap((surface) => [
+		[surface.vertices[0], surface.vertices[2], surface.vertices[1]],
+		[surface.vertices[0], surface.vertices[3], surface.vertices[2]],
+	]);
+	data.collision.positions = triangles.flat(2);
+	data.collision.indices = Array.from({ length: triangles.length * 3 }, (_, index) => index);
+	data.request.arrival.position = [2, 4, 0];
+	data.request.target = [10, 0, 0];
+	data.movement.assets[0].settings = {
+		...data.movement.assets[0].settings,
+		_maxJumpHeight: 2,
+		_inAirMaxHorizontalSpeedSprint: 3,
+	};
+	const result = await execute(data);
+	assert.equal(result.status, 'candidate');
+	assert.equal(result.diagnostics.groundStatus, 'complete');
+	assert.ok(result.route.cost < result.diagnostics.baselineCost / 2);
+	assert.equal(result.diagnostics.selectedCost, result.route.cost);
+	assert.ok(result.route.segments.some((segment: { mode: string }) => segment.mode === 'jump'));
 });

@@ -503,7 +503,10 @@ packs or renders correctly.
 - directed movement API: the packed Ganglia dependency accepts grounded rope/jump/drop/launch
   connections with sample times, and exposes timed journey sampling. unknown connections and
   air-wall intersections remain blocked. `player-route` now generates model-based jump/drop
-  candidates with sprint entry/resource constraints. the installed package's descent example
+  candidates with sprint entry/resource constraints. successful ground routes also receive
+  shortcut search, including surface-interior landings and isolated intermediate platforms.
+  a common directed action graph selects the retained ground/jump/drop combinations, and
+  complete incumbents are replaced only by faster timed routes. the installed package's descent example
   passes the normal CLI. sampled search can miss valid connections, and movement-device
   state and in-game dynamics remain unresolved. view caches have not been rebuilt.
 
