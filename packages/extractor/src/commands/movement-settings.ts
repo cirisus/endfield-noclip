@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 
 import { withContext } from '../context.ts';
+import { characterMovement } from '../game/character-movement.ts';
 
 export const summary = 'export build-bound player movement settings separately from AI navigation settings';
 export const usage = 'movement-settings -o <file> --config <config>';
@@ -32,12 +33,18 @@ export const run = async (args: string[]): Promise<void> => {
 			`${prefix}NavMesh/DefaultNavMeshBuildData.asset`,
 		]);
 		const assets = [];
+		const characters = [];
 		for (const [hash, path] of paths.entries()) {
 			const player = path.startsWith(`${prefix}${movement}`) && path.endsWith('.asset');
-			if (!player && !required.has(path)) {
+			const character = path.startsWith(`${prefix}CharacterData/data_chr_`) && path.endsWith('.asset');
+			if (!player && !character && !required.has(path)) {
 				continue;
 			}
 			const settings = await resolver.read(await resolver.findUnique({ hash, path }, 114));
+			if (character) {
+				characters.push({ path, ...characterMovement(settings) });
+				continue;
+			}
 			assets.push({
 				purpose: player ? 'player' : path.includes('/NavMesh/') ? 'ai-navigation' : 'world',
 				path,
@@ -49,6 +56,7 @@ export const run = async (args: string[]): Promise<void> => {
 			throw new Error(`missing movement settings: ${[...required].join(', ')}`);
 		}
 		assets.sort((a, b) => a.path.localeCompare(b.path));
+		characters.sort((a, b) => a.id.localeCompare(b.id));
 		const build = await ctx.world.manifest();
 		await writeFile(
 			values.output!,
@@ -56,13 +64,20 @@ export const run = async (args: string[]): Promise<void> => {
 				{
 					version: 1,
 					source: { buildGuid: build.guid, contentHash: build.contentHash },
-					// settings alone do not establish capsule size, applied modifiers or collision-free trajectories.
+					// authored inputs do not establish the applied capsule, active modifiers or collision-free trajectories.
 					motionValidation: 'unresolved',
 					assets,
+					characters,
 				},
 				(_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value),
 			),
 		);
-		console.log(JSON.stringify({ assets: assets.length, motionValidation: 'unresolved' }));
+		console.log(
+			JSON.stringify({
+				assets: assets.length,
+				characters: characters.length,
+				motionValidation: 'unresolved',
+			}),
+		);
 	});
 };
