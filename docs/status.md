@@ -443,7 +443,7 @@ packs or renders correctly.
   the example point's distant arrival and full visual acceptance are still unverified
 - version 2 exclusions also block reset-zone bounds, including payload-free temporary zones; current
   full-map extraction found 400 volumes. exact trigger shapes and activation remain unresolved
-- movement settings can be exported separately from AI bake settings. directed jumps/drops still need
+- movement settings and 34 character capsule proxies can be exported separately from AI bake settings. directed jumps/drops still need
   player collision geometry, capsule/modifier resolution and trajectory/landing validation; they are
   not inferred from AI jump heights or admitted by vertical endpoint projection
 - cooked collision decoding passed 107 triangle-mesh assets / 43,900 triangles in the example cell,
