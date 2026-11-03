@@ -1,5 +1,11 @@
 # ground navigation extraction
 
+`interaction-points <scene> -o <file>` exports placed trigger rules, retaining source build,
+template paths, transforms and override provenance. direct values resolve in base, selected
+variant and placement order. supported sphere/direction rules produce an explicit standing
+goal volume for Ganglia. unresolved shapes, transforms and referenced parameters remain
+separate from resolved authoring. see [interaction authoring](game-data/interaction.md).
+
 navigation for region switching remains distinct from walkable topology. `navmesh <scene> -o <file>`
 exports version-16 Unity navigation tile vertices, polygon indices, neighbour codes and metadata,
 plus the source asset transform and build settings. `--limit` is diagnostic and marks partial output.
