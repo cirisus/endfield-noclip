@@ -506,7 +506,7 @@ packs or renders correctly.
   to a closed, outward-facing hull of 8 vertices / 12 triangles;
   collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
 
-- player ground build: Ganglia alpha.2 provides a separate offline collision-to-surface
+- player ground build: Ganglia alpha.3 provides a separate offline collision-to-surface
   builder with profile clearance, slope and conservative ordinary step limits. packed
   import and type declarations are verified. game collision placement and full factory
   coverage are still pending; the current route CLI continues using selected Unity
@@ -518,3 +518,8 @@ packs or renders correctly.
 
   current exports contain 218 reciprocal rope pairs, 158 launch devices and 40 acceleration
   devices across map01/map02; all selected rope endpoints pair by authored reference.
+
+- directed movement API: the packed Ganglia dependency accepts grounded rope/jump/drop/launch
+  connections with sample times, and exposes timed journey sampling. unknown connections and
+  air-wall intersections remain blocked. the extractor does not yet generate validated game
+  trajectories, and has not rebuilt view caches using movement devices.
