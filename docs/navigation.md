@@ -166,6 +166,11 @@ coordinates; compound shape poses are local to the actor. primitive dimensions a
 belong to collision geometry, so renderer scale must not be applied again. mesh shapes
 retain their own scale and ordered asset bindings, separately from the render mesh.
 
+use `<scene> global` instead of `<scene> <x> <z>` to export the global chunks for the
+same explicit state/area selection. a cell export does not implicitly include them:
+consumers must combine global and intersecting cell inputs for their selected active
+states. the current map01 default global chunk contains 19 collider actors.
+
 box, capsule, sphere, single mesh, compound and terrain records are decoded. enabled,
 trigger, surface and raw option fields are retained independently: a trigger is not a
 solid obstruction, and an absent AI polygon does not invalidate a collision floor.
