@@ -78,10 +78,13 @@ export const readCollisionMesh = (bytes: Uint8Array): CollisionMesh => {
 	for (let i = 0; i < 6; i++) {
 		scalar();
 	}
-	if (r.u32() !== 1) {
-		throw new FormatError('unsupported nonquantized collision tree');
+	const quantized = r.u32();
+	if (quantized > 1) {
+		throw new FormatError('invalid collision tree quantization flag');
 	}
-	r.skip(r.u32() * 16);
+	// PhysX BV4 v3 stores a 12-byte quantized or 24-byte float AABB plus a child descriptor.
+	// tiny leaf-only cooks can have no nodes and leave the tree nonquantized.
+	r.skip(r.u32() * (quantized ? 16 : 28));
 	if (scalar() < 0) {
 		throw new FormatError('negative collision epsilon');
 	}
