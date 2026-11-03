@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { parseSparkTable, SparkType } from './spark-buffer.ts';
+import { parseSparkBean, parseSparkTable, SparkType } from './spark-buffer.ts';
 
 /** little byte-buffer builder with natural alignment */
 class Buffer {
@@ -343,4 +343,44 @@ test('reads byte-sized booleans before aligned fields and rejects invalid values
 	assert.deepEqual(parseSparkTable(new Uint8Array(b.bytes)).entries, [[5, { enabled: false, order: 17 }]]);
 	b.bytes[bean] = 2;
 	assert.throws(() => parseSparkTable(new Uint8Array(b.bytes)), /invalid spark boolean/);
+});
+
+test('decodes a direct bean root with nested fields and keeps root contracts strict', () => {
+	const b = new Buffer();
+	const header = [b.u32(12), b.u32(0), b.u32(0)];
+	b.u32(2);
+	b.u8(SparkType.Bean);
+	b.u32(0xaaaa);
+	b.cString('Settings');
+	b.u32(2);
+	b.cString('capacity');
+	b.u8(SparkType.Int);
+	b.cString('nested');
+	b.u8(SparkType.Bean);
+	b.u32(0xbbbb);
+	b.u8(SparkType.Bean);
+	b.u32(0xbbbb);
+	b.cString('Nested');
+	b.u32(1);
+	b.cString('rate');
+	b.u8(SparkType.Float);
+	b.patch(header[1], b.pos);
+	b.u8(SparkType.Bean);
+	b.cString('Settings');
+	b.u32(0xaaaa);
+	b.align(4);
+	const nested = b.pos;
+	b.f32(0.5);
+	b.patch(header[2], b.pos);
+	b.u32(8);
+	b.u32(nested);
+	const bytes = new Uint8Array(b.bytes);
+	assert.deepEqual(parseSparkBean(bytes), {
+		name: 'Settings',
+		value: { capacity: 8, nested: { rate: 0.5 } },
+	});
+	assert.throws(() => parseSparkTable(bytes), /expected spark map root/);
+	assert.throws(() => parseSparkBean(buildBeanTable()), /expected spark bean root/);
+	b.patch(header[1] + 4, 0xffffffff);
+	assert.throws(() => parseSparkBean(new Uint8Array(b.bytes)), /spark|bounds|range/i);
 });

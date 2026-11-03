@@ -16,7 +16,7 @@ import { loadTexture } from '../game/asset-decode.ts';
 export const summary =
 	'export streamed collider poses, shapes, filters and cooked geometry for a cell or global chunk';
 export const usage =
-	'collision-inputs <scene> <x> <z> | <scene> global --scene-state <n> --area <n> -o <file> --config <config>';
+	'collision-inputs <scene> <x> <z> | <scene> global --scene-state <n> --area <n> [--layers <uint32>] -o <file> --config <config>';
 
 /**
  * @param args explicit cell/state selection and output @returns after exporting collision inputs with
@@ -31,6 +31,7 @@ export const run = async (args: string[]): Promise<void> => {
 			config: { type: 'string' },
 			'scene-state': { type: 'string' },
 			area: { type: 'string' },
+			layers: { type: 'string' },
 		},
 	});
 	if (
@@ -49,13 +50,18 @@ export const run = async (args: string[]): Promise<void> => {
 	const selection = {
 		sceneState: parseInteger(values['scene-state'], '--scene-state'),
 		area: parseInteger(values.area, '--area'),
+		layerMask: values.layers === undefined ? 0xffffffff : parseInteger(values.layers, '--layers'),
 	};
+	if (selection.layerMask < 0 || selection.layerMask > 0xffffffff) {
+		throw new Error('--layers must be an unsigned 32-bit mask');
+	}
 	await withContext(values.config, async (ctx) => {
 		const files = await ctx.world.cellChunkFiles(scene, cell, selection);
 		if (!files.length) {
 			throw new Error('no chunks match the collision selection');
 		}
 		const actors = [];
+		const excludedActors = [];
 		const resolver = await ctx.resolver(),
 			paths = await ctx.world.pathLookup();
 		const geometries = new Map<string, CollisionMesh>();
@@ -64,12 +70,19 @@ export const run = async (args: string[]): Promise<void> => {
 			if (!geometries.has(key)) {
 				const hash = BigInt(asset),
 					data = await resolver.read(await resolver.findUnique({ hash, path: paths(hash) ?? null }, 43));
-				geometries.set(
-					key,
-					kind === 'convex'
-						? readConvexMesh(bytesField(data, 'm_BakedConvexCollisionMesh'))
-						: readCollisionMesh(bytesField(data, 'm_BakedTriangleCollisionMesh')),
-				);
+				try {
+					geometries.set(
+						key,
+						kind === 'convex'
+							? readConvexMesh(bytesField(data, 'm_BakedConvexCollisionMesh'))
+							: readCollisionMesh(bytesField(data, 'm_BakedTriangleCollisionMesh')),
+					);
+				} catch (cause) {
+					throw new Error(
+						`cannot decode collision geometry ${key} (${paths(hash) ?? 'unknown asset path'})`,
+						{ cause },
+					);
+				}
 			}
 			return key;
 		};
@@ -112,6 +125,10 @@ export const run = async (args: string[]): Promise<void> => {
 						throw new Error('incomplete collider asset bindings');
 					}
 					const assets = Array.from({ length: count }, (_, i) => bindings.get(i)!);
+					if (((selection.layerMask >>> collider.layer) & 1) === 0) {
+						excludedActors.push({ id: row.id, component, file: file.name, collider, assets });
+						continue;
+					}
 					const shapeGeometry: (string | null)[] = [];
 					for (const shape of collider.shapes) {
 						shapeGeometry.push(
@@ -180,9 +197,12 @@ export const run = async (args: string[]): Promise<void> => {
 					],
 				},
 				actors,
+				excludedActors,
 				geometries: Object.fromEntries(geometries),
 			}),
 		);
-		console.log(`${actors.length} streamed collider actors; world coverage remains incomplete`);
+		console.log(
+			`${actors.length} streamed collider actors; ${excludedActors.length} excluded by layer; world coverage remains incomplete`,
+		);
 	});
 };
