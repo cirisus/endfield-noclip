@@ -156,6 +156,22 @@ arcs exceeding the ordinary-run air speed require paid sprint entry. the full ro
 receives acceleration and resource scheduling. results retain source, coverage, model and
 truncation diagnostics. sampled discovery and prior corridor selection can miss valid routes.
 
+the current movement query passes the complete interaction goal to one Ganglia search.
+directed ground components share goal faces, removing the previous eight-face cutoff and
+repeated full collision searches. spatial bounds and height/distance heuristics propose
+region chains backward from the goal. only neighbouring transfers on proposed chains
+receive local standing and trajectory checks; rejected transfers trigger another chain.
+launch-region and landing-region diversity preserve short box-to-box hops and railing
+pullbacks. ordered local batches contain up to 8,000 candidates, with query-wide limits
+of 16,000 arc attempts and 64 retained links. source, body, slope, occupied-volume and air-wall constraints remain
+mandatory. optimistic region bounds never establish a physical connection by themselves.
+local launch sampling is interleaved and landing samples are queried in 3D goal-distance
+order. candidate timing includes approach, flight and departure. difficult transfers defer
+after a small validation batch, preserving their remaining candidates. exhausting candidate
+generation does not discard trajectories already waiting for physical validation.
+raw endpoint-pair generation is also resumable, so alternative region chains receive
+work before a difficult transfer consumes the complete generation budget.
+
 the packed normal command produced a three-segment candidate for the supplied descent
 example with one sprint-required jump. that verifies the package/command pipeline. complete
 collision coverage, game air-control behaviour and device state still require validation.
