@@ -461,3 +461,12 @@ packs or renders correctly.
 - per-controller meaning of progression bit 0 ("unbuilt" versus "level 1")
 - weather/time state ids
 - runtime: BC texture support in Safari, the texture-array layer limit on Apple GPUs
+
+## ground routes and arrival framing
+
+- navigation topology, current air-wall geometry and teleport/base seeds can be exported and fed to
+  the Ganglia alpha package; route-bound camera candidates and forced cache rebuilding are available
+  ([navigation](navigation.md), [precompute](oem-precompute.md#arrival-route-constraints))
+- player area masks, dynamic-state selection, partial portals, detail heights and missing industrial
+  ground coverage remain unresolved. an AI navigation path is not proof of complete player passage;
+  the example point's distant arrival and full visual acceptance are still unverified
