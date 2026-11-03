@@ -216,7 +216,7 @@ test('searches a many-face interaction goal once and retains the reachable landi
 	assert.equal(result.diagnostics.strategy, 'surface-action-graph');
 	assert.equal(result.diagnostics.searches.length, 2);
 	assert.ok(result.diagnostics.searches[0].goalFaces > 8);
-	assert.equal(result.diagnostics.searches[0].reason, 'reachable-frontier');
+	assert.equal(result.diagnostics.searches[0].reason, 'searched');
 	assert.ok(result.diagnostics.searches[0].accepted > 0);
 	const end = result.route.points.at(-1);
 	assert.ok(Math.hypot(end[0] - 5, end[1] - 1, end[2] - 1) <= 1.5 + 1e-8);
