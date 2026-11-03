@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { planGroundRoute } from '@oem/ganglia';
+
 import { groundData } from './ground-data.ts';
 
 const source = { buildGuid: 'build', contentHash: 'content' };
@@ -30,7 +32,7 @@ const navigation = {
 		},
 	],
 };
-const walls = { version: 1, source, scene: 'scene', walls: [] };
+const walls = { version: 2, source, scene: 'scene', walls: [], hazards: [] };
 const request = {
 	release: 'release',
 	state: 'explicit-state',
@@ -42,6 +44,33 @@ const request = {
 	arrivals: [{ id: 'player', position: [0.2, 0, 0.2], state: 'available', cost: 0 }],
 	targets: [{ id: 'target', position: [0.4, 0, 0.4] }],
 };
+test('excludes reset volumes even when the navmesh contains a continuous walkable face', () => {
+	const clear = groundData(navigation, walls, request);
+	assert.equal(
+		planGroundRoute(clear.surfaces, clear.arrivals, clear.targets[0].position, clear.options).status,
+		'complete',
+	);
+	const blocked = groundData(
+		navigation,
+		{
+			...walls,
+			hazards: [
+				{
+					kind: 'repatriation',
+					state: 'unknown',
+					min: [0.3, -0.1, 0.3],
+					max: [0.5, 0.1, 0.5],
+				},
+			],
+		},
+		request,
+	);
+	assert.equal(
+		planGroundRoute(blocked.surfaces, blocked.arrivals, blocked.targets[0].position, blocked.options).status,
+		'no-verified-route',
+	);
+	assert.throws(() => groundData(navigation, { ...walls, version: 1 }, request), /share/);
+});
 test('imports only explicitly selected areas with matching build and clearance', () => {
 	assert.equal(groundData(navigation, walls, request).surfaces.length, 1);
 	assert.throws(

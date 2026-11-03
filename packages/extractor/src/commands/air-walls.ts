@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import { withContext } from '../context.ts';
+import { routeHazards } from '../game/route-hazards.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
 const vector = (value: unknown): number[] => {
@@ -18,13 +19,12 @@ const vector = (value: unknown): number[] => {
 	return value.map(Number);
 };
 
-export const summary =
-	'export conservative air-wall exclusions and authored conditions from the current install';
+export const summary = 'export conservative air-wall and reset-zone exclusions from the current install';
 export const usage = 'air-walls <scene> -o <file> --config <config>';
 
 /**
- * @param args scene and output arguments @returns after exporting every authored level wall, including
- *   disabled/conditional walls
+ * @param args scene and output arguments @returns after exporting every authored level wall and reset zone,
+ *   including disabled/conditional exclusions
  */
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
@@ -47,6 +47,7 @@ export const run = async (args: string[]): Promise<void> => {
 			throw new Error('unknown scene');
 		}
 		const groups: unknown[] = [];
+		const hazards: unknown[] = [];
 		for (const level of levels) {
 			for (const hash of level.levelDataPathHashes ?? []) {
 				const path = paths(hash);
@@ -65,6 +66,9 @@ export const run = async (args: string[]): Promise<void> => {
 				);
 				if (!isObject(data) || !Array.isArray(data.airWalls)) {
 					throw new Error('invalid level walls');
+				}
+				for (const zone of routeHazards(data)) {
+					hazards.push({ ...zone, level: level.id, path });
 				}
 				for (const group of data.airWalls) {
 					if (!isObject(group) || !Array.isArray(group.polyLineWalls)) {
@@ -109,14 +113,15 @@ export const run = async (args: string[]): Promise<void> => {
 			values.output!,
 			JSON.stringify(
 				{
-					version: 1,
+					version: 2,
 					scene: positionals[0],
 					source: { buildGuid: build.guid, contentHash: build.contentHash },
 					walls: groups,
+					hazards,
 				},
 				(_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value),
 			),
 		);
-		console.log(JSON.stringify({ scene: positionals[0], walls: groups.length }));
+		console.log(JSON.stringify({ scene: positionals[0], walls: groups.length, hazards: hazards.length }));
 	});
 };
