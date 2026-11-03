@@ -506,3 +506,5 @@ packs or renders correctly.
   normalization, alternating diagonals and complete hole-quad removal. four real heightfields
   yield 31,092 triangles and omit 838 hole quads. world geometry assembly, layer policy and
   traversal collision validation are still pending.
+  the same command accepts `global` to include global chunk inputs separately (19 actors
+  in the map01 default global chunk); neither selection claims complete collision coverage.
