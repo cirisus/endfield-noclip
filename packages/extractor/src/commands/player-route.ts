@@ -16,7 +16,6 @@ import {
 	type GroundOptions,
 	type InteractionGoal,
 	type LocomotionOptions,
-	type Route,
 	type Surface,
 	type Vec3,
 	type Wall,
@@ -77,8 +76,6 @@ const sameSource = (a: Source, b: Source) =>
 	a.buildGuid === b.buildGuid &&
 	a.contentHash === b.contentHash;
 const sameProfile = (a: Profile, b: Profile) => a && b && a.radius === b.radius && a.height === b.height;
-const distance = (a: Vec3, b: Vec3) => Math.hypot(...a.map((value, axis) => value - b[axis]));
-
 const targetSupport = (surfaces: Surface[], target: Vec3) => {
 	const nearest = projectPoint(surfaces, target, { maxVertical: 0.5 });
 	if (nearest) {
@@ -92,36 +89,6 @@ const targetSupport = (surfaces: Surface[], target: Vec3) => {
 		}
 	}
 	return below;
-};
-
-const spreadTargets = (
-	candidates: { surface: string; position: Vec3; distance: number }[],
-	limit: number,
-) => {
-	if (candidates.length <= limit) {
-		return candidates;
-	}
-	const selected = [candidates[0]],
-		remaining = new Set(candidates.slice(1));
-	while (selected.length < limit && remaining.size) {
-		let best = null,
-			separation = -Infinity;
-		for (const candidate of remaining) {
-			const nearest = Math.min(
-				...selected.map((previous) => distance(previous.position, candidate.position)),
-			);
-			if (nearest > separation) {
-				best = candidate;
-				separation = nearest;
-			}
-		}
-		if (!best) {
-			break;
-		}
-		selected.push(best);
-		remaining.delete(best);
-	}
-	return selected;
 };
 
 /**
@@ -223,10 +190,8 @@ export const run = async (args: string[]): Promise<void> => {
 	const coverage = { ground: ground.coverage, collision: collision.coverage };
 	const diagnostics: Record<string, unknown> = {
 		limits: {
-			maxCandidatesPerGoal: 1000,
-			maxTotalCandidates: 8000,
+			maxCandidates: 8000,
 			maxLinks: 64,
-			maxGoalFaces: 8,
 			sampleSpacing: 1,
 		},
 		truncated: false,
@@ -330,81 +295,40 @@ export const run = async (args: string[]): Promise<void> => {
 		{ positions: collision.positions, indices: walkableCollisionIndices(collision) },
 		{ bounds },
 	);
-	const targets = spreadTargets(candidates, 8),
-		connections: GroundConnection[] = [],
-		searches = [];
-	diagnostics.goalFaces = {
-		eligible: candidates.length,
-		selected: targets.map((candidate) => candidate.surface),
-		truncated: targets.length < candidates.length,
-	};
-	const seenConnections = new Set<string>();
-	let found: Route | null = null;
-	for (let index = 0; index < targets.length && connections.length < 64; index++) {
-		const candidate = targets[index];
-		console.log(
-			JSON.stringify({
-				phase: 'jump-discovery',
-				goalFace: candidate.surface,
-				goalIndex: index,
-				goalCount: targets.length,
-				connections: connections.length,
-			}),
-		);
-		const result = findJumpConnections(ground.surfaces, world, {
-			profile,
-			portals: options.portals,
-			walls: options.walls,
-			from: start.position,
-			to: candidate.position,
-			maxVertical: ground.options.maxVertical,
-			maxSlope,
-			maxDrop,
-			maxHorizontalDistance,
-			sampleSpacing: 1,
-			maxCandidates: 1000,
-			maxLinks: 64 - connections.length,
-			model,
-		});
-		searches.push({ surface: candidate.surface, ...result.diagnostics });
-		for (const connection of result.connections) {
-			const key = JSON.stringify([connection.mode, connection.points[0], connection.points.at(-1)]);
-			if (seenConnections.has(key)) {
-				continue;
-			}
-			seenConnections.add(key);
-			const from = connection.points[0],
-				to = connection.points.at(-1)!;
-			const horizontalSpeed = Math.hypot(to[0] - from[0], to[2] - from[2]) / connection.times.at(-1)!;
-			connections.push({
-				...connection,
-				id: `goal/${index}/${connection.id}`,
-				...(horizontalSpeed > runAirSpeed + 1e-7 ? { requiredGait: 'sprint' as const } : {}),
-			});
-		}
-		if (connections.length) {
-			console.log(JSON.stringify({ phase: 'route-search', connections: connections.length }));
-			found = createGroundPlanner(ground.surfaces, {
-				...options,
-				connections: [...(options.connections ?? []), ...connections],
-			}).plan([arrival], goal, { interaction: request.interaction });
-			if (found.status === 'complete') {
-				break;
-			}
-		}
-	}
-	diagnostics.searches = searches;
-	diagnostics.truncated =
-		targets.length < candidates.length ||
-		searches.some((search) => search.truncated) ||
-		connections.length >= 64;
+	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
+	const discovery = findJumpConnections(ground.surfaces, world, {
+		profile,
+		portals: options.portals,
+		walls: options.walls,
+		from: start.position,
+		to: goal,
+		interaction: request.interaction,
+		maxVertical: ground.options.maxVertical,
+		maxSlope,
+		maxDrop,
+		maxHorizontalDistance,
+		sampleSpacing: 1,
+		maxCandidates: 8000,
+		maxLinks: 64,
+		model,
+	});
+	const connections: GroundConnection[] = discovery.connections.map((connection) => {
+		const from = connection.points[0],
+			to = connection.points.at(-1)!;
+		const horizontalSpeed = Math.hypot(to[0] - from[0], to[2] - from[2]) / connection.times.at(-1)!;
+		return {
+			...connection,
+			...(horizontalSpeed > runAirSpeed + 1e-7 ? { requiredGait: 'sprint' as const } : {}),
+		};
+	});
+	diagnostics.strategy = 'lazy-region-links';
+	diagnostics.searches = [discovery.diagnostics];
+	diagnostics.truncated = discovery.diagnostics.truncated;
 	console.log(JSON.stringify({ phase: 'route-search', connections: connections.length }));
-	const route =
-		found ??
-		createGroundPlanner(ground.surfaces, {
-			...options,
-			connections: [...(options.connections ?? []), ...connections],
-		}).plan([arrival], goal, { interaction: request.interaction });
+	const route = createGroundPlanner(ground.surfaces, {
+		...options,
+		connections: [...(options.connections ?? []), ...connections],
+	}).plan([arrival], goal, { interaction: request.interaction });
 	if (route.status === 'complete') {
 		await emit({ status: 'candidate', route, connections, groundedTarget: route.points.at(-1) });
 	} else {
