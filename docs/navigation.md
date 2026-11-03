@@ -191,8 +191,9 @@ work share a bounded query budget. the initial region proposal has separate boun
 seed, pair and physical arc limits. continuous ground transfers are reused for the
 current target. overlapping patches
 can participate through proven supported ground approaches even without a shared
-navigation edge. immutable graph and wall checks are prepared once per planner, and
-query-specific endpoints and movement edges remain isolated between planning passes.
+navigation edge. immutable graph, wall checks and spatial hierarchies are prepared
+once. eligibility views prune spatial branches for each action frontier without
+sorting the same geometry again. query-specific endpoints and movement edges remain isolated between planning passes.
 action edges retain their validated support faces so a later projection cannot change graph attachment.
 
 source air acceleration and no-input deceleration bound early, late and braking control
