@@ -112,3 +112,18 @@ full map import is not yet a player navigation solution. partially overlapping p
 variants, detailed ground heights, non-air-wall dynamic colliders and incomplete AI navigation coverage
 still require work. base centre seeds remain approximate; do not enlarge vertical tolerance to silently
 jump onto another floor. publication and all-point route baking have not been performed.
+
+## collision-based player mesh
+
+Ganglia alpha.2 adds an offline `@oem/ganglia/build` entry point. it accepts world-space
+collision triangles and an explicit player profile, slope, step and voxel resolution,
+returning the existing surface contract with sampled detail heights. factory floors do
+not require AI NavMesh coverage. ordinary connections use the smaller upward/downward
+step allowance; larger drops and jumps remain separate directed transitions.
+
+the dependency is installed and its packed builder has been exercised. `walk-routes`
+still imports the selected Unity navigation surfaces: complete world-space collision
+placement, layer/trigger selection and region ownership must be implemented before the
+new builder can replace that input. synthetic slope, step, headroom and gap checks do
+not establish complete game-world reachability. the runtime package root does not
+import the offline generator or WASM.
