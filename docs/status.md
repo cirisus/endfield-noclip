@@ -501,5 +501,8 @@ packs or renders correctly.
 - streamed collision inputs now decode actor/local shape poses, compound mesh ordering,
   primitive dimensions, enabled/trigger flags and separate terrain bindings. the new
   `collision-inputs` command requires an explicit cell/state/area and reports incomplete
-  world coverage. 134 real sample actors / 1,008 shapes decode; world geometry assembly,
-  heightmaps, layer policy and traversal collision validation are still pending.
+  world coverage. 134 real sample actors / 1,008 shapes decode. cooked triangle/convex
+  geometry and RG16 collision heightfields are now included, with collision-specific height
+  normalization, alternating diagonals and complete hole-quad removal. four real heightfields
+  yield 31,092 triangles and omit 838 hole quads. world geometry assembly, layer policy and
+  traversal collision validation are still pending.

@@ -2,14 +2,19 @@
 import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 
+import { readCollisionHeightfield } from '@endfield-noclip/formats/endfield/collision-heightfield';
 import { readEcsCollider } from '@endfield-noclip/formats/endfield/ecs-collider';
 import { parseStreamingChunk } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
+import { readCollisionMesh, type CollisionMesh } from '@endfield-noclip/formats/unity/collision-mesh';
+import { readConvexMesh } from '@endfield-noclip/formats/unity/convex-mesh';
+import { bytesField } from '@endfield-noclip/formats/unity/values';
 
 import { parseInteger } from '../cli-args.ts';
 import { withContext } from '../context.ts';
+import { loadTexture } from '../game/asset-decode.ts';
 
 export const summary =
-	'export streamed collider poses, shapes, filters and asset bindings for one cell/state';
+	'export streamed collider poses, shapes, filters and cooked geometry for one cell/state';
 export const usage =
 	'collision-inputs <scene> <x> <z> --scene-state <n> --area <n> -o <file> --config <config>';
 
@@ -48,6 +53,23 @@ export const run = async (args: string[]): Promise<void> => {
 			throw new Error('no chunks match the collision selection');
 		}
 		const actors = [];
+		const resolver = await ctx.resolver(),
+			paths = await ctx.world.pathLookup();
+		const geometries = new Map<string, CollisionMesh>();
+		const meshGeometry = async (asset: string, kind: 'triangle' | 'convex') => {
+			const key = `${asset}/${kind}`;
+			if (!geometries.has(key)) {
+				const hash = BigInt(asset),
+					data = await resolver.read(await resolver.findUnique({ hash, path: paths(hash) ?? null }, 43));
+				geometries.set(
+					key,
+					kind === 'convex'
+						? readConvexMesh(bytesField(data, 'm_BakedConvexCollisionMesh'))
+						: readCollisionMesh(bytesField(data, 'm_BakedTriangleCollisionMesh')),
+				);
+			}
+			return key;
+		};
 		for (const file of files) {
 			const payload = await ctx.world.readStreamingPayload(file);
 			if (!payload) {
@@ -86,12 +108,49 @@ export const run = async (args: string[]): Promise<void> => {
 					if (bindings.size !== count || [...bindings.keys()].some((i) => i >= count)) {
 						throw new Error('incomplete collider asset bindings');
 					}
+					const assets = Array.from({ length: count }, (_, i) => bindings.get(i)!);
+					const shapeGeometry: (string | null)[] = [];
+					for (const shape of collider.shapes) {
+						shapeGeometry.push(
+							shape.kind === 'mesh'
+								? await meshGeometry(assets[shape.mesh], shape.convex ? 'convex' : 'triangle')
+								: null,
+						);
+					}
+					const complexGeometry = collider.complex
+						? await meshGeometry(assets[collider.complex.mesh], 'triangle')
+						: null;
+					let terrainGeometry: string | null = null;
+					if (collider.terrain) {
+						const hash = BigInt(assets[0]);
+						terrainGeometry = `${hash}/heightfield/${collider.terrain.scale.join('/')}`;
+						if (!geometries.has(terrainGeometry)) {
+							const texture = await loadTexture(
+								resolver,
+								await resolver.findUnique({ hash, path: paths(hash) ?? null }, 28),
+							);
+							if (texture.kind !== '2d' || texture.format.name !== 'RG16') {
+								throw new Error('unsupported collision height texture');
+							}
+							geometries.set(
+								terrainGeometry,
+								readCollisionHeightfield(texture.levels[0], {
+									width: texture.width,
+									height: texture.height,
+									scale: collider.terrain.scale,
+								}),
+							);
+						}
+					}
 					actors.push({
 						id: row.id,
 						component,
 						file: file.name,
 						collider,
-						assets: Array.from({ length: count }, (_, i) => bindings.get(i)!),
+						assets,
+						shapeGeometry,
+						complexGeometry,
+						terrainGeometry,
 					});
 				}
 			}
@@ -114,11 +173,11 @@ export const run = async (args: string[]): Promise<void> => {
 						'mono-colliders',
 						'interactive-prefabs',
 						'foliage',
-						'terrain-heightmaps',
 						'player-layer-policy',
 					],
 				},
 				actors,
+				geometries: Object.fromEntries(geometries),
 			}),
 		);
 		console.log(`${actors.length} streamed collider actors; world coverage remains incomplete`);
