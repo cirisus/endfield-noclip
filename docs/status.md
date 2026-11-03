@@ -453,3 +453,9 @@ packs or renders correctly.
   with bounds matching the asset records within 0.000006 m. its remaining convex asset now decodes
   to a closed, outward-facing hull of 8 vertices / 12 triangles;
   collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
+
+- player ground build: Ganglia alpha.2 provides a separate offline collision-to-surface
+  builder with profile clearance, slope and conservative ordinary step limits. packed
+  import and type declarations are verified. game collision placement and full factory
+  coverage are still pending; the current route CLI continues using selected Unity
+  navigation surfaces. no implicit jump/drop links or view-cache rebuild were added.
