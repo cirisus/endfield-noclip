@@ -26,7 +26,9 @@ version 2 of this export also includes `hazards`: conservative bounds of ordinar
 reset zones. payload references are resolved independently of range slots; temporary zones can have
 no specific payload. the importer blocks these volumes even on otherwise connected navigation
 faces. default-off flags and condition records are retained without assuming that a scripted zone
-is inactive. upright polygon zones now include a world XZ footprint checked against the authored
+is inactive. the current client directly enables unaddressed zones without conditions, bypassing
+the addressed-area default switch. these export as `active`; addressed or conditional zones
+retain `unknown`. upright polygon zones include a world XZ footprint checked against the authored
 bounds. Ganglia uses the filled prism, including concave outlines, rather than its enclosing box.
 tilted/offset polygons and other shapes retain conservative bounds; their exact shape and state
 resolution remain pending. version 1 exclusions are rejected because they omit these hazards.
@@ -110,6 +112,14 @@ world metres, costs are seconds. the state identifier records the caller's chose
 not automatically resolve game progress. no area other than the whitelist is admitted, and imported
 polygon neighbour codes must allow a shared edge. requested dimensions cannot exceed baked clearance.
 
+optional `progression: "completed"` explicitly evaluates mission-controlled air walls with quest and
+mission state 3, matching the OEM viewer's completed-progress default. the current client tests rise
+reasons first, then down reasons, then the default switch. any/all reason combinations and equality
+inversion follow those source checks. script-owned groups, unsupported conditions and malformed or
+empty reason lists remain unresolved and blocked. runtime wall overrides are outside this snapshot.
+this setting does not disable reset volumes. the client enables unaddressed unconditional function
+areas directly, including reset zones whose addressed-area `defaultOff` field is true.
+
 navigation, wall and optional teleport exports must share source identity. `walk-routes` emits a
 binding hash over the selected dataset and request, successful routes for `oem-views`, and separate
 unresolved outcomes. the data output can be supplied to Atlos's `planWalkingRoute`; it is local input,
@@ -167,22 +177,24 @@ visibility between action endpoints. limits bound candidate work and retained ed
 while successive jumps have no separate fixed hop-count cutoff. the graph and candidate
 set remain approximations to globally fastest continuous motion.
 
-the feasibility stage passes the complete interaction goal to one Ganglia search.
-directed ground components share goal faces, removing the previous eight-face cutoff and
-repeated full collision searches. spatial bounds and height/distance heuristics propose
-region chains backward from the goal. only neighbouring transfers on proposed chains
-receive local standing and trajectory checks; rejected transfers trigger another chain.
-launch-region and landing-region diversity preserve short box-to-box hops and railing
-pullbacks. ordered local batches contain up to 8,000 candidates. each discovery stage
-reports its own limits of 16,000 arc attempts and 64 retained links. source, body,
-slope, occupied-volume and air-wall constraints remain
-mandatory. optimistic region bounds never establish a physical connection by themselves.
-local launch sampling is interleaved and landing samples are queried in 3D goal-distance
-order. candidate timing includes approach, flight and departure. difficult transfers defer
-after a small validation batch, preserving their remaining candidates. exhausting candidate
-generation does not discard trajectories already waiting for physical validation.
-raw endpoint-pair generation is also resumable, so alternative region chains receive
-work before a difficult transfer consumes the complete generation budget.
+the feasibility stage passes the complete interaction goal to Ganglia. verified action
+frontiers expand from reached ground and backward into goal-connected surfaces. charged
+work is balanced between both sides. bounded passes reuse standing support, ledge
+approaches, air openings and trajectories while increasing coverage. source-height and
+goal-height landing queries preserve intermediate steps. recursive spatial scheduling
+visits coarse regions before body-scale offsets. one query-wide budget covers discovery
+and subsequent shortcut work. continuous ground transfers are reused for the current target. action edges retain
+their validated support faces so a later projection cannot change graph attachment.
+
+source air acceleration and no-input deceleration bound early, late and braking control
+primitives. collision-checked air openings also allow outward-and-returning jumps below
+an overhang. supported walk-offs follow the rounded capsule's contact with triangle edges
+before free fall. bounded cubic air controls also permit turning back beneath a low
+roof after leaving its edge, with continuous entry velocity and full curved-body checks.
+the collision index retains the selected build extent, including empty air beyond
+walkable surface extrema. curved sweep envelopes refine near contacts, and indexed air-wall queries
+reuse their validated records with per-interval inflation. complete collision coverage and
+the game's live air-control response remain independent validation requirements.
 
 the packed normal command produced a three-segment candidate for the supplied descent
 example with one sprint-required jump. that verifies the package/command pipeline. complete
