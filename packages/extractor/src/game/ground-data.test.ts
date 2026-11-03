@@ -127,3 +127,68 @@ test('uses a build-bound default capsule and preserves explicit profile override
 		/share/,
 	);
 });
+
+test('passes filled reset footprints to the planner instead of blocking their empty corners', () => {
+	const polygon = [
+		[-10, -10],
+		[10, -10],
+		[10, -9],
+		[-9, -9],
+		[-9, 10],
+		[-10, 10],
+	];
+	const hazard = { kind: 'repatriation', state: 'unknown', min: [-10, -1, -10], max: [10, 1, 10], polygon };
+	const data = groundData(navigation, { ...walls, hazards: [hazard] }, request);
+	assert.deepEqual(data.options.walls[0].polygon, polygon);
+	assert.equal(
+		planGroundRoute(data.surfaces, data.arrivals, data.targets[0].position, data.options).status,
+		'complete',
+	);
+	const boundsOnly = groundData(
+		navigation,
+		{ ...walls, hazards: [{ ...hazard, polygon: undefined }] },
+		request,
+	);
+	assert.equal(
+		planGroundRoute(
+			boundsOnly.surfaces,
+			boundsOnly.arrivals,
+			boundsOnly.targets[0].position,
+			boundsOnly.options,
+		).status,
+		'no-verified-route',
+	);
+});
+
+test('imports sustained sprint from matching movement data and retains explicit resource policy', () => {
+	const movement = {
+		version: 1,
+		source,
+		defaultProfile: request.profile,
+		sustainedSprint: { speed: 5, sprintSpeed: 7, sprintAcceleration: 60 },
+		assets: [
+			{
+				path: 'Gameplay/MovementSetting_Default.asset',
+				settings: { _runSpeed: 5, _sprintSpeed: 7, _sprintAcceleration: 60 },
+			},
+		],
+	};
+	const data = groundData(navigation, walls, request, { movement });
+	assert.deepEqual(data.options.locomotion, { speed: 5, sprintSpeed: 7, sprintAcceleration: 60 });
+	const route = planGroundRoute(data.surfaces, data.arrivals, data.targets[0].position, data.options);
+	assert.equal(route.status, 'complete');
+	if (route.status !== 'complete') {
+		throw new Error('expected sprint route');
+	}
+	assert.equal(route.segments[0].gait, 'sprint');
+	const locomotion = {
+		speed: 3,
+		sprintSpeed: 6,
+		sprintAcceleration: 20,
+		stamina: { capacity: 10, initial: 5, sprintDrain: 2, recoveryRate: 1, recoveryDelay: 1, reserve: 1 },
+	};
+	const imported = groundData(navigation, walls, { ...request, locomotion }, { movement }).options.locomotion;
+	assert.equal(imported?.stamina?.initial, 5);
+	assert.equal(imported?.stamina?.activationCost, 0);
+	assert.equal(imported?.stamina?.sprintDrain, 2);
+});

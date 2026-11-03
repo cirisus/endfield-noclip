@@ -1,6 +1,6 @@
 import { isObject } from '@endfield-noclip/formats/unity/values';
 
-import type { GroundArrival, GroundOptions, Surface, Vec3, Wall } from '@oem/ganglia';
+import type { GroundArrival, GroundOptions, LocomotionOptions, Surface, Vec3, Wall } from '@oem/ganglia';
 
 const object = (value: unknown): Record<string, unknown> => {
 	if (!isObject(value)) {
@@ -32,6 +32,13 @@ const vector = (value: unknown): Vec3 => {
 		throw new Error('expected routing position');
 	}
 	return [number(p[0]), number(p[1]), number(p[2])];
+};
+
+const optionalFlag = (value: unknown) => {
+	if (value !== undefined && typeof value !== 'boolean') {
+		throw new Error('invalid stamina recovery flag');
+	}
+	return value;
 };
 
 /**
@@ -70,6 +77,7 @@ export const groundData = (
 		throw new Error('explicit assets and area whitelist required');
 	}
 	let defaultProfile: unknown;
+	let defaultLocomotion: unknown;
 	if (movement !== undefined) {
 		const settings = object(movement),
 			movementSource = object(settings.source);
@@ -81,6 +89,7 @@ export const groundData = (
 			throw new Error('movement settings must share the navigation build');
 		}
 		defaultProfile = settings.defaultProfile;
+		defaultLocomotion = settings.sustainedSprint;
 	}
 	if (query.profile === undefined && defaultProfile === undefined) {
 		throw new Error('provide a profile or build-bound movement settings');
@@ -176,7 +185,20 @@ export const groundData = (
 		if (hazard.kind !== 'repatriation' || hazard.state !== 'unknown') {
 			throw new Error('unsupported route hazard');
 		}
-		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: 'unknown' });
+		const polygon =
+			hazard.polygon === undefined
+				? undefined
+				: list(hazard.polygon).map((p): [number, number] => {
+						const point = list(p);
+						if (point.length !== 2) {
+							throw new Error('invalid hazard polygon');
+						}
+						return [number(point[0]), number(point[1])];
+					});
+		if (polygon && polygon.length < 3) {
+			throw new Error('invalid hazard polygon');
+		}
+		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: 'unknown', polygon });
 	}
 	const landings = new Map<string, Vec3>();
 	if (travel !== undefined) {
@@ -220,7 +242,47 @@ export const groundData = (
 	if (new Set(targets.map((t) => t.id)).size !== targets.length) {
 		throw new Error('duplicate routing target');
 	}
-	const options: GroundOptions = { speed, maxVertical, profile: { radius, height }, walls: exclusionsList };
+	let locomotion: LocomotionOptions | undefined;
+	const selectedLocomotion = query.locomotion ?? defaultLocomotion;
+	if (selectedLocomotion !== undefined) {
+		const policy = object(selectedLocomotion);
+		locomotion = {
+			speed: number(policy.speed),
+			sprintSpeed: number(policy.sprintSpeed),
+			sprintAcceleration: number(policy.sprintAcceleration),
+		};
+		if (policy.sprintThrough !== undefined) {
+			locomotion.sprintThrough = list(policy.sprintThrough).map((mode) => {
+				if (mode !== 'jump' && mode !== 'drop' && mode !== 'rope' && mode !== 'launch') {
+					throw new Error('invalid sprint continuation mode');
+				}
+				return mode;
+			});
+		}
+		if (policy.stamina !== undefined) {
+			const resource = object(policy.stamina);
+
+			locomotion.stamina = {
+				capacity: number(resource.capacity),
+				initial: number(resource.initial ?? resource.capacity),
+				activationCost: number(resource.activationCost ?? 0),
+				sprintDrain: number(resource.sprintDrain ?? 0),
+				recoveryRate: number(resource.recoveryRate),
+				recoveryDelay: number(resource.recoveryDelay),
+				reserve: number(resource.reserve),
+				recoveryDuringSprint: optionalFlag(resource.recoveryDuringSprint),
+				recoveryDuringNonWalk: optionalFlag(resource.recoveryDuringNonWalk),
+			};
+		}
+	}
+
+	const options: GroundOptions = {
+		speed,
+		maxVertical,
+		profile: { radius, height },
+		walls: exclusionsList,
+		locomotion,
+	};
 	return {
 		release,
 		source,
