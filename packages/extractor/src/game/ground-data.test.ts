@@ -169,7 +169,13 @@ test('imports sustained sprint from matching movement data and retains explicit 
 		assets: [
 			{
 				path: 'Gameplay/MovementSetting_Default.asset',
-				settings: { _runSpeed: 5, _sprintSpeed: 7, _sprintAcceleration: 60 },
+				settings: {
+					_runSpeed: 5,
+					_sprintSpeed: 7,
+					_sprintAcceleration: 60,
+					_stepOffset: 0.4,
+					_stepDownOffset: 0.6,
+				},
 			},
 		],
 	};
