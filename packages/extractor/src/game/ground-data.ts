@@ -2,6 +2,8 @@ import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import type { GroundArrival, GroundOptions, LocomotionOptions, Surface, Vec3, Wall } from '@oem/ganglia';
 
+import { navigationPortals } from './navigation-portals.ts';
+
 const object = (value: unknown): Record<string, unknown> => {
 	if (!isObject(value)) {
 		throw new Error('expected routing object');
@@ -78,6 +80,7 @@ export const groundData = (
 	}
 	let defaultProfile: unknown;
 	let defaultLocomotion: unknown;
+	let steps = { up: 0, down: 0 };
 	if (movement !== undefined) {
 		const settings = object(movement),
 			movementSource = object(settings.source);
@@ -90,6 +93,15 @@ export const groundData = (
 		}
 		defaultProfile = settings.defaultProfile;
 		defaultLocomotion = settings.sustainedSprint;
+		const defaults = list(settings.assets ?? [])
+			.map(object)
+			.find(
+				(asset) => typeof asset.path === 'string' && asset.path.endsWith('/MovementSetting_Default.asset'),
+			);
+		if (defaults) {
+			const values = object(defaults.settings);
+			steps = { up: number(values['_stepOffset']), down: number(values['_stepDownOffset']) };
+		}
 	}
 	if (query.profile === undefined && defaultProfile === undefined) {
 		throw new Error('provide a profile or build-bound movement settings');
@@ -103,6 +115,7 @@ export const groundData = (
 		throw new Error('invalid walking profile');
 	}
 	const surfaces: Surface[] = [];
+	const boundaries: Parameters<typeof navigationPortals>[0] = [];
 	const found = new Set<string>();
 	for (const value of list(nav.assets)) {
 		const asset = object(value),
@@ -142,6 +155,14 @@ export const groundData = (
 					const v = vertices[i];
 					return [v[0] + position[0], v[1] + position[1], v[2] + position[2]] satisfies Vec3;
 				});
+				const origin = points[0];
+				const area = points.reduce((sum, p, i) => {
+					const q = points[(i + 1) % points.length];
+					return sum + (p[0] - origin[0]) * (q[2] - origin[2]) - (q[0] - origin[0]) * (p[2] - origin[2]);
+				}, 0);
+				if (Math.abs(area) <= 1e-8) {
+					continue;
+				}
 				const neighbours = list(polygon.neighbours).map(number);
 				if (
 					neighbours.length !== points.length ||
@@ -149,8 +170,20 @@ export const groundData = (
 				) {
 					throw new Error('invalid navigation neighbours');
 				}
+				const id = `${name}/${ti}/${pi}`;
+				for (const [edge, neighbour] of neighbours.entries()) {
+					if (neighbour & 0x8000) {
+						boundaries.push({
+							id,
+							side: neighbour & 0xff,
+							climb: number(settings.agentClimb),
+							a: points[edge],
+							b: points[(edge + 1) % points.length],
+						});
+					}
+				}
 				surfaces.push({
-					id: `${name}/${ti}/${pi}`,
+					id,
 					vertices: points,
 					portals: neighbours.flatMap((neighbour, index) => (neighbour === 0 ? [] : [index])),
 				});
@@ -282,6 +315,7 @@ export const groundData = (
 		profile: { radius, height },
 		walls: exclusionsList,
 		locomotion,
+		portals: navigationPortals(boundaries, steps),
 	};
 	return {
 		release,

@@ -444,8 +444,8 @@ packs or renders correctly.
 - navigation topology, current air-wall geometry and teleport/base seeds can be exported and fed to
   the Ganglia alpha package; route-bound camera candidates and forced cache rebuilding are available
   ([navigation](navigation.md), [precompute](oem-precompute.md#arrival-route-constraints))
-- player area masks, dynamic-state selection, partial portals, detail heights and missing industrial
-  ground coverage remain unresolved. an AI navigation path is not proof of complete player passage;
+- dynamic-state selection, complete player area coverage and missing industrial
+  ground remain unresolved. matching partial portals and authored directed seams are imported;
   the example point's distant arrival and full visual acceptance are still unverified
 - version 2 exclusions also block reset-zone bounds, including payload-free temporary zones; current
   full-map extraction found 400 volumes. upright unoffset polygon zones now export bounds-checked
@@ -461,14 +461,11 @@ packs or renders correctly.
   to a closed, outward-facing hull of 8 vertices / 12 triangles;
   collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
 
-- player ground build: Ganglia alpha.4 provides a separate offline collision-to-surface
-  builder with profile clearance, slope and conservative ordinary step limits. packed
-  import and type declarations are verified. game collision placement and full factory
-  coverage are still pending; the current route CLI continues using selected Unity
-  navigation surfaces. no implicit jump/drop links or view-cache rebuild were added.
-  explicit XZ bounds now keep large actors from expanding a local build; native contour
-  failures remain errors with diagnostics. a 64 × 64 m real geometry probe built 33,891
-  detail triangles. this does not validate full collision coverage or crossing region edges.
+- player ground build: Ganglia alpha.12 supplies padded collision-to-surface tiles with
+  profile clearance, detail heights, slope and directed step seams. `player-ground` collects
+  selected physical inputs independently of factory AI exclusions. complex shapes, capsule
+  axis interpretation and complete prefab/state coverage remain gaps. real VL2 tile seams
+  validate, while its tested arrival route remains unresolved.
 
 - movement devices: `traversal-devices` exports authored rope targets, launch/acceleration
   parameter scopes and unresolved state. reciprocal rope pairs are explicit; the exporter
@@ -479,8 +476,10 @@ packs or renders correctly.
 
 - directed movement API: the packed Ganglia dependency accepts grounded rope/jump/drop/launch
   connections with sample times, and exposes timed journey sampling. unknown connections and
-  air-wall intersections remain blocked. the extractor does not yet generate validated game
-  trajectories, and has not rebuilt view caches using movement devices.
+  air-wall intersections remain blocked. `player-route` now generates model-based jump/drop
+  candidates with sprint entry/resource constraints. the installed package's descent example
+  passes the normal CLI. sampled search can miss valid connections, and movement-device
+  state and in-game dynamics remain unresolved. view caches have not been rebuilt.
 
 - streamed collision inputs now decode actor/local shape poses, compound mesh ordering,
   primitive dimensions, enabled/trigger flags and separate terrain bindings. the new
@@ -488,14 +487,15 @@ packs or renders correctly.
   world coverage. 134 real sample actors / 1,008 shapes decode. cooked triangle/convex
   geometry and RG16 collision heightfields are now included, with collision-specific height
   normalization, alternating diagonals and complete hole-quad removal. four real heightfields
-  yield 31,092 triangles and omit 838 hole quads. world geometry assembly, layer policy and
-  traversal collision validation are still pending.
+  yield 31,092 triangles and omit 838 hole quads. world geometry assembly and source player
+  layer masks now feed `player-ground`. coverage and state selection remain incomplete.
   the same command accepts `global` to include global chunk inputs separately (19 actors
   in the map01 default global chunk); neither selection claims complete collision coverage.
   explicit layer masks retain excluded actor metadata without forcing unrelated geometry cooks.
   the southward descent example now has bounded physical ground and continuous capsule-sweep
   trials. the package checks full linearly swept body volume; game motion, complete collision
-  coverage and landing states remain unresolved, so no traversal links have been authorized.
+  coverage and landing states remain unresolved. jump/drop links passing the explicit model
+  are exposed as candidates with that limitation retained.
 
 - Ganglia alpha.7 removes ground centre/portal zigzags through portal-constrained
   visibility tracing and retains terrain height changes. Reusable planner preparation
