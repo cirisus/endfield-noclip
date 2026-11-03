@@ -465,6 +465,12 @@ packs or renders correctly.
 
 ## ground routes and arrival framing
 
+- `interaction-points` exports effective per-placement trigger ranges and directional gates.
+  supported normal-channel sphere goals carry source identity and explicit unsupported cases
+  ([interaction authoring](game-data/interaction.md)). map01/map02 exports cover 13,202 authored
+  interactives, with 11,286 effective trigger records and 8,732 supported standing-goal volumes.
+  runtime availability, script changes and interaction visibility remain separate conditions.
+
 - navigation topology, current air-wall geometry and teleport/base seeds can be exported and fed to
   the Ganglia alpha package; route-bound camera candidates and forced cache rebuilding are available
   ([navigation](navigation.md), [precompute](oem-precompute.md#arrival-route-constraints))
