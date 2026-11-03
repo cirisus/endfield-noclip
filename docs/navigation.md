@@ -170,17 +170,29 @@ box, capsule, sphere, single mesh, compound and terrain records are decoded. ena
 trigger, surface and raw option fields are retained independently: a trigger is not a
 solid obstruction, and an absent AI polygon does not invalidate a collision floor.
 compound complex-mesh inputs remain separate from regular shapes; their query policy
-must be resolved before baking. terrain records retain heightmap bindings and scale,
-not fabricated flat ground. malformed counts and missing asset bindings fail the export.
+must be resolved before baking. malformed counts, missing bindings and unsupported cooked
+geometry fail the export.
+
+the `geometries` table contains deduplicated local triangle/convex meshes and collision
+heightfields. each actor's `shapeGeometry` array parallels its shapes (`null` for primitives);
+`complexGeometry` and `terrainGeometry` remain separate. mesh geometry still needs its
+shape scale and actor/local poses applied. terrain geometry already includes its collider
+scale and needs only the actor pose, never a second scale or renderer transform.
+
+collision heightfields read RG16 base-level samples, normalize the low 15 bits by 32766,
+and alternate quad diagonals. this differs from rendered terrain's 32768 normalization.
+a hole bit at any of a quad's four corners removes both triangles, including the triangle
+without that corner. no flat ground is inserted at holes or missing data.
 
 one current cell sample decoded 134 actors with 1,008 shapes (869 mesh and 139 box),
 four complex-mesh records and four terrain records. this verifies record framing, not
-world navigation. the exported coverage is explicitly incomplete: global chunks, Mono
-colliders, interactive prefabs, foliage, heightmap reconstruction and player layer/option
+world navigation. its four 65 × 65 heightfields produce 31,092 triangles and omit 838 hole
+quads. the exported coverage is explicitly incomplete: global chunks, Mono
+colliders, interactive prefabs, foliage and player layer/option
 policy still need integration. do not interpret this cell catalogue as a complete collision
 world or use missing coverage to authorize a jump/drop.
 
 a separate placement probe expanded the sample's regular shapes to 434,065 world-space
 triangles using 106 cooked meshes. the original preview target's vertical ray intersects
 an upward-facing surface near its marker height. this is a local placement cross-check;
-complex meshes and terrain coverage still require separate validation.
+complex-mesh collision policy and complete world coverage still require separate validation.
