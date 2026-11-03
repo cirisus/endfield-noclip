@@ -14,9 +14,9 @@ import { withContext } from '../context.ts';
 import { loadTexture } from '../game/asset-decode.ts';
 
 export const summary =
-	'export streamed collider poses, shapes, filters and cooked geometry for one cell/state';
+	'export streamed collider poses, shapes, filters and cooked geometry for a cell or global chunk';
 export const usage =
-	'collision-inputs <scene> <x> <z> --scene-state <n> --area <n> -o <file> --config <config>';
+	'collision-inputs <scene> <x> <z> | <scene> global --scene-state <n> --area <n> -o <file> --config <config>';
 
 /**
  * @param args explicit cell/state selection and output @returns after exporting collision inputs with
@@ -34,7 +34,10 @@ export const run = async (args: string[]): Promise<void> => {
 		},
 	});
 	if (
-		positionals.length !== 3 ||
+		!(
+			(positionals.length === 3 && positionals[1] !== 'global') ||
+			(positionals.length === 2 && positionals[1] === 'global')
+		) ||
 		!values.output ||
 		values['scene-state'] === undefined ||
 		values.area === undefined
@@ -42,7 +45,7 @@ export const run = async (args: string[]): Promise<void> => {
 		throw new Error(usage);
 	}
 	const [scene, x, z] = positionals;
-	const cell = { x: parseInteger(x, 'x'), z: parseInteger(z, 'z') };
+	const cell = x === 'global' ? 'global' : { x: parseInteger(x, 'x'), z: parseInteger(z, 'z') };
 	const selection = {
 		sceneState: parseInteger(values['scene-state'], '--scene-state'),
 		area: parseInteger(values.area, '--area'),
@@ -165,11 +168,11 @@ export const run = async (args: string[]): Promise<void> => {
 				cell,
 				selection,
 				coverage: {
-					scope: 'streamed-ecs-cell',
+					scope: cell === 'global' ? 'streamed-ecs-global' : 'streamed-ecs-cell',
 					complete: false,
 					files: files.map((f) => f.name),
 					remaining: [
-						'global-chunks',
+						cell === 'global' ? 'cell-chunks' : 'global-chunks',
 						'mono-colliders',
 						'interactive-prefabs',
 						'foliage',
