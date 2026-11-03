@@ -480,11 +480,14 @@ packs or renders correctly.
   to a closed, outward-facing hull of 8 vertices / 12 triangles;
   collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
 
-- player ground build: Ganglia alpha.3 provides a separate offline collision-to-surface
+- player ground build: Ganglia alpha.4 provides a separate offline collision-to-surface
   builder with profile clearance, slope and conservative ordinary step limits. packed
   import and type declarations are verified. game collision placement and full factory
   coverage are still pending; the current route CLI continues using selected Unity
   navigation surfaces. no implicit jump/drop links or view-cache rebuild were added.
+  explicit XZ bounds now keep large actors from expanding a local build; native contour
+  failures remain errors with diagnostics. a 64 × 64 m real geometry probe built 33,891
+  detail triangles. this does not validate full collision coverage or crossing region edges.
 
 - movement devices: `traversal-devices` exports authored rope targets, launch/acceleration
   parameter scopes and unresolved state. reciprocal rope pairs are explicit; the exporter

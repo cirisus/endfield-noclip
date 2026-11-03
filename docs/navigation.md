@@ -115,7 +115,7 @@ jump onto another floor. publication and all-point route baking have not been pe
 
 ## collision-based player mesh
 
-Ganglia alpha.2 adds an offline `@oem/ganglia/build` entry point. it accepts world-space
+Ganglia provides an offline `@oem/ganglia/build` entry point. it accepts world-space
 collision triangles and an explicit player profile, slope, step and voxel resolution,
 returning the existing surface contract with sampled detail heights. factory floors do
 not require AI NavMesh coverage. ordinary connections use the smaller upward/downward
@@ -127,6 +127,14 @@ placement, layer/trigger selection and region ownership must be implemented befo
 new builder can replace that input. synthetic slope, step, headroom and gap checks do
 not establish complete game-world reachability. the runtime package root does not
 import the offline generator or WASM.
+
+alpha.4 accepts explicit XZ build bounds while keeping the full vertical extent of all
+input geometry. an actor's origin is not an overlap test: its mesh may cross several
+cells. dense regions can exceed the native contour limit even below the voxel budget;
+the error includes the native diagnostic instead of emitting partial surfaces. a local
+64 × 64 m placement probe built 33,891 detail triangles from 465,157 collision triangles,
+and projected the original preview marker onto a surface near its authored height.
+this verifies a bounded build, not complete coverage, tile stitching or a safe arrival route.
 
 ## movement devices
 
