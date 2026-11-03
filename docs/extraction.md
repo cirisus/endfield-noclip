@@ -258,8 +258,10 @@ mesh. skinned meshes expose weights, bone indices and bind pose counts in `skin`
 [collision-mesh.ts](../packages/formats/src/unity/collision-mesh.ts), separately from render geometry.
 the supported layout is little-endian PhysX mesh version 15 with a quantized BV4 version 3 tree.
 triangle indices, optional material indices and original-face remaps are retained. bounds, finite
-coordinates, counts and the complete payload framing are checked. convex, GPU and other unsupported
-cooks fail explicitly. JSON output is build-bound local Unity geometry, without a world transform,
+coordinates, counts and the complete payload framing are checked. GPU and other unsupported
+cooks fail explicitly. `convex-mesh.ts` additionally handles version-13 convex cooks with a version-9
+hull and no support map or GPU data. it validates the supporting planes, outward winding and closed
+edge topology before triangulating convex faces. JSON output is build-bound local Unity geometry, without a world transform,
 collision-layer interpretation or claim of player passage. streaming collider placement and capsule
 sweeps must still be resolved before this geometry can validate movement links.
 

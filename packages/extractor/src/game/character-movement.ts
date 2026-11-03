@@ -60,3 +60,26 @@ export const characterMovement = (asset: TypeTreeObject) => {
 		movement: objectField(movement[0], 'movementData'),
 	};
 };
+
+/**
+ * @param characters decoded character movement records
+ * @returns the most frequent authored capsule; ties prefer larger radius, then larger height
+ * @throws {FormatError} when no character capsules are available
+ */
+export const commonCapsule = (characters: readonly ReturnType<typeof characterMovement>[]) => {
+	const counts = new Map<string, { radius: number; height: number; count: number }>();
+	for (const {
+		proxyShape: { radius, height },
+	} of characters) {
+		const key = `${radius}/${height}`,
+			previous = counts.get(key);
+		counts.set(key, { radius, height, count: (previous?.count ?? 0) + 1 });
+	}
+	const selected = [...counts.values()].toSorted(
+		(a, b) => b.count - a.count || b.radius - a.radius || b.height - a.height,
+	)[0];
+	if (!selected) {
+		throw new FormatError('no character capsules for default profile');
+	}
+	return { radius: selected.radius, height: selected.height };
+};
