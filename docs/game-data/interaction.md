@@ -22,6 +22,8 @@ single-precision values. all checked templates have shape code 2 and player-dire
 | `int_collection_trstar` | 2 | 0 | enabled | 2 / 2 | 360 |
 | `int_system_world_energy_point` | 1 | 0 | disabled | 10 / 5 | 360 |
 | `int_trchest_common` | 3 | 0 | enabled | 3 / 3 | 180 |
+| `int_trchest_wrdg` | 1.5 | 0 | disabled | 1.5 / 1.5 | 180 |
+| `int_trchest_bubble` | 1.59 | 0.75 | disabled | 10 / 5 | 360 |
 | `int_rope_port` | 2.2 | 0.7 | disabled | 10 / 5 | 360 |
 | `int_campfire_v2` | 2.5 | 0 | disabled | 10 / 5 | 360 |
 | `int_jumpmachine` | 1 | 0 | disabled | 10 / 5 | 360 |
@@ -31,6 +33,12 @@ single-precision values. all checked templates have shape code 2 and player-dire
 all listed trigger-center x/z, check-area offsets and check-angle offsets are zero.
 when interactive-direction checking is disabled, its authored check radius/height/angle
 remain recorded independently and must not be substituted for the trigger volume.
+
+the checked equip, supplybox and lock chest bases share the common chest's radius and
+direction gate. the wrdg and bubble bases carry their own values shown above. box
+triggers also occur, including mission_beacon with size (3, 3, 3) and lifter_v2 with
+size approximately (1.43, 2, 1.88). a stored radius field on those boxes is kept separate
+from the effective box dimensions.
 
 ## placed authoring
 

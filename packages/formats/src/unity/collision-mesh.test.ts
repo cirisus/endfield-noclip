@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { readCollisionMesh } from './collision-mesh.ts';
 
-const fixture = (width: number) => {
+const fixture = (width: number, tree = { quantized: true, nodes: 0 }) => {
 	const bytes: number[] = [];
 	const raw = (s: string) => bytes.push(...new TextEncoder().encode(s));
 	const u32 = (n: number) => {
@@ -36,13 +36,15 @@ const fixture = (width: number) => {
 	[0, 0, 0, 2].forEach(f32);
 	u32(0);
 	[1, 1, 1, 1, 1, 1].forEach(f32);
-	u32(1);
-	u32(0);
+	const quantization = bytes.length;
+	u32(Number(tree.quantized));
+	u32(tree.nodes);
+	bytes.push(...Array<number>(tree.nodes * (tree.quantized ? 16 : 28)).fill(0));
 	f32(0.001);
 	[0, 0, 0, 1, 0, 1].forEach(f32);
 	u32(1);
 	bytes.push(0);
-	return { bytes: Uint8Array.from(bytes), indices };
+	return { bytes: Uint8Array.from(bytes), indices, quantization };
 };
 
 test('reads all triangle index widths without confusing cooked order with original faces', () => {
@@ -56,6 +58,24 @@ test('reads all triangle index widths without confusing cooked order with origin
 		]);
 		assert.deepEqual(mesh.faceRemap, [0]);
 		assert.deepEqual(mesh.bounds, { min: [0, 0, 0], max: [1, 0, 1] });
+	}
+});
+
+test('reads nonquantized leaf-only cooks and both BV4 node widths without moving the geometry tail', () => {
+	for (const quantized of [false, true]) {
+		for (const nodes of [0, 4]) {
+			const { bytes, quantization } = fixture(1, { quantized, nodes });
+			const mesh = readCollisionMesh(bytes);
+			assert.deepEqual(mesh.triangles, [[0, 1, 2]]);
+			assert.deepEqual(mesh.bounds, { min: [0, 0, 0], max: [1, 0, 1] });
+			const invalid = bytes.slice();
+			new DataView(invalid.buffer).setUint32(quantization, 2, true);
+			assert.throws(() => readCollisionMesh(invalid), /quantization flag/);
+			assert.throws(
+				() => readCollisionMesh(bytes.subarray(0, quantization + 8 + nodes * (quantized ? 16 : 28) - 1)),
+				/exceeds/,
+			);
+		}
 	}
 });
 

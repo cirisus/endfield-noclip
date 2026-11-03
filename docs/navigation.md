@@ -114,11 +114,12 @@ navigation, wall and optional teleport exports must share source identity. `walk
 binding hash over the selected dataset and request, successful routes for `oem-views`, and separate
 unresolved outcomes. the data output can be supplied to Atlos's `planWalkingRoute`; it is local input,
 not automatically uploaded or attached to the public catalog. Atlos's wrapper rejects stale bindings
-and exposes arc-length playback positions. the interactive route panel is not implemented.
+and exposes timed playback positions. Atlos's development route panel opens from point detail,
+retains the point camera, draws the candidate route and shows its planar minimap projection.
 
-full map import is not yet a player navigation solution. partially overlapping portals, moving/state
-variants, detailed ground heights, non-air-wall dynamic colliders and incomplete AI navigation coverage
-still require work. base centre seeds remain approximate; do not enlarge vertical tolerance to silently
+full map import retains gaps in AI coverage, state variants and dynamic obstacles. matching partial
+edges and authored directed chunk seams are imported within verified step limits. player ground is
+handled by the separate physical pipeline below. base centre seeds remain approximate; do not enlarge vertical tolerance to silently
 jump onto another floor. publication and all-point route baking have not been performed.
 
 ## collision-based player mesh
@@ -129,20 +130,35 @@ returning the existing surface contract with sampled detail heights. factory flo
 not require AI NavMesh coverage. ordinary connections use the smaller upward/downward
 step allowance; larger drops and jumps remain separate directed transitions.
 
-the dependency is installed and its packed builder has been exercised. `walk-routes`
-still imports the selected Unity navigation surfaces: complete world-space collision
-placement, layer/trigger selection and region ownership must be implemented before the
-new builder can replace that input. synthetic slope, step, headroom and gap checks do
-not establish complete game-world reachability. the runtime package root does not
-import the offline generator or WASM.
+`player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n>
+--movement-settings <file> -o <ground> --collision-output <geometry> --config <config>`
+collects selected global and neighbouring streamed collision inputs. source-bound per-cell
+caches are optional with `--input-cache`. the player's collidable/walkable layer masks,
+body, slope and ordinary step limits come from the matching movement export. actor and
+local shape poses, mesh scale, terrain holes, boxes and sphere envelopes feed the world
+geometry. capsules currently use conservative axis-independent sphere envelopes. complex
+shapes and absent cells remain explicit coverage gaps. collision-only meshes with an
+empty cooked payload can retain their authored local bounds as conservative obstacle
+enclosures in this selected-solid pipeline. those enclosures carry unknown world-volume
+exclusions and remain non-walkable. they can substantially overblock. malformed nonempty
+cooks still fail decoding.
 
-alpha.4 accepts explicit XZ build bounds while keeping the full vertical extent of all
-input geometry. an actor's origin is not an overlap test: its mesh may cross several
-cells. dense regions can exceed the native contour limit even below the voxel budget;
-the error includes the native diagnostic instead of emitting partial surfaces. a local
-64 × 64 m placement probe built 33,891 detail triangles from 465,157 collision triangles,
-and projected the original preview marker onto a surface near its authored height.
-this verifies a bounded build, not complete coverage, tile stitching or a safe arrival route.
+the alpha.12 packed builder constructs padded tiles, clips their cores and connects
+directed seams. near-boundary Float32 vertices snap to exact core planes while retaining
+detail-plane heights. a real VL2 build produced 69,963 surfaces and 7,114 validated seams,
+but its test arrival remains disconnected. native build failures abort the result.
+
+`player-route --ground <file> --collision <file> --movement-settings <file> --request <file>
+-o <result>` accepts a matching scene/source, arrival, target, optional interaction volume
+and wall exclusions. after ground search it discovers bounded model-based jumps/drops,
+including intermediate platforms, with physical support, capsule sweeps and air-wall checks.
+arcs exceeding the ordinary-run air speed require paid sprint entry. the full route then
+receives acceleration and resource scheduling. results retain source, coverage, model and
+truncation diagnostics. sampled discovery and prior corridor selection can miss valid routes.
+
+the packed normal command produced a three-segment candidate for the supplied descent
+example with one sprint-required jump. that verifies the package/command pipeline. complete
+collision coverage, game air-control behaviour and device state still require validation.
 
 ## movement devices
 
