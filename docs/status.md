@@ -490,3 +490,8 @@ packs or renders correctly.
 - player area masks, dynamic-state selection, partial portals, detail heights and missing industrial
   ground coverage remain unresolved. an AI navigation path is not proof of complete player passage;
   the example point's distant arrival and full visual acceptance are still unverified
+- version 2 exclusions also block reset-zone bounds, including payload-free temporary zones; current
+  full-map extraction found 400 volumes. exact trigger shapes and activation remain unresolved
+- movement settings can be exported separately from AI bake settings. directed jumps/drops still need
+  player collision geometry, capsule/modifier resolution and trajectory/landing validation; they are
+  not inferred from AI jump heights or admitted by vertical endpoint projection
