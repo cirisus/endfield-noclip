@@ -190,3 +190,31 @@ test('mandatory physical exclusions survive an empty caller wall list at the sta
 		assert.equal(result.route, undefined);
 	}
 });
+
+test('searches a many-face interaction goal once and retains the reachable landing region', async () => {
+	const data = fixture();
+	const floor = (id: string, x0: number, x1: number) => ({
+		id,
+		vertices: [
+			[x0, 0, 0],
+			[x1, 0, 0],
+			[x1, 0, 2],
+			[x0, 0, 2],
+		],
+	});
+	data.ground.surfaces = [floor('start', 0, 2)];
+	for (let index = 0; index < 20; index++) {
+		data.ground.surfaces.push(floor('landing/' + index, 3 + index * 0.15, 3 + (index + 1) * 0.15));
+	}
+	data.collision.positions = [0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 3, 0, 0, 6, 0, 0, 6, 0, 2, 3, 0, 2];
+	data.collision.indices = [0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6];
+	const result = await execute(data, { target: [5, 1, 1], interaction: { radius: 1.5 } });
+	assert.equal(result.status, 'candidate');
+	assert.equal(result.diagnostics.strategy, 'lazy-region-links');
+	assert.equal(result.diagnostics.searches.length, 1);
+	assert.ok(result.diagnostics.searches[0].goalFaces > 8);
+	assert.equal(result.diagnostics.searches[0].goalComponents, 1);
+	assert.equal(result.diagnostics.searches[0].targetReached, true);
+	const end = result.route.points.at(-1);
+	assert.ok(Math.hypot(end[0] - 5, end[1] - 1, end[2] - 1) <= 1.5 + 1e-8);
+});
