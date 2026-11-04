@@ -20,7 +20,7 @@ const vector = (value: unknown): number[] => {
 };
 
 export const summary = 'export conservative air-wall and reset-zone exclusions from the current install';
-export const usage = 'air-walls <scene> -o <file> --config <config>';
+export const usage = 'usage: endfield-extract air-walls <scene> -o <file> --config <config>';
 
 /**
  * @param args scene and output arguments @returns after exporting every authored level wall and reset zone,

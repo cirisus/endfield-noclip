@@ -1115,6 +1115,9 @@ export class PostProcess {
 					postUniforms: this.#skyLayoutGroups.uniforms,
 					sky: this.#skyLayoutGroups.sky,
 					version: sized.version,
+					width,
+					height,
+					foam: input.waterFoam,
 				});
 				this.#focus.encode(encoder, {
 					camera,
