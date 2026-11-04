@@ -8,7 +8,7 @@ import { groundData } from '../game/ground-data.ts';
 
 export const summary = 'plan selected ground routes and export source-bound inputs for Atlos';
 export const usage =
-	'walk-routes --navigation <file> --walls <file> --request <file> -o <routes> --data <ground-data> [--travel-points <file>] [--movement-settings <file>]';
+	'usage: endfield-extract walk-routes --navigation <file> --walls <file> --request <file> -o <routes> --data <ground-data> [--travel-points <file>] [--movement-settings <file>]';
 
 /**
  * @param args matching navigation/wall exports and explicit state/profile/arrival request

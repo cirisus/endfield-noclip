@@ -14,7 +14,7 @@ import {
 import { withContext } from '../context.ts';
 
 export const summary = 'export source-bound navigation tile topology without inventing player connectivity';
-export const usage = 'navmesh <scene> -o <file> [--limit n] --config <config>';
+export const usage = 'usage: endfield-extract navmesh <scene> -o <file> [--limit n] --config <config>';
 
 /**
  * @param args scene and output arguments @returns after decoding selected navigation assets; partial exports

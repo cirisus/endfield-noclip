@@ -11,7 +11,7 @@ import { VfsGroup } from '../hg/vfs.ts';
 
 export const summary =
 	'export rope references and movement-device parameters, without assuming traversal or unlock state';
-export const usage = 'traversal-devices <scene> -o <file> --config <config>';
+export const usage = 'usage: endfield-extract traversal-devices <scene> -o <file> --config <config>';
 
 /** @param args scene, output and install config @returns after exporting build-bound device inputs */
 export const run = async (args: string[]): Promise<void> => {

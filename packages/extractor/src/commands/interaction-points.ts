@@ -10,7 +10,7 @@ import { interactionPoint, interactionRules } from '../game/interaction-rules.ts
 import { VfsGroup } from '../hg/vfs.ts';
 
 export const summary = 'export build-bound placed interaction triggers and unresolved override scopes';
-export const usage = 'interaction-points <scene> -o <file> --config <config>';
+export const usage = 'usage: endfield-extract interaction-points <scene> -o <file> --config <config>';
 
 /** @param args scene, output and local install config @returns after exporting placed interaction rules */
 export const run = async (args: string[]): Promise<void> => {

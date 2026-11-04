@@ -9,7 +9,7 @@ import { collectCollisionInputs } from '../game/collision-inputs.ts';
 export const summary =
 	'export streamed collider poses, shapes, filters and cooked geometry for a cell or global chunk';
 export const usage =
-	'collision-inputs <scene> <x> <z> | <scene> global --scene-state <n> --area <n> [--layers <uint32>] -o <file> --config <config>';
+	'usage: endfield-extract collision-inputs <scene> <x> <z> | <scene> global --scene-state <n> --area <n> [--layers <uint32>] -o <file> --config <config>';
 
 /**
  * @param args explicit cell/state selection and output @returns after exporting collision inputs with
