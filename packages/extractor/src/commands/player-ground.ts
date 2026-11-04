@@ -20,7 +20,7 @@ import { collectCollisionInputs } from '../game/collision-inputs.ts';
 export const summary =
 	'build bounded player ground tiles from selected collision sources, including factory floors';
 export const usage =
-	'player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n> --movement-settings <file> -o <ground-file> --collision-output <geometry-file> [--cell-size <m>] [--tile-cells <n>] --config <config>';
+	'usage: endfield-extract player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n> --movement-settings <file> -o <ground-file> --collision-output <geometry-file> [--cell-size <m>] [--tile-cells <n>] --config <config>';
 
 /**
  * @param args source selection, build-bound movement parameters and explicit world bounds

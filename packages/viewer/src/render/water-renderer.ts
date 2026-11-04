@@ -462,7 +462,6 @@ export class WaterRenderer {
 		pass.setBindGroup(2, group);
 		pass.setBindGroup(3, context.postUniforms);
 		this.#draw(pass);
-		pass.end();
 	}
 
 	/**

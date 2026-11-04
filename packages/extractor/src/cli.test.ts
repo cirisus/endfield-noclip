@@ -16,7 +16,7 @@ test('every command provides help without an install or config', async () => {
 		const files = await readdir(new URL('./commands/', import.meta.url));
 		await Promise.all(
 			files
-				.filter((file) => file.endsWith('.ts'))
+				.filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
 				.map(async (file) => {
 					const name = file.slice(0, -3);
 					for (const args of [[name], [name, '--help'], [name, 'anything', '-h']]) {
