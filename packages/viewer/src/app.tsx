@@ -28,10 +28,17 @@ const setParam = (name: string, value: string | null): void => {
 };
 
 /**
- * @param props optional host overlay; its presence delegates navigation to the host
+ * @param props optional host overlay and photography library URL; the overlay delegates navigation to the
+ *   host
  * @returns the shared viewer canvas and scene panels
  */
-export const App = ({ overlay }: { overlay?: (viewer: Viewer, panel: HTMLElement | null) => ReactNode }) => {
+export const App = ({
+	overlay,
+	filtersUrl,
+}: {
+	overlay?: (viewer: Viewer, panel: HTMLElement | null) => ReactNode;
+	filtersUrl?: string;
+}) => {
 	const hosted = overlay !== undefined;
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [viewer, setViewer] = useState<Viewer | null>(null);
@@ -128,7 +135,7 @@ export const App = ({ overlay }: { overlay?: (viewer: Viewer, panel: HTMLElement
 					<div className="dock right">
 						{hosted && <div ref={setPointPanelRoot} className="host-panel" />}
 						{!hosted && <LevelsPanel viewer={viewer} />}
-						<PhotoFiltersPanel viewer={viewer} />
+						<PhotoFiltersPanel viewer={viewer} source={filtersUrl} />
 						<SceneControls viewer={viewer} />
 						<PhotographyPanel viewer={viewer} />
 						<FiltersPanel viewer={viewer} />
