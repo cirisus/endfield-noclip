@@ -5,7 +5,9 @@ import { parseArgs } from 'node:util';
 import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import { withContext } from '../context.ts';
+import { completedScriptWallState, terminalScriptStage } from '../game/air-wall-state.ts';
 import { routeHazards } from '../game/route-hazards.ts';
+import { toScript, type Script } from '../game/script-drivers.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
 const vector = (value: unknown): number[] => {
@@ -48,6 +50,7 @@ export const run = async (args: string[]): Promise<void> => {
 		}
 		const groups: unknown[] = [];
 		const hazards: unknown[] = [];
+		const scripts = new Map<string, Script | null>();
 		for (const level of levels) {
 			for (const hash of level.levelDataPathHashes ?? []) {
 				const path = paths(hash);
@@ -74,6 +77,46 @@ export const run = async (args: string[]): Promise<void> => {
 					if (!isObject(group) || !Array.isArray(group.polyLineWalls)) {
 						throw new Error('invalid wall group');
 					}
+					let completed;
+					const scriptId =
+						typeof group.scriptId === 'string' ||
+						typeof group.scriptId === 'number' ||
+						typeof group.scriptId === 'bigint'
+							? String(group.scriptId)
+							: '';
+					if (scriptId !== '' && scriptId !== '0' && Number.isInteger(group.slotId)) {
+						const scriptPath = `Data/Json/LevelScriptData/${level.id}/${scriptId}.json`;
+						if (!scripts.has(scriptPath)) {
+							const scriptFile = await ctx.vfs.find(VfsGroup.JsonData, scriptPath);
+							try {
+								scripts.set(
+									scriptPath,
+									scriptFile
+										? toScript(
+												scriptId,
+												level.id,
+												reader.decode(
+													await ctx.vfs.readVerified(scriptFile),
+													'Beyond_Gameplay_LevelScriptDataForMemoryPack',
+												),
+											)
+										: null,
+								);
+							} catch {
+								scripts.set(scriptPath, null);
+							}
+						}
+						const script = scripts.get(scriptPath);
+						const stage = script ? terminalScriptStage(script) : null;
+						if (script && stage !== null) {
+							completed = {
+								model: 'script-terminal-stage-v1',
+								stage,
+								state: completedScriptWallState(script, Number(group.slotId), stage),
+								script: scriptPath,
+							};
+						}
+					}
 					for (const wall of group.polyLineWalls) {
 						if (
 							!isObject(wall) ||
@@ -95,6 +138,7 @@ export const run = async (args: string[]): Promise<void> => {
 							slotId: group.slotId,
 							defaultOn: group.defaultOn,
 							condition: group.checkData,
+							completed,
 							state: 'unknown',
 							min: center.map((v, i) => v - size[i] / 2),
 							max: center.map((v, i) => v + size[i] / 2),

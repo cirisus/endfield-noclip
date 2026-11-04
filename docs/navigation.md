@@ -1,5 +1,35 @@
 # ground navigation extraction
 
+Ganglia alpha.22 builds consecutive ordinary steps through local support-span
+connections and preserves directed tile-passage intervals. Physical routing
+publishes an atomic walking candidate before optional airborne optimization.
+
+`player-route --ground-only` ends after walking feasibility, before airborne
+collision indexing. Full queries keep a provisional result with `optimizing`
+until action comparison finishes. Stage costs are exported in
+`diagnostics.timingMs`. Interactive shortcut comparison uses a 512-candidate
+budget when a complete walking baseline exists, while unresolved reachability
+retains the 8000-candidate budget. Search truncation remains explicit.
+
+Ground routing can recover a continuous clear support corridor when obstacle
+checks block its polygon representatives. Every reconstructed segment must pass
+the same exclusions before the candidate is accepted.
+
+The selected default planning snapshot assumes all level tasks completed.
+`air-walls` records a source-bound owning-script interpretation with model
+`script-terminal-stage-v1`. An explicit contiguous stage domain supplies the
+terminal-stage assumption, and analyzed event paths must agree on the wall state.
+Unresolved stages, targets or conflicting writes remain unknown. `groundData`
+applies these records only with explicit `progression: 'completed'`. Runtime
+snapshots with other task states require their own evaluation. Re-export walls
+and ground datasets after changing this policy.
+
+Completed-world mission conditions treat empty rise/down lists as having no
+activation reason. This preserves their initialized false result and allows a
+resolved completed down condition to disable its wall.
+Unowned walls with no condition use their authored default switch in the selected
+planning snapshot. Runtime overrides require separately supplied state.
+
 `interaction-points <scene> -o <file>` exports placed trigger rules, retaining source build,
 template paths, transforms and override provenance. direct values resolve in base, selected
 variant and placement order. supported sphere/direction rules produce an explicit standing
