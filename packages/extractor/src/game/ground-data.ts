@@ -200,7 +200,7 @@ export const groundData = (
 	const exclusionsList: Wall[] = list(walls.walls).map((value) => {
 		const wall = object(value);
 		// resolve only the explicitly selected completed-progression snapshot.
-		// unsupported conditions and script-owned groups retain unresolved activation.
+		// Unsupported conditions and unresolved script-stage analyses remain blocked.
 		if (wall.state !== 'unknown') {
 			throw new Error('expected unresolved exported wall state');
 		}

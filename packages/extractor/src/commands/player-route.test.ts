@@ -74,7 +74,11 @@ const fixture = (bounds?: { min: number[]; max: number[] }) => ({
 	},
 });
 
-const execute = async (data: ReturnType<typeof fixture>, extra: Record<string, unknown> = {}) => {
+const execute = async (
+	data: ReturnType<typeof fixture>,
+	extra: Record<string, unknown> = {},
+	groundOnly = false,
+) => {
 	const directory = await mkdtemp(join(tmpdir(), 'player-route-'));
 	try {
 		const files = ['ground', 'collision', 'movement', 'request'] as const;
@@ -96,6 +100,7 @@ const execute = async (data: ReturnType<typeof fixture>, extra: Record<string, u
 			join(directory, 'request.json'),
 			'-o',
 			output,
+			...(groundOnly ? ['--ground-only'] : []),
 		]);
 		return JSON.parse(await readFile(output, 'utf8'));
 	} finally {
@@ -113,6 +118,14 @@ test('plans arbitrary ground endpoints through the CLI and retains source/covera
 	assert.ok(result.route.cost < Math.hypot(8, 8));
 	assert.deepEqual(result.connections, []);
 	assert.equal(result.coverage.ground.complete, false);
+});
+
+test('the foreground walking stage finishes before airborne collision indexing', async () => {
+	const result = await execute(fixture(), {}, true);
+	assert.equal(result.status, 'candidate');
+	assert.equal(result.optimizing, false);
+	assert.ok(result.route.segments.every((segment: { mode: string }) => segment.mode === 'walk'));
+	assert.equal(result.diagnostics.collisionScope, undefined);
 });
 
 test('plans to the supplied interaction region instead of snapping an outside marker onto another floor', async () => {

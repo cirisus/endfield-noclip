@@ -6,6 +6,7 @@ import { isObject, numberField } from '@endfield-noclip/formats/unity/values';
 
 import {
 	createGoalProjector,
+	createGroundPlanner,
 	jumpDuration,
 	planJumpRoute,
 	projectPoint,
@@ -62,7 +63,7 @@ type Request = {
 export const summary =
 	'compare bounded ground, jump and drop action combinations with physical collision checks';
 export const usage =
-	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result>';
+	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result> [--ground-only]';
 
 const vector = (point: unknown): point is Vec3 =>
 	Array.isArray(point) && point.length === 3 && point.every(Number.isFinite);
@@ -98,6 +99,7 @@ const targetSupport = (surfaces: Surface[], target: Vec3) => {
  *   failure
  */
 export const run = async (args: string[]): Promise<void> => {
+	const started = performance.now();
 	const { values } = parseArgs({
 		args,
 		options: {
@@ -106,6 +108,7 @@ export const run = async (args: string[]): Promise<void> => {
 			'movement-settings': { type: 'string' },
 			request: { type: 'string' },
 			output: { type: 'string', short: 'o' },
+			'ground-only': { type: 'boolean', default: false },
 		},
 	});
 	if (
@@ -188,15 +191,15 @@ export const run = async (args: string[]): Promise<void> => {
 		locomotion: movement.sustainedSprint,
 	};
 	const coverage = { ground: ground.coverage, collision: collision.coverage };
+	const timing: Record<string, number> = { input: performance.now() - started };
+	const limits = { maxCandidates: 8000, maxLinks: 64, sampleSpacing: 1 };
 	const diagnostics: Record<string, unknown> = {
-		limits: {
-			maxCandidates: 8000,
-			maxLinks: 64,
-			sampleSpacing: 1,
-		},
+		limits,
+		timingMs: timing,
 		truncated: false,
 	};
-	const emit = async (result: object) => {
+	const emit = async (result: object, optimizing = false) => {
+		timing.total = performance.now() - started;
 		const temporary = `${values.output!}.${process.pid}.tmp`;
 		try {
 			await writeFile(
@@ -209,6 +212,7 @@ export const run = async (args: string[]): Promise<void> => {
 					coverage,
 					diagnostics,
 					...result,
+					optimizing,
 				}),
 			);
 			await rename(temporary, values.output!);
@@ -232,6 +236,30 @@ export const run = async (args: string[]): Promise<void> => {
 	const candidates = project(goal, { maxVertical: 0.5, interaction: request.interaction });
 	if (!candidates.length) {
 		await emit({ status: 'unavailable', reason: 'target-region-unmapped' });
+		return;
+	}
+	// Publish supported walking feasibility before indexing airborne collision and
+	// spending the optional action-discovery budget. The parent keeps polling for
+	// a faster complete route while this atomic provisional result is available.
+	const groundStart = performance.now();
+	const walking = createGroundPlanner(ground.surfaces, options).plan([arrival], goal, {
+		interaction: request.interaction,
+	});
+	timing.ground = performance.now() - groundStart;
+	// Interactive optimization starts from an existing supported route. Bound its
+	// optional shortcut comparison separately from unresolved reachability work.
+	if (walking.status === 'complete') {
+		limits.maxCandidates = 512;
+		await emit(
+			{ status: 'candidate', route: walking, connections: [], groundedTarget: walking.points.at(-1) },
+			!values['ground-only'],
+		);
+		console.log(JSON.stringify({ phase: 'ground-route', cost: walking.cost }));
+	}
+	if (values['ground-only']) {
+		if (walking.status !== 'complete') {
+			await emit({ status: 'unavailable', reason: walking.status });
+		}
 		return;
 	}
 	const model = {
@@ -302,11 +330,14 @@ export const run = async (args: string[]): Promise<void> => {
 		max: [maxXZ[0] + padding, maxXZ[1] + padding] as [number, number],
 	};
 	diagnostics.collisionScope = { bounds, padding, curveInflationMargin };
+	const indexStart = performance.now();
 	const world = createCollisionWorld(
 		{ positions: collision.positions, indices: walkableCollisionIndices(collision) },
 		{ bounds },
 	);
+	timing.collision = performance.now() - indexStart;
 	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
+	const searchStart = performance.now();
 	const result = planJumpRoute(ground.surfaces, world, [arrival], goal, {
 		...options,
 		interaction: request.interaction,
@@ -314,11 +345,10 @@ export const run = async (args: string[]): Promise<void> => {
 		maxSlope,
 		maxDrop,
 		maxHorizontalDistance,
-		sampleSpacing: 1,
-		maxCandidates: 8000,
-		maxLinks: 64,
+		...limits,
 		model,
 	});
+	timing.search = performance.now() - searchStart;
 	Object.assign(diagnostics, result.diagnostics);
 	const { route, connections } = result;
 	console.log(JSON.stringify({ phase: 'route-search', connections: connections.length }));
