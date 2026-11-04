@@ -84,7 +84,7 @@ points behind the near plane. this changes photography settings, not the environ
 photography uses a full-resolution circular filter, with separate foreground coverage and background
 filtering. the 24 mm sensor height agrees with the focal-length readout at any aspect ratio.
 foreground and background radius limits are 10 pixels at a 1440-pixel render height; the temporal
-shaping input is 0.3. a separate water-depth pass prevents focusing through water to its bed.
+shaping input is 0.3. the shared scene water-depth pass prevents focusing through water to its bed.
 camera-relative reprojection includes the current and previous antialiasing jitter. camera cuts,
 lens edits, resizing and disabling the effect invalidate history; disabling it releases its render
 targets. the lens effect itself needs no new scene resources.
