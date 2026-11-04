@@ -1,4 +1,4 @@
-import { type SceneTextures, DEPTH_FORMAT, HDR_FORMAT } from '../gfx/render-targets.ts';
+import { type SceneTextures, HDR_FORMAT } from '../gfx/render-targets.ts';
 import type { Camera } from '../scene/camera.ts';
 
 import { AutoExposure } from './auto-exposure.ts';
@@ -153,8 +153,6 @@ interface Sized {
 	/** the composited scene at the render size, which the temporal resolve reads */
 	scene: GPUTexture;
 	sceneView: GPUTextureView;
-	waterDepth: GPUTexture | null;
-	waterDepthView: GPUTextureView | null;
 	/** views of the temporal histories, the antialiased scene at the output size */
 	historyViews: [GPUTextureView, GPUTextureView];
 	/**
@@ -472,9 +470,8 @@ export class PostProcess {
 			outputPixels * 8 * (2 / 3) +
 			this.taa.bytes +
 			this.reflections.bytes +
-			(this.#lightShafts.bytes +
-				(this.#focus?.bytes ?? 0) +
-				(sized.waterDepth === null ? 0 : sized.width * sized.height * 4))
+			this.#lightShafts.bytes +
+			(this.#focus?.bytes ?? 0)
 		);
 	}
 
@@ -586,7 +583,6 @@ export class PostProcess {
 
 	#releaseSized(sized: Sized): void {
 		this.#focus?.release();
-		sized.waterDepth?.destroy();
 		for (const texture of [
 			sized.aoDepth,
 			sized.ao,
@@ -750,8 +746,6 @@ export class PostProcess {
 			aoBlurred,
 			scene: sceneTexture,
 			sceneView,
-			waterDepth: null,
-			waterDepthView: null,
 			historyViews: [histories[0].createView(), histories[1].createView()],
 			down,
 			blurred,
@@ -1099,32 +1093,12 @@ export class PostProcess {
 			});
 			if (settings.depthOfField) {
 				this.#focus ??= new DepthOfField(this.#device);
-				if (sized.waterDepth === null) {
-					sized.waterDepth = this.#device.createTexture({
-						label: 'photography water depth',
-						size: [width, height],
-						format: DEPTH_FORMAT,
-						usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-					});
-					sized.waterDepthView = sized.waterDepth.createView();
-				}
-				water.encodeDepth(encoder, sized.waterDepthView!, {
-					scene,
-					background: scene.radiance,
-					frame: input.frameGroup,
-					postUniforms: this.#skyLayoutGroups.uniforms,
-					sky: this.#skyLayoutGroups.sky,
-					version: sized.version,
-					width,
-					height,
-					foam: input.waterFoam,
-				});
 				this.#focus.encode(encoder, {
 					camera,
 					jitter: this.taa.jitter,
 					scene: sized.scene,
 					depth: scene.depth,
-					waterDepth: sized.waterDepthView!,
+					waterDepth: scene.waterDepth,
 					settings: {
 						aperture: settings.aperture,
 						focusDistance: settings.focusDistance,
@@ -1147,9 +1121,6 @@ export class PostProcess {
 		}
 		if (!settings.depthOfField || settings.debugView !== 'lit') {
 			this.#focus?.release();
-			sized.waterDepth?.destroy();
-			sized.waterDepth = null;
-			sized.waterDepthView = null;
 		}
 		const resolved = this.taa.encode(encoder, { camera, postGroup: sized.passes.taa });
 		if (settings.autoExposure) {
