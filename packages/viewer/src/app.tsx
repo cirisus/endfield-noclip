@@ -129,7 +129,6 @@ export const App = ({ overlay }: { overlay?: (viewer: Viewer, panel: HTMLElement
 						{hosted && <div ref={setPointPanelRoot} className="host-panel" />}
 						{!hosted && <LevelsPanel viewer={viewer} />}
 						<PhotoFiltersPanel viewer={viewer} />
-						<LevelsPanel viewer={viewer} />
 						<SceneControls viewer={viewer} />
 						<PhotographyPanel viewer={viewer} />
 						<FiltersPanel viewer={viewer} />

@@ -62,7 +62,7 @@ type Request = {
 export const summary =
 	'compare bounded ground, jump and drop action combinations with physical collision checks';
 export const usage =
-	'player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result>';
+	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result>';
 
 const vector = (point: unknown): point is Vec3 =>
 	Array.isArray(point) && point.length === 3 && point.every(Number.isFinite);

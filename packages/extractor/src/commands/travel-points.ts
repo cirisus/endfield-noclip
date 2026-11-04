@@ -8,7 +8,7 @@ import { withContext } from '../context.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
 export const summary = 'export map teleport landing positions; availability remains a player-state input';
-export const usage = 'travel-points -o <file> --config <config>';
+export const usage = 'usage: endfield-extract travel-points -o <file> --config <config>';
 
 /** @param args output and install config @returns after exporting authored camp landing positions */
 export const run = async (args: string[]): Promise<void> => {

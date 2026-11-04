@@ -10,7 +10,7 @@ import { characterMovement, commonCapsule } from '../game/character-movement.ts'
 import { VfsGroup } from '../hg/vfs.ts';
 
 export const summary = 'export build-bound player movement settings separately from AI navigation settings';
-export const usage = 'movement-settings -o <file> --config <config>';
+export const usage = 'usage: endfield-extract movement-settings -o <file> --config <config>';
 
 const positive = (value: unknown, name: string): number => {
 	if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
