@@ -112,6 +112,9 @@ scene's grading. the LUT contribution slider multiplies the authored lookup cont
 does not fade grading, bloom, vignette or particle effects. filters remain selected when changing
 levels.
 
+hosts can supply the optional `filtersUrl` prop on `ViewerApp`. this library URL takes
+precedence over the `filters` query parameter.
+
 the final pass samples the exported colour strip after grading and tonemapping, in sRGB display
 space, interpolating adjacent blue slices. this follows URP's external-LUT convention; a pixel
 comparison with the game's photo mode remains outstanding. the linear BC7 format does not cause an
