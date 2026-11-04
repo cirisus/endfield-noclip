@@ -6,14 +6,14 @@ import type { Viewer } from '../viewer.ts';
 import { useViewerState } from './use-viewer.ts';
 
 /** an opt-in library from an extractor export; no game resources ship with the viewer */
-export const PhotoFiltersPanel = ({ viewer }: { viewer: Viewer }) => {
+export const PhotoFiltersPanel = ({ viewer, source }: { viewer: Viewer; source?: string }) => {
+	const path = source ?? new URL(location.href).searchParams.get('filters');
 	useViewerState(viewer);
 	const id = useId();
 	const [error, setError] = useState('');
-	const [loading, setLoading] = useState(() => new URL(location.href).searchParams.has('filters'));
+	const [loading, setLoading] = useState(Boolean(path));
 	useEffect(() => {
-		const path = new URL(location.href).searchParams.get('filters');
-		if (path === null) {
+		if (!path) {
 			return;
 		}
 		const abort = new AbortController();
@@ -38,7 +38,7 @@ export const PhotoFiltersPanel = ({ viewer }: { viewer: Viewer }) => {
 				}
 			});
 		return () => abort.abort();
-	}, [viewer]);
+	}, [viewer, path]);
 	const selected = viewer.photoFilters.find((filter) => filter.id === viewer.options.photoFilter);
 	if (!loading && !error && viewer.photoFilters.length === 0) {
 		return null;
