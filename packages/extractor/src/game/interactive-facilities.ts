@@ -938,7 +938,7 @@ export const loadInteractiveFacilities = async (
 				if (looks !== null) {
 					const radius = looks.near === null ? null : Math.max(...keys.map((entry) => entry.radius));
 					interactiveLooks.set(key, { looks, campfire, radius });
-				} else if (kind.animator !== null) {
+				} else if (kind.kind === 'other' && kind.animator !== null) {
 					animatorStarts.set(key, kind.animator);
 				}
 				continue;

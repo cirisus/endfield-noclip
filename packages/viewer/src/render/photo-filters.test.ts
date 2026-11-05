@@ -23,6 +23,7 @@ const effect = (): PhotoEffect => ({
 		renderMode: 0,
 		alignment: 0,
 		stretch: null,
+		screenSize: null,
 		sizedByScale: true,
 		duration: 5,
 		looping: true,
