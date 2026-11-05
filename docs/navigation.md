@@ -466,7 +466,8 @@ resource-optimal selection across all spatial corridors remain unresolved.
 `groundData` accepts `progression: 'fully-enabled'` as an explicit planning assumption.
 controllable air walls are open, including mission gates and walls with an owned or
 recovered script controller. uncontrolled boundary defaults remain in force, and
-reset exclusions retain their normal behavior. this policy is separate from inferring
+fixed reset exclusions remain blocked. unknown reset zones with an explicit runtime
+condition or disabled default are inactive in this unrestricted snapshot. this policy is separate from inferring
 the actual completed-game state. `openTraversalPicks` applies the corresponding viewer
 preset to doors and activations while retaining derived controls and physical supports.
 
@@ -489,3 +490,7 @@ the complete collision selection and rectangular collision scope remain availabl
 while only the proposed corridor receives detailed ground construction. unselected
 tiles remain unmapped. per-tile progress includes completed and total counts. this
 supports coarse direction proposals before fine support, collision and action work.
+
+physical route progress announces ground search, device validation and local access
+refinement before those stages start, allowing the parent to retain their elapsed
+time even when a child exits before writing its final result.

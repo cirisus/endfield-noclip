@@ -242,6 +242,22 @@ test('resolves only explicit completed mission gates and retains reset exclusion
 	);
 	const enabled = groundData(navigation, exclusions, { ...request, progression: 'fully-enabled' });
 	assert.equal(enabled.progression, 'fully-enabled');
+	const withControlledReset = groundData(
+		navigation,
+		{
+			...exclusions,
+			hazards: [
+				...exclusions.hazards,
+				{ ...exclusions.hazards[0], state: 'unknown', shape: { defaultOff: true } },
+			],
+		},
+		{ ...request, progression: 'fully-enabled' },
+	);
+	assert.deepEqual(
+		withControlledReset.options.walls.map((value) => value.state),
+		['inactive', 'active', 'inactive'],
+	);
+
 	assert.deepEqual(
 		enabled.options.walls.map((value) => value.state),
 		['inactive', 'active'],
