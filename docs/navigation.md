@@ -16,19 +16,46 @@ checks block its polygon representatives. Every reconstructed segment must pass
 the same exclusions before the candidate is accepted.
 
 The selected default planning snapshot assumes all level tasks completed.
-`air-walls` records a source-bound owning-script interpretation with model
-`script-terminal-stage-v1`. An explicit contiguous stage domain supplies the
-terminal-stage assumption, and analyzed event paths must agree on the wall state.
-Unresolved stages, targets or conflicting writes remain unknown. `groundData`
-applies these records only with explicit `progression: 'completed'`. Runtime
-snapshots with other task states require their own evaluation. Re-export walls
-and ground datasets after changing this policy.
+`air-walls` records a source-bound control interpretation with model
+`wall-controls-v2`. it scans the scene's level scripts and other-level references
+to wall groups. owned slots and group-id writes are both included, with controller
+identity, stage interpretation and resulting state retained in each record.
+the level brief supplies the declared maximum stage and parameterized global
+wall references. the completed snapshot selects that stage, falling back to an
+explicit contiguous stage domain when the brief does not supply one. this is a
+planning assumption. a script resolves only when its reachable writes consistently
+establish or preserve the selected state. known completed-mission, stage and boolean
+guards prune paths. unresolved guards keep effects possible without establishing
+that a write executes. conflicting writers and undecoded inputs remain unknown.
+other-level activation requires its own snapshot before changing a wall's base
+state. `groundData` applies these records only with explicit
+`progression: 'completed'`. re-export walls and ground datasets after changing
+this policy.
 
 Completed-world mission conditions treat empty rise/down lists as having no
 activation reason. This preserves their initialized false result and allows a
 resolved completed down condition to disable its wall.
-Unowned walls with no condition use their authored default switch in the selected
-planning snapshot. Runtime overrides require separately supplied state.
+the level-script check type can be controlled through a group id even when its
+stored owner is zero. its default switch is a base state, and is used only after
+the explicit controller scan. legacy level-script exports without that scan
+remain unknown. completion-disabled encounter and fog-nest modules supply an
+inactive state for their explicit wall references in this completed snapshot.
+independent script writes are still checked. repeating and unsupported modules
+remain unknown. unresolved computed targets are recorded and keep scene wall
+states unknown, since the affected group cannot be excluded. dynamic
+properties, player-trigger state and server-only controls still need snapshot
+input. an authored-default assumption does not establish live runtime state.
+
+the current two-scene audit covers 504 walls. the selected snapshot resolves 347
+inactive and 43 active, with 114 unknown, down from 196 before module and brief
+resolution. map01 has 112 inactive, 16 active and 30 unknown. map02 has 235 inactive,
+27 active and 84 unknown. the remaining controls include dynamic properties,
+trigger occupancy, event callbacks, owner activation, conflicting writers, three
+owners without client action graphs and one invalid mission reference. wall usage
+tags supply no independent permanent-boundary classification. the three additional
+elevated route examples retain complete walking routes with these exclusions.
+the fixed reference-positive population also retains 31/31 complete walking
+routes, including all 13 measured step-profile cases.
 
 `interaction-points <scene> -o <file>` exports placed trigger rules, retaining source build,
 template paths, transforms and override provenance. direct values resolve in base, selected
@@ -145,8 +172,9 @@ polygon neighbour codes must allow a shared edge. requested dimensions cannot ex
 optional `progression: "completed"` explicitly evaluates mission-controlled air walls with quest and
 mission state 3, matching the OEM viewer's completed-progress default. the current client tests rise
 reasons first, then down reasons, then the default switch. any/all reason combinations and equality
-inversion follow those source checks. script-owned groups, unsupported conditions and malformed or
-empty reason lists remain unresolved and blocked. runtime wall overrides are outside this snapshot.
+inversion follow those source checks. empty lists carry no activation reason.
+script controls follow the completed snapshot described above. unsupported or
+malformed conditions remain unresolved and blocked. runtime wall overrides require snapshot input.
 this setting does not disable reset volumes. the client enables unaddressed unconditional function
 areas directly, including reset zones whose addressed-area `defaultOff` field is true.
 
