@@ -77,6 +77,8 @@ const properties = (list: unknown) =>
 		),
 	);
 const effective = (device: Device, raw: unknown, component: string) => {
+	const forcedState = (key: string) =>
+		component === 'InteractiveVerticalRopeComponentData' && (key === 'state' || key === 'is_locked');
 	if (!isObject(raw) || !Array.isArray(raw.components)) {
 		return null;
 	}
@@ -132,15 +134,17 @@ const effective = (device: Device, raw: unknown, component: string) => {
 		if (
 			Array.isArray(override) &&
 			[...properties(override[1])].some(
-				([key, value]) => values.has(key) && JSON.stringify(values.get(key)) !== JSON.stringify(value),
+				([key, value]) =>
+					!forcedState(key) && values.has(key) && JSON.stringify(values.get(key)) !== JSON.stringify(value),
 			)
 		) {
 			return null;
 		}
 	}
 	if (
-		(Array.isArray(device.placement.mapProperties) && device.placement.mapProperties.length) ||
-		(Array.isArray(device.placement.globalProperties) && device.placement.globalProperties.length)
+		[...properties(device.placement.mapProperties), ...properties(device.placement.globalProperties)].some(
+			([key]) => !forcedState(key),
+		)
 	) {
 		return null;
 	}
@@ -199,8 +203,8 @@ const offset = (d: Device, p: Vec3): Vec3 => {
 };
 
 /**
- * builds fixed device macro-actions for the selected completed-task/authored-device snapshot. only explicitly
- * enabled, unlocked devices participate. every action ends on collision-checked support.
+ * builds fixed device macro-actions with all vertical ropes enabled and completed tasks. launch devices
+ * retain their authored enabled/unlocked state. every action ends on collision-checked support.
  *
  * @param input build-bound traversal-device export
  * @param options matching physical surfaces, collision world, movement settings and exclusions
@@ -328,8 +332,8 @@ export const deviceConnections = (input: Input, options: Options) => {
 		}
 		const p = effective(lower, input.templates[lower.template], 'InteractiveVerticalRopeComponentData');
 		const q = effective(upper, input.templates[upper.template], 'InteractiveVerticalRopeComponentData');
-		let reason = 'device-state-unresolved';
-		if (p && q && available(lower, p) && available(upper, q)) {
+		let reason = 'device-model-unresolved';
+		if (p && q && lower.scale.every((value) => value === 1) && upper.scale.every((value) => value === 1)) {
 			reason = 'support-or-clearance-unresolved';
 			const requestedSpeed = Number(p.get('move_speed'));
 			const speed = requestedSpeed > 0 ? requestedSpeed : Number(p.get('speed')),
@@ -425,7 +429,7 @@ export const deviceConnections = (input: Input, options: Options) => {
 	return {
 		connections,
 		outcomes,
-		snapshot: 'completed-tasks/authored-enabled-devices',
+		snapshot: 'completed-tasks/all-ropes-enabled/authored-launch-devices',
 		motionValidation: 'model-based',
 	};
 };

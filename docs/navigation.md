@@ -299,10 +299,13 @@ references; none name a selected movement device in this install. these are auth
 input counts, not proof that every device is unlocked or that its landing is safe.
 
 `player-route --devices <traversal-export>` now imports fixed device macro-actions
-from that matching scene/build. the selected snapshot combines completed mission
-and quest gates with authored enabled/unlocked device states. power, unresolved
-overrides and unsupported conditions do not become available merely through task
-completion. the pure `--ground-only` stage still measures walking alone.
+from that matching scene/build. the selected snapshot assumes all exported
+vertical ropes enabled and unlocked, regardless of authored enable/lock flags or
+progression gates. motion parameters, reciprocal references, interaction geometry,
+support and collision still require validation. launch devices combine completed
+mission/quest gates with authored enabled/unlocked states. power and unresolved
+motion overrides require their own input. the pure `--ground-only` stage still
+measures walking alone.
 
 reciprocal vertical ropes provide directed ascent actions with approach, a timed
 startup pause, upward travel and a supported exit. entry candidates use the shared
@@ -333,6 +336,19 @@ selects device 3500031283 and a small jump, totaling 22.16 model seconds. its ph
 walking baseline takes 27.64 seconds. the initial normal query returned a candidate
 at 0.74 seconds and completed physical construction/action comparison at 39.36
 seconds. these are computed candidates, with in-game operation still unverified.
+
+the all-enabled rope policy admits a normal nearest-anchor route for point
+10100023101 through pair 10100023065 / 10100023064. its timed sequence is
+walk/rope/walk, at 5.97 model seconds. the exported maps contain 218 reciprocal
+pairs; 93 lacked explicit enabled flags on both endpoints under the earlier policy.
+
+Ganglia alpha.23 shares prepared topology, normalized portals, ground visibility
+and projection between walking, device checks and action search. bounds hierarchy
+construction uses median partitions. the fixed profiled input above drops from
+58.39 to 23.76 command seconds, with action search dropping from 33.18 to 11.22.
+the returned route remains 22.39 model seconds with the same discovery limits.
+`diagnostics.timingMs.devices` now reports device admission separately. these
+single-run comparisons reuse physical ground and retain CPU profiling overhead.
 
 ## streamed collision inputs
 
