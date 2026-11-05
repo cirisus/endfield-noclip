@@ -259,7 +259,7 @@ export const run = async (args: string[]): Promise<void> => {
 	// Interactive optimization starts from an existing supported route. Bound its
 	// optional shortcut comparison separately from unresolved reachability work.
 	if (walking.status === 'complete') {
-		limits.maxCandidates = 512;
+		limits.maxCandidates = 640;
 		await emit(
 			{ status: 'candidate', route: walking, connections: [], groundedTarget: walking.points.at(-1) },
 			!values['ground-only'] && !(values['devices-only'] && !values.devices),
@@ -368,7 +368,7 @@ export const run = async (args: string[]): Promise<void> => {
 		knownConnections = options.connections;
 		timing.devices = performance.now() - deviceStart;
 		if (connected.status === 'complete') {
-			limits.maxCandidates = 512;
+			limits.maxCandidates = 640;
 			if (walking.status !== 'complete' || connected.cost < walking.cost) {
 				await emit(
 					{

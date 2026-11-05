@@ -525,3 +525,7 @@ queries remain incomplete rather than being treated as proof of unreachability.
 
 negative global tile coordinates are passed as `--tiles=<x,z;...>` by the development
 host so Node does not interpret the coordinate list as another command-line option.
+
+the broad shortcut pass retains its complete existing comparison budget. a bounded
+local pass uses spare total-query candidates afterward, compares both its independent
+route and the merged action graph, and cannot replace a faster complete incumbent.
