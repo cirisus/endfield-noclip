@@ -246,7 +246,14 @@ export const groundData = (
 		if (polygon && polygon.length < 3) {
 			throw new Error('invalid hazard polygon');
 		}
-		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: hazardState, polygon });
+		const controlled =
+			(isObject(hazard.shape) && (hazard.shape.defaultOff === true || hazard.shape.hasCondition === true)) ||
+			(Array.isArray(hazard.conditions) && hazard.conditions.length > 0);
+		const resolvedState =
+			query.progression === 'fully-enabled' && hazardState === 'unknown' && controlled
+				? 'inactive'
+				: hazardState;
+		exclusionsList.push({ min: vector(hazard.min), max: vector(hazard.max), state: resolvedState, polygon });
 	}
 	const landings = new Map<string, Vec3>();
 	if (travel !== undefined) {
