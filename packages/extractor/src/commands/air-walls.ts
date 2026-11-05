@@ -5,9 +5,9 @@ import { parseArgs } from 'node:util';
 import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import { withContext } from '../context.ts';
-import { completedScriptWallState, terminalScriptStage } from '../game/air-wall-state.ts';
+import { createWallResolver } from '../game/air-wall-state.ts';
 import { routeHazards } from '../game/route-hazards.ts';
-import { toScript, type Script } from '../game/script-drivers.ts';
+import { loadLevelScripts } from '../game/script-drivers.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
 const vector = (value: unknown): number[] => {
@@ -50,7 +50,7 @@ export const run = async (args: string[]): Promise<void> => {
 		}
 		const groups: unknown[] = [];
 		const hazards: unknown[] = [];
-		const scripts = new Map<string, Script | null>();
+		const briefs = new Map<string, unknown>();
 		for (const level of levels) {
 			for (const hash of level.levelDataPathHashes ?? []) {
 				const path = paths(hash);
@@ -70,52 +70,22 @@ export const run = async (args: string[]): Promise<void> => {
 				if (!isObject(data) || !Array.isArray(data.airWalls)) {
 					throw new Error('invalid level walls');
 				}
+				for (const entry of Array.isArray(data.levelScriptBriefDataDict)
+					? data.levelScriptBriefDataDict
+					: []) {
+					if (
+						Array.isArray(entry) &&
+						(typeof entry[0] === 'string' || typeof entry[0] === 'bigint' || typeof entry[0] === 'number')
+					) {
+						briefs.set(`${level.id}/${entry[0]}`, entry[1]);
+					}
+				}
 				for (const zone of routeHazards(data)) {
 					hazards.push({ ...zone, level: level.id, path });
 				}
 				for (const group of data.airWalls) {
 					if (!isObject(group) || !Array.isArray(group.polyLineWalls)) {
 						throw new Error('invalid wall group');
-					}
-					let completed;
-					const scriptId =
-						typeof group.scriptId === 'string' ||
-						typeof group.scriptId === 'number' ||
-						typeof group.scriptId === 'bigint'
-							? String(group.scriptId)
-							: '';
-					if (scriptId !== '' && scriptId !== '0' && Number.isInteger(group.slotId)) {
-						const scriptPath = `Data/Json/LevelScriptData/${level.id}/${scriptId}.json`;
-						if (!scripts.has(scriptPath)) {
-							const scriptFile = await ctx.vfs.find(VfsGroup.JsonData, scriptPath);
-							try {
-								scripts.set(
-									scriptPath,
-									scriptFile
-										? toScript(
-												scriptId,
-												level.id,
-												reader.decode(
-													await ctx.vfs.readVerified(scriptFile),
-													'Beyond_Gameplay_LevelScriptDataForMemoryPack',
-												),
-											)
-										: null,
-								);
-							} catch {
-								scripts.set(scriptPath, null);
-							}
-						}
-						const script = scripts.get(scriptPath);
-						const stage = script ? terminalScriptStage(script) : null;
-						if (script && stage !== null) {
-							completed = {
-								model: 'script-terminal-stage-v1',
-								stage,
-								state: completedScriptWallState(script, Number(group.slotId), stage),
-								script: scriptPath,
-							};
-						}
 					}
 					for (const wall of group.polyLineWalls) {
 						if (
@@ -138,7 +108,6 @@ export const run = async (args: string[]): Promise<void> => {
 							slotId: group.slotId,
 							defaultOn: group.defaultOn,
 							condition: group.checkData,
-							completed,
 							state: 'unknown',
 							min: center.map((v, i) => v - size[i] / 2),
 							max: center.map((v, i) => v + size[i] / 2),
@@ -153,6 +122,28 @@ export const run = async (args: string[]): Promise<void> => {
 				}
 			}
 		}
+		const targets = new Set<string>();
+		for (const wall of groups) {
+			if (
+				!isObject(wall) ||
+				(typeof wall.groupId !== 'string' &&
+					typeof wall.groupId !== 'number' &&
+					typeof wall.groupId !== 'bigint')
+			) {
+				throw new Error('invalid wall group identity');
+			}
+			if (String(wall.groupId) !== '0') {
+				targets.add(String(wall.groupId));
+			}
+		}
+		const scripts = await loadLevelScripts(ctx, positionals[0], targets);
+		const resolveCompleted = createWallResolver({ ...scripts, briefs });
+		const controlled = groups.map((wall) => {
+			if (!isObject(wall)) {
+				throw new Error('invalid exported wall');
+			}
+			return { ...wall, completed: resolveCompleted(wall) };
+		});
 		await writeFile(
 			values.output!,
 			JSON.stringify(
@@ -160,7 +151,7 @@ export const run = async (args: string[]): Promise<void> => {
 					version: 2,
 					scene: positionals[0],
 					source: { buildGuid: build.guid, contentHash: build.contentHash },
-					walls: groups,
+					walls: controlled,
 					hazards,
 				},
 				(_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value),
