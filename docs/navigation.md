@@ -494,3 +494,34 @@ supports coarse direction proposals before fine support, collision and action wo
 physical route progress announces ground search, device validation and local access
 refinement before those stages start, allowing the parent to retain their elapsed
 time even when a child exits before writing its final result.
+
+
+## physical tile reuse and profiling
+
+`player-ground --tile-cache <directory>` retains padded native support meshes. Keys
+bind the collision source, exact ordered float64 vertices and indices, physical
+profile, voxel/step settings, padded bounds and installed generator files/dependencies.
+Changing these inputs misses the cache. Corrupt entries are rebuilt. Core clipping
+and directed seams are recomputed for every request, including differently clipped
+outer bounds. The decoded-source `--input-cache` remains a separate cache.
+
+`player-ground --identity` reports the installed geometry generator fingerprint.
+The development host uses this instead of the routing SDK release as its ground
+artifact identity: runtime-only search updates can reuse ground, while geometry
+changes still invalidate it. Route result caches retain their solver binding.
+
+A profiled ten-tile replay containing 125,025 support faces took 7.57 seconds without
+tile reuse, and 1.00 and 0.88 seconds on two warm-cache passes. Mesh, portal and tile
+outputs had identical content hashes. This measures ground construction only; input
+loading, graph preparation and movement discovery still contribute to a route job.
+
+`player-route` reuses the prepared ground projector during goal refinement and
+releases an obsolete planner before allocating its replacement. Coarse direction
+samples guide bounded action discovery without becoming route segments; only
+validated partial actions are retained for the final start-to-goal query. The
+three-box replay returns a 33.07-second model route with current unrestricted
+facilities, compared with 33.80 seconds in the earlier replay. Complex unresolved
+queries remain incomplete rather than being treated as proof of unreachability.
+
+negative global tile coordinates are passed as `--tiles=<x,z;...>` by the development
+host so Node does not interpret the coordinate list as another command-line option.

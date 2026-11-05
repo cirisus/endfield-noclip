@@ -1,5 +1,5 @@
 import {
-	createGoalProjector,
+	type createGoalProjector,
 	jumpDuration,
 	surfaceGraph,
 	type InteractionGoal,
@@ -11,6 +11,7 @@ import { buildGroundSurfaces, type BuildOptions, type CollisionGeometry } from '
 
 type Options = {
 	build: BuildOptions;
+	project: ReturnType<typeof createGoalProjector>;
 	goal: Vec3;
 	interaction?: InteractionGoal;
 	model: JumpModel;
@@ -26,7 +27,7 @@ type Options = {
 export const refineGoalGround = async (
 	geometry: CollisionGeometry,
 	surfaces: Surface[],
-	{ build, goal, interaction, model }: Options,
+	{ build, project, goal, interaction, model }: Options,
 ) => {
 	const duration = jumpDuration(goal[1], goal[1], { ...model, mode: 'jump' });
 	if (!duration || !build.bounds) {
@@ -75,7 +76,6 @@ export const refineGoalGround = async (
 		{ positions, indices: Array.from({ length: positions.length / 3 }, (_, index) => index) },
 		{ ...build, bounds, cellSize: build.cellSize / 3 },
 	);
-	const project = createGoalProjector(surfaces);
 	const graph = surfaceGraph(fine, { speed: 1 });
 	const parents = new Map(fine.map((surface) => [surface.id, surface.id]));
 	const root = (id: string): string => {

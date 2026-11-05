@@ -55,7 +55,12 @@ test('recovers a body-width landing omitted by coarse erosion while preserving l
 		const before = structuredClone(coarse);
 		const goal: Vec3 = [0.4, 1.5, 0];
 		assert.equal(createGoalProjector(coarse)(goal, { maxVertical: 0.15 }).length, 0);
-		const refined = await refineGoalGround(geometry, coarse, { build: options, goal, model });
+		const refined = await refineGoalGround(geometry, coarse, {
+			build: options,
+			goal,
+			model,
+			project: createGoalProjector(coarse),
+		});
 		const accessible = createGoalProjector([...coarse, ...refined.surfaces])(goal, { maxVertical: 0.15 });
 		assert.equal(accessible.length > 0, !ceiling);
 		assert.deepEqual(coarse, before);
