@@ -76,9 +76,8 @@ const properties = (list: unknown) =>
 			isObject(p) && typeof p.key === 'string' ? [[p.key, parameter(p.value)] as const] : [],
 		),
 	);
+const forcedState = (key: string) => key === 'state' || key === 'is_locked' || key === 'has_power';
 const effective = (device: Device, raw: unknown, component: string) => {
-	const forcedState = (key: string) =>
-		component === 'InteractiveVerticalRopeComponentData' && (key === 'state' || key === 'is_locked');
 	if (!isObject(raw) || !Array.isArray(raw.components)) {
 		return null;
 	}
@@ -124,6 +123,9 @@ const effective = (device: Device, raw: unknown, component: string) => {
 		// the versioned interactive schema uses key 169 for the jump-machine component.
 		if (Array.isArray(override) && override[0] === 169 && component === 'JumpMachineComponentData') {
 			for (const [key, value] of properties(override[1])) {
+				if (forcedState(key)) {
+					continue;
+				}
 				if (properties(device.placement.properties).has(key)) {
 					return null;
 				}
@@ -151,52 +153,6 @@ const effective = (device: Device, raw: unknown, component: string) => {
 	return values;
 };
 
-const completedGate = (condition: unknown) => {
-	if (condition === null) {
-		return true;
-	}
-	if (
-		!isObject(condition) ||
-		typeof condition.$type !== 'string' ||
-		!condition.$type.match(/SimpleConditionCheck(Mission|Quest)State/) ||
-		typeof (condition.missionId ?? condition.questId) !== 'string' ||
-		(condition.missionId ?? condition.questId) === '' ||
-		typeof condition.compareTarget !== 'number'
-	) {
-		return false;
-	}
-	const target = condition.compareTarget;
-	switch (condition.compareOperator) {
-		case 0: {
-			return 3 === target;
-		}
-		case 1: {
-			return 3 !== target;
-		}
-		case 2: {
-			return 3 > target;
-		}
-		case 3: {
-			return 3 >= target;
-		}
-		case 4: {
-			return 3 < target;
-		}
-		case 5: {
-			return 3 <= target;
-		}
-		default: {
-			return false;
-		}
-	}
-};
-const available = (d: Device, p: Map<string, unknown>) =>
-	d.placement.isLocked === false &&
-	d.placement.createState === 0 &&
-	p.get('state') === 1 &&
-	p.get('is_locked') !== true &&
-	completedGate(d.placement.progressLockCondition) &&
-	d.scale.every((v) => v === 1);
 const offset = (d: Device, p: Vec3): Vec3 => {
 	const v = transformPoint(trsMatrix(d.position, unityEulerQuaternion(d.rotation), [1, 1, 1]), p);
 	return [v[0], v[1], v[2]];
@@ -383,9 +339,9 @@ export const deviceConnections = (input: Input, options: Options) => {
 		let reason = 'device-state-or-model-unresolved';
 		if (
 			p &&
-			available(d, p) &&
+			d.scale.every((value) => value === 1) &&
 			p.get('free_jump') === false &&
-			p.get('use_electric') === false &&
+			typeof p.get('use_electric') === 'boolean' &&
 			p.get('unlock_height_limit') === false
 		) {
 			const aim = p.get('target_position'),
@@ -429,7 +385,7 @@ export const deviceConnections = (input: Input, options: Options) => {
 	return {
 		connections,
 		outcomes,
-		snapshot: 'completed-tasks/all-ropes-enabled/authored-launch-devices',
+		snapshot: 'all-devices-enabled-and-powered',
 		motionValidation: 'model-based',
 	};
 };

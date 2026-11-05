@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
 	completedWallState,
+	enabledWallState,
 	completedScriptWallState,
 	terminalScriptStage,
 	createWallResolver,
@@ -409,4 +410,17 @@ test('level briefs supply completed stages and parameterized global wall targets
 	assert.equal(createWallResolver(input)(target).state, 'inactive');
 	brief.maxStage = 0;
 	assert.equal(createWallResolver(input)(target).state, 'unknown');
+});
+
+test('fully enabled traversal opens controlled barriers while preserving uncontrolled boundary defaults', () => {
+	const fixed = {
+		scriptId: '0',
+		defaultOn: true,
+		condition: { checkType: 0 },
+		completed: { controllers: [] },
+	};
+	assert.equal(enabledWallState(fixed), 'active');
+	assert.equal(enabledWallState({ ...fixed, scriptId: 'controller' }), 'inactive');
+	assert.equal(enabledWallState({ ...fixed, completed: { controllers: [{ script: 'other' }] } }), 'inactive');
+	assert.equal(enabledWallState({ ...fixed, condition: { checkType: 1 } }), 'inactive');
 });

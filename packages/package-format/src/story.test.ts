@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { it } from 'node:test';
 
 import type { SceneControl } from './states.ts';
-import { completedProgressionPicks, storyPointPicks, storyPoints } from './story.ts';
+import { completedProgressionPicks, openTraversalPicks, storyPointPicks, storyPoints } from './story.ts';
 
 const control = (
 	kind: 'quest' | 'mission',
@@ -112,4 +112,24 @@ it('lists a point per mission start and per step quest controls sit at, once per
 			[null, []],
 		],
 	);
+});
+
+it('opens traversal doors without destroying supports or overriding derived gates', () => {
+	const door: SceneControl = {
+		...control('quest', 'a', 'mission', 1),
+		kind: 'door',
+		id: 'door:a',
+		default: 0,
+		values: [
+			{ value: 0, label: 'closed' },
+			{ value: 1, label: 'open' },
+		],
+	};
+	const controls: SceneControl[] = [
+		door,
+		{ ...door, kind: 'activation', id: 'activation:a' },
+		{ ...door, kind: 'destruction', id: 'destruction:a' },
+		{ ...door, id: 'door:derived', derived: 0 },
+	];
+	assert.deepEqual(openTraversalPicks(controls), { 'door:a': 1, 'activation:a': 1 });
 });

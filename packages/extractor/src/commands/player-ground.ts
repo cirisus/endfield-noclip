@@ -20,7 +20,7 @@ import { collectCollisionInputs } from '../game/collision-inputs.ts';
 export const summary =
 	'build bounded player ground tiles from selected collision sources, including factory floors';
 export const usage =
-	'usage: endfield-extract player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n> --movement-settings <file> -o <ground-file> --collision-output <geometry-file> [--cell-size <m>] [--tile-cells <n>] --config <config>';
+	'usage: endfield-extract player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n> --movement-settings <file> -o <ground-file> --collision-output <geometry-file> [--cell-size <m>] [--tile-cells <n>] [--tiles <x,z;x,z>] --config <config>';
 
 /**
  * @param args source selection, build-bound movement parameters and explicit world bounds
@@ -40,6 +40,7 @@ export const run = async (args: string[]): Promise<void> => {
 			'collision-output': { type: 'string' },
 			'cell-size': { type: 'string', default: '0.15' },
 			'tile-cells': { type: 'string', default: '256' },
+			tiles: { type: 'string' },
 			config: { type: 'string' },
 			'input-cache': { type: 'string' },
 		},
@@ -73,6 +74,13 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	const cellSize = Number(values['cell-size']);
 	const tileCells = parseInteger(values['tile-cells'], '--tile-cells');
+	const tiles = values.tiles?.split(';').map((value) => {
+		if (!/^-?\d+,-?\d+$/.test(value)) {
+			throw new Error('invalid physical tile selection');
+		}
+		const [x, z] = value.split(',').map(Number);
+		return { x, z };
+	});
 	const tileSpan = cellSize * tileCells;
 	const tileRange = [
 		Math.floor(bounds[0] / tileSpan),
@@ -80,7 +88,7 @@ export const run = async (args: string[]): Promise<void> => {
 		Math.ceil(bounds[2] / tileSpan),
 		Math.ceil(bounds[3] / tileSpan),
 	];
-	const tileCount = (tileRange[2] - tileRange[0]) * (tileRange[3] - tileRange[1]);
+	const tileCount = tiles?.length ?? (tileRange[2] - tileRange[0]) * (tileRange[3] - tileRange[1]);
 	if (
 		!Number.isFinite(cellSize) ||
 		cellSize <= 0 ||
@@ -192,9 +200,16 @@ export const run = async (args: string[]): Promise<void> => {
 				min: [bounds[0], bounds[1]] as [number, number],
 				max: [bounds[2], bounds[3]] as [number, number],
 			},
+			...(tiles ? { tiles } : {}),
 		};
 		await writeFile(values['collision-output']!, JSON.stringify({ ...geometry, options, absent }));
-		const ground = await buildGroundTiles({ positions: geometry.positions, indices: buildIndices }, options);
+		const ground = await buildGroundTiles(
+			{ positions: geometry.positions, indices: buildIndices },
+			{
+				...options,
+				onTile: (progress) => console.log(JSON.stringify({ phase: 'ground-tile', ...progress })),
+			},
+		);
 		await writeFile(
 			values.output!,
 			JSON.stringify({

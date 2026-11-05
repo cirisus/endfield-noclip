@@ -19,10 +19,11 @@ import {
 	type Vec3,
 	type Wall,
 } from '@oem/ganglia';
-import type { CollisionGeometry } from '@oem/ganglia/build';
+import type { BuildOptions, CollisionGeometry } from '@oem/ganglia/build';
 import { createCollisionWorld } from '@oem/ganglia/collision';
 
 import { walkableCollisionIndices, type CollisionRecord } from '../game/collision-ground.ts';
+import { refineGoalGround } from '../game/ground-refinement.ts';
 import { deviceConnections } from '../game/traversal-links.ts';
 
 type Source = { buildGuid: string; contentHash: string };
@@ -35,7 +36,7 @@ type Ground = {
 	coverage: unknown;
 	surfaces: Surface[];
 	options: GroundOptions;
-	build?: { bounds?: { min: [number, number]; max: [number, number] } };
+	build?: Partial<BuildOptions & { tileCells: number }>;
 };
 type Collision = CollisionGeometry & {
 	records?: CollisionRecord[];
@@ -128,11 +129,13 @@ export const run = async (args: string[]): Promise<void> => {
 		throw new Error('route output must not overwrite an input');
 	}
 	console.log(JSON.stringify({ phase: 'read-inputs' }));
-	let input = await Promise.all(files.map((path) => readFile(path, 'utf8')));
-	const ground: Ground = JSON.parse(input[0]),
-		collision: Collision = JSON.parse(input[1]),
-		movement: Movement = JSON.parse(input[2]),
-		request: Request = JSON.parse(input[3]);
+	const ground: Ground = JSON.parse(await readFile(values.ground, 'utf8'));
+	let input = await Promise.all(
+		[values.collision, values['movement-settings'], values.request].map((path) => readFile(path, 'utf8')),
+	);
+	const collision: Collision = JSON.parse(input[0]),
+		movement: Movement = JSON.parse(input[1]),
+		request: Request = JSON.parse(input[2]);
 	input = [];
 	if (
 		!ground ||
@@ -245,7 +248,7 @@ export const run = async (args: string[]): Promise<void> => {
 	// spending the optional action-discovery budget. The parent keeps polling for
 	// a faster complete route while this atomic provisional result is available.
 	const groundStart = performance.now();
-	const groundPlanner = createGroundPlanner(ground.surfaces, options);
+	let groundPlanner = createGroundPlanner(ground.surfaces, options);
 	const walking = groundPlanner.plan([arrival], goal, {
 		interaction: request.interaction,
 	});
@@ -335,10 +338,8 @@ export const run = async (args: string[]): Promise<void> => {
 	};
 	diagnostics.collisionScope = { bounds, padding, curveInflationMargin };
 	const indexStart = performance.now();
-	const world = createCollisionWorld(
-		{ positions: collision.positions, indices: walkableCollisionIndices(collision) },
-		{ bounds },
-	);
+	const geometry = { positions: collision.positions, indices: walkableCollisionIndices(collision) };
+	const world = createCollisionWorld(geometry, { bounds });
 	timing.collision = performance.now() - indexStart;
 	let knownRoute = walking;
 	let knownConnections = options.connections ?? [];
@@ -390,9 +391,33 @@ export const run = async (args: string[]): Promise<void> => {
 		}
 		return;
 	}
+	let surfaces = ground.surfaces;
+	if (ground.build?.cellSize !== undefined && ground.build.cellHeight !== undefined && ground.build.bounds) {
+		const refineStart = performance.now();
+		const refined = await refineGoalGround(geometry, surfaces, {
+			build: {
+				profile,
+				maxSlope,
+				stepUp: numberField(settings, '_stepOffset'),
+				stepDown: numberField(settings, '_stepDownOffset'),
+				cellSize: ground.build.cellSize,
+				cellHeight: ground.build.cellHeight,
+				bounds: ground.build.bounds,
+			},
+			goal,
+			interaction: request.interaction,
+			model,
+		});
+		diagnostics.refinement = { bounds: refined.bounds, addedSurfaces: refined.surfaces.length };
+		if (refined.surfaces.length) {
+			surfaces = [...surfaces, ...refined.surfaces];
+			groundPlanner = createGroundPlanner(surfaces, options);
+		}
+		timing.refinement = performance.now() - refineStart;
+	}
 	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
 	const searchStart = performance.now();
-	const result = planJumpRoute(ground.surfaces, world, [arrival], goal, {
+	const result = planJumpRoute(surfaces, world, [arrival], goal, {
 		...options,
 		groundPlanner,
 		interaction: request.interaction,
@@ -401,6 +426,7 @@ export const run = async (args: string[]): Promise<void> => {
 		maxDrop,
 		maxHorizontalDistance,
 		...limits,
+		maxShortcutCandidates: 512,
 		model,
 	});
 	timing.search = performance.now() - searchStart;

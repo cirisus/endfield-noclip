@@ -53,6 +53,25 @@ export const completedProgressionPicks = (controls: readonly SceneControl[]): Re
 };
 
 /**
+ * @param controls the scene's merged controls
+ * @returns completed facilities with controllable traversal doors open and activations enabled
+ */
+export const openTraversalPicks = (controls: readonly SceneControl[]): Record<string, number> => {
+	const picks = completedProgressionPicks(controls);
+	for (const control of controls) {
+		if (
+			control.derived === null &&
+			(control.kind === 'door' || control.kind === 'activation') &&
+			control.default !== 1 &&
+			control.values.some((value) => value.value === 1)
+		) {
+			picks[control.id] = 1;
+		}
+	}
+	return picks;
+};
+
+/**
  * @param controls a package's controls
  * @param missions mission ids in story order
  * @param point where the story stands
