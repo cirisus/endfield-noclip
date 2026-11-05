@@ -64,7 +64,7 @@ type Request = {
 export const summary =
 	'compare bounded ground, device, jump and drop action combinations with physical collision checks';
 export const usage =
-	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result> [--ground-only] [--devices <file>]';
+	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result> [--ground-only | --devices-only] [--devices <file>]';
 
 const vector = (point: unknown): point is Vec3 =>
 	Array.isArray(point) && point.length === 3 && point.every(Number.isFinite);
@@ -110,6 +110,7 @@ export const run = async (args: string[]): Promise<void> => {
 			request: { type: 'string' },
 			output: { type: 'string', short: 'o' },
 			'ground-only': { type: 'boolean', default: false },
+			'devices-only': { type: 'boolean', default: false },
 			devices: { type: 'string' },
 		},
 	});
@@ -255,11 +256,11 @@ export const run = async (args: string[]): Promise<void> => {
 		limits.maxCandidates = 512;
 		await emit(
 			{ status: 'candidate', route: walking, connections: [], groundedTarget: walking.points.at(-1) },
-			!values['ground-only'],
+			!values['ground-only'] && !(values['devices-only'] && !values.devices),
 		);
 		console.log(JSON.stringify({ phase: 'ground-route', cost: walking.cost }));
 	}
-	if (values['ground-only']) {
+	if (values['ground-only'] || (values['devices-only'] && !values.devices)) {
 		if (walking.status !== 'complete') {
 			await emit({ status: 'unavailable', reason: walking.status });
 		}
@@ -339,6 +340,8 @@ export const run = async (args: string[]): Promise<void> => {
 		{ bounds },
 	);
 	timing.collision = performance.now() - indexStart;
+	let knownRoute = walking;
+	let knownConnections = options.connections ?? [];
 	if (values.devices) {
 		const deviceStart = performance.now();
 		const devices = deviceConnections(JSON.parse(await readFile(values.devices, 'utf8')), {
@@ -356,6 +359,8 @@ export const run = async (args: string[]): Promise<void> => {
 			interaction: request.interaction,
 			connections: options.connections,
 		});
+		knownRoute = connected;
+		knownConnections = options.connections;
 		timing.devices = performance.now() - deviceStart;
 		if (connected.status === 'complete') {
 			limits.maxCandidates = 512;
@@ -367,10 +372,23 @@ export const run = async (args: string[]): Promise<void> => {
 						connections: devices.connections,
 						groundedTarget: connected.points.at(-1),
 					},
-					true,
+					!values['devices-only'],
 				);
 			}
 		}
+	}
+	if (values['devices-only']) {
+		if (knownRoute.status === 'complete') {
+			await emit({
+				status: 'candidate',
+				route: knownRoute,
+				connections: knownConnections,
+				groundedTarget: knownRoute.points.at(-1),
+			});
+		} else {
+			await emit({ status: 'unavailable', reason: knownRoute.status });
+		}
+		return;
 	}
 	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
 	const searchStart = performance.now();

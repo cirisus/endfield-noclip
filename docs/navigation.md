@@ -350,6 +350,19 @@ the returned route remains 22.39 model seconds with the same discovery limits.
 `diagnostics.timingMs.devices` now reports device admission separately. these
 single-run comparisons reuse physical ground and retain CPU profiling overhead.
 
+`player-route --devices-only` ends after ground and known-device feasibility,
+before free jump/drop discovery. it preserves supported trajectories and emits a
+completed candidate or an explicit unavailable result. Atlos runs this stage in
+the foreground when walking fails, publishes a feasible device route immediately,
+and continues optional action optimization independently. queries over ready ground
+precede additional queued physical builds.
+
+the small physical rope input above completes this stage in 1.45 command seconds,
+without a jump-search phase. a normal query for 10100023101 with physical ground
+cached returns its 5.97-model-second walk/rope/walk route after 13.54 seconds,
+including scene loading and foreground preparation. larger first builds and active
+foreground work can still add waiting time.
+
 ## streamed collision inputs
 
 `collision-inputs <scene> <x> <z> --scene-state <n> --area <n> -o <file>` exports
