@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs, isDeepStrictEqual } from 'node:util';
 
-import { isObject, numberField, objectField } from '@endfield-noclip/formats/unity/values';
+import { isObject, numberField, objectField, stringField } from '@endfield-noclip/formats/unity/values';
 
 import { buildGroundTiles } from '@oem/ganglia/build';
 
@@ -16,11 +16,12 @@ import {
 	type CollisionInputs,
 } from '../game/collision-ground.ts';
 import { collectCollisionInputs } from '../game/collision-inputs.ts';
+import { groundGeneratorIdentity, groundTileCache } from '../game/ground-tile-cache.ts';
 
 export const summary =
 	'build bounded player ground tiles from selected collision sources, including factory floors';
 export const usage =
-	'usage: endfield-extract player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n> --movement-settings <file> -o <ground-file> --collision-output <geometry-file> [--cell-size <m>] [--tile-cells <n>] [--tiles <x,z;x,z>] --config <config>';
+	'usage: endfield-extract player-ground <scene> --bounds <minX,minZ,maxX,maxZ> --scene-state <n> --area <n> --movement-settings <file> -o <ground-file> --collision-output <geometry-file> [--cell-size <m>] [--tile-cells <n>] [--tiles <x,z;x,z>] [--tile-cache <directory>] --config <config>; player-ground --identity';
 
 /**
  * @param args source selection, build-bound movement parameters and explicit world bounds
@@ -43,8 +44,14 @@ export const run = async (args: string[]): Promise<void> => {
 			tiles: { type: 'string' },
 			config: { type: 'string' },
 			'input-cache': { type: 'string' },
+			'tile-cache': { type: 'string' },
+			identity: { type: 'boolean' },
 		},
 	});
+	if (values.identity) {
+		console.log(JSON.stringify({ generator: await groundGeneratorIdentity() }));
+		return;
+	}
 	if (
 		positionals.length !== 1 ||
 		!values.bounds ||
@@ -114,7 +121,10 @@ export const run = async (args: string[]): Promise<void> => {
 		throw new Error('missing default movement settings');
 	}
 	const settings = asset.settings;
-	const source = movement.source;
+	const source = {
+		buildGuid: stringField(movement.source, 'buildGuid'),
+		contentHash: stringField(movement.source, 'contentHash'),
+	};
 	const profile = {
 		radius: numberField(movement.defaultProfile, 'radius'),
 		height: numberField(movement.defaultProfile, 'height'),
@@ -207,6 +217,9 @@ export const run = async (args: string[]): Promise<void> => {
 			{ positions: geometry.positions, indices: buildIndices },
 			{
 				...options,
+				cache: values['tile-cache']
+					? await groundTileCache(resolve(values['tile-cache']), source)
+					: undefined,
 				onTile: (progress) => console.log(JSON.stringify({ phase: 'ground-tile', ...progress })),
 			},
 		);
