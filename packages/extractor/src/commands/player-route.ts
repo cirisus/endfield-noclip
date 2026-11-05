@@ -5,7 +5,6 @@ import { isDeepStrictEqual, parseArgs } from 'node:util';
 import { isObject, numberField } from '@endfield-noclip/formats/unity/values';
 
 import {
-	createGoalProjector,
 	createGroundPlanner,
 	jumpDuration,
 	planJumpRoute,
@@ -60,6 +59,7 @@ type Request = {
 	target: Vec3;
 	interaction?: InteractionGoal;
 	walls: Wall[];
+	waypoints?: Vec3[];
 };
 
 export const summary =
@@ -232,14 +232,19 @@ export const run = async (args: string[]): Promise<void> => {
 		return;
 	}
 	const arrival = { ...request.arrival, position: start.position };
-	const project = createGoalProjector(ground.surfaces);
 	const target = request.interaction ? null : targetSupport(ground.surfaces, request.target);
 	const goal = request.interaction ? request.target : target?.position;
 	if (!goal) {
 		await emit({ status: 'unavailable', reason: 'target-unmapped' });
 		return;
 	}
-	const candidates = project(goal, { maxVertical: 0.5, interaction: request.interaction });
+	console.log(JSON.stringify({ phase: 'ground-search', surfaces: ground.surfaces.length }));
+	const groundStart = performance.now();
+	let groundPlanner: ReturnType<typeof createGroundPlanner> | undefined = createGroundPlanner(
+		ground.surfaces,
+		options,
+	);
+	const candidates = groundPlanner.project(goal, { maxVertical: 0.5, interaction: request.interaction });
 	if (!candidates.length) {
 		await emit({ status: 'unavailable', reason: 'target-region-unmapped' });
 		return;
@@ -247,9 +252,6 @@ export const run = async (args: string[]): Promise<void> => {
 	// Publish supported walking feasibility before indexing airborne collision and
 	// spending the optional action-discovery budget. The parent keeps polling for
 	// a faster complete route while this atomic provisional result is available.
-	console.log(JSON.stringify({ phase: 'ground-search', surfaces: ground.surfaces.length }));
-	const groundStart = performance.now();
-	let groundPlanner = createGroundPlanner(ground.surfaces, options);
 	const walking = groundPlanner.plan([arrival], goal, {
 		interaction: request.interaction,
 	});
@@ -408,12 +410,15 @@ export const run = async (args: string[]): Promise<void> => {
 				bounds: ground.build.bounds,
 			},
 			goal,
+			project: groundPlanner.project,
 			interaction: request.interaction,
 			model,
 		});
 		diagnostics.refinement = { bounds: refined.bounds, addedSurfaces: refined.surfaces.length };
 		if (refined.surfaces.length) {
 			surfaces = [...surfaces, ...refined.surfaces];
+			// release the old large snapshot before allocating its replacement.
+			groundPlanner = undefined;
 			groundPlanner = createGroundPlanner(surfaces, options);
 		}
 		timing.refinement = performance.now() - refineStart;
@@ -430,6 +435,8 @@ export const run = async (args: string[]): Promise<void> => {
 		maxHorizontalDistance,
 		...limits,
 		maxShortcutCandidates: 512,
+		waypoints: request.waypoints,
+		onProgress: (progress) => console.log(JSON.stringify(progress)),
 		model,
 	});
 	timing.search = performance.now() - searchStart;
