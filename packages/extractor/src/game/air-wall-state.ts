@@ -407,3 +407,22 @@ export const completedWallState = (wall: unknown): Wall['state'] => {
 	}
 	return authoredWallState(wall);
 };
+
+/**
+ * @param wall an authored air wall and its recovered controller catalogue
+ * @returns open for controllable passage barriers; uncontrolled boundary defaults remain in force
+ */
+export const enabledWallState = (wall: unknown): Wall['state'] => {
+	if (!isObject(wall)) {
+		return 'unknown';
+	}
+	const controls = isObject(wall.completed) ? wall.completed.controllers : undefined;
+	if (
+		(typeof wall.scriptId === 'string' && wall.scriptId !== '0') ||
+		(isObject(wall.condition) && wall.condition.checkType === 1) ||
+		(Array.isArray(controls) && controls.length > 0)
+	) {
+		return 'inactive';
+	}
+	return typeof wall.defaultOn === 'boolean' ? (wall.defaultOn ? 'active' : 'inactive') : 'unknown';
+};

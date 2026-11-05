@@ -240,6 +240,12 @@ test('resolves only explicit completed mission gates and retains reset exclusion
 		resolved.options.walls.map((value) => value.state),
 		['inactive', 'active'],
 	);
+	const enabled = groundData(navigation, exclusions, { ...request, progression: 'fully-enabled' });
+	assert.equal(enabled.progression, 'fully-enabled');
+	assert.deepEqual(
+		enabled.options.walls.map((value) => value.state),
+		['inactive', 'active'],
+	);
 	assert.throws(
 		() => groundData(navigation, exclusions, { ...request, progression: 'arbitrary' }),
 		/snapshot/,

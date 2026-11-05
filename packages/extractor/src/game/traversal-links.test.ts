@@ -111,7 +111,7 @@ const setup = (surfaces: Surface[], walls: Wall[] = []) => {
 	};
 };
 
-test('fixed launch joins supported ground, preserves device timing and rejects reverse, disabled and obstructed uses', () => {
+test('fixed launch joins supported ground, preserves device timing and rejects reverse and obstructed uses under the fully enabled snapshot', () => {
 	const surfaces = [floor('start', 0, 0), floor('end', 8, 4)];
 	const entry = device('1', 'int_jumpmachine', [0, 0, 0]);
 	entry.placement.componentProperties.push([169, [parameter('input_affect', false)]]);
@@ -157,6 +157,15 @@ test('fixed launch joins supported ground, preserves device timing and rejects r
 	const blocked = setup(surfaces, [{ min: [3, -1, -3], max: [4, 20, 3], state: 'active' }]);
 	assert.equal(deviceConnections(input, blocked).connections.length, 0);
 	entry.placement.isLocked = true;
+	entry.placement.createState = 1;
+	entry.placement.properties.push(parameter('state', 0), parameter('has_power', false));
+	input.templates.int_jumpmachine = template('JumpMachineComponentData', [
+		...values,
+		parameter('use_electric', true),
+		parameter('has_power', false),
+	]);
+	assert.equal(deviceConnections(input, options).connections.length, 1);
+	entry.placement.properties.push(parameter('free_jump', true));
 	assert.equal(deviceConnections(input, options).connections.length, 0);
 	assert.throws(
 		() => deviceConnections({ ...input, source: { ...source, contentHash: 'other' } }, options),

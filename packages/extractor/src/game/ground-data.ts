@@ -2,7 +2,7 @@ import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import type { GroundArrival, GroundOptions, LocomotionOptions, Surface, Vec3, Wall } from '@oem/ganglia';
 
-import { completedWallState } from './air-wall-state.ts';
+import { completedWallState, enabledWallState } from './air-wall-state.ts';
 import { navigationPortals } from './navigation-portals.ts';
 
 const object = (value: unknown): Record<string, unknown> => {
@@ -74,7 +74,11 @@ export const groundData = (
 	}
 	const release = string(query.release),
 		state = string(query.state);
-	if (query.progression !== undefined && query.progression !== 'completed') {
+	if (
+		query.progression !== undefined &&
+		query.progression !== 'completed' &&
+		query.progression !== 'fully-enabled'
+	) {
 		throw new Error('unsupported route progression snapshot');
 	}
 	const selected = new Set(list(query.assets).map(string));
@@ -207,7 +211,12 @@ export const groundData = (
 		return {
 			min: vector(wall.min),
 			max: vector(wall.max),
-			state: query.progression === 'completed' ? completedWallState(wall) : 'unknown',
+			state:
+				query.progression === 'fully-enabled'
+					? enabledWallState(wall)
+					: query.progression === 'completed'
+						? completedWallState(wall)
+						: 'unknown',
 			padding: number(wall.padding),
 			points: list(wall.points).map((pointValue) => {
 				const p = list(pointValue);
@@ -328,7 +337,7 @@ export const groundData = (
 		source,
 		scene: string(nav.scene),
 		state,
-		...(query.progression === 'completed' ? { progression: query.progression } : {}),
+		...(query.progression !== undefined ? { progression: query.progression } : {}),
 		assets: [...selected],
 		areas: [...areas],
 		profileSource: query.profile === undefined ? 'most-common-character' : 'explicit',
