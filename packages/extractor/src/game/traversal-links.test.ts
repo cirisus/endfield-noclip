@@ -164,7 +164,7 @@ test('fixed launch joins supported ground, preserves device timing and rejects r
 	);
 });
 
-test('reciprocal rope approaches and exits require free supported feet and retain unresolved states', () => {
+test('all reciprocal ropes are enabled while support, collision and geometry constraints still apply', () => {
 	const surfaces = [floor('lower', 0, 0), floor('upper', 4, 6)];
 	const lower = device('1', 'int_rope_port', [1.8, 0, 0], '2'),
 		upper = device('2', 'int_rope_port', [1.8, 6, 0], '1');
@@ -197,5 +197,11 @@ test('reciprocal rope approaches and exits require free supported feet and retai
 	const route = planner.plan([{ id: 'start', position: [0, 0, 0], cost: 0, state: 'available' }], [4, 6, 0]);
 	assert.equal(route.status, 'complete');
 	lower.placement.properties.push(parameter('state', 0));
-	assert.equal(deviceConnections(input, options).connections.length, 0);
+	lower.placement.isLocked = true;
+	assert.equal(deviceConnections(input, options).connections.length, 1);
+	assert.equal(
+		deviceConnections(input, setup(surfaces, [{ min: [1, 1, -3], max: [4, 8, 3], state: 'active' }]))
+			.connections.length,
+		0,
+	);
 });

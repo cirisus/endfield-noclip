@@ -244,7 +244,8 @@ export const run = async (args: string[]): Promise<void> => {
 	// spending the optional action-discovery budget. The parent keeps polling for
 	// a faster complete route while this atomic provisional result is available.
 	const groundStart = performance.now();
-	const walking = createGroundPlanner(ground.surfaces, options).plan([arrival], goal, {
+	const groundPlanner = createGroundPlanner(ground.surfaces, options);
+	const walking = groundPlanner.plan([arrival], goal, {
 		interaction: request.interaction,
 	});
 	timing.ground = performance.now() - groundStart;
@@ -339,6 +340,7 @@ export const run = async (args: string[]): Promise<void> => {
 	);
 	timing.collision = performance.now() - indexStart;
 	if (values.devices) {
+		const deviceStart = performance.now();
 		const devices = deviceConnections(JSON.parse(await readFile(values.devices, 'utf8')), {
 			scene: ground.scene,
 			source: ground.source,
@@ -350,9 +352,11 @@ export const run = async (args: string[]): Promise<void> => {
 		});
 		options.connections = [...(options.connections ?? []), ...devices.connections];
 		diagnostics.devices = devices;
-		const connected = createGroundPlanner(ground.surfaces, options).plan([arrival], goal, {
+		const connected = groundPlanner.plan([arrival], goal, {
 			interaction: request.interaction,
+			connections: options.connections,
 		});
+		timing.devices = performance.now() - deviceStart;
 		if (connected.status === 'complete') {
 			limits.maxCandidates = 512;
 			if (walking.status !== 'complete' || connected.cost < walking.cost) {
@@ -372,6 +376,7 @@ export const run = async (args: string[]): Promise<void> => {
 	const searchStart = performance.now();
 	const result = planJumpRoute(ground.surfaces, world, [arrival], goal, {
 		...options,
+		groundPlanner,
 		interaction: request.interaction,
 		runAirSpeed,
 		maxSlope,
