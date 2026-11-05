@@ -17,11 +17,15 @@ import {
 } from '@endfield-noclip/package-format/particles';
 
 import type { Vec3 } from '../scene/camera.ts';
+import type { ResidentInstances } from '../streaming/stream-manager.ts';
 
-import { RowKind, packRowColor, rowInfo } from './instance-rows.ts';
+import { ROW_WORDS, RowBillboard, RowKind, packRowColor, rowInfo } from './instance-rows.ts';
 import {
 	PARTICLE_FLOATS,
+	ParticleField,
+	type ParticleRowStore,
 	ParticleSimulation,
+	type ParticleView,
 	dragged,
 	draggedFall,
 	evaluateMinMax,
@@ -31,6 +35,8 @@ import {
 	sheetTile,
 	splinePoint,
 	travelled,
+	turnedByBillboard,
+	screenLimited,
 	turnFromZ,
 } from './particles.ts';
 
@@ -86,6 +92,7 @@ const fields = (
 ): Omit<ParticleSystemInfo, 'emissionBound' | 'motion'> => ({
 	renderMode: ParticleRenderMode.Mesh,
 	stretch: null,
+	screenSize: null,
 	sizedByScale: true,
 	duration: 5,
 	looping: true,
@@ -575,6 +582,163 @@ describe('ParticleSimulation', () => {
 		assert.ok(Math.abs(ramped.position[2] - 0.25) < 1e-6, `${ramped.position[2]}`);
 		const [steady] = rising(constant(2));
 		assert.ok(Math.abs(steady.position[2] - 1) < 1e-6, `${steady.position[2]}`);
+	});
+});
+
+describe('ParticleField', () => {
+	/** @returns the row the field writes for one particle of a system on an identity emitter at the origin */
+	const written = (info: ParticleSystemInfo, view: Omit<ParticleView, 'time'>): Float32Array => {
+		let rows = new Float32Array(0);
+		const store: ParticleRowStore = {
+			allocateRows: (count) => ({ start: 0, count }),
+			freeRows: () => {},
+			writeRows: (_start, words) => {
+				rows = new Float32Array(words.buffer.slice(0, ROW_WORDS * 4));
+			},
+		};
+		const rowsF32 = new Float32Array(ROW_WORDS);
+		rowsF32.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
+		// the field reads only the emitter row, the block's origin and its slot
+		const instances = { rowsF32, origin: [0, 0, 0], blockSlot: 0 } as unknown as ResidentInstances;
+		const field = new ParticleField({ systems: [info] }, store);
+		assert.equal(field.rows(instances, 0, 0, 0, { time: 0, ...view }).length, 1);
+		return rows;
+	};
+	const center = (info: ParticleSystemInfo, view: Omit<ParticleView, 'time'>): number[] => {
+		const row = written(info, view);
+		return [row[3], row[7], row[11]];
+	};
+	const eye: Vec3 = [0, 0, -10];
+
+	it('lays a stretched particle back from its head, its width set by where the camera is, not how it turns', () => {
+		// Suiming's drifting fog (`smoke` in p_fxmap_map02_lv007_windice01): legacy stretched quads
+		const fog = system({
+			renderMode: ParticleRenderMode.Stretched,
+			stretch: { lengthScale: 2, velocityScale: 0 },
+			screenSize: { min: 0, max: 2 },
+			looping: false,
+			startLifetime: constant(5),
+			rate: constant(0),
+			bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+			shape: null,
+			startSize: [constant(1), constant(1), constant(1)],
+			startRotation: [constant(0), constant(0), constant(0)],
+			gravityModifier: constant(0),
+			velocity: {
+				linear: [constant(0), constant(1), constant(0)],
+				linearInWorld: false,
+				orbital: [constant(0), constant(0), constant(0)],
+				orbitalOffset: [0, 0, 0],
+				radial: constant(0),
+				speedModifier: constant(1),
+			},
+		});
+		const level = written(fog, {
+			eye,
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, 1, 0],
+			forward: [0, 0, 1],
+		});
+		// looking 30° down from the same place
+		const pitched = written(fog, {
+			eye,
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)],
+			forward: [0, -Math.sin(Math.PI / 6), Math.cos(Math.PI / 6)],
+		});
+		const near = (a: Float32Array, b: number[]) =>
+			b.every((value, i) => Math.abs(a[[0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11][i]] - value) < 1e-5);
+		// width along x, 2 m up the rise, its face's normal on the line of sight, the particle at the top end
+		const expected = [1, 0, 0, 0, 2, 0, 0, 0, 1, 0, -1, 0];
+		assert.ok(near(level, expected), [...level.subarray(0, 12)].join());
+		assert.ok(near(pitched, expected), [...pitched.subarray(0, 12)].join());
+	});
+
+	it('offsets a view-aligned mesh by its pivot in the camera-turned frame it is drawn in', () => {
+		// the blue talosite's shards: one mesh particle each, pivoted off centre, facing the camera
+		const shard = system({
+			looping: false,
+			startLifetime: constant(5),
+			rate: constant(0),
+			bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+			shape: null,
+			startSize: [constant(2), constant(2), constant(2)],
+			startRotation: [constant(0), constant(0), constant(0)],
+			gravityModifier: constant(0),
+			pivot: [0, 0.5, 0],
+		});
+		const level = center(shard, {
+			eye,
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, 1, 0],
+			forward: [0, 0, 1],
+		});
+		assert.deepEqual(level, [0, 1, 0]);
+		// looking straight down, the camera's up is the world's +z, so the offset goes there
+		const down = center(shard, {
+			eye,
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, 0, 1],
+			forward: [0, -1, 0],
+		});
+		assert.deepEqual(down, [0, 0, 1]);
+		// a world-aligned one keeps it in the world's frame
+		const world = center(
+			{ ...shard, alignment: ParticleAlignment.World },
+			{
+				eye,
+				widthPerDepth: 2,
+				right: [1, 0, 0],
+				up: [0, 0, 1],
+				forward: [0, -1, 0],
+			},
+		);
+		assert.deepEqual(world, [0, 1, 0]);
+	});
+});
+
+describe('turnedByBillboard', () => {
+	it('turns as row_basis turns a billboard row', () => {
+		const view = {
+			time: 0,
+			eye: [0, 0, 0],
+			widthPerDepth: 2,
+			right: [0, 0, -1],
+			up: [0.6, 0.8, 0],
+			forward: [0.8, -0.6, 0],
+		} satisfies ParticleView;
+		assert.deepEqual(turnedByBillboard(RowBillboard.None, view, [1, 2, 3]), [1, 2, 3]);
+		assert.deepEqual(turnedByBillboard(RowBillboard.Facing, view, [1, 0, 0]), [0, 0, -1]);
+		// kept upright: right stays level, up is the world's, forward is right × up
+		assert.deepEqual(
+			turnedByBillboard(RowBillboard.Upright, view, [0, 1, 1]).map((value) => value + 0),
+			[1, 1, 0],
+		);
+	});
+});
+
+describe('screenLimited', () => {
+	const view = {
+		time: 0,
+		eye: [0, 0, 0],
+		widthPerDepth: 2,
+		right: [1, 0, 0],
+		up: [0, 1, 0],
+		forward: [0, 0, 1],
+	} satisfies ParticleView;
+
+	it('holds the larger side to a fraction of the viewport width at the depth, scaling both', () => {
+		// 4 m away the viewport is 8 m wide, so half of it is 4 m: a 10 × 5 m quad shrinks to 4 × 2 m
+		assert.deepEqual(screenLimited([10, 5, 1], { min: 0, max: 0.5 }, view, [3, 0, 4]), [4, 2, 1]);
+		// small ones grow to the minimum, those within the limits stay
+		assert.deepEqual(screenLimited([0.5, 1, 1], { min: 0.25, max: 0.5 }, view, [0, 0, 4]), [1, 2, 1]);
+		assert.deepEqual(screenLimited([3, 1, 1], { min: 0, max: 0.5 }, view, [0, 0, 4]), [3, 1, 1]);
+		// behind the camera, nothing
+		assert.deepEqual(screenLimited([3, 1, 1], { min: 0, max: 0.5 }, view, [0, 0, -4]), [0, 0, 0]);
 	});
 });
 

@@ -663,12 +663,13 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 			tn = mix(tn, layer_normal(draw, tn, layer_bump), cover);
 		}
 		n = normalize(t * tn.x + b * tn.y + n * tn.z);
-		if (has_normal && (flags & NORMAL_ROUGHNESS) != 0u) {
-			roughness = mix(draw.surface.x, draw.surface.y, packed.b);
-		}
 	} else if (top_layer) {
 		raw_cover = top_coverage(draw, n.y);
 		cover = layer_coverage(draw, raw_cover, layer.a);
+	}
+	// read whether or not the mesh has tangents: tangentless meshes lose only the normal's bump
+	if (has_normal && (flags & NORMAL_ROUGHNESS) != 0u) {
+		roughness = mix(draw.surface.x, draw.surface.y, packed.b);
 	}
 	// `_LAYERBLEND_MOSS` (neutral without it): the fuzzy shading faces the blended normal to the view, and
 	// the coverage edge tips the normal down
