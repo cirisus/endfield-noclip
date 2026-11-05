@@ -460,3 +460,32 @@ interruption. A `sprintThrough` whitelist preserves gait only for supported mode
 Allocation search compares run-level choices with nondominated resource labels, capped
 at 256 with an explicit truncation flag. Interior activation-time optimization and
 resource-optimal selection across all spatial corridors remain unresolved.
+
+## fully enabled traversal and sparse physical construction
+
+`groundData` accepts `progression: 'fully-enabled'` as an explicit planning assumption.
+controllable air walls are open, including mission gates and walls with an owned or
+recovered script controller. uncontrolled boundary defaults remain in force, and
+reset exclusions retain their normal behavior. this policy is separate from inferring
+the actual completed-game state. `openTraversalPicks` applies the corresponding viewer
+preset to doors and activations while retaining derived controls and physical supports.
+
+`player-route` now assumes all supported rope and fixed-target launch devices are
+enabled, unlocked and powered. ordinary and electric fixed-target devices share the
+same supported-endpoint and swept-trajectory checks. unsupported motion controls,
+unknown geometry and blocked trajectories do not become executable connections.
+
+local goal-access refinement uses the same selected collision and body at finer
+horizontal resolution. it adds only wholly missing support components. combining
+partial detail meshes can invalidate portal ownership, so overlapping components are
+excluded until a stitched replacement is available. restored narrow tops still need
+stationary clearance and complete motion validation. the ordinary three-box example
+returns a 33.80-second launch-and-jump route, against its earlier 51.19-second rope
+detour. the matching cached-ground command takes 66.80 seconds rather than 173.71;
+these are model and single-run computation measurements, not in-game observations.
+
+`player-ground --tiles <x,z;x,z>` selects physical tiles on the existing global grid.
+the complete collision selection and rectangular collision scope remain available,
+while only the proposed corridor receives detailed ground construction. unselected
+tiles remain unmapped. per-tile progress includes completed and total counts. this
+supports coarse direction proposals before fine support, collision and action work.
