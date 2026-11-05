@@ -279,8 +279,8 @@ counted separately; selected devices retain whether they are referenced by that 
 rope pairs require reciprocal authored `target` references in the same level, with distinct
 heights. no proximity matching is used. each pair names ascent by rope and descent by drop,
 following the requested traversal rule; ground attachment, unlock state, trajectory and
-landing validation remain unresolved. pivots and rope render anchors are not automatically
-player stand positions. this catalogue does not add passable graph edges yet.
+landing validation are separate from this catalogue. pivots and rope render anchors are
+not automatically player stand positions.
 
 launch device parameters retain height, free-jump/input controls and collision flags when
 authored; acceleration parameters retain their own duration/cooldown scopes. an acceleration
@@ -297,6 +297,42 @@ pairs (60 / 158), 158 launch devices (59 / 99), and 40 acceleration devices (9 /
 all selected rope endpoints have reciprocal targets. map02 has 32 automatic-spawn
 references; none name a selected movement device in this install. these are authored
 input counts, not proof that every device is unlocked or that its landing is safe.
+
+`player-route --devices <traversal-export>` now imports fixed device macro-actions
+from that matching scene/build. the selected snapshot combines completed mission
+and quest gates with authored enabled/unlocked device states. power, unresolved
+overrides and unsupported conditions do not become available merely through task
+completion. the pure `--ground-only` stage still measures walking alone.
+
+reciprocal vertical ropes provide directed ascent actions with approach, a timed
+startup pause, upward travel and a supported exit. entry candidates use the shared
+effective interaction-trigger resolver. the standing capsule, full polyline and
+active/unknown wall exclusions are checked. endpoint projection stays within body
+radius. travel uses the configured speed and startup duration. this finite entry/exit
+sampling is a model of the complete macro-action, pending in-game motion validation.
+
+ordinary fixed-target bounce devices use their own target and height, with a
+minimum three-metre apex margin above the target in the supported height-limited
+model. the matching movement gravity, falling gravity and apex interval supply
+flight timing. neutral input supplies a fixed trajectory. the imported jump-machine
+component override can disable air input without disabling the device. both support
+ends and the swept capsule are checked even when the device allows collision bypass.
+free-direction, electric, vertical-only and other unsupported device models retain
+explicit unresolved outcomes. no reverse launch edge is inferred.
+
+the actions enter Ganglia's existing connection interface and participate in
+reachability, resource timing, shortcut comparison and timed replay. a feasible
+device route is published before optional jump optimization. diagnostics retain
+the device id, selected snapshot, accepted trajectories and rejected device reasons.
+
+validation on the current build includes a physical rope route from point
+300020256 to 300020282, with walking before and after ascent through the reciprocal
+pair. walking alone has no verified route in that rectangle; the device route takes
+5.93 model seconds. the normal Atlos nearest-arrival query for point 3500070545
+selects device 3500031283 and a small jump, totaling 22.16 model seconds. its physical
+walking baseline takes 27.64 seconds. the initial normal query returned a candidate
+at 0.74 seconds and completed physical construction/action comparison at 39.36
+seconds. these are computed candidates, with in-game operation still unverified.
 
 ## streamed collision inputs
 

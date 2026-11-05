@@ -23,6 +23,7 @@ import type { CollisionGeometry } from '@oem/ganglia/build';
 import { createCollisionWorld } from '@oem/ganglia/collision';
 
 import { walkableCollisionIndices, type CollisionRecord } from '../game/collision-ground.ts';
+import { deviceConnections } from '../game/traversal-links.ts';
 
 type Source = { buildGuid: string; contentHash: string };
 type Profile = { radius: number; height: number };
@@ -61,9 +62,9 @@ type Request = {
 };
 
 export const summary =
-	'compare bounded ground, jump and drop action combinations with physical collision checks';
+	'compare bounded ground, device, jump and drop action combinations with physical collision checks';
 export const usage =
-	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result> [--ground-only]';
+	'usage: endfield-extract player-route --ground <file> --collision <file> --movement-settings <file> --request <file> -o <result> [--ground-only] [--devices <file>]';
 
 const vector = (point: unknown): point is Vec3 =>
 	Array.isArray(point) && point.length === 3 && point.every(Number.isFinite);
@@ -109,6 +110,7 @@ export const run = async (args: string[]): Promise<void> => {
 			request: { type: 'string' },
 			output: { type: 'string', short: 'o' },
 			'ground-only': { type: 'boolean', default: false },
+			devices: { type: 'string' },
 		},
 	});
 	if (
@@ -336,6 +338,36 @@ export const run = async (args: string[]): Promise<void> => {
 		{ bounds },
 	);
 	timing.collision = performance.now() - indexStart;
+	if (values.devices) {
+		const devices = deviceConnections(JSON.parse(await readFile(values.devices, 'utf8')), {
+			scene: ground.scene,
+			source: ground.source,
+			surfaces: ground.surfaces,
+			world,
+			settings,
+			profile,
+			walls: options.walls,
+		});
+		options.connections = [...(options.connections ?? []), ...devices.connections];
+		diagnostics.devices = devices;
+		const connected = createGroundPlanner(ground.surfaces, options).plan([arrival], goal, {
+			interaction: request.interaction,
+		});
+		if (connected.status === 'complete') {
+			limits.maxCandidates = 512;
+			if (walking.status !== 'complete' || connected.cost < walking.cost) {
+				await emit(
+					{
+						status: 'candidate',
+						route: connected,
+						connections: devices.connections,
+						groundedTarget: connected.points.at(-1),
+					},
+					true,
+				);
+			}
+		}
+	}
 	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
 	const searchStart = performance.now();
 	const result = planJumpRoute(ground.surfaces, world, [arrival], goal, {
