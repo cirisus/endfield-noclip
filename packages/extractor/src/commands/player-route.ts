@@ -247,6 +247,7 @@ export const run = async (args: string[]): Promise<void> => {
 	// Publish supported walking feasibility before indexing airborne collision and
 	// spending the optional action-discovery budget. The parent keeps polling for
 	// a faster complete route while this atomic provisional result is available.
+	console.log(JSON.stringify({ phase: 'ground-search', surfaces: ground.surfaces.length }));
 	const groundStart = performance.now();
 	let groundPlanner = createGroundPlanner(ground.surfaces, options);
 	const walking = groundPlanner.plan([arrival], goal, {
@@ -344,6 +345,7 @@ export const run = async (args: string[]): Promise<void> => {
 	let knownRoute = walking;
 	let knownConnections = options.connections ?? [];
 	if (values.devices) {
+		console.log(JSON.stringify({ phase: 'device-links' }));
 		const deviceStart = performance.now();
 		const devices = deviceConnections(JSON.parse(await readFile(values.devices, 'utf8')), {
 			scene: ground.scene,
@@ -393,6 +395,7 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	let surfaces = ground.surfaces;
 	if (ground.build?.cellSize !== undefined && ground.build.cellHeight !== undefined && ground.build.bounds) {
+		console.log(JSON.stringify({ phase: 'goal-refinement' }));
 		const refineStart = performance.now();
 		const refined = await refineGoalGround(geometry, surfaces, {
 			build: {
