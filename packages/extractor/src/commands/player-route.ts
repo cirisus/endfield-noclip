@@ -55,7 +55,7 @@ type Movement = {
 type Request = {
 	scene: string;
 	source: Source;
-	arrival: GroundArrival;
+	arrival: GroundArrival & { groundRange?: [number, number] };
 	target: Vec3;
 	interaction?: InteractionGoal;
 	walls: Wall[];
@@ -226,12 +226,41 @@ export const run = async (args: string[]): Promise<void> => {
 			await rm(temporary, { force: true });
 		}
 	};
-	const start = projectPoint(ground.surfaces, request.arrival.position, { maxVertical: 0.5 });
-	if (!start || request.arrival.state !== 'available') {
-		await emit({ status: 'unavailable', reason: start ? 'arrival-unavailable' : 'arrival-unmapped' });
+	// Authored landings may settle down by the player's step distance. A factory
+	// centre is a volume seed instead: its source bounds explicitly constrain the
+	// vertical projection. Neither rule changes general route floor matching.
+	const settling = Math.max(0.5, numberField(settings, '_stepDownOffset') + (ground.build?.cellHeight ?? 0));
+	const range = request.arrival.groundRange ?? [
+		request.arrival.position[1] - settling,
+		request.arrival.position[1] + 0.5,
+	];
+	if (!Array.isArray(range) || range.length !== 2 || !range.every(Number.isFinite) || range[0] > range[1]) {
+		throw new Error('invalid arrival support range');
+	}
+	const maxVertical = Math.max(...range.map((height) => Math.abs(height - request.arrival.position[1])));
+	let supportedStart: ReturnType<typeof projectPoint> = null;
+	for (const surface of ground.surfaces) {
+		const start = projectPoint([surface], request.arrival.position, { maxVertical });
+		if (
+			start &&
+			start.position[1] >= range[0] &&
+			start.position[1] <= range[1] &&
+			(!supportedStart ||
+				Math.abs(start.position[1] - request.arrival.position[1]) <
+					Math.abs(supportedStart.position[1] - request.arrival.position[1]))
+		) {
+			supportedStart = start;
+		}
+	}
+	if (!supportedStart || request.arrival.state !== 'available') {
+		await emit({
+			status: 'unavailable',
+			reason: supportedStart ? 'arrival-unavailable' : 'arrival-unmapped',
+		});
 		return;
 	}
-	const arrival = { ...request.arrival, position: start.position };
+	const arrival = { ...request.arrival, position: supportedStart.position };
+	diagnostics.arrival = { requested: request.arrival.position, grounded: arrival.position };
 	const target = request.interaction ? null : targetSupport(ground.surfaces, request.target);
 	const goal = request.interaction ? request.target : target?.position;
 	if (!goal) {

@@ -96,7 +96,7 @@ export const run = async (args: string[]): Promise<void> => {
 						throw new Error('invalid factory region');
 					}
 					for (const area of region.areas) {
-						if (!isObject(area) || area.isMain !== false) {
+						if (!isObject(area) || typeof area.isMain !== 'boolean') {
 							continue;
 						}
 						const stageData: unknown = area.levelData;
@@ -145,6 +145,7 @@ export const run = async (args: string[]): Promise<void> => {
 							availability: 'unknown',
 							approximate: true,
 							requiresGroundProjection: true,
+							groundRange: [Number(start[1]), Number(start[1]) + Number(size[1])],
 							areaLevel: Number(stage.level),
 						});
 					}

@@ -52,6 +52,7 @@ const fixture = (bounds?: { min: number[]; max: number[] }) => ({
 				path: 'MovementSetting/MovementSetting_Default.asset',
 				settings: {
 					_gravity: 10,
+					_stepDownOffset: 0.6,
 					_fallingGravity: 10,
 					_maxJumpHeight: 1,
 					_maxFallingSpeed: 10,
@@ -235,7 +236,13 @@ test('searches a many-face interaction goal once and retains the reachable landi
 	const result = await execute(data, { target: [5, 1, 1], interaction: { radius: 1.5 } });
 	assert.equal(result.status, 'candidate');
 	assert.equal(result.diagnostics.strategy, 'surface-action-graph');
-	assert.equal(result.diagnostics.searches.length, 2);
+	// local shortcut refinement is a separate post-feasibility phase; it must not
+	// multiply the two broad searches by the number of interaction faces.
+	assert.equal(
+		result.diagnostics.searches.filter((search: { reason: string }) => search.reason !== 'route-shortcuts')
+			.length,
+		2,
+	);
 	assert.ok(result.diagnostics.searches[0].goalFaces > 8);
 	assert.equal(result.diagnostics.searches[0].reason, 'searched');
 	assert.ok(result.diagnostics.searches[0].accepted > 0);
@@ -295,4 +302,37 @@ test('retains the selected physical build extent around empty air', async () => 
 	assert.deepEqual(scope.bounds.min, [-2 - scope.padding, -3 - scope.padding]);
 	assert.deepEqual(scope.bounds.max, [12 + scope.padding, 13 + scope.padding]);
 	await assert.rejects(execute(fixture({ min: [2, 0], max: [1, 10] })), /build bounds/);
+});
+
+test('settles authored arrivals within the player step-down limit without snapping to another storey', async () => {
+	for (const [height, expected] of [
+		[0.54, 'candidate'],
+		[0.59, 'candidate'],
+		[1.8, 'unavailable'],
+		[-0.54, 'unavailable'],
+	] as const) {
+		const data = fixture();
+		data.request.arrival.position[1] = height;
+		const result = await execute(data, {}, 'walking');
+		assert.equal(result.status, expected);
+		if (expected === 'candidate') {
+			assert.deepEqual(result.route.points[0], [1, 0, 1]);
+			assert.equal(result.diagnostics.arrival.requested[1], height);
+		} else {
+			assert.equal(result.reason, 'arrival-unmapped');
+		}
+	}
+});
+
+test('factory centres project only inside their explicit source volume and still obey exclusions', async () => {
+	const data = fixture();
+	const arrival = { ...data.request.arrival, position: [1, 12, 1], groundRange: [-1, 20] };
+	const result = await execute(data, { arrival }, 'walking');
+	assert.equal(result.status, 'candidate');
+	assert.deepEqual(result.route.points[0], [1, 0, 1]);
+	const outside = await execute(data, { arrival: { ...arrival, groundRange: [2, 20] } }, 'walking');
+	assert.equal(outside.reason, 'arrival-unmapped');
+	await assert.rejects(execute(data, { arrival: { ...arrival, groundRange: [20, -1] } }), /support range/);
+	data.ground.options.walls = [{ min: [0, -1, 0], max: [2, 2, 2], state: 'active' }];
+	assert.equal((await execute(data, { arrival }, 'walking')).status, 'unavailable');
 });
