@@ -967,6 +967,11 @@ export const loadInteractiveFacilities = async (
 		}
 		const destruction = destructible.has(row.template) ? `destruction:${row.id}` : null;
 		const reward = rewards.get(logicId);
+		const gates = [
+			...switches.map((control) => ({ control, mask: 2 })),
+			...(destruction ? [{ control: destruction, mask: 1 }] : []),
+			...(reward ? [{ control: reward, mask: 2 }] : []),
+		];
 		// a blight core shows while its erosion root loads, so both go when the core is destroyed
 		const erosion = erosionCores.get(logicId);
 		const gate = (visibility: ConditionalSetInfo): ConditionalSetInfo => {
