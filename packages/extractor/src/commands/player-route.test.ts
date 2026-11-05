@@ -77,7 +77,7 @@ const fixture = (bounds?: { min: number[]; max: number[] }) => ({
 const execute = async (
 	data: ReturnType<typeof fixture>,
 	extra: Record<string, unknown> = {},
-	groundOnly = false,
+	stage: 'all' | 'walking' | 'devices' = 'all',
 ) => {
 	const directory = await mkdtemp(join(tmpdir(), 'player-route-'));
 	try {
@@ -100,7 +100,7 @@ const execute = async (
 			join(directory, 'request.json'),
 			'-o',
 			output,
-			...(groundOnly ? ['--ground-only'] : []),
+			...(stage === 'all' ? [] : [stage === 'walking' ? '--ground-only' : '--devices-only']),
 		]);
 		return JSON.parse(await readFile(output, 'utf8'));
 	} finally {
@@ -121,11 +121,19 @@ test('plans arbitrary ground endpoints through the CLI and retains source/covera
 });
 
 test('the foreground walking stage finishes before airborne collision indexing', async () => {
-	const result = await execute(fixture(), {}, true);
+	const result = await execute(fixture(), {}, 'walking');
 	assert.equal(result.status, 'candidate');
 	assert.equal(result.optimizing, false);
 	assert.ok(result.route.segments.every((segment: { mode: string }) => segment.mode === 'walk'));
 	assert.equal(result.diagnostics.collisionScope, undefined);
+});
+
+test('known-action queries finish without jump discovery when no device inputs are supplied', async () => {
+	const result = await execute(fixture(), {}, 'devices');
+	assert.equal(result.status, 'candidate');
+	assert.equal(result.optimizing, false);
+	assert.equal(result.diagnostics.collisionScope, undefined);
+	assert.equal(result.diagnostics.searches, undefined);
 });
 
 test('plans to the supplied interaction region instead of snapping an outside marker onto another floor', async () => {
