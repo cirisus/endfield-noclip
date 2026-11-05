@@ -111,11 +111,11 @@ independently; no implicit reverse jump or unlimited downward drop is added.
 `travel-points -o <file>` exports camp teleport landing positions from the current installation,
 resolving scene ownership through level configuration. positions of map icons are not substituted for
 landing positions. unmapped levels are reported separately. availability is unknown until supplied
-by the caller's player state or explicit planning assumptions. the six non-main industrial-base areas are also exported using the horizontal centre of their
+by the caller's player state or explicit planning assumptions. all eight authored industrial-base areas, including the two main areas, are also exported using the horizontal centre of their
 maximum authored expansion bounds. their vertical centre is only a projection seed, never a claimed
 ground height. factory regions are player-accessible; absence from an AI navigation bake is missing
 coverage, never a player exclusion. buildings, holes, air walls and other physical constraints still
-apply inside those regions. these records are marked approximate and require ground projection; zero-valued
+apply inside those regions. these records are marked approximate and carry their source vertical bounds for ground projection; zero-valued
 factory-region origins are not used.
 
 these exports include build GUID/content hash and contain local game-derived data; keep outputs
@@ -127,7 +127,7 @@ packed package. camera headings and baked views belong to this repository's extr
 current map01 extraction decoded all 1,085 assets / 499,357 polygons. current wall export found 158
 map01 and 346 map02 walls. eleven map02 walls have the navigation-obstacle flag disabled, so an AI
 navmesh alone cannot be treated as proof of player passage. map travel data yielded 131 mapped camps
-and one unmapped test-level entry, plus six industrial-base centre seeds. these counts are extraction evidence, not runtime-state validation.
+and one unmapped test-level entry, plus eight industrial-base centre seeds. these counts are extraction evidence, not runtime-state validation.
 the reset-volume export additionally found 108 map01 and 292 map02 volumes (including two temporary
 zones without payloads). full exports completed with the current metadata layout. player movement
 has not yet been reproduced or validated against a collision scene.
@@ -529,3 +529,18 @@ host so Node does not interpret the coordinate list as another command-line opti
 the broad shortcut pass retains its complete existing comparison budget. a bounded
 local pass uses spare total-query candidates afterward, compares both its independent
 route and the merged action graph, and cannot replace a faster complete incumbent.
+
+
+### arrival projection regression check
+
+physical arrival placement permits ordinary downward settling up to the movement setting's step-down
+distance plus one vertical voxel. upward placement retains the existing 0.5 m bound. this tolerance
+applies only to the authored arrival, not ordinary floor matching, jumps or interaction endpoints.
+factory-centre seeds instead use their exported vertical volume; they must resolve to physical support
+inside it. exclusions still apply after projection. the route diagnostics retain requested and grounded
+positions. an unmapped arrival is an origin failure, not evidence that a wider collision region is needed.
+
+rechecking the two reported formerly reachable cases on current physical tiles restored complete
+routes of 8.20 and 22.63 model seconds without rebuilding wider terrain. the latter is not a shortest-path
+claim: a separate wider candidate comparison found a 15.24-second descent, so optimization coverage
+remains distinct from reachability. the historical 13.44-second result used an earlier support mesh.
