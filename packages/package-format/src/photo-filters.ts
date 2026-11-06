@@ -7,7 +7,7 @@ export interface PhotoFilters {
 	/** separate from the scene package contract */
 	format: 'endfield-noclip.photo-filters';
 	/** incompatible photo-library changes increment this version */
-	version: 2;
+	version: 3;
 	/** table order, with names resolved from the install */
 	filters: PhotoFilter[];
 }

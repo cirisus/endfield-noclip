@@ -70,6 +70,8 @@ const particles = (value: unknown): boolean => {
 		value.motion.kind !== 'free' ||
 		value.motion.velocity !== null ||
 		value.motion.clamp !== null ||
+		value.motion.forces !== null ||
+		value.customData !== null ||
 		value.ringBuffer !== null ||
 		!Array.isArray(value.bursts) ||
 		value.bursts.length !== 0 ||
@@ -255,7 +257,7 @@ export const parsePhotoFilters = (value: unknown): PhotoFilters => {
 	if (
 		!object(value) ||
 		value.format !== 'endfield-noclip.photo-filters' ||
-		value.version !== 2 ||
+		value.version !== 3 ||
 		!Array.isArray(value.filters) ||
 		value.filters.length > 64
 	) {
