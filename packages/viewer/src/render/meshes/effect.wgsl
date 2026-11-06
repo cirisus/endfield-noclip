@@ -1,3 +1,5 @@
+override after_dof: bool = false;
+
 // scene effect meshes (looks/effects/, docs/game-data/effects.md), accumulated into the transparent pass's
 // targets like alpha-blended meshes: VFXBaseV2 surfaces and VFXWater sheets (`fs_effect`), VFXDecal boxes
 // (`fs_effect_decal`), FogSimple mist cards (`fs_mist_card`) and VFXFakeVolumeFog boxes (`fs_mist_volume`); lit
@@ -478,7 +480,7 @@ fn fx_scene_depth(px: vec2i) -> f32 {
 fn fx_accumulate(premultiplied: vec3f, alpha: f32, distance: f32, unfogged: f32) -> EffectAccumulated {
 	// mesh.wgsl's weighting
 	let x = distance / 20.0;
-	let weight = max(0.01, 1.0 / (1.0 + x * x));
+	let weight = select(max(0.01, 1.0 / (1.0 + x * x)), 1.0, after_dof);
 	var out: EffectAccumulated;
 	out.sum = vec4f(premultiplied * weight, alpha * weight);
 	out.revealage = vec4f(alpha);
@@ -504,8 +506,7 @@ fn fx_layer_bases(in: EffectOut) -> FxBases {
 // VFXBaseV2 surfaces: the texture stack tinted by the vertex colour, brightened above a threshold, faded by the
 // Fresnel term, where the surface nears what lies behind it (soft blend), and by the near camera fade. VFXWater
 // sheets branch off to `water_sheet`
-@fragment
-fn fs_effect(in: EffectOut, @builtin(front_facing) front: bool) -> EffectAccumulated {
+fn layer_effect(in: EffectOut, front: bool) -> EffectAccumulated {
 	let id = in.draw;
 	let dx = dpdx(in.uv);
 	let dy = dpdy(in.uv);
@@ -1257,8 +1258,7 @@ fn fx_surface_normal(px: vec2i) -> vec3f {
 // VFXDecal boxes, drawn by their back faces without a depth test: each covered pixel finds the main pass's
 // surface along its view ray, and the texture stack projects onto it down the box's y, faded towards the
 // box's sides and top and bottom, on surfaces facing away from the projection, and near the camera
-@fragment
-fn fs_effect_decal(in: EffectOut) -> EffectAccumulated {
+fn layer_effect_decal(in: EffectOut) -> EffectAccumulated {
 	let id = in.draw;
 	let px = vec2i(in.position.xy);
 	let scene_depth = fx_scene_depth(px);
@@ -1579,8 +1579,7 @@ fn mist_fade(range: vec2f, depth: f32) -> f32 {
 // `HGRP/FogSimple` mist cards: the main texture's red broken up by the noise texture, times a scrolling wind
 // sample of it (on colour and opacity both, as the game's), in the flat colour or lit by the sun; faded by view
 // depth, towards the card's top (object y) and where it nears what lies behind it
-@fragment
-fn fs_mist_card(in: EffectOut) -> EffectAccumulated {
+fn layer_mist_card(in: EffectOut) -> EffectAccumulated {
 	let id = in.draw;
 	let uv = in.uv.xy;
 	let dx = dpdx(uv);
@@ -1631,8 +1630,7 @@ fn fs_mist_card(in: EffectOut) -> EffectAccumulated {
 // the nearer of the surface behind and the back face, the fog's thickness along the ray towards the camera
 // through the unit cube (or up to the camera inside it), faded towards the box's edges and top, with distance and,
 // for boxes the camera can't walk into, close to them
-@fragment
-fn fs_mist_volume(in: EffectOut) -> EffectAccumulated {
+fn layer_mist_volume(in: EffectOut) -> EffectAccumulated {
 	let id = in.draw;
 	let px = vec2i(in.position.xy);
 	let face = dot(in.rel, frame.view_forward.xyz);
@@ -1831,3 +1829,47 @@ fn light_beam(in: EffectOut) -> EffectAccumulated {
 }
 
 // #endregion
+
+@fragment
+fn fs_effect(in: EffectOut, @builtin(front_facing) front: bool) -> EffectAccumulated {
+	return layer_effect(in, front);
+}
+
+@fragment
+fn fs_effect_after_dof(in: EffectOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+	let layer = layer_effect(in, front);
+	return vec4f(layer.sum.rgb + layer.glow.rgb, layer.revealage.x);
+}
+
+@fragment
+fn fs_effect_decal(in: EffectOut) -> EffectAccumulated {
+	return layer_effect_decal(in);
+}
+
+@fragment
+fn fs_effect_decal_after_dof(in: EffectOut) -> @location(0) vec4f {
+	let layer = layer_effect_decal(in);
+	return vec4f(layer.sum.rgb + layer.glow.rgb, layer.revealage.x);
+}
+
+@fragment
+fn fs_mist_card(in: EffectOut) -> EffectAccumulated {
+	return layer_mist_card(in);
+}
+
+@fragment
+fn fs_mist_card_after_dof(in: EffectOut) -> @location(0) vec4f {
+	let layer = layer_mist_card(in);
+	return vec4f(layer.sum.rgb + layer.glow.rgb, layer.revealage.x);
+}
+
+@fragment
+fn fs_mist_volume(in: EffectOut) -> EffectAccumulated {
+	return layer_mist_volume(in);
+}
+
+@fragment
+fn fs_mist_volume_after_dof(in: EffectOut) -> @location(0) vec4f {
+	let layer = layer_mist_volume(in);
+	return vec4f(layer.sum.rgb + layer.glow.rgb, layer.revealage.x);
+}

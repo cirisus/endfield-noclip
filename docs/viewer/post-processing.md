@@ -73,3 +73,93 @@ grading.
 without the colour curves, which the package doesn't carry. where the game bakes grading and curve
 into a LogC LUT, the viewer evaluates them per pixel. it also offers Khronos PBR Neutral and a
 clamp, for separating lighting errors from grading.
+
+the independent filters panel groups exposure compensation, automatic exposure, tonemapping, bloom
+and vignette. it uses the existing renderer options; resetting it restores only these five defaults.
+hosts can persist these settings through their normal view record. it shares panel chrome and form
+controls with photography and display settings.
+
+## photography
+
+[`render/depth-of-field.ts`](../../packages/viewer/src/render/depth-of-field.ts) adds optional
+physical defocus before lens flare and temporal antialiasing. the photography panel controls
+aperture (f/1.4–f/32) and focus-plane distance in metres; the existing lens controls still determine
+focal length. `Viewer.focusAt` focuses on a world point along the camera's forward axis, rejecting
+points behind the near plane. this changes photography settings, not the environment profile.
+
+photography uses a full-resolution circular filter, with separate foreground coverage and background
+filtering. the 24 mm sensor height agrees with the focal-length readout at any aspect ratio.
+foreground and background radius limits are 10 pixels at a 1440-pixel render height; the temporal
+shaping input is 0.3. the shared scene water-depth pass prevents focusing through water to its bed.
+camera-relative reprojection includes the current and previous antialiasing jitter. camera cuts,
+lens edits, resizing and disabling the effect invalidate history; disabling it releases its render
+targets. the lens effect itself needs no new scene resources.
+
+materials with an authored queue from 3660 through 3740 draw after focus blur and before lens flares
+and TAA, including when focus blur is disabled. these layers leave the ordinary transparent pass;
+they use direct premultiplied blending, retaining additive emission, rather than weighted OIT.
+instances sort by queue then descending camera distance. particle instances currently share their
+emitter's sorting distance. multiply and refraction retain their own blend modes. scene depth stays
+read-only, and refraction samples a separate copy made after focus blur. unsupported materials keep
+their diagnostic appearance.
+
+the packer retains `renderQueue` in ready material records. earlier version-49 packages without that
+optional field retain their previous transparent path; repack to enable authored post-focus ordering.
+no material name or shader-name heuristic substitutes for the queue.
+
+current limits: reprojection accounts for camera motion, not moving-object motion. the viewer uses
+half-float intermediates throughout, so rounding differs from packed colour intermediates. validation
+is against recovered code and data plus GPU execution; it does not establish pixel-identical output.
+these limits are independent of the
+existing differences in scene content, lighting and other post effects.
+
+the bottom camera readout shows focal length in millimetres and the selected f-number. it marks
+depth of field as off when disabled, and uses the same sensor-height conversion as the blur pass.
+### photo filters
+
+`pnpm extract filters --config endfield.local.json -o out/photo-filters.json` exports an optional
+photo library from the same install. open the viewer with
+`?package=map02&filters=/packages/photo-filters.json` to load its picker. `none` restores the
+scene's grading. the LUT contribution slider multiplies the authored lookup contribution only; it
+does not fade grading, bloom, vignette or particle effects. filters remain selected when changing
+levels.
+
+hosts can supply the optional `filtersUrl` prop on `ViewerApp`. this library URL takes
+precedence over the `filters` query parameter.
+
+the final pass samples the exported colour strip after grading and tonemapping, in sRGB display
+space, interpolating adjacent blue slices. this follows URP's external-LUT convention; a pixel
+comparison with the game's photo mode remains outstanding. the linear BC7 format does not cause an
+automatic sRGB decode. only the selected LUT is allocated; changing contribution reuses it. debug
+material views bypass the post chain as before.
+
+active grading sections replace scene grading after spatial volume blending. supported vignette and
+high-quality bloom parameters keep the scene's non-overridden values, including bloom tint. the
+scene's bloom and vignette toggles still apply. Warm and Pale now use their authored bloom
+overrides; their character-only lighting volume needs a character shading path and remains
+unsupported.
+
+Black and Gold also exports its additive particle emitter and BC7 sprite atlas. the viewer reuses
+the scene particle evaluator for emission, lifetime curves, size, rotation, colour and atlas frames.
+the effect is anchored at the camera's first selection pose; switching away and back resumes that
+anchor rather than making the particles follow the camera. its clock is the viewer's rendered-frame
+animation time; the Animate switch pauses it with the scene. it draws depth-tested HDR
+billboards before temporal AA, bloom and grading, cancelling post exposure when the source material
+requests it. only selected emitters allocate textures and buffers; animation reuses scene selection
+unless visible scene particles need updating too. the shared evaluator's 1024-particle cap still
+applies. Unity's noise module is not evaluated and remains in the filter's partial-support notice.
+this path accepts only simple additive, view-aligned billboards without gravity, speed limits,
+bursts, pivot offsets or extra motion modules; other materials and emitters are reported by the
+extractor.
+
+the underlying scene renderer's existing grading, bloom and vignette differences still apply.
+
+the library uses the separate `endfield-noclip.photo-filters` contract, version 3, in
+`package-format/photo-filters.ts`. its JSON contains names, grading, vignette and optional bloom
+overrides, optional particle emitters and texture mips, unsupported-feature notes and base64
+GPU-ready LUT blocks. version 3 uses the v65 particle motion union, emission bounds, per-emitter
+delay and resolved scale. version-1 and version-2 libraries are rejected and must be re-exported. the loader checks
+supported particle layouts and bounds texture dimensions,
+mip sizes and samplers before GPU allocation. it does not alter scene archives or their package
+version. extracted libraries are game content and remain outside git; a static host must serve the
+exported JSON separately. the viewer never reads game files or imports decoders.

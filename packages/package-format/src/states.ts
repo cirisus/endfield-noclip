@@ -105,6 +105,8 @@ export interface VisibilityGroup {
  * - `cabinLevel`: a built growth chamber's level, which unlocks its planting boxes
  * - `created`: one level's interactives the game creates during play rather than with the level (by the server
  *   or a level script), shown (1) or not (0)
+ * - `destruction`: a destructible interactive, intact (0) or destroyed (1); authored reward entities show after
+ *   destruction
  * - `activity`: placements of limited-time events (the game's activities), shown (1) or not (0); the server
  *   opens and closes events, so they're off by default
  * - `door`: an interactive door, closed (0) or open (1); derived from its cabin slot for a Dijiang cabin's door
@@ -135,6 +137,7 @@ export type SceneControlKind =
 	| 'cabin'
 	| 'cabinLevel'
 	| 'created'
+	| 'destruction'
 	| 'activity'
 	| 'door'
 	| 'bridge'

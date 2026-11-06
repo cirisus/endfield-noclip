@@ -1,4 +1,4 @@
-:root {
+.viewer-app {
 	color-scheme: dark;
 	--panel-bg: rgb(16 18 22 / 0.72);
 	--panel-border: rgb(255 255 255 / 0.08);
@@ -28,7 +28,7 @@ body,
 	background: #000;
 }
 
-.app {
+.viewer-app {
 	position: relative;
 	height: 100%;
 }
@@ -220,7 +220,8 @@ button {
 	text-align: start;
 }
 
-.settings {
+.settings,
+.settings > .panel-body {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
@@ -247,6 +248,11 @@ button {
 		min-width: 0;
 		max-width: 100%;
 	}
+}
+
+.environment-name {
+	flex-basis: 100%;
+	overflow-wrap: anywhere;
 }
 
 /* the environment volumes in effect, lowest priority first */
@@ -353,4 +359,8 @@ button {
 		padding-left: 8px;
 		border-left: 1px solid color-mix(in srgb, currentColor 20%, transparent);
 	}
+}
+
+.host-panel:empty {
+	display: none;
 }

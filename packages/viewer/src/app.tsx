@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useEffect, useCallback, type ReactNode, useRef, useState } from 'react';
 
 import { sourceFromParam } from './package/package-param.ts';
 import type { PackageSource } from './package/package-source.ts';
@@ -6,8 +6,9 @@ import { CameraReadout } from './ui/camera-readout.tsx';
 import { describeError } from './ui/format.ts';
 import { LevelsPanel } from './ui/levels-panel.tsx';
 import { type OpenPackage, PackagePanel } from './ui/package-panel.tsx';
+import { PhotoFiltersPanel } from './ui/photo-filters.tsx';
 import { SceneControls } from './ui/scene-controls/scene-controls.tsx';
-import { SettingsPanel } from './ui/settings-panel.tsx';
+import { FiltersPanel, PhotographyPanel, SettingsPanel } from './ui/settings-panel.tsx';
 import { StatsPanel } from './ui/stats-panel.tsx';
 import { Viewer } from './viewer/viewer.ts';
 
@@ -25,14 +26,27 @@ const setParam = (name: string, value: string | null): void => {
 	history.replaceState(null, '', url);
 };
 
-export const App = () => {
+/**
+ * @param props optional host overlay and photography library URL; the overlay delegates navigation to the
+ *   host
+ * @returns the shared viewer canvas and scene panels
+ */
+export const App = ({
+	overlay,
+	filtersUrl,
+}: {
+	overlay?: (viewer: Viewer, panel: HTMLElement | null) => ReactNode;
+	filtersUrl?: string;
+}) => {
+	const hosted = overlay !== undefined;
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [viewer, setViewer] = useState<Viewer | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [current, setCurrent] = useState<OpenPackage | null>(null);
 	const [status, setStatus] = useState('');
+	const [pointPanelRoot, setPointPanelRoot] = useState<HTMLDivElement | null>(null);
 
-	const open = (target: Viewer, source: PackageSource, param: string | null): void => {
+	const open = useCallback((target: Viewer, source: PackageSource, param: string | null): void => {
 		setParam(PACKAGE_PARAM, param);
 		setStatus('opening…');
 		setCurrent({ label: source.label, param });
@@ -43,10 +57,7 @@ export const App = () => {
 				setCurrent(null);
 				setStatus(`couldn't open ${source.label}: ${describeError(err)}`);
 			});
-	};
-	const openInitial = useEffectEvent((instance: Viewer, param: string) =>
-		open(instance, sourceFromParam(param), param),
-	);
+	}, []);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -70,8 +81,8 @@ export const App = () => {
 				}
 				setViewer(instance);
 				const param = new URL(location.href).searchParams.get(PACKAGE_PARAM);
-				if (param !== null) {
-					openInitial(instance, param);
+				if (param !== null && !hosted) {
+					open(instance, sourceFromParam(param), param);
 				}
 			})
 			.catch((err: unknown) => {
@@ -83,11 +94,11 @@ export const App = () => {
 			abort.abort();
 			created?.destroy();
 		};
-	}, []);
+	}, [hosted, open]);
 
 	// the current level lives in the URL, so a reload or a shared link opens over the same level
 	useEffect(() => {
-		if (viewer === null) {
+		if (viewer === null || hosted) {
 			return;
 		}
 		return viewer.subscribe(() => {
@@ -96,10 +107,10 @@ export const App = () => {
 				setParam(LEVEL_PARAM, viewer.level);
 			}
 		});
-	}, [viewer]);
+	}, [viewer, hosted]);
 
 	return (
-		<main className="app">
+		<main className={`viewer-app${hosted ? ' hosted-viewer' : ''}`}>
 			<canvas ref={canvasRef} className="viewport" />
 			{error !== null && (
 				<div className="panel error" role="alert">
@@ -109,18 +120,26 @@ export const App = () => {
 			)}
 			{viewer !== null && (
 				<>
+					{overlay?.(viewer, pointPanelRoot)}
 					<div className="dock left">
-						<PackagePanel
-							current={current}
-							status={status}
-							onOpen={(source, param) => open(viewer, source, param)}
-						/>
-						<StatsPanel viewer={viewer} />
+						{!hosted && (
+							<PackagePanel
+								current={current}
+								status={status}
+								onOpen={(source, param) => open(viewer, source, param)}
+							/>
+						)}
+						{!hosted && <StatsPanel viewer={viewer} />}
 					</div>
 					<div className="dock right">
-						<LevelsPanel viewer={viewer} />
+						{hosted && <div ref={setPointPanelRoot} className="host-panel" />}
+						{!hosted && <LevelsPanel viewer={viewer} />}
+						<PhotoFiltersPanel viewer={viewer} source={filtersUrl} />
 						<SceneControls viewer={viewer} />
+						<PhotographyPanel viewer={viewer} />
+						<FiltersPanel viewer={viewer} />
 						<SettingsPanel viewer={viewer} />
+						{hosted && <StatsPanel viewer={viewer} />}
 					</div>
 					<div className="dock bottom">
 						<CameraReadout viewer={viewer} />

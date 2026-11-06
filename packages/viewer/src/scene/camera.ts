@@ -42,6 +42,11 @@ export class Camera {
 	pitch = 0;
 	/** vertical field of view, radians */
 	fovY = (60 * Math.PI) / 180;
+
+	/** focal length in millimetres for the photography sensor's fixed 24 mm height */
+	get focalLength(): number {
+		return 12 / Math.tan(this.fovY / 2);
+	}
 	/** near plane distance (m); the far plane is at infinity */
 	near = 0.25;
 

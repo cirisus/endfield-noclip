@@ -2,10 +2,11 @@ import { useId } from 'react';
 
 import { DEBUG_VIEWS } from '../render/frame/debug-views.ts';
 import { TONEMAPPERS } from '../render/post/settings.ts';
-import type { ViewerOptions } from '../viewer/options.ts';
+import { DEFAULT_OPTIONS, type ViewerOptions } from '../viewer/options.ts';
 import type { Viewer } from '../viewer/viewer.ts';
 
 import { Checkbox } from './controls.tsx';
+import { Panel } from './panel.tsx';
 import { useViewerEnvironment, useViewerState } from './use-viewer.ts';
 
 const HLOD_TIERS = [0, 1, 2] as const;
@@ -79,7 +80,7 @@ const Slider = ({
 				onChange={(event) => viewer.setOptions({ [name]: Number(event.currentTarget.value) })}
 			/>
 			<output htmlFor={id}>
-				{viewer.options[name]} {unit}
+				{name === 'aperture' ? `f/${viewer.options[name].toFixed(1)}` : `${viewer.options[name]} ${unit}`}
 			</output>
 		</div>
 	);
@@ -161,7 +162,7 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 		viewer.setOptions({ hlodTiers: next });
 	};
 	return (
-		<section className="panel settings" aria-label="display settings">
+		<Panel title="Display settings" label="display settings" className="settings">
 			<fieldset>
 				<legend>layers</legend>
 				<Toggle viewer={viewer} name="terrain" label="terrain" />
@@ -187,15 +188,11 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 				<Toggle viewer={viewer} name="water" label="water" />
 				<Toggle viewer={viewer} name="ao" label="ambient occlusion" />
 				<Toggle viewer={viewer} name="reflections" label="screen-space reflections" />
-				<Toggle viewer={viewer} name="bloom" label="bloom" />
-				<Toggle viewer={viewer} name="vignette" label="vignette" />
-				<Toggle viewer={viewer} name="autoExposure" label="auto exposure" />
 				<Toggle viewer={viewer} name="irradiance" label="irradiance volume" />
 				<Toggle viewer={viewer} name="localLights" label="local lights" />
 				<Toggle viewer={viewer} name="antialiasing" label="temporal AA" />
 			</fieldset>
 			<EnvironmentControls viewer={viewer} />
-			<Slider viewer={viewer} name="exposure" label="exposure" min={-4} max={4} step={0.25} unit="EV" />
 			<Slider
 				viewer={viewer}
 				name="renderScale"
@@ -205,7 +202,6 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 				step={0.05}
 				unit="×"
 			/>
-			<Choice viewer={viewer} name="tonemapper" label="tonemapper" choices={TONEMAPPERS} />
 			<Choice viewer={viewer} name="debugView" label="show" choices={DEBUG_VIEWS} />
 			<fieldset>
 				<legend>HLOD tiers</legend>
@@ -271,6 +267,77 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 			/>
 			<Toggle viewer={viewer} name="animate" label="animate" />
 			<Toggle viewer={viewer} name="continuous" label="render every frame" />
-		</section>
+		</Panel>
+	);
+};
+
+/** photographic lens controls, using the same panel and form styles as the scene controls */
+export const PhotographyPanel = ({ viewer }: { viewer: Viewer }) => {
+	useViewerState(viewer);
+	const id = useId();
+	return (
+		<Panel title="Photography" label="photography" className="settings">
+			<Toggle viewer={viewer} name="depthOfField" label="depth of field" />
+			<Slider viewer={viewer} name="aperture" label="aperture" min={1.4} max={32} step={0.1} unit="f" />
+			<div className="slider">
+				<label htmlFor={id}>focus distance</label>
+				<input
+					id={id}
+					type="range"
+					min={-1}
+					max={4}
+					step={0.01}
+					value={Math.log10(viewer.options.focusDistance)}
+					onChange={(event) => viewer.setOptions({ focusDistance: 10 ** Number(event.currentTarget.value) })}
+				/>
+				<input
+					type="number"
+					aria-label="focus distance in metres"
+					min={0.1}
+					max={10000}
+					step={0.1}
+					value={Number(viewer.options.focusDistance.toFixed(2))}
+					onChange={(event) => {
+						if (event.currentTarget.value !== '') {
+							viewer.setOptions({ focusDistance: event.currentTarget.valueAsNumber });
+						}
+					}}
+				/>
+			</div>
+		</Panel>
+	);
+};
+
+/** post-processing controls shared by the standalone viewer and its host's panel chrome */
+export const FiltersPanel = ({ viewer }: { viewer: Viewer }) => {
+	useViewerState(viewer);
+	return (
+		<Panel
+			title="Filters"
+			label="filters"
+			className="settings"
+			actions={
+				<button
+					type="button"
+					onClick={() =>
+						viewer.setOptions({
+							exposure: DEFAULT_OPTIONS.exposure,
+							autoExposure: DEFAULT_OPTIONS.autoExposure,
+							tonemapper: DEFAULT_OPTIONS.tonemapper,
+							bloom: DEFAULT_OPTIONS.bloom,
+							vignette: DEFAULT_OPTIONS.vignette,
+						})
+					}
+				>
+					Reset
+				</button>
+			}
+		>
+			<Toggle viewer={viewer} name="autoExposure" label="auto exposure" />
+			<Slider viewer={viewer} name="exposure" label="exposure" min={-4} max={4} step={0.25} unit="EV" />
+			<Choice viewer={viewer} name="tonemapper" label="tonemapper" choices={TONEMAPPERS} />
+			<Toggle viewer={viewer} name="bloom" label="bloom" />
+			<Toggle viewer={viewer} name="vignette" label="vignette" />
+		</Panel>
 	);
 };

@@ -820,6 +820,9 @@ export class MeshSelector {
 						for (const rows of bucket.rows) {
 							rows.length = 0;
 						}
+						for (const distances of bucket.distances ?? []) {
+							distances.length = 0;
+						}
 						bucket.pixels = 0;
 						bucket.nearest = Infinity;
 						buckets.push(bucket);
@@ -834,11 +837,13 @@ export class MeshSelector {
 					}
 					if (slot.particles === null) {
 						bucket.rows[slotGroup].push(row);
+						bucket.distances?.[slotGroup].push(distance);
 					} else {
 						const particles = this.#particles.rows(instances, i, slot.particles, frame, view.particles);
 						this.selection.particles = true;
 						for (const particle of particles) {
 							bucket.rows[slotGroup].push(particle);
+							bucket.distances?.[slotGroup].push(distance);
 						}
 					}
 					if (priority > bucket.pixels) {

@@ -50,7 +50,16 @@ const MAX_DRAWS = 16_384;
  */
 const OCCLUSION_MAX_MOVE = 8;
 
+interface SortedDraw {
+	index: number;
+	first: number;
+	distance: number;
+	queue: number;
+	phase: DrawPhase;
+}
+
 interface PreparedDraw {
+	afterDof: boolean;
 	geometry: ResidentGeometry;
 	indexCount: number;
 	firstIndex: number;
@@ -124,6 +133,7 @@ export class MeshRenderer {
 	#entries: DrawEntry[] = [];
 	/** prepared draws in {@link DRAW_RANGES} order; entries past {@link #drawCount} are reused next frame */
 	#draws: PreparedDraw[] = [];
+	#afterDof: SortedDraw[] = [];
 	#drawCount = 0;
 	/** whether the depth buffer has a stencil; without one, draws that use it are skipped */
 	#stencil: boolean;
@@ -337,6 +347,7 @@ export class MeshRenderer {
 
 	/** draws nothing this frame */
 	clear(): void {
+		this.#afterDof.length = 0;
 		this.#drawCount = 0;
 		this.instanceCount = 0;
 		this.triangles = 0;
@@ -417,6 +428,7 @@ export class MeshRenderer {
 			}
 			range.end = d;
 		}
+		this.#afterDof.sort((a, b) => a.queue - b.queue || b.distance - a.distance);
 		this.#drawCount = d;
 		if (d > 0) {
 			const queue = this.#device.queue;
@@ -522,6 +534,7 @@ export class MeshRenderer {
 		const draw = this.#draws[d];
 		if (draw === undefined) {
 			this.#draws[d] = {
+				afterDof: look.afterDof !== null,
 				geometry: resident,
 				indexCount: range.indexCount,
 				firstIndex: range.firstIndex,
@@ -537,6 +550,7 @@ export class MeshRenderer {
 				stencil: look.stencil,
 			};
 		} else {
+			draw.afterDof = look.afterDof !== null;
 			draw.geometry = resident;
 			draw.indexCount = range.indexCount;
 			draw.firstIndex = range.firstIndex;
@@ -554,6 +568,17 @@ export class MeshRenderer {
 			draw.variant = variant;
 			draw.effect = effect;
 			draw.stencil = look.stencil;
+		}
+		if (look.afterDof !== null && bucket.distances !== null && !bucket.castOnly) {
+			const phase = PASS_PHASES.afterDof.find((candidate) => candidate.range === info.range);
+			if (phase !== undefined) {
+				let first = span.first;
+				for (const distances of bucket.distances) {
+					for (const distance of distances) {
+						this.#afterDof.push({ index: d, first: first++, distance, queue: look.afterDof, phase });
+					}
+				}
+			}
 		}
 		if (!bucket.castOnly && gpu === null) {
 			this.instanceCount += span.count;
@@ -618,6 +643,21 @@ export class MeshRenderer {
 		return this.#encode(which, pass, -1);
 	}
 
+	/** whether authored post-focus layers need their pass this frame */
+	get hasAfterDof(): boolean {
+		return this.#afterDof.length > 0;
+	}
+
+	/** draws authored queues after focus, in queue order then back to front */
+	encodeAfterDof(pass: GPURenderPassEncoder, inputs: EffectInputs): number {
+		this.#bindEffectGroups('afterDof', inputs);
+		let draws = 0;
+		for (const draw of this.#afterDof) {
+			draws += this.#encode('afterDof', pass, -1, draw);
+		}
+		return draws;
+	}
+
 	/** builds the groups of a pass's effect draws, which also bind the main pass's outputs */
 	#bindEffectGroups(which: MeshPass, inputs: EffectInputs): void {
 		for (const phase of PASS_PHASES[which]) {
@@ -670,7 +710,7 @@ export class MeshRenderer {
 	 * encodes a pass's phases in order; nothing if any of its or its paired pass's pipelines isn't ready.
 	 * `layer` limits each draw to the rows that shadow layer draws, or is -1 for all of them
 	 */
-	#encode(which: MeshPass, pass: GPURenderPassEncoder, layer: number): number {
+	#encode(which: MeshPass, pass: GPURenderPassEncoder, layer: number, selected?: SortedDraw): number {
 		if (this.#drawCount === 0) {
 			return 0;
 		}
@@ -685,11 +725,11 @@ export class MeshRenderer {
 		const bindings = this.#vertexBindings;
 		bindings.reset();
 		let draws = 0;
-		for (const phase of PASS_PHASES[which]) {
+		for (const phase of selected === undefined ? PASS_PHASES[which] : [selected.phase]) {
 			const range = this.#range(phase.range);
 			// shadow passes draw the casters, cast-only ones first; the rest skip those
-			const from = phase.shadow ? range.start : range.castOnlyEnd;
-			const to = phase.shadow ? range.castersEnd : range.end;
+			const from = selected === undefined ? (phase.shadow ? range.start : range.castOnlyEnd) : selected.index;
+			const to = selected === undefined ? (phase.shadow ? range.castersEnd : range.end) : selected.index + 1;
 			if (from === to) {
 				continue;
 			}
@@ -701,6 +741,9 @@ export class MeshRenderer {
 			let material: GPUBindGroup | null = null;
 			for (let i = from; i < to; i++) {
 				const draw = this.#draws[i];
+				if (draw.afterDof && selected === undefined && !phase.shadow) {
+					continue;
+				}
 				let count = 0;
 				if (draw.indirect < 0) {
 					count = layer < 0 ? draw.count : draw.layerCounts[layer];
@@ -746,7 +789,13 @@ export class MeshRenderer {
 					pass.setIndexBuffer(geometry.indices, geometry.indexFormat);
 				}
 				if (draw.indirect < 0) {
-					pass.drawIndexed(draw.indexCount, count, draw.firstIndex, draw.baseVertex, draw.first);
+					pass.drawIndexed(
+						draw.indexCount,
+						selected === undefined ? count : 1,
+						draw.firstIndex,
+						draw.baseVertex,
+						selected?.first ?? draw.first,
+					);
 				} else if (this.#culler !== null) {
 					// the draw of the rows in view, then one per shadow layer, 5 words each
 					pass.drawIndexedIndirect(this.#culler.indirect, draw.indirect + (layer < 0 ? 0 : (1 + layer) * 20));

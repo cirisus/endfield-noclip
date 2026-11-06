@@ -3,6 +3,10 @@ import type { PostSettings, Tonemapper } from '../render/post/settings.ts';
 
 /** user-facing switches */
 export interface ViewerOptions {
+	/** exported photo filter id, or null for the scene's own look */
+	photoFilter: string | null;
+	/** multiplier of the authored external LUT contribution, 0–1 */
+	photoLutStrength: number;
 	terrain: boolean;
 	/** draw the terrain's baked albedo and normal pages; off (or without BC textures) shows stand-in colours */
 	terrainSurface: boolean;
@@ -61,6 +65,12 @@ export interface ViewerOptions {
 	renderScale: number;
 	/** exposure compensation on top of the level's exposure, EV */
 	exposure: number;
+	/** enable photographic foreground and background defocus */
+	depthOfField: boolean;
+	/** photographic f-number */
+	aperture: number;
+	/** focus plane distance along the camera forward axis, metres */
+	focusDistance: number;
 	/** adapt the exposure to the view as the game's auto exposure does */
 	autoExposure: boolean;
 	tonemapper: Tonemapper;
@@ -99,6 +109,8 @@ export interface ViewerOptions {
 
 /** defaults for {@link ViewerOptions} */
 export const DEFAULT_OPTIONS: ViewerOptions = {
+	photoFilter: null,
+	photoLutStrength: 1,
 	terrain: true,
 	terrainSurface: true,
 	terrainSplat: true,
@@ -124,6 +136,9 @@ export const DEFAULT_OPTIONS: ViewerOptions = {
 	antialiasing: true,
 	renderScale: 1,
 	exposure: 0,
+	depthOfField: false,
+	aperture: 32,
+	focusDistance: 10,
 	autoExposure: true,
 	tonemapper: 'game',
 	sky: true,
@@ -153,6 +168,9 @@ export const DEFAULT_OPTIONS: ViewerOptions = {
  */
 export const postSettings = (options: ViewerOptions, scene: boolean): PostSettings => ({
 	exposure: options.exposure,
+	depthOfField: options.depthOfField,
+	aperture: options.aperture,
+	focusDistance: options.focusDistance,
 	autoExposure: options.autoExposure && scene,
 	tonemapper: options.tonemapper,
 	sky: options.sky,

@@ -7,6 +7,7 @@ import { useId, useState } from 'react';
 import { controlsForLevel, groupByLevel } from '../../scene-states/listing.ts';
 import type { Viewer } from '../../viewer/viewer.ts';
 import { LazyDetails } from '../lazy-details.tsx';
+import { Panel } from '../panel.tsx';
 import { useViewerState } from '../use-viewer.ts';
 
 import { ControlRow } from './control-row.tsx';
@@ -60,8 +61,8 @@ const SECTIONS: { kinds: SceneControlKind[]; title: string; note: string | null;
 		open: false,
 	},
 	{
-		kinds: ['door', 'bridge'],
-		title: 'Doors and bridges',
+		kinds: ['door', 'bridge', 'destruction'],
+		title: 'Doors, bridges and destructibles',
 		note: null,
 		open: false,
 	},
@@ -149,11 +150,16 @@ export const SceneControls = ({ viewer }: { viewer: Viewer }) => {
 			))
 		);
 	return (
-		<section className="panel scene-controls" aria-label="scene conditions">
-			<header>
-				<h2>Scene conditions</h2>
-				<button onClick={() => viewer.resetSceneValues()}>Reset</button>
-			</header>
+		<Panel
+			title="Scene conditions"
+			label="scene conditions"
+			className="scene-controls"
+			actions={
+				<button type="button" onClick={() => viewer.resetSceneValues()}>
+					Reset
+				</button>
+			}
+		>
 			<label className="control-search" htmlFor={searchId}>
 				Filter controls
 				<input
@@ -196,6 +202,6 @@ export const SceneControls = ({ viewer }: { viewer: Viewer }) => {
 			})}
 			<WaterLevels viewer={viewer} matches={matches} />
 			<EnvironmentVolumes viewer={viewer} manifest={manifest} level={level} matches={matches} />
-		</section>
+		</Panel>
 	);
 };

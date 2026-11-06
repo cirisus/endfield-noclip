@@ -124,7 +124,20 @@ variant, and what selects it and what the extra fields do isn't read.
 mixer, shadows/midtones/highlights, lift/gamma/gain, split toning, colour curves); each sub-section
 that's off reads as its neutral default. the game bakes grading and curve into a LogC LUT, with its
 HG-specific contrast and its modified-ACES curve (the only tonemapper the game ships besides none;
-every profile sets `tonemappingMode` 5). no shipped profile enables the external lookup texture.
+every profile sets `tonemappingMode` 5). no shipped scene profile enables the external lookup texture.
+
+### photo filters
+
+`SnapshotFilterTable` identifies each photo filter's volume prefab and, optionally, an additional
+camera effect. the prefab can carry both an environment phase and an SRP post-processing profile.
+the phase's active colour-grading section replaces the scene's grading; inactive lighting and fog
+sections leave the scene alone. SRP parameters apply only when their override flag is set.
+
+the checked install has 15 filters, each referencing a linear-sampled BC7 lookup texture: a 32³
+colour cube stored as a 1024×32 strip. red varies along each slice, green along its rows and blue
+across slices. these are external display-colour lookups rather than the internal HDR LogC LUT. Warm
+and Pale also carry vignette, bloom and character-volume settings; Black and Gold references an
+additional camera effect. item unlocks control availability in the game, not the LUT data.
 
 ## open
 
@@ -132,3 +145,23 @@ every profile sets `tonemappingMode` 5). no shipped profile enables the external
 - the flare component's own settings, which apply while the environment's flare is off.
 - unverified: at Origin Lodespring's overview the game's flare seems not to be occluded by the
   crystal mountain behind the sun, as if the mountain weren't in its depth buffer.
+
+## photographic depth of field
+
+photography overrides the ordinary camera's depth-of-field defaults. its physical lens fits a 24 mm
+sensor height to the display aspect ratio, with aperture controls spanning f/1.4–f/32. the
+photography configuration requests full resolution, foreground and background radius limits of 10 at
+the 1440-pixel reference height, and a temporal factor of 0.3. quality settings may further limit
+the radius.
+
+physical defocus uses a signed thin-lens circle of confusion: foreground radii are negative and
+background radii positive. the closest of scene and water depth supplies the optical distance.
+foreground coverage is filtered separately from colour; background sampling rejects focused
+neighbours to limit silhouette bleeding. temporal filtering clips reprojected colour against the
+current neighbourhood and rejects opposite-sign focus history. the effect precedes motion blur,
+after-DoF transparencies, lens flare and temporal antialiasing. see the
+[viewer implementation and remaining differences](../viewer/post-processing.md#photography).
+
+post-focus transparency is selected by authored render queues 3660–3740 inclusive. it uses the
+forward transparent shader passes and runs after depth of field, before lens flare and TAA; being
+transparent alone does not select this stage.

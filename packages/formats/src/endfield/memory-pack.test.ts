@@ -225,3 +225,77 @@ test('reads compressed integers as IL2CPP metadata writes them', () => {
 	assert.equal(reader.compressedI32(), -0x80000000);
 	assert.throws(() => reader.byte(), FormatError);
 });
+
+test('reads an unmanaged pair of Vector3 values inside a wrapper list without tuple headers', () => {
+	const types: FakeType[] = [
+		{ name: 'Vector3', valueType: true },
+		{ name: 'ValueTuple' },
+		{ name: 'List' },
+		{ name: 'Root' },
+	];
+	const pair: Il2CppTypeRef = {
+		kind: 'generic',
+		definition: 1,
+		args: [def(types, 'Vector3'), def(types, 'Vector3')],
+	};
+	types.push({
+		name: 'RootForMemoryPack',
+		wraps: def(types, 'Root'),
+		members: [
+			['pairs', { kind: 'generic', definition: 2, args: [pair] }],
+			['tail', prim('int')],
+		],
+	});
+	const encoded = new Uint8Array(1 + 4 + 24 + 4),
+		view = new DataView(encoded.buffer);
+	encoded[0] = 2;
+	view.setInt32(1, 1, true);
+	for (let i = 0; i < 6; i++) {
+		view.setFloat32(5 + i * 4, i + 0.5, true);
+	}
+	view.setInt32(29, 42, true);
+	const reader = new MemoryPackReader(new MemoryPackSchema(fakeRuntime(types)), () => undefined);
+	assert.deepEqual(reader.decode(encoded, 'RootForMemoryPack'), {
+		$type: 'RootForMemoryPack',
+		pairs: [
+			[
+				[0.5, 1.5, 2.5],
+				[3.5, 4.5, 5.5],
+			],
+		],
+		tail: 42,
+	});
+	assert.throws(() => reader.decode(encoded.subarray(0, 28), 'RootForMemoryPack'), FormatError);
+});
+
+test('reads path hashes and spline knots as schema-sized raw structs', () => {
+	const types: FakeType[] = [
+		{ name: 'StringPathHash', valueType: true, fields: [['hash', prim('long'), 0]] },
+		{
+			name: 'BezierKnot',
+			valueType: true,
+			fields: [
+				['x', prim('float'), 0],
+				['y', prim('float'), 4],
+			],
+		},
+		{ name: 'Container' },
+	];
+	types.push({
+		name: 'ContainerForMemoryPack',
+		wraps: def(types, 'Container'),
+		members: [
+			['path', def(types, 'StringPathHash')],
+			['knot', def(types, 'BezierKnot')],
+		],
+	});
+	const reader = new MemoryPackReader(new MemoryPackSchema(fakeRuntime(types)), () => null);
+	assert.deepEqual(
+		reader.decode(bytes([2, 1], [123n, 8], [0x3f800000, 4], [0x40000000, 4]), 'ContainerForMemoryPack'),
+		{
+			$type: 'ContainerForMemoryPack',
+			path: { $type: 'StringPathHash', hash: '123' },
+			knot: { $type: 'BezierKnot', x: 1, y: 2 },
+		},
+	);
+});

@@ -1,11 +1,14 @@
 import { autoBindGroup, encodeFullscreen, fullscreenPipeline } from '../../gfx/fullscreen-pass.ts';
 import colorWgsl from '../shaders/common/color.wgsl?raw';
 
+import { PhotoLut } from './photo-filters.ts';
 import { postShaderModule } from './shader-source.ts';
 import tonemapWgsl from './tonemap.wgsl?raw';
 
 /** the final pass (tonemap.wgsl): exposure, bloom, vignette, grading and tonemapping into the swapchain */
 export class Tonemap {
+	/** the photo LUT applied after scene grading and tonemapping */
+	readonly photoLut: PhotoLut;
 	#device: GPUDevice;
 	#sampler: GPUSampler;
 	#pipeline: GPURenderPipeline;
@@ -33,6 +36,7 @@ export class Tonemap {
 			entryPoint: 'fs_tonemap',
 			targets: [{ format: swapchainFormat }],
 		});
+		this.photoLut = new PhotoLut(device, this.#pipeline.getBindGroupLayout(2));
 		this.#postGroup = autoBindGroup(device, this.#pipeline, 0, { 0: { buffer: postUniforms } });
 	}
 
@@ -62,8 +66,13 @@ export class Tonemap {
 		encodeFullscreen(encoder, {
 			label: 'tonemap',
 			pipeline: this.#pipeline,
-			groups: [this.#postGroup, this.#groups[input.history]],
+			groups: [this.#postGroup, this.#groups[input.history], this.photoLut.group],
 			targets: [input.swapchain],
 		});
+	}
+
+	/** frees the final pass's photo LUT */
+	destroy(): void {
+		this.photoLut.destroy();
 	}
 }

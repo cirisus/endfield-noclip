@@ -24,12 +24,13 @@ pnpm extract --help
 ```
 
 `cli.ts` loads every file in `commands/` as a subcommand exporting `summary`, `usage` and
-`run(args)`, so a new command is a new file there; shared argument helpers live outside that
-directory, in `cli-args.ts`. run a command without arguments or with `--help` / `-h` for its usage,
-which works without a config or install. every command takes `--config <file>` (default
-`endfield.local.json` in the working directory) and, except for `init`, opens the install through
-`withContext` in `context.ts`, which mounts the VFS, builds the world index and creates the asset
-resolver on first use.
+`run(args)`, so a new command is a new file there. shared argument helpers live in `cli-args.ts`,
+outside `commands/`, because every file in that directory is treated as a command. each command
+exports its usage text; run it without arguments or with `--help` / `-h` for details. help works
+without a config or install, including `world find --help`. commands that read the install take
+`--config <file>` (default `endfield.local.json` in the working directory) and open the install
+through `withContext` in `context.ts`, which mounts the VFS, builds the world index and creates the
+asset resolver on first use.
 
 | command    | what it does                                                                                                                                                                                                                                                                                                                                                              |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,6 +108,21 @@ with `--class`, it selects objects of that class in matching SerializedFiles. `-
 `variants --areas` lists every selected chunk, including area zero. with `--json`, it adds a
 `selection` object of sorted area ids and chunk file names to the variants object, without trailing
 text.
+
+### OEM companion releases
+
+`pnpm extract oem --atlos /path/to/Atlos/talos --packages out --output out/releases` exports point
+metadata from the same local install as the complete packages. it resolves placements and NPC
+proxies by their authored ids, retains prerequisite expressions and interaction-lock evidence, and
+labels supplemental quest states. generated content stays outside git. the MemoryPack reader also
+handles unmanaged pairs of Unity Vector3 values used by Dijiang's specific level data. it reads the
+adjacent values without an object header, following the
+[MemoryPack unmanaged format](https://github.com/Cysharp/MemoryPack#binary-wire-format-specification);
+other tuple layouts remain explicit errors until their field layout is verified.
+
+`pnpm extract oem-check out/releases/<release-id>` verifies every archive size, package generation
+and source fingerprint, point index and preview preset before publication. presets use the existing
+scene evaluator and story ordering; unknown runtime conditions remain explicit.
 
 ## local config and keys
 
@@ -209,6 +225,19 @@ booleans. code: [serialized-file.ts](../packages/formats/src/unity/serialized-fi
 [values.ts](../packages/formats/src/unity/values.ts),
 [plain-object.ts](../packages/formats/src/unity/plain-object.ts).
 
+## photo library
+
+`pnpm extract filters --config endfield.local.json -o out/photo-filters.json` reads
+`SnapshotFilterTable` and its referenced prefabs from the local install. names come from the
+install's English text table. it reuses the asset resolver, environment-phase, TypeTree and texture
+decoders, retaining BC7 blocks without transcoding. SRP vignette and high-quality bloom overrides
+retain their individual override flags. referenced camera effects reuse prefab, particle and
+material decoding to export supported additive billboards and their sprite mip chains. unsupported
+components, materials and particle modules are reported per filter. missing references and
+unsupported LUT formats fail the export. the output is separate from scene packages, so adding a
+library does not require re-packing maps. usage and remaining differences are in
+[photo filters](viewer/post-processing.md#photo-filters).
+
 ## decoders
 
 `formats` modules validate layouts while decoding and throw on a mismatch. the linked game-data
@@ -236,6 +265,17 @@ disagree; the report counts those meshes and `debug/assets.json` lists their set
 mesh any swaying material draws is converted with the strongest of their sways, which puts the sway
 weights in position W and grows its bounds
 ([swaying geometry](package-format.md#geometry-blob-mesh-efgm)).
+
+**collision mesh.** `asset collision <object> [-o file.json]` reads the cooked triangle bytes with
+[collision-mesh.ts](../packages/formats/src/unity/collision-mesh.ts), separately from render geometry.
+the supported layout is little-endian PhysX mesh version 15 with a quantized BV4 version 3 tree.
+triangle indices, optional material indices and original-face remaps are retained. bounds, finite
+coordinates, counts and the complete payload framing are checked. GPU and other unsupported
+cooks fail explicitly. `convex-mesh.ts` additionally handles version-13 convex cooks with a version-9
+hull and no support map or GPU data. it validates the supporting planes, outward winding and closed
+edge topology before triangulating convex faces. JSON output is build-bound local Unity geometry, without a world transform,
+collision-layer interpretation or claim of player passage. streaming collider placement and capsule
+sweeps must still be resolved before this geometry can validate movement links.
 
 **skin pose.** [skin-pose.ts](../packages/formats/src/unity/skin-pose.ts) bakes linear blend
 skinning into a new static mesh: positions, normals, tangents and bounds move into the space of the
@@ -594,3 +634,23 @@ to entities and chunk files, and `assets.json` says why an asset didn't convert.
   ([asset conversion](#asset-conversion-and-workers)).
 - LevelData with populated blackbox settings isn't read ([MemoryPack data](#memorypack-data)).
 - texture formats without a WebGPU equivalent aren't convertible ([texture](#asset-classes)).
+
+`pnpm extract oem-views out/releases/<base> -o out/releases --cache out/framing/<base>` computes
+every point's completed-profile view without WebGPU, sharing CPU decode jobs with the browser
+workers. checkpoint files support resuming. the command writes a new immutable release, linking
+archives from the immutable input on the same filesystem and writing its catalog last; never bake
+into the input release. validate the result with `oem-check` before changing the OEM catalog URL.
+see [offline framing](oem-precompute.md) for coverage, distance and network details.
+
+### destructible interactives
+
+placements with a destructible component receive an independent `destruction:<id>` control:
+intact (0, the default) or destroyed (1). intact geometry keeps its authored rest pose and all
+existing visibility requirements; destruction hides it. explicit `reward_entities` references
+replace the generic created-during-play gate on those rewards, showing them only after their
+unique parent is destroyed. ambiguous parent references are left unresolved. this models settled
+visibility only, not damage, debris, physics or explosion effects.
+
+`traversal-devices <scene> -o <file>` exports build-bound rope pairing and movement-device
+parameter scopes; see [movement devices](navigation.md#movement-devices). its candidate
+connections still require grounded endpoints, active state and motion validation.

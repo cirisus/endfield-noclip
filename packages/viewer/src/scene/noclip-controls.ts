@@ -1,6 +1,6 @@
 /**
  * free-flight camera controls: WASD to move, mouse look under pointer lock (or drag), E/R or Space up, Q/F or
- * C down, Shift to boost, Alt to creep, wheel to change the base speed.
+ * C/Shift down, right mouse to boost, Tab/Alt to creep, wheel to zoom, Ctrl+wheel to change the base speed.
  *
  * @module
  */
@@ -15,6 +15,9 @@ const MAX_PITCH = Math.PI / 2 - 0.001;
 const SMOOTHING = 0.08;
 const BOOST = 5;
 const CREEP = 0.2;
+// 250 mm at a full-frame-equivalent 24 mm sensor height.
+const MIN_FOV = 2 * Math.atan(24 / (2 * 250));
+const MAX_FOV = (100 * Math.PI) / 180;
 /** the key codes that move the camera, by direction */
 const KEYS = {
 	forward: ['KeyW', 'ArrowUp'],
@@ -22,7 +25,7 @@ const KEYS = {
 	right: ['KeyD', 'ArrowRight'],
 	left: ['KeyA', 'ArrowLeft'],
 	up: ['KeyE', 'KeyR', 'Space', 'PageUp'],
-	down: ['KeyQ', 'KeyF', 'KeyC', 'PageDown'],
+	down: ['KeyQ', 'KeyF', 'KeyC', 'PageDown', 'ShiftLeft', 'ShiftRight'],
 };
 
 /** a camera pose to fly to */
@@ -53,6 +56,8 @@ const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 export class NoclipControls {
 	/** base speed, m/s */
 	speed = 40;
+	/** optional ground elevation in Unity metres; null keeps fixed-speed flight. hosts sample this. */
+	groundHeight: number | null = null;
 	/** speed applied in the last update, m/s */
 	effectiveSpeed = 0;
 
@@ -64,7 +69,8 @@ export class NoclipControls {
 	readonly #target: Vec3 = [0, 0, 0];
 	#flight: Flight | null = null;
 	#dragging = false;
-	#looked = false;
+	#boosting = false;
+	#changed = false;
 	#abort = new AbortController();
 
 	/**
@@ -82,6 +88,36 @@ export class NoclipControls {
 				if (isTyping(event.target) || event.metaKey || event.ctrlKey) {
 					return;
 				}
+				if (event.code === 'Tab') {
+					// preserve focus navigation outside flight, including panel controls.
+					const flying =
+						document.pointerLockElement === element ||
+						this.#dragging ||
+						[
+							'KeyW',
+							'KeyA',
+							'KeyS',
+							'KeyD',
+							'KeyE',
+							'KeyR',
+							'KeyQ',
+							'KeyF',
+							'KeyC',
+							'Space',
+							'ArrowUp',
+							'ArrowDown',
+							'ArrowLeft',
+							'ArrowRight',
+							'PageUp',
+							'PageDown',
+							'ShiftLeft',
+							'ShiftRight',
+						].some((code) => this.#keys.has(code));
+					if (!flying) {
+						return;
+					}
+					event.preventDefault();
+				}
 				this.#keys.add(event.code);
 				if (event.code === 'Space' || event.code.startsWith('Arrow')) {
 					event.preventDefault();
@@ -90,7 +126,44 @@ export class NoclipControls {
 			{ signal },
 		);
 		window.addEventListener('keyup', (event) => this.#keys.delete(event.code), { signal });
-		window.addEventListener('blur', () => this.#keys.clear(), { signal });
+		const release = () => {
+			this.#keys.clear();
+			this.#boosting = false;
+			this.#dragging = false;
+		};
+		window.addEventListener('blur', release, { signal });
+		element.addEventListener('pointercancel', release, { signal });
+		document.addEventListener(
+			'pointerlockchange',
+			() => {
+				if (document.pointerLockElement !== element) {
+					release();
+				}
+			},
+			{ signal },
+		);
+		// Mouse events retain individual button changes when left and right are held together.
+		element.addEventListener(
+			'mousedown',
+			(event) => {
+				if (event.button === 2) {
+					this.#boosting = true;
+				}
+			},
+			{ signal },
+		);
+		window.addEventListener(
+			'mouseup',
+			(event) => {
+				if (event.button === 0) {
+					this.#dragging = false;
+				}
+				if (event.button === 2) {
+					this.#boosting = false;
+				}
+			},
+			{ signal },
+		);
 
 		element.addEventListener(
 			'pointerdown',
@@ -107,7 +180,16 @@ export class NoclipControls {
 			},
 			{ signal },
 		);
-		element.addEventListener('pointerup', () => (this.#dragging = false), { signal });
+		window.addEventListener(
+			'pointerup',
+			(event) => {
+				if (event.button === 0) {
+					this.#dragging = false;
+				}
+			},
+			{ signal },
+		);
+		element.addEventListener('contextmenu', (event) => event.preventDefault(), { signal });
 		element.addEventListener(
 			'pointermove',
 			(event) => {
@@ -121,7 +203,18 @@ export class NoclipControls {
 			'wheel',
 			(event) => {
 				event.preventDefault();
-				this.speed = Math.min(5000, Math.max(0.5, this.speed * 1.15 ** (-event.deltaY / 100)));
+				const pixels =
+					event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1);
+				if (event.ctrlKey) {
+					this.speed = Math.min(5000, Math.max(0.5, this.speed * 1.15 ** (-pixels / 100)));
+				} else {
+					const fov = Math.min(
+						MAX_FOV,
+						Math.max(MIN_FOV, 2 * Math.atan(Math.tan(camera.fovY / 2) * 1.15 ** (pixels / 100))),
+					);
+					this.#changed ||= fov !== camera.fovY;
+					camera.fovY = fov;
+				}
 			},
 			{ signal, passive: false },
 		);
@@ -132,7 +225,7 @@ export class NoclipControls {
 		camera.yaw = wrapAngle(camera.yaw + dx * LOOK_SENSITIVITY);
 		camera.pitch = Math.min(MAX_PITCH, Math.max(-MAX_PITCH, camera.pitch - dy * LOOK_SENSITIVITY));
 		this.#flight = null;
-		this.#looked = true;
+		this.#changed = true;
 	}
 
 	/** @returns whether a {@link flyTo} is still under way */
@@ -163,14 +256,20 @@ export class NoclipControls {
 		this.#velocity = [0, 0, 0];
 	}
 
+	/** cancels an automatic flight and its residual movement before a camera cut */
+	cancelFlight(): void {
+		this.#flight = null;
+		this.#velocity = [0, 0, 0];
+	}
+
 	/**
 	 * @param dt seconds since the last update
 	 * @returns whether the camera moved
 	 */
 	update(dt: number): boolean {
 		const camera = this.#camera;
-		let moved = this.#looked;
-		this.#looked = false;
+		let moved = this.#changed;
+		this.#changed = false;
 
 		const flight = this.#flight;
 		if (flight !== null) {
@@ -193,11 +292,19 @@ export class NoclipControls {
 		const lift = this.#held(KEYS.up) - this.#held(KEYS.down);
 
 		let speed = this.speed;
-		if (this.#keys.has('ShiftLeft') || this.#keys.has('ShiftRight')) {
-			speed *= BOOST;
+		const adaptive = this.groundHeight !== null && Number.isFinite(this.groundHeight);
+		if (adaptive && this.groundHeight !== null) {
+			const height = Math.max(0, camera.position[1] - this.groundHeight);
+			const t = Math.min(1, Math.max(0, (height - 5) / 95));
+			// keep the stored Ctrl+wheel preference as a trim around the default 40;
+			// only ordinary adaptive flight is capped. explicit boost remains faster.
+			const cruise = 10 + 40 * t * t * (3 - 2 * t);
+			speed = Math.min(50, cruise * (this.speed / 40));
 		}
-		if (this.#keys.has('AltLeft') || this.#keys.has('AltRight')) {
+		if (this.#keys.has('Tab') || this.#keys.has('AltLeft') || this.#keys.has('AltRight')) {
 			speed *= CREEP;
+		} else if (this.#boosting) {
+			speed *= BOOST;
 		}
 		this.effectiveSpeed = speed;
 
@@ -208,6 +315,13 @@ export class NoclipControls {
 			target[i] = (f[i] * forward + r[i] * strafe) * speed;
 		}
 		target[1] += lift * speed;
+		const magnitude = Math.hypot(...target);
+		if (adaptive && magnitude > speed) {
+			// diagonal or combined horizontal/vertical input shares the cruise cap.
+			for (let i = 0; i < 3; i++) {
+				target[i] *= speed / magnitude;
+			}
+		}
 		const blend = 1 - Math.exp(-dt / SMOOTHING);
 		for (let i = 0; i < 3; i++) {
 			this.#velocity[i] += (target[i] - this.#velocity[i]) * blend;

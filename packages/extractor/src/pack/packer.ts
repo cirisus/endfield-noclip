@@ -96,15 +96,14 @@ import { mapDefined, unique } from '@mary-ext/array-fns';
 
 import type { Context } from '../context.ts';
 import { ignoreMissing } from '../errors.ts';
-import type { AssetResolver, ObjectRef } from '../game/assets.ts';
 import { billboardPlacement } from '../game/billboard.ts';
-import { RENDER_PIPELINE_QUAD_PATH } from '../game/builtin-resources.ts';
 import { cabinDoors, loadCabins } from '../game/cabins.ts';
 import { loadDynamicStructures } from '../game/dynamic-structures.ts';
 import type { SceneEnvironmentVolume } from '../game/environment.ts';
 import { allOf, GameState } from '../game/game-state.ts';
 import { loadInteractiveFacilities } from '../game/interactive-facilities.ts';
 import { axisLengths, withAxisLengths } from '../game/particle-mesh.ts';
+import { findParticleQuad } from '../game/particle-quad.ts';
 import { loadPlacedVolumes } from '../game/prefab-environment.ts';
 import { placePrefabLight, readPrefabLights, type PrefabLight } from '../game/prefab-lights.ts';
 import { readPrefabRenderers, type PrefabRenderer } from '../game/prefab.ts';
@@ -1908,19 +1907,6 @@ interface StandInReport {
 
 /** the synthetic stand-in cube's bounds */
 const UNIT_CUBE_BOUNDS: Aabb = { center: [0, 0, 0], extents: [0.5, 0.5, 0.5] };
-
-/** @returns the quad billboard particles draw, or `null` if the install doesn't have it where expected */
-const findParticleQuad = async (context: Context, resolver: AssetResolver): Promise<ObjectRef | null> => {
-	const [hash] = await context.world.hashesOf(RENDER_PIPELINE_QUAD_PATH);
-	if (hash === undefined) {
-		return null;
-	}
-	try {
-		return await resolver.findUnique({ hash, path: RENDER_PIPELINE_QUAD_PATH }, UnityClass.Mesh);
-	} catch {
-		return null;
-	}
-};
 
 /**
  * stores the subset's terrain (see `terrain.ts`) and attaches its pages to the tree

@@ -2,10 +2,13 @@ import { parseArgs } from 'node:util';
 
 import { writeKtx2 } from '@endfield-noclip/formats/binary/ktx2';
 import { DrawFlags } from '@endfield-noclip/formats/endfield/init-chunk-data';
+import { readCollisionMesh } from '@endfield-noclip/formats/unity/collision-mesh';
+import { readConvexMesh } from '@endfield-noclip/formats/unity/convex-mesh';
 import { ShaderPropertyFlags, ShaderPropertyType } from '@endfield-noclip/formats/unity/material';
 import type { DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { type DecodedTexture, toKtx2Texture } from '@endfield-noclip/formats/unity/texture';
+import { booleanField, bytesField } from '@endfield-noclip/formats/unity/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
@@ -23,7 +26,7 @@ import { withContext } from '../context.ts';
 import { errorText, failureReason } from '../errors.ts';
 import { type GlbScene, writeGlb } from '../export/glb.ts';
 import { loadMesh, loadTexture } from '../game/asset-decode.ts';
-import { type AssetResolver, objectKey, type ObjectRef } from '../game/assets.ts';
+import { type AssetResolver, locateObject, objectKey, type ObjectRef } from '../game/assets.ts';
 import { loadMaterial, type LoadedMaterial } from '../game/material-load.ts';
 import type { IndexedEntity, WorldIndex } from '../game/world-index.ts';
 import { zstdSync } from '../zstd.ts';
@@ -33,6 +36,7 @@ export const summary = 'decode meshes, textures and materials; trace entity draw
 /** command usage, available without opening the install */
 export const usage = `usage:
   asset mesh <object> [-o file.glb]                   mesh summary; -o exports it alone as glTF
+  asset collision <object> [-o file.json]             cooked triangle/convex collision geometry in local Unity coordinates
   asset texture <object> [-o file.ktx2] [--zstd level]
                                                       texture summary; -o writes KTX2 (zstd per level if given)
   asset material <object>                             material record, classification and its textures
@@ -92,6 +96,45 @@ export const run = async (args: string[]): Promise<void> => {
 			return resolver.findUnique({ hash: hashes[0], path: target }, classId);
 		};
 		switch (sub) {
+			case 'collision': {
+				const ref = await objectArg(UnityClass.Mesh);
+				const data = await resolver.read(ref);
+				const convex = booleanField(data, 'm_CollisionMeshConvex');
+				const mesh = convex
+					? readConvexMesh(bytesField(data, 'm_BakedConvexCollisionMesh'))
+					: readCollisionMesh(bytesField(data, 'm_BakedTriangleCollisionMesh'));
+				const build = await world.manifest();
+				console.log(
+					JSON.stringify({
+						vertices: mesh.vertices.length,
+						convex,
+						triangles: mesh.triangles.length,
+						bounds: mesh.bounds,
+					}),
+				);
+				if (output !== undefined) {
+					await save(
+						output,
+						new TextEncoder().encode(
+							JSON.stringify(
+								{
+									version: 1,
+									source: {
+										buildGuid: build.guid,
+										contentHash: build.contentHash,
+										object: locateObject(ref),
+									},
+									coordinates: 'local-unity',
+									convex,
+									mesh,
+								},
+								jsonReplacer,
+							),
+						),
+					);
+				}
+				break;
+			}
 			case 'mesh': {
 				const mesh = await loadMesh(resolver, await objectArg(UnityClass.Mesh));
 				console.log(JSON.stringify(meshSummary(mesh), null, '\t'));

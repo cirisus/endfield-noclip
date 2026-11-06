@@ -18,8 +18,11 @@ import { AmbientOcclusion } from './ambient-occlusion.ts';
 import { AutoExposure } from './auto-exposure.ts';
 import { Bloom } from './bloom.ts';
 import { Composite } from './composite.ts';
+import { DepthOfField } from './depth-of-field.ts';
 import { LensFlares } from './lens-flare.ts';
 import { LightShafts } from './light-shafts.ts';
+import type { PhotoLut } from './photo-filters.ts';
+import { PhotoParticles } from './photo-particles.ts';
 import { POST_BYTES, writeEnvironmentUniforms, writeFrameUniforms } from './post-uniforms.ts';
 import { ScreenSpaceReflections } from './screen-space-reflections.ts';
 import { type PostSettings, effectiveSettings, postExposure } from './settings.ts';
@@ -50,6 +53,9 @@ export interface CompositedScene {
  * then the caller's passes over the composited scene, then {@link encodeAfterScene}
  */
 export class PostProcess {
+	/** stationary particle effects owned by the selected photo look */
+	readonly photoParticles: PhotoParticles;
+	#focus: DepthOfField | null = null;
 	/**
 	 * explicit layouts of the post uniforms and of the sky's reads (the sky-view LUT, its sampler and the
 	 * volumetric fog, at their atmosphere.wgsl and sky.wgsl bindings), for passes that also bind the main
@@ -116,6 +122,7 @@ export class PostProcess {
 		this.#taa = new TemporalAA(device, postUniforms);
 		this.#bloom = new Bloom(device, postUniforms, sampler);
 		this.#tonemap = new Tonemap(device, postUniforms, sampler, swapchainFormat);
+		this.photoParticles = new PhotoParticles(device);
 		this.#environment = environment;
 		writeEnvironmentUniforms(this.#data, environment);
 
@@ -165,8 +172,14 @@ export class PostProcess {
 			this.#bloom.bytes +
 			this.#taa.bytes +
 			this.#reflections.bytes +
-			this.#lightShafts.bytes
+			this.#lightShafts.bytes +
+			(this.#focus?.bytes ?? 0)
 		);
+	}
+
+	/** the photo LUT applied after scene grading and tonemapping */
+	get photoLut(): PhotoLut {
+		return this.#tonemap.photoLut;
 	}
 
 	/**
@@ -226,6 +239,12 @@ export class PostProcess {
 	reset(): void {
 		this.#taa.reset();
 		this.#reflections.reset();
+		this.resetFocus();
+	}
+
+	/** discards photography history after a camera cut or focus-setting change */
+	resetFocus(): void {
+		this.#focus?.reset();
 	}
 
 	/** @param enabled whether the temporal antialiasing jitters and accumulates; off passes the frame through */
@@ -249,6 +268,11 @@ export class PostProcess {
 	 */
 	nextJitter(width: number, height: number, outputHeight: number): readonly [x: number, y: number] {
 		return this.#taa.nextJitter(width, height, outputHeight);
+	}
+
+	/** this frame's projection jitter, for passes sharing the main pass's depth */
+	get jitter(): readonly [number, number] {
+		return this.#taa.jitter;
 	}
 
 	/** jumps the auto exposure straight to its next reading (a new package or level) */
@@ -297,6 +321,7 @@ export class PostProcess {
 			return current;
 		}
 		this.#targets.destroy();
+		this.#focus?.release();
 		const sceneTexture = this.#targets.create({
 			label: 'hdr scene',
 			size: [width, height],
@@ -449,6 +474,11 @@ export class PostProcess {
 		encoder: GPUCommandEncoder,
 		input: {
 			swapchain: GPUTextureView;
+			scene: SceneTextures;
+			/** viewer animation time, frozen when animation is disabled */
+			time: number;
+			/** transparent effects whose render queue puts them after photography */
+			afterDepthOfField: (encoder: GPUCommandEncoder, target: GPUTextureView, copy: () => void) => void;
 			camera: Camera;
 			width: number;
 			height: number;
@@ -465,9 +495,40 @@ export class PostProcess {
 			return;
 		}
 		if (settings.debugView === 'lit') {
+			this.photoParticles.encode(encoder, {
+				time: input.time,
+				target: sized.sceneView,
+				depth: input.scene.depth,
+				camera,
+				aspect: width / height,
+				exposure: postExposure(settings, this.#autoExposure),
+			});
 			this.#lightShafts.encode(encoder, { camera, aspect: width / height, look: environment.lightShaft });
+			if (settings.depthOfField) {
+				this.#focus ??= new DepthOfField(this.#device);
+				this.#focus.encode(encoder, {
+					camera,
+					jitter: this.#taa.jitter,
+					scene: sized.scene,
+					depth: input.scene.depth,
+					waterDepth: input.scene.waterDepth,
+					settings: {
+						aperture: settings.aperture,
+						focusDistance: settings.focusDistance,
+						nearRadius: 10,
+						farRadius: 10,
+						temporalFactor: 0.3,
+					},
+				});
+			}
+		}
+		input.afterDepthOfField(encoder, sized.sceneView, () => this.copyComposite(encoder, input.scene));
+		if (settings.debugView === 'lit') {
 			// the game draws the flare after the shafts, which don't see it
 			this.#lensFlares.encode(encoder, { camera, width, height });
+		}
+		if (!settings.depthOfField) {
+			this.#focus?.release();
 		}
 		const resolved = this.#taa.encode(encoder, camera);
 		if (settings.autoExposure) {
@@ -496,5 +557,8 @@ export class PostProcess {
 		this.#reflections.destroy();
 		this.#lightShafts.destroy();
 		this.#lensFlares.destroy();
+		this.#tonemap.destroy();
+		this.photoParticles.destroy();
+		this.#focus?.destroy();
 	}
 }

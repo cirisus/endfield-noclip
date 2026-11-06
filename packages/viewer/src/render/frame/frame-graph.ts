@@ -412,6 +412,25 @@ export const encodeFrame = (
 		outputWidth,
 		outputHeight,
 		settings: settings.post,
+		scene,
+		time: context.time,
+		afterDepthOfField: (screenEncoder, target, copy) => {
+			if (sceneFrame === null || !meshes.hasAfterDof) {
+				return;
+			}
+			copy();
+			const pass = beginPass(
+				screenEncoder,
+				{
+					label: 'after depth of field',
+					colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
+					depthStencilAttachment: targets.readOnlyDepthAttachment(),
+				},
+				sceneFrame,
+			);
+			draws += meshes.encodeAfterDof(pass, { ...scene, background: scene.radiance });
+			pass.end();
+		},
 	});
 	return draws;
 };

@@ -15,6 +15,9 @@ export type Tonemapper = (typeof TONEMAPPERS)[number];
 export interface PostSettings {
 	/** exposure compensation, EV */
 	exposure: number;
+	depthOfField: boolean;
+	aperture: number;
+	focusDistance: number;
 	/** follow the game's auto exposure on top of the compensation */
 	autoExposure: boolean;
 	tonemapper: Tonemapper;
@@ -45,6 +48,7 @@ export const effectiveSettings = (settings: PostSettings): PostSettings => {
 		exposure: 0,
 		autoExposure: false,
 		tonemapper: 'none',
+		depthOfField: false,
 		heightFog: false,
 		atmosphereFog: false,
 		flowNoise: false,

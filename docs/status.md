@@ -40,6 +40,14 @@ packs or renders correctly.
 
 ## lighting and post-processing
 
+- photographic depth of field and authored post-focus transparency are available; moving-object
+  reprojection, per-particle transparency sorting and packed intermediate precision still differ
+  ([photography](viewer/post-processing.md#photography))
+- photo filters: exported colour LUTs, vignette and high-quality bloom overrides render, along with
+  Black and Gold's additive sprite particles. particle noise and character-specific lighting volumes
+  remain unsupported. external-LUT colour-space parity still needs an in-game comparison
+  ([photo filters](viewer/post-processing.md#photo-filters))
+
 - baked GI ([irradiance](game-data/irradiance.md), [ambient](game-data/lighting.md#ambient)):
   brightness is unchecked against in-game shots; the native scalar on all diffuse ambient, the
   specular ambient's scale (taken as `indirectSpecularFactor`) and the volume's default SH aren't
@@ -500,9 +508,12 @@ packs or renders correctly.
 - place global scenery by its own bounds instead of pulling it all into `assets/common`
 - port the game's path hash so lookups stop reverse-scanning the path-hash table (about a second
   each; [asset resolution](extraction.md#asset-resolution))
-- meshes: collision-only meshes and vertices in `m_CompressedMesh` are rejected; PPtrs into Unity's
-  built-in resources resolve only for the Quad and Cube; prefabs failing with a `FormatError` are
-  stand-in cubes ([mesh](extraction.md#asset-classes))
+- render meshes: collision-only meshes (`m_CollisionMeshBaked`) and vertices in `m_CompressedMesh` are
+  rejected, leaving their instances as streaming boxes. a separate `asset collision` decoder reads
+  supported cooked triangle meshes for routing investigation; PPtrs into Unity's built-in resources
+  resolve only for the Quad and Cube ([built-in meshes](game-data/assets.md#built-in-meshes));
+  prefabs that fail with a `FormatError` are listed in the unsupported-prefab report and drawn as
+  [stand-in](package-format.md#stand-ins) cubes ([assets](game-data/assets.md#mesh))
 - move the viewer's environment-agnostic package loading into `package-format` so packer tests read
   packages through the viewer's code
 
@@ -515,3 +526,77 @@ packs or renders correctly.
   [progressions](game-data/scene-states.md#progressions))
 - weather/time state ids
 - runtime: BC texture support in Safari, the texture-array layer limit on Apple GPUs
+
+## ground routes and arrival framing
+
+- `interaction-points` exports effective per-placement trigger ranges and directional gates.
+  supported normal-channel sphere goals carry source identity and explicit unsupported cases
+  ([interaction authoring](game-data/interaction.md)). map01/map02 exports cover 13,202 authored
+  interactives, with 11,286 effective trigger records and 10,507 supported standing-goal volumes.
+  runtime availability, script changes and interaction visibility remain separate conditions.
+
+- navigation topology, current air-wall geometry and teleport/base seeds can be exported and fed to
+  the Ganglia alpha package; route-bound camera candidates and forced cache rebuilding are available
+  ([navigation](navigation.md), [precompute](oem-precompute.md#arrival-route-constraints))
+- dynamic-state selection, complete player area coverage and missing industrial
+  ground remain unresolved. matching partial portals and authored directed seams are imported;
+  the example point's distant arrival and full visual acceptance are still unverified
+- version 2 exclusions also block reset-zone bounds, including payload-free temporary zones; current
+  full-map extraction found 400 volumes. upright unoffset polygon zones now export bounds-checked
+  filled footprints; other exact trigger shapes and activation remain unresolved
+- movement settings and 34 character capsule proxies can be exported separately from AI bake settings. directed jumps/drops still need
+  player collision geometry, capsule/modifier resolution and trajectory/landing validation; they are
+  not inferred from AI jump heights or admitted by vertical endpoint projection
+- the most common capsule is the default when importing matching movement settings; explicit dimensions
+  can override it. factory regions are player-accessible and require physical ground coverage where
+  AI navigation omits them; the AI exclusion is not a player barrier
+- cooked collision decoding passed 107 triangle-mesh assets / 43,900 triangles in the example cell,
+  with bounds matching the asset records within 0.000006 m. its remaining convex asset now decodes
+  to a closed, outward-facing hull of 8 vertices / 12 triangles;
+  collider transforms, primitive shapes, filtering and full-scene coverage are not yet validated
+
+- player ground build: Ganglia alpha.13 supplies padded collision-to-surface tiles with
+  profile clearance, detail heights, slope and directed step seams. `player-ground` collects
+  selected physical inputs independently of factory AI exclusions. complex shapes, capsule
+  axis interpretation and complete prefab/state coverage remain gaps. real VL2 tile seams
+  validate, while its tested arrival route remains unresolved.
+
+- movement devices: `traversal-devices` exports authored rope targets, launch/acceleration
+  parameter scopes and unresolved state. reciprocal rope pairs are explicit; the exporter
+  does not convert device pivots into ground or grant traversal without validation.
+
+  current exports contain 218 reciprocal rope pairs, 158 launch devices and 40 acceleration
+  devices across map01/map02; all selected rope endpoints pair by authored reference.
+
+- directed movement API: the packed Ganglia dependency accepts grounded rope/jump/drop/launch
+  connections with sample times, and exposes timed journey sampling. unknown connections and
+  air-wall intersections remain blocked. `player-route` now generates model-based jump/drop
+  candidates with sprint entry/resource constraints. successful ground routes also receive
+  shortcut search, including surface-interior landings and isolated intermediate platforms.
+  a common directed action graph selects the retained ground/jump/drop combinations, and
+  complete incumbents are replaced only by faster timed routes. the installed package's descent example
+  passes the normal CLI. sampled search can miss valid connections, and movement-device
+  state and in-game dynamics remain unresolved. view caches have not been rebuilt.
+
+- streamed collision inputs now decode actor/local shape poses, compound mesh ordering,
+  primitive dimensions, enabled/trigger flags and separate terrain bindings. the new
+  `collision-inputs` command requires an explicit cell/state/area and reports incomplete
+  world coverage. 134 real sample actors / 1,008 shapes decode. cooked triangle/convex
+  geometry and RG16 collision heightfields are now included, with collision-specific height
+  normalization, alternating diagonals and complete hole-quad removal. four real heightfields
+  yield 31,092 triangles and omit 838 hole quads. world geometry assembly and source player
+  layer masks now feed `player-ground`. coverage and state selection remain incomplete.
+  the same command accepts `global` to include global chunk inputs separately (19 actors
+  in the map01 default global chunk); neither selection claims complete collision coverage.
+  explicit layer masks retain excluded actor metadata without forcing unrelated geometry cooks.
+  the southward descent example now has bounded physical ground and continuous capsule-sweep
+  trials. the package checks full linearly swept body volume; game motion, complete collision
+  coverage and landing states remain unresolved. jump/drop links passing the explicit model
+  are exposed as candidates with that limitation retained.
+
+- Ganglia alpha.7 removes ground centre/portal zigzags through portal-constrained
+  visibility tracing and retains terrain height changes. Reusable planner preparation
+  supports arbitrary endpoint queries. Sustained sprint speed/acceleration and optional
+  explicit stamina policies affect playback and arrival comparisons. Global continuous
+  shortest-path optimality, resource-optimal corridor search and full player dynamics
+  remain open. The English development route panel uses the existing host component.

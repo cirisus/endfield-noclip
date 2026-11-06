@@ -1,5 +1,6 @@
 import type { EnvironmentProfile } from '@endfield-noclip/package-format/environment';
 import type { LevelEnvironment, PackageManifest } from '@endfield-noclip/package-format/manifest';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { type AppliedVolume, applyBlend, EnvironmentFades, planBlend } from '../environment/blend.ts';
@@ -22,6 +23,8 @@ export interface EnvironmentLook {
 
 /** what {@link EnvironmentState.update} blends at */
 export interface BlendInput {
+	/** photo overrides applied after the scene's volumes */
+	photoFilter?: PhotoFilter | null;
 	/** the loaded package's manifest, `undefined` without one */
 	manifest: PackageManifest | undefined;
 	eye: Vec3;
@@ -39,8 +42,8 @@ export interface BlendInput {
  * @param profile a blended profile, or `null` for the defaults
  * @returns what the renderers take from it
  */
-const lookOf = (profile: EnvironmentProfile | null): EnvironmentLook => ({
-	environment: deriveEnvironment(profile),
+const lookOf = (profile: EnvironmentProfile | null, filter: PhotoFilter | null): EnvironmentLook => ({
+	environment: deriveEnvironment(profile, filter),
 	celestial: celestialLook(profile),
 	lensFlare: lensFlareLook(profile),
 	wetness: wetnessParams(profile?.rain),
@@ -52,7 +55,7 @@ const lookOf = (profile: EnvironmentProfile | null): EnvironmentLook => ({
  */
 export class EnvironmentState {
 	/** the look in effect */
-	look: EnvironmentLook = lookOf(null);
+	look: EnvironmentLook = lookOf(null, null);
 	/** the volumes applied at the camera, in order */
 	applied: AppliedVolume[] = [];
 	/** the time-faded volumes' fade state for the camera */
@@ -62,6 +65,7 @@ export class EnvironmentState {
 	/** what the blend was last planned for */
 	#eye: Vec3 = [Infinity, Infinity, Infinity];
 	#volumes = true;
+	#photoFilter: PhotoFilter | null = null;
 	#pinnedPhase: number | null = null;
 	#loaded: readonly boolean[] = [];
 	/** the last plan's key; `null` forces a new look */
@@ -85,9 +89,12 @@ export class EnvironmentState {
 	 */
 	update(input: BlendInput, options: { force: boolean }): EnvironmentLook | null {
 		const { eye } = input;
+		const filter = input.photoFilter ?? null;
+		const filterChanged = filter !== this.#photoFilter;
 		const last = this.#eye;
 		if (
 			!options.force &&
+			!filterChanged &&
 			input.volumes === this.#volumes &&
 			input.pinnedPhase === this.#pinnedPhase &&
 			input.loaded === this.#loaded &&
@@ -99,6 +106,7 @@ export class EnvironmentState {
 			return null;
 		}
 		this.#eye = [...eye];
+		this.#photoFilter = filter;
 		this.#volumes = input.volumes;
 		this.#pinnedPhase = input.pinnedPhase;
 		this.#loaded = input.loaded;
@@ -116,11 +124,11 @@ export class EnvironmentState {
 					);
 		const key = plan?.key ?? '';
 		this.applied = plan?.applied ?? [];
-		if (key === this.#key) {
+		if (key === this.#key && !filterChanged) {
 			return null;
 		}
 		this.#key = key;
-		this.look = lookOf(plan === null ? null : applyBlend(plan));
+		this.look = lookOf(plan === null ? null : applyBlend(plan), filter);
 		return this.look;
 	}
 }

@@ -12,6 +12,7 @@ import { ByteView } from '../binary/byte-view.ts';
 //   type ref: u8 type, then [pad4, u32 typeHash] for beans and enums, the element's type ref for arrays, or
 //             the key's and the value's type refs for maps
 //   root:  u8 0x0a (map), cstring name, key type ref, value type ref
+//          or u8 0x08 (bean), cstring name, pad4, u32 bean type hash
 //   data:  u32 slotCount, slotCount × (u32 entriesOffset, u32 entryCount); entries are `key ‖ value` packed
 //          with natural alignment. bools and bytes are u8, enums i32, floats f32, doubles f64. strings, beans,
 //          arrays and maps are stored as u32 absolute offsets (0xFFFFFFFF = null); a bean's fields follow the
@@ -75,14 +76,43 @@ export interface SparkTable {
 	entries: [key: number | bigint | string, value: SparkValue][];
 }
 
+type Document =
+	| ({ kind: 'map' } & SparkTable)
+	| { kind: 'bean'; name: string; value: { [field: string]: SparkValue } };
+
 /**
  * decodes a SparkBuffer map table
  *
  * @param bytes the table file
  * @returns the table's entries as plain values
- * @throws {FormatError} on unsupported types or framing errors
+ * @throws {FormatError} on a non-map root, unsupported types or framing errors
  */
 export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
+	const document = parseSparkDocument(bytes);
+	if (document.kind !== 'map') {
+		throw new FormatError('expected spark map root');
+	}
+	return { name: document.name, entries: document.entries };
+};
+
+/**
+ * decodes a SparkBuffer configuration with a single bean at its root
+ *
+ * @param bytes the configuration file
+ * @returns the root name and fields as plain values
+ * @throws {FormatError} on a non-bean root, unsupported types or framing errors
+ */
+export const parseSparkBean = (
+	bytes: Uint8Array,
+): { name: string; value: { [field: string]: SparkValue } } => {
+	const document = parseSparkDocument(bytes);
+	if (document.kind !== 'bean') {
+		throw new FormatError('expected spark bean root');
+	}
+	return { name: document.name, value: document.value };
+};
+
+const parseSparkDocument = (bytes: Uint8Array): Document => {
 	const view = new ByteView(bytes, 'spark');
 	const u32 = (at: number): number => view.u32(at);
 	const u8 = (at: number): number => view.u8(at);
@@ -157,18 +187,20 @@ export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 
 	const rootAt = u32(4);
 	const rootKind = u8(rootAt);
-	if (rootKind !== SparkType.Map) {
+	if (rootKind !== SparkType.Map && rootKind !== SparkType.Bean) {
 		throw new FormatError(`unsupported spark root kind ${rootKind}`);
 	}
 	const [name, afterName] = cString(rootAt + 1);
-	const [keyRef, afterKeyRef] = readRef(afterName, `${name} key`);
-	const [valueRef] = readRef(afterKeyRef, `${name} value`);
 
 	/** reads a value of type `ref` packed at or after `pos`; returns it and the position after it */
 	const read = (ref: TypeRef, pos: number): [SparkValue, number] => {
 		switch (ref.type) {
 			case SparkType.Bool: {
-				return [u8(pos) !== 0, pos + 1];
+				const value = u8(pos);
+				if (value > 1) {
+					throw new FormatError(`invalid spark boolean ${value}`);
+				}
+				return [value !== 0, pos + 1];
 			}
 			case SparkType.Byte: {
 				return [u8(pos), pos + 1];
@@ -281,7 +313,12 @@ export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 		return entries;
 	};
 
-	return { name, entries: readMap(keyRef, valueRef, u32(8), name) };
+	if (rootKind === SparkType.Bean) {
+		return { kind: 'bean', name, value: readBean(u32(align(afterName, 4)), u32(8)) };
+	}
+	const [keyRef, afterKeyRef] = readRef(afterName, `${name} key`);
+	const [valueRef] = readRef(afterKeyRef, `${name} value`);
+	return { kind: 'map', name, entries: readMap(keyRef, valueRef, u32(8), name) };
 };
 
 const align = (at: number, to: number): number => Math.ceil(at / to) * to;

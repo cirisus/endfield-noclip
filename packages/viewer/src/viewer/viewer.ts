@@ -1,4 +1,18 @@
+import {
+	conditionResults,
+	groupsShown,
+	resolveSceneValues,
+} from '@endfield-noclip/package-format/conditions';
 import type { LevelInfo, PackageManifest } from '@endfield-noclip/package-format/manifest';
+import type { PointView } from '@endfield-noclip/package-format/oem';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
+import type { MissionInfo, SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
+import {
+	areasShownIn,
+	streamAreaValues,
+	zonesAt,
+	zonesAround,
+} from '@endfield-noclip/package-format/stream-areas';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 import type { WaterSurfaceEntry } from '@endfield-noclip/package-format/water';
 
@@ -15,13 +29,16 @@ import { volumesForLevel } from '../scene-states/listing.ts';
 import { type GroupsConsumer, SceneState } from '../scene-states/scene-state.ts';
 import { WaterLevels, type WaterVolumeState } from '../scene-states/water-levels.ts';
 import { Camera } from '../scene/camera.ts';
+import { groundHeight as heightAt } from '../scene/ground.ts';
 import { cellIdAt, levelCellIds, levelPose, levelsByCell, overviewPose } from '../scene/level-pose.ts';
 import { type CameraPose, NoclipControls } from '../scene/noclip-controls.ts';
+import { pointPreview } from '../scene/point-preview.ts';
+import { pointViewKey, readPointView, writePointView } from '../scene/point-view-cache.ts';
 import type { ResidentInstances } from '../streaming/resident.ts';
 
 import { EnvironmentState } from './environment-state.ts';
 import { DEFAULT_OPTIONS, type ViewerOptions, postSettings } from './options.ts';
-import { Renderer } from './renderer.ts';
+import { Renderer, type OverlayFrame } from './renderer.ts';
 import { type LevelEntry, type LoadedScene, openScene } from './scene-loader.ts';
 import { type ViewerStats, FrameTimes, STATS_INTERVAL, collectStats, emptyStats } from './stats.ts';
 import { Traversal } from './traversal.ts';
@@ -29,8 +46,163 @@ import { Traversal } from './traversal.ts';
 /** the irradiance volume of a package without one */
 const EMPTY_IRRADIANCE = { keys: new Uint32Array(), blobs: new Uint32Array(), groups: new Uint32Array() };
 
+export type { OverlayFrame } from './renderer.ts';
+
 /** the running viewer */
 export class Viewer {
+	#overlays = new Set<(frame: OverlayFrame) => void>();
+	#baseStates: StatesInfo | null = null;
+	#cameraListeners = new Set<() => void>();
+	#photoFilters: readonly PhotoFilter[] = [];
+
+	addOverlay(encode: (frame: OverlayFrame) => void): () => void {
+		this.#overlays.add(encode);
+		this.#dirty = true;
+		return () => {
+			this.#overlays.delete(encode);
+			this.#dirty = true;
+		};
+	}
+
+	subscribeCamera(listener: () => void): () => void {
+		this.#cameraListeners.add(listener);
+		return () => this.#cameraListeners.delete(listener);
+	}
+
+	setCompanion(controls: readonly SceneControl[], missions: readonly MissionInfo[]): void {
+		const pkg = this.scene?.pkg,
+			base = this.#baseStates;
+		if (!pkg || !base) {
+			return;
+		}
+		const byId = new Map(base.controls.map((c) => [c.id, c]));
+		for (const c of controls) {
+			if (!byId.has(c.id) && (c.kind === 'quest' || c.kind === 'mission') && c.derived === null) {
+				byId.set(c.id, c);
+			}
+		}
+		pkg.manifest.states = {
+			...base,
+			controls: [...byId.values()],
+			missions: [...new Map([...base.missions, ...missions].map((m) => [m.id, m])).values()],
+		};
+		this.#sceneState.setPackage(pkg.manifest.states, [this.scene!.selector, ...this.#groupsConsumers]);
+		this.#updateVisibility();
+		this.#emitState();
+	}
+
+	async framePoint(
+		target: Vec3,
+		signal: AbortSignal,
+		options?: { baked?: PointView; animate: boolean },
+	): Promise<PointView | null> {
+		signal.throwIfAborted();
+		const scene = this.scene;
+		if (!scene) {
+			return null;
+		}
+		this.#unsettledPose = null;
+		const initial: CameraPose = {
+			position: [target[0], target[1] + 6, target[2] - 10],
+			yaw: 0,
+			pitch: -Math.atan2(6, 10),
+		};
+		if (options?.animate) {
+			this.controls.flyTo(initial);
+		} else {
+			this.controls.cancelFlight();
+			this.#setPose(initial);
+		}
+		this.#dirty = true;
+		const states = scene.pkg.manifest.states;
+		const areas = states.streamAreas;
+		let picks = this.scenePicks;
+		if (areas && this.options.streamAreas) {
+			let zones = zonesAt(areas, target);
+			if (zones.size === 0) {
+				zones = zonesAround(areas, target);
+			}
+			picks = { ...streamAreaValues(areas, areasShownIn(areas, zones)), ...picks };
+		}
+		const shown = groupsShown(states, conditionResults(states, resolveSceneValues(states, picks)));
+		const key = await pointViewKey(scene.pkg.manifest.generation, this.level, target, shown);
+		let pose = options?.baked?.key === key ? options.baked : readPointView(key);
+		if (pose === null) {
+			let pendingTerrain = false;
+			pose = await pointPreview(
+				scene.pkg,
+				this.#pool,
+				target,
+				states,
+				this.#level?.tag ?? null,
+				picks,
+				(x, z) => {
+					const height = heightAt(scene.ground, x, z);
+					pendingTerrain ||= height === undefined;
+					return height ?? null;
+				},
+				signal,
+			);
+			if (!pendingTerrain && !signal.aborted && this.scene === scene) {
+				writePointView(key, pose);
+			}
+		}
+		signal.throwIfAborted();
+		if (this.scene !== scene) {
+			return null;
+		}
+		this.#unsettledPose = null;
+		if (options?.animate) {
+			this.controls.flyTo(pose);
+		} else {
+			this.controls.cancelFlight();
+			this.#setPose(pose);
+		}
+		this.#dirty = true;
+		return { key, clear: false, ...pose };
+	}
+
+	focusAt(point: Vec3): boolean {
+		const forward = this.camera.forward();
+		const distance = point.reduce((sum, value, i) => sum + (value - this.camera.position[i]) * forward[i], 0);
+		if (!Number.isFinite(distance) || distance < this.camera.near) {
+			return false;
+		}
+		this.setOptions({ depthOfField: true, focusDistance: distance });
+		return true;
+	}
+
+	/** @returns the terrain beneath the camera, when resident */
+	get groundHeight(): number | null {
+		return this.scene === null
+			? null
+			: (heightAt(this.scene.ground, this.camera.position[0], this.camera.position[2]) ?? null);
+	}
+	/** @param id level to prioritize @param options whether to fly there */
+	showLevel(id: string, options: { fly?: boolean } = {}): void {
+		const level = this.#levelInfo(id);
+		const scene = this.scene;
+		if (!level || !scene) {
+			return;
+		}
+		this.#setLevel(level, scene.pkg.manifest);
+		this.#blendEnvironment({ force: true, dt: 0 });
+		if (options.fly !== false) {
+			this.flyToLevel(id);
+		}
+		this.#updateVisibility();
+	}
+	/** @returns installed photo filters */
+	get photoFilters(): readonly PhotoFilter[] {
+		return this.#photoFilters;
+	}
+	/** @param filters validated library */
+	setPhotoFilters(filters: readonly PhotoFilter[]): void {
+		this.setOptions({ photoFilter: null });
+		this.#photoFilters = filters;
+		this.#emitState();
+	}
+
 	readonly camera = new Camera();
 	readonly controls: NoclipControls;
 	readonly options: ViewerOptions = structuredClone(DEFAULT_OPTIONS);
@@ -172,10 +344,12 @@ export class Viewer {
 		source: PackageSource,
 		initialLevel: string | null,
 		onProgress: (phase: string) => void,
+		loadOptions: { preserveCamera?: boolean } = {},
 	): Promise<void> {
 		this.unload();
 		const pkg = await openViewerPackage(source, onProgress);
 		const manifest = pkg.manifest;
+		this.#baseStates = manifest.states;
 		const renderer = this.#renderer;
 		renderer.setIrradiance(pkg.irradiance, manifest.irradianceRegions);
 		const scene = openScene(pkg, {
@@ -202,7 +376,9 @@ export class Viewer {
 		renderer.lights.setLights(pkg.lights.lights);
 		this.#updateVisibility();
 		this.#applyEnvironment();
-		if (level === null) {
+		if (loadOptions.preserveCamera) {
+			this.#unsettledPose = null;
+		} else if (level === null) {
 			this.#setPose(overviewPose(manifest));
 		} else {
 			this.#focusCells = levelCellIds(manifest, level);
@@ -226,6 +402,7 @@ export class Viewer {
 		renderer.bindings.setReflection(null, 1);
 		renderer.bindings.set('shadowRamp', null);
 		this.scene = null;
+		this.#baseStates = null;
 		this.#sceneState.setPackage(null, this.#groupsConsumers);
 		this.options.environmentPin = null;
 		this.#environment.fades.reset();
@@ -318,6 +495,7 @@ export class Viewer {
 				eye: this.camera.position,
 				volumes: this.options.environmentVolumes,
 				pinnedPhase: this.options.environmentPin,
+				photoFilter: this.#photoFilters.find((f) => f.id === this.options.photoFilter) ?? null,
 				loaded: this.#sceneState.conditionResults,
 				dt,
 			},
@@ -391,6 +569,9 @@ export class Viewer {
 		this.camera.pitch = pitch;
 		// a cut: the last frames show somewhere else
 		this.#renderer.cut();
+		for (const listener of this.#cameraListeners) {
+			listener();
+		}
 	}
 
 	/** re-poses the first view over the ground once the coarse terrain lands; drops it if the camera moved */
@@ -545,11 +726,50 @@ export class Viewer {
 	/** @param patch options to change */
 	setOptions(patch: Partial<ViewerOptions>): void {
 		const { post, targets } = this.#renderer;
+		if (
+			patch.photoFilter !== undefined &&
+			patch.photoFilter !== null &&
+			!this.#photoFilters.some((filter) => filter.id === patch.photoFilter)
+		) {
+			throw new Error(`unknown photo filter ${patch.photoFilter}`);
+		}
+		if (patch.photoFilter !== undefined || patch.photoLutStrength !== undefined) {
+			const id = patch.photoFilter === undefined ? this.options.photoFilter : patch.photoFilter;
+			const filter = this.#photoFilters.find((entry) => entry.id === id) ?? null;
+			if (
+				patch.photoLutStrength !== undefined &&
+				(!Number.isFinite(patch.photoLutStrength) || patch.photoLutStrength < 0 || patch.photoLutStrength > 1)
+			) {
+				throw new RangeError('photo LUT contribution must be between 0 and 1');
+			}
+			this.#renderer.post.photoLut.set(filter, patch.photoLutStrength ?? this.options.photoLutStrength);
+			if (patch.photoFilter !== undefined && patch.photoFilter !== this.options.photoFilter) {
+				this.#renderer.post.photoParticles.set(filter, this.camera, this.#time);
+			}
+		}
+
 		Object.assign(this.options, patch);
+		this.options.aperture = Number.isFinite(this.options.aperture)
+			? Math.min(32, Math.max(1.4, this.options.aperture))
+			: DEFAULT_OPTIONS.aperture;
+		this.options.focusDistance = Number.isFinite(this.options.focusDistance)
+			? Math.min(10000, Math.max(0.1, this.options.focusDistance))
+			: DEFAULT_OPTIONS.focusDistance;
+		if (
+			patch.depthOfField !== undefined ||
+			patch.aperture !== undefined ||
+			patch.focusDistance !== undefined
+		) {
+			this.#renderer.post.resetFocus();
+			this.#renderer.post.resetAntialiasing();
+		}
+
+		this.#blendEnvironment({ force: true, dt: 0 });
 		targets.renderScale = Math.min(1, Math.max(0.25, this.options.renderScale));
 		post.setAntialiasing(this.options.antialiasing);
 		if (patch.debugView !== undefined || patch.antialiasing !== undefined) {
 			post.resetAntialiasing();
+			post.resetFocus();
 		}
 		if (patch.streamAreas !== undefined) {
 			this.#updateVisibility();
@@ -622,7 +842,13 @@ export class Viewer {
 		const renderer = this.#renderer;
 		const traversal = this.#traversal;
 
+		this.controls.groundHeight = this.groundHeight;
 		const moved = this.controls.update(dt) || this.#settleFirstPose();
+		if (moved) {
+			for (const listener of this.#cameraListeners) {
+				listener();
+			}
+		}
 		const watered = this.#waterLevels.update(dt, this.options.waterLevelRate);
 		this.#waterLevels.applyFloaters(this.#writeFloater);
 		if (this.#sceneState.follow(this.camera.position)) {
@@ -648,7 +874,7 @@ export class Viewer {
 		// the temporal antialiasing converges over a few more jittered frames of the same view
 		let settling = false;
 		if (changed) {
-			this.#settleFrames = options.antialiasing ? SETTLE_FRAMES : 0;
+			this.#settleFrames = options.antialiasing || options.depthOfField ? SETTLE_FRAMES : 0;
 		} else if (this.#settleFrames > 0) {
 			this.#settleFrames--;
 			settling = true;
@@ -657,7 +883,11 @@ export class Viewer {
 		// particles change what it meters every frame, so a meter that kept running would never let it settle
 		const settings = frameSettings(options, scene !== null, postSettings(options, scene !== null));
 		const adapting = renderer.post.adaptExposure(settings.post, dt, { metering: changed || settling });
-		const render = changed || settling || adapting;
+		const render =
+			changed ||
+			settling ||
+			adapting ||
+			(options.animate && settings.post.debugView === 'lit' && renderer.post.photoParticles.active);
 		const look = this.#environment.look;
 		if (render && options.animate) {
 			this.#time += dt;
@@ -700,6 +930,7 @@ export class Viewer {
 				terrain: scene?.pkg.manifest.terrain,
 				options,
 				times: this.#times,
+				overlays: this.#overlays,
 			});
 			this.#times.rendered(dt);
 		}
@@ -719,6 +950,8 @@ export class Viewer {
 		document.removeEventListener('visibilitychange', this.#onVisibilityChange);
 		this.unload();
 		this.controls.destroy();
+		this.#overlays.clear();
+		this.#cameraListeners.clear();
 		this.#pool.destroy();
 		this.#renderer.destroy();
 	}

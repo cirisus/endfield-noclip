@@ -72,6 +72,8 @@ const VECTORS = new Map<string, [string, number]>([
 
 /** structs serialized raw rather than through their wrapper (besides `*Ptr`) */
 const RAW_STRUCTS = new Set([
+	'StringPathHash',
+	'BezierKnot',
 	'GameplayTag',
 	'CameraControlStateInitialParam',
 	'PosRot',
@@ -433,6 +435,19 @@ export class MemoryPackReader {
 		if (type.kind === 'generic') {
 			const [first, second] = type.args;
 			switch (base) {
+				case 'ValueTuple': {
+					// Unity writes this unmanaged pair as two adjacent Vector3 values, without an object header.
+					// Other tuple layouts may reorder fields or add padding and need separate validation.
+					if (
+						type.args.length !== 2 ||
+						!type.args.every(
+							(arg) => arg.kind === 'definition' && runtime.definitionName(arg.definition) === 'Vector3',
+						)
+					) {
+						throw new FormatError(`unsupported tuple layout ${name}`);
+					}
+					return [this.#value(first, false), this.#value(second, false)];
+				}
 				case 'List': {
 					return this.#list(() => this.#value(first, true));
 				}

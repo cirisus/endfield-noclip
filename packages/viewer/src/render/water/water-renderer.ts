@@ -210,6 +210,7 @@ export class WaterRenderer {
 			primitive,
 			depthStencil: { format: WATER_DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: DEPTH_COMPARE },
 		}));
+
 		this.#surfaces = device.createBuffer({
 			label: 'water surfaces',
 			size: this.#surfaceData.byteLength,
@@ -508,6 +509,10 @@ export class WaterRenderer {
 		pass.setBindGroup(1, context.sky);
 		pass.setBindGroup(2, group);
 		pass.setBindGroup(3, context.postUniforms);
+		this.#draw(pass);
+	}
+
+	#draw(pass: GPURenderPassEncoder): void {
 		for (const { geometry, slot } of this.#draws) {
 			pass.setVertexBuffer(0, geometry.vertices, 0, geometry.positionBytes);
 			pass.setVertexBuffer(1, geometry.vertices, geometry.normalOffset ?? 0);

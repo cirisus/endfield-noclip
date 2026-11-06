@@ -89,6 +89,16 @@ const stencilMaskLook = (mask: StencilMaskSurface, cull: MaterialCull): Material
 
 // #endregion
 
+const AFTER_DOF_QUEUES = new Set<LookQueue>([
+	'transparent',
+	'effect',
+	'effectDecal',
+	'mist',
+	'mistVolume',
+	'screenMultiply',
+	'refract',
+]);
+
 /**
  * @param materials the package's material table
  * @returns a look per material id
@@ -199,6 +209,17 @@ export const materialLooks = (materials: MaterialTable): MaterialLook[] => {
 				break;
 			}
 		}
+		const look = looks[entry.id];
+		const queue = entry.renderQueue;
+		if (
+			AFTER_DOF_QUEUES.has(look.queue) &&
+			!look.unsupported &&
+			queue !== undefined &&
+			queue >= 3660 &&
+			queue <= 3740
+		) {
+			look.afterDof = queue;
+		}
 	}
 	return looks;
 };
@@ -240,6 +261,7 @@ const effectMaterialLook = (
 	drawn: true,
 	unsupported: false,
 	queue,
+	afterDof: null,
 	cull: box ? 'front' : cull,
 	castsShadows: false,
 	textures: effect.textures,

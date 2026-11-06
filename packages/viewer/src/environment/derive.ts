@@ -6,10 +6,12 @@
  */
 
 import type { LightConfig } from '@endfield-noclip/package-format/environment';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { linearRgb, rec709Luminance, srgbToLinear } from '../math/color.ts';
 import { scale, vec3From } from '../math/vec3.ts';
+import { photoProfile } from '../render/post/photo-filters.ts';
 
 import { gradingLook } from './color-grading.ts';
 import { DEFAULT_POST, DEFAULT_PROFILE } from './default-profile.ts';
@@ -321,10 +323,14 @@ const windLook = ({ speed, direction }: WindInput): Environment['wind'] => ({
 
 /**
  * @param profile the level's environment profile, or `null` for the defaults
+ * @param filter optional photo overrides applied after scene volume blending
  * @returns the renderer's view of it
  */
-export const deriveEnvironment = (profile: EnvironmentInput | null): Environment => {
-	const source = profile ?? DEFAULT_PROFILE;
+export const deriveEnvironment = (
+	profile: EnvironmentInput | null,
+	filter?: PhotoFilter | null,
+): Environment => {
+	const source = photoProfile(profile ?? DEFAULT_PROFILE, filter ?? null);
 	const { light, sky, atmosphere, heightFog, volumetricFog } = source;
 	const intensity = exposedSunIntensity(light);
 	const color = linearRgb(light.directColor);

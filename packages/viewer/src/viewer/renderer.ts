@@ -40,6 +40,20 @@ const INSTANCE_ROWS = 1_500_000;
 /** the frame uniforms' local lights while they're off */
 const NO_LOCAL_LIGHTS: LocalLightFrame = { count: 0, tilesX: 1, tilesY: 1 };
 
+/** transient GPU targets for a host overlay, after tonemapping */
+export interface OverlayFrame {
+	device: GPUDevice;
+	encoder: GPUCommandEncoder;
+	target: GPUTextureView;
+	format: GPUTextureFormat;
+	/** current opaque/cutout scene depth, reversed-Z; 0 is empty */
+	depth: GPUTextureView;
+	width: number;
+	height: number;
+	/** current depth-buffer projection jitter in NDC */
+	jitter: readonly [number, number];
+}
+
 /** what {@link Renderer.render} draws */
 export interface RenderInput {
 	camera: Camera;
@@ -57,6 +71,8 @@ export interface RenderInput {
 	options: FrameUniformInputs['options'];
 	/** where the CPU spans go */
 	times: FrameTimes;
+	/** host GPU overlays encoded after tonemapping */
+	overlays: Iterable<(frame: OverlayFrame) => void>;
 }
 
 /** the GPU side of the viewer: the device's renderers and targets, and the frame they encode together */
@@ -167,6 +183,7 @@ export class Renderer {
 
 	/** drops what the passes carry over from earlier frames, after a cut to somewhere else */
 	cut(): void {
+		this.post.resetFocus();
 		for (const history of this.#histories) {
 			history.reset();
 		}
@@ -259,6 +276,18 @@ export class Renderer {
 			},
 			this.frame,
 		);
+		for (const encode of input.overlays) {
+			encode({
+				device: this.device,
+				encoder,
+				target: this.targets.swapchainView(),
+				format: this.targets.colorFormat,
+				depth: this.targets.scene.depth,
+				width: outputWidth,
+				height: outputHeight,
+				jitter: this.post.jitter,
+			});
+		}
 		this.profiler.resolve(encoder);
 		times.span('encode');
 		this.device.queue.submit([encoder.finish()]);

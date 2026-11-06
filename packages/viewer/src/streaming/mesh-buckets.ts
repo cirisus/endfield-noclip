@@ -27,6 +27,8 @@ export interface MeshBucket {
 	 * none), so each layer draws a prefix of the bucket; reset every frame
 	 */
 	rows: number[][];
+	/** camera distances parallel to rows, only allocated for sorted post-focus layers */
+	distances: number[][] | null;
 	/**
 	 * the highest priority of an instance this frame: its projected height, px, scaled by the caster priority
 	 * in cast-only buckets. textures stream by it
@@ -240,7 +242,8 @@ export class MeshBuckets {
 					castsStatic: castsShadows && layers.static,
 					hiddenBy: hiddenByOf(draw.role, look),
 					shadowOnly,
-					gpuCullable: draw.particles === null && (queue === 'opaque' || queue === 'cutout'),
+					gpuCullable:
+						draw.particles === null && look.afterDof === null && (queue === 'opaque' || queue === 'cutout'),
 					particles: draw.particles,
 					buckets: Array.from({ length: BUCKET_VARIANTS }, () => null),
 				});
@@ -275,6 +278,10 @@ export class MeshBuckets {
 				mirrored: (index & 1) === 1,
 				castOnly: (index & 2) === 2,
 				rows: Array.from({ length: SHADOW_LAYERS + 1 }, () => []),
+				distances:
+					this.#looks[material].afterDof === null
+						? null
+						: Array.from({ length: SHADOW_LAYERS + 1 }, () => []),
 				pixels: 0,
 				nearest: Infinity,
 				frame: -1,

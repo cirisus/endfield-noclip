@@ -13,7 +13,7 @@ import {
 import normalMapWgsl from '../shaders/common/normal-map.wgsl?raw';
 import { SHADOW_DEPTH_STATE } from '../shadows/shadow-map.ts';
 
-import { type DrawPhase, PHASES, type VertexStreams } from './draw-ranges.ts';
+import { AFTER_DOF_PHASES, type DrawPhase, PHASES, type VertexStreams } from './draw-ranges.ts';
 import effectWgsl from './effect.wgsl?raw';
 import meshWgsl from './mesh.wgsl?raw';
 import { type FaceCull, FRONT_FACE, type UvFormat, VARIANTS, pipelineKey } from './pipeline-variants.ts';
@@ -167,6 +167,15 @@ export const prepareMeshPipelines = (
 		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 		depthStencil: depthTest,
 	});
+	describeMesh(AFTER_DOF_PHASES[0], {
+		fragment: {
+			module,
+			entryPoint: 'fs_after_dof',
+			constants: { after_dof: 1 },
+			targets: [{ format: HDR_FORMAT, blend: { color: PREMULTIPLIED_OVER, alpha: KEEP } }],
+		},
+		depthStencil: depthTest,
+	});
 	describeMesh(PHASES.shadowOpaque, { depthStencil: SHADOW_DEPTH_STATE });
 	describeMesh(PHASES.shadowCutout, {
 		fragment: { module, entryPoint: 'fs_cutout_depth', targets: [] },
@@ -190,14 +199,19 @@ export const prepareMeshPipelines = (
 		entryPoint: string,
 		targets: GPUColorTargetState[],
 		depthCompare: GPUCompareFunction | null,
-		{ writesDepth = false }: { writesDepth?: boolean } = {},
+		{ writesDepth = false, constants }: { writesDepth?: boolean; constants?: Record<string, number> } = {},
 	): void => {
 		describe(phase, (cullMode, uvFormat) => {
 			const descriptor: GPURenderPipelineDescriptor = {
 				layout: effectPipelineLayout,
 				vertex: { ...meshVertex(module, uvFormat, 'all'), module: effectModule, entryPoint: 'vs_effect' },
 				primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
-				fragment: { module: effectModule, entryPoint, targets },
+				fragment: {
+					module: effectModule,
+					entryPoint,
+					targets,
+					...(constants === undefined ? {} : { constants }),
+				},
 			};
 			if (depthCompare !== null) {
 				descriptor.depthStencil = { format: format.depth, depthWriteEnabled: writesDepth, depthCompare };
@@ -215,6 +229,21 @@ export const prepareMeshPipelines = (
 	describeEffect(PHASES.mist, 'fs_mist_card', TRANSPARENT_TARGETS, DEPTH_COMPARE);
 	// fog boxes measure their thickness up to the depth buffer the same way
 	describeEffect(PHASES.mistVolume, 'fs_mist_volume', TRANSPARENT_TARGETS, 'always');
+	for (const [index, entryPoint, depthCompare] of [
+		[1, 'fs_effect_after_dof', DEPTH_COMPARE],
+		[2, 'fs_effect_decal_after_dof', 'always'],
+		[3, 'fs_mist_card_after_dof', DEPTH_COMPARE],
+		[4, 'fs_mist_volume_after_dof', 'always'],
+	] as const) {
+		describeEffect(
+			AFTER_DOF_PHASES[index],
+			entryPoint,
+			[{ format: HDR_FORMAT, blend: { color: PREMULTIPLIED_OVER, alpha: KEEP } }],
+			depthCompare,
+			{ constants: { after_dof: 1 } },
+		);
+	}
+
 	// effects over the composited scene: multiplying it, then blending a refracted copy of it over
 	describeEffect(
 		PHASES.screenMultiply,

@@ -38,6 +38,12 @@ passes up to the lens flare run at the render size, the canvas's device-pixel si
 what each post pass computes is in [post-processing](post-processing.md) and
 [sky and fog](sky-and-fog.md).
 
+hosts can register `Viewer.addOverlay` callbacks after tonemapping. each callback receives
+the output target and size, the current opaque/cutout reversed-Z depth view and its NDC
+projection jitter, and the device/encoder for that frame. targets are transient; host
+renderers own their buffers and pipelines. registration and removal invalidate the frame.
+depth sampling must account for jitter and the difference between render and output size.
+
 - **depth.** reversed-Z `depth32float`, cleared to 0 and tested with `greater`, with an infinite far
   plane and a 0.25 m near plane; logarithmic depth is avoided because writing fragment depth
   disables early-Z and, on tile-based GPUs, hidden-surface removal. where the GPU has the

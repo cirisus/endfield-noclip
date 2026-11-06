@@ -112,8 +112,17 @@ export const PHASES = {
 	shadowCutout: { key: 'mesh/shadow/cutout', range: 'cutout', textured: true, shadow: true, streams: 'uv' },
 } as const satisfies Record<string, DrawPhase>;
 
+/** alpha layers authored after focus, drawn into one HDR target rather than the OIT buffers */
+export const AFTER_DOF_PHASES: readonly DrawPhase[] = [
+	PHASES.transparent,
+	PHASES.effect,
+	PHASES.effectDecal,
+	PHASES.mist,
+	PHASES.mistVolume,
+].map((phase) => Object.assign({}, phase, { key: `${phase.key}/after-dof` }));
+
 /** the passes that draw meshes */
-export type MeshPass = SurfacePass | EffectPass | 'shadow';
+export type MeshPass = SurfacePass | EffectPass | 'shadow' | 'afterDof';
 
 /** passes over the main pass's targets */
 export type SurfacePass = 'prepass' | 'main';
@@ -138,6 +147,7 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// of the scene, then those it tests behind it
 	waterFoam: [PHASES.waterFoam, PHASES.waterFoamBehind],
 	shadow: [PHASES.shadowOpaque, PHASES.shadowCutout],
+	afterDof: [...AFTER_DOF_PHASES, PHASES.screenMultiply, PHASES.refract],
 };
 
 /**

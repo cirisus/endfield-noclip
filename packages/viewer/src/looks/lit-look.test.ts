@@ -374,3 +374,23 @@ test('foliage: leaves and grass fill the foliage rows, and surfaces keeping lit 
 	assert.deepEqual(row(grass, LookRow.foliage2), [0.1, 3, 4, 0.25].map(Math.fround));
 	assert.equal(grass.params[LookRow.detail2 + 3], 0);
 });
+
+test('only authored post-focus queues move supported transparent surfaces after depth of field', () => {
+	const queues = [undefined, 3659, 3660, 3700, 3740, 3741];
+	const entries = queues.map((renderQueue, id) => {
+		const entry = described(id, litSurface({ blend: 'alphaBlend' }));
+		if (renderQueue !== undefined) {
+			entry.renderQueue = renderQueue;
+		}
+		return entry;
+	});
+	entries.push({ ...described(entries.length, litSurface()), renderQueue: 3700 });
+	entries.push({
+		...described(entries.length, { kind: 'unsupported', reason: 'unknown shader' }),
+		renderQueue: 3700,
+	});
+	assert.deepEqual(
+		materialLooks({ entries }).map((look) => look.afterDof),
+		[null, null, 3660, 3700, 3740, null, null, null],
+	);
+});

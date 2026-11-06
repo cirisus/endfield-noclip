@@ -114,6 +114,8 @@ export interface MaterialLook {
 	unsupported: boolean;
 	/** the draws the look's meshes join, which decide their pass and pipelines */
 	queue: LookQueue;
+	/** authored queue for layers composited after depth of field, otherwise null */
+	afterDof: number | null;
 	/** the faces the game culls, for unmirrored instances */
 	cull: MaterialCull;
 	/** whether the material draws into shadow maps */
@@ -307,6 +309,7 @@ export const emptyLook = ({ drawn }: { drawn: boolean }): MaterialLook => ({
 	drawn,
 	unsupported: false,
 	queue: 'opaque',
+	afterDof: null,
 	cull: 'none',
 	castsShadows: true,
 	...emptySlots(),
