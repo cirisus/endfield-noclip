@@ -29,6 +29,11 @@ UI node's RectTransform as its Transform (as the light, volume and effect walker
   `interactiveLockData` ([level-locks.ts](../../packages/formats/src/endfield/level-locks.ts)),
   decoded whole, so a level whose LevelData the MemoryPack schema can't decode (Dijiang's) reports
   `gameplay locks` in `unsupported-interactives.json` and its placements count as unlocked.
+- **emission overrides**: an enabled `AnimationProperties_Emissive` on an active GameObject folds
+  its colour into `_EmissiveColor` of the renderers it lists, as the shader mixes it
+  ([emission](../game-data/materials.md#emission);
+  [emissive-override.ts](../../packages/extractor/src/game/emissive-override.ts)); those renderers
+  get a material variant, like a pose's material values. its breathing and albedo tint aren't read.
 - **resolution**: the packer resolves a prefab from its StringPathHash key, which must name exactly
   one manifest path.
 - **what else a prefab holds**: its environment volumes

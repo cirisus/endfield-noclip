@@ -94,13 +94,23 @@ grey glow of 2.1 from its emissive map's G (alpha 1), which covers the whole roc
 
 each draw also carries a runtime emission colour in its per-draw data, which replaces
 `_EmissiveColor` by its alpha. the static scenery's files store it as zero, and the client's known
-setters work on GameObject renderers (interactives' emissive configs, VFX-driven emission). the
-white lamp cubes on Wuling's and Marker Stone's towers (`M_module_tylight+1_001_03`) don't take a
-colour from it: they emit white, and the green and red glow over them comes from one effect prefab
-per tower, placed always ([pull towards the camera](effects.md#vertex-offset-and-brightening)).
-Wuling's (`P_fxmap_map02_lv002_citywall_lighting_02`) emits a round glow and a 40 × 5 m horizontal
-streak at each lamp from a mesh of their positions, both teal (`_TintColor` 0.45, 0.84, 0.75),
-added; Marker Stone's (`P_fxmap_map_lv004_lamp_light_01`) draws red.
+setters work on GameObject renderers (interactives' emissive configs, VFX-driven emission).
+
+one of those setters is the `AnimationProperties_Emissive` component, a VFX playable that starts
+playing when enabled and then writes its `emissiveColor` into that colour on each renderer it lists
+(`affectRenderers`), so a prefab can author its resting emission colour there instead of on the
+material. `_EmissiveColor`'s own alpha still sets the pulse or sweep depth. the water drone targets
+(`int_waterdrone_floating_target_postmodel`) keep a black `_EmissiveColor` on
+`M_anm_map02_machine+1_003_02` and glow green (0, 1, 0.17, alpha 1) from their emissive map's R
+through the component; their G channel only lights inside the sweep band. the component also sets an
+albedo tint where R is at least 0.1, weighted by `emissiveAlbedoColor`'s alpha (0 on the targets),
+and a breathing pulse (`breathFrequency`, `breathIntensity`; 0 on the targets). the white lamp cubes
+on Wuling's and Marker Stone's towers (`M_module_tylight+1_001_03`) don't take a colour from it:
+they emit white, and the green and red glow over them comes from one effect prefab per tower, placed
+always ([pull towards the camera](effects.md#vertex-offset-and-brightening)). Wuling's
+(`P_fxmap_map02_lv002_citywall_lighting_02`) emits a round glow and a 40 × 5 m horizontal streak at
+each lamp from a mesh of their positions, both teal (`_TintColor` 0.45, 0.84, 0.75), added; Marker
+Stone's (`P_fxmap_map_lv004_lamp_light_01`) draws red.
 
 the mask channel is 0 for no emission, 1 for the base colour's alpha, 2 for the normal map's B
 (two-basemap layout) or the base alpha (MRO layout), and 3 or more for the normal map's alpha
