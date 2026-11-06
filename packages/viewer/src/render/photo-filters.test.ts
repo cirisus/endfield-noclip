@@ -46,8 +46,10 @@ const effect = (): PhotoEffect => ({
 			gravityModifier: constant(0),
 			velocity: null,
 			clamp: null,
+			forces: null,
 		},
 		ringBuffer: null,
+		customData: null,
 		textureSheet: null,
 		pivot: [0, 0, 0],
 		meshWeights: [1],
@@ -87,7 +89,7 @@ const filter = (): PhotoFilter => ({
 });
 const library = (filters: PhotoFilter[]) => ({
 	format: 'endfield-noclip.photo-filters',
-	version: 2,
+	version: 3,
 	filters,
 });
 
@@ -158,6 +160,11 @@ test('bloom overrides preserve the scene tint and unrelated post sections, and n
 test('rejects malformed effect transforms, particle curves, texture mips and unsupported render states', () => {
 	const parse = (fx: PhotoEffect) => parsePhotoFilters(library([{ ...filter(), effects: [fx] }]));
 	assert.equal(parse(effect()).filters[0].effects?.length, 1);
+	const stale = JSON.stringify(library([{ ...filter(), effects: [effect()] }])).replace(
+		',"forces":null',
+		'',
+	);
+	assert.throws(() => parsePhotoFilters(JSON.parse(stale)), /invalid effects/);
 	assert.throws(() => parse({ ...effect(), matrix: [1] }), /invalid effects/);
 	const badCurve = effect();
 	badCurve.particles.startSize[0] = { ...constant(1), mode: 1, curve: null };
@@ -174,6 +181,7 @@ test('rejects malformed effect transforms, particle curves, texture mips and uns
 		gravityModifier: constant(1),
 		velocity: null,
 		clamp: null,
+		forces: null,
 	};
 	assert.throws(() => parse(badMotion), /invalid effects/);
 	const speedLimited = effect();
@@ -183,6 +191,7 @@ test('rejects malformed effect transforms, particle curves, texture mips and uns
 		gravityModifier: constant(0),
 		velocity: null,
 		clamp: { kind: 'limit', limit: constant(1), dampen: 1 },
+		forces: null,
 	};
 	assert.throws(() => parse(speedLimited), /invalid effects/);
 	const badMip = effect();

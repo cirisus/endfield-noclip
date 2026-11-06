@@ -229,7 +229,7 @@ export const run = async (args: string[]): Promise<void> => {
 				`${filter.id}: ${filter.name}${filter.unsupported.length ? ` (partial: ${filter.unsupported.join(', ')})` : ''}`,
 			);
 		}
-		const library: PhotoFilters = { format: 'endfield-noclip.photo-filters', version: 2, filters };
+		const library: PhotoFilters = { format: 'endfield-noclip.photo-filters', version: 3, filters };
 		const output = resolve(values.output);
 		await mkdir(dirname(output), { recursive: true });
 		await writeFile(output, JSON.stringify(library));

@@ -148,11 +148,11 @@ extractor.
 
 the underlying scene renderer's existing grading, bloom and vignette differences still apply.
 
-the library uses the separate `endfield-noclip.photo-filters` contract, version 2, in
+the library uses the separate `endfield-noclip.photo-filters` contract, version 3, in
 `package-format/photo-filters.ts`. its JSON contains names, grading, vignette and optional bloom
 overrides, optional particle emitters and texture mips, unsupported-feature notes and base64
-GPU-ready LUT blocks. version 2 uses the v49 particle motion union, emission bounds, per-emitter
-delay and resolved scale. version-1 libraries are rejected and must be re-exported. the loader checks
+GPU-ready LUT blocks. version 3 uses the v65 particle motion union, emission bounds, per-emitter
+delay and resolved scale. version-1 and version-2 libraries are rejected and must be re-exported. the loader checks
 supported particle layouts and bounds texture dimensions,
 mip sizes and samplers before GPU allocation. it does not alter scene archives or their package
 version. extracted libraries are game content and remain outside git; a static host must serve the

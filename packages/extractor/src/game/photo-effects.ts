@@ -47,6 +47,8 @@ export const loadPhotoEffects = async (
 			particles.motion.gravityModifier.scalar !== 0 ||
 			particles.motion.velocity !== null ||
 			particles.motion.clamp !== null ||
+			particles.motion.forces !== null ||
+			particles.customData !== null ||
 			particles.ringBuffer !== null ||
 			particles.bursts.length !== 0 ||
 			particles.pivot.some((v) => v !== 0) ||
