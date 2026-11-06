@@ -549,11 +549,9 @@ remains distinct from reachability. the historical 13.44-second result used an e
 ### physical search timing
 
 fixed-size vector arithmetic in SDK alpha.29 retains identical capsule collision results while
-reducing action search allocation. the first feasible airborne route no longer reduces the remaining
-feasibility budget to the optional walking-shortcut cap. queries that already have a walking/device
-baseline retain that small cap. the total configured feasibility budget remains unchanged.
+reducing action search allocation. the existing candidate budgets and sampling are preserved.
+with identical route and action output, one retained real-scene solve fell from 57.83 to 24.78 seconds.
 
-same-input replay restores the reported descent approach at 15.24 model seconds in 38.53 seconds of
-solver time, versus 22.63 model seconds in 57.83 seconds before the change. the other reported arrival
-regression improves from 8.20 to 6.15 model seconds, completing in 22.39 seconds. these are bounded
-model searches and do not prove globally fastest paths or game execution.
+an experimental wider comparison found a 15.24-second descent in 38.53 seconds of solver time,
+but changed another point's candidate ordering and slightly worsened its route. that budget change
+is not enabled. future broader comparison must preserve the established incumbent independently.
