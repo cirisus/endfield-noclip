@@ -61,19 +61,11 @@ export const conditionResults = (states: StatesInfo, values: Readonly<Record<str
 	states.conditionalSets.map((condition) => conditionVisible(condition, values));
 
 /**
+ * every level of a package shows at once, so a group's level tag doesn't decide whether it shows
+ *
  * @param states exported scene controls
- * @param level the shown level's tag, or `null` to show every level's content
  * @param conditions per conditional set, whether it holds (from {@link conditionResults})
- * @returns per visibility group, whether its content shows: owned by the shown level or by every level (tag
- *   0), and loaded by the current scene values
+ * @returns per visibility group, whether its content shows: loaded by the current scene values
  */
-export const groupsShown = (
-	states: StatesInfo,
-	level: number | null,
-	conditions: readonly boolean[],
-): boolean[] =>
-	states.groups.map(
-		({ levelTag, condition }) =>
-			(level === null || levelTag === level || levelTag === 0) &&
-			(condition === null || (conditions[condition] ?? false)),
-	);
+export const groupsShown = (states: StatesInfo, conditions: readonly boolean[]): boolean[] =>
+	states.groups.map(({ condition }) => condition === null || (conditions[condition] ?? false));

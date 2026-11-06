@@ -1,14 +1,15 @@
 /* oxlint-disable no-await-in-loop -- avoid a burst of requests while examining local instances */
 import { DrawRole } from '@endfield-noclip/package-format/instances';
 import { ContentKind } from '@endfield-noclip/package-format/tree';
+import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import { RowKind, ROW_WORDS } from '../content/instance-rows.ts';
+import { LookFlags } from '../looks/look.ts';
+import { materialLooks } from '../looks/material-looks.ts';
 import type { DecodePool } from '../package/decode-pool.ts';
 import type { DecodedGeometry, DecodedInstances } from '../package/decode-protocol.ts';
 import { CORE_ARCHIVE_INDEX, type ViewerPackage } from '../package/viewer-package.ts';
-import { RowKind, ROW_WORDS } from '../render/instance-rows.ts';
-import { LookFlags, materialLooks } from '../render/materials.ts';
 
-import type { Vec3 } from './camera.ts';
 import type { CameraPose } from './noclip-controls.ts';
 
 // only resolved decodes are shared: cancelling one target must not poison later reads.
@@ -344,9 +345,7 @@ export const pointTriangles = async (
 			(look) =>
 				look.drawn &&
 				!look.unsupported &&
-				!look.transparent &&
-				!look.relight &&
-				look.screen === null &&
+				(look.queue === 'opaque' || look.queue === 'cutout') &&
 				(look.flags & LookFlags.Effect) === 0,
 		);
 		opaqueCache.set(pkg, opaque);
@@ -401,13 +400,16 @@ export const pointTriangles = async (
 				cached?.kind === 'instances'
 					? Promise.resolve(cached)
 					: read(ref.blob).then((data) =>
-							pool.run({
-								kind: 'instances',
-								data,
-								codec: pkg.blobs[ref.blob].codec,
-								rawLength: pkg.blobs[ref.blob].rawLength,
-								rowKinds: RowKind.Detail,
-							}),
+							pool.run(
+								{
+									kind: 'instances',
+									data,
+									codec: pkg.blobs[ref.blob].codec,
+									rawLength: pkg.blobs[ref.blob].rawLength,
+									rowKinds: RowKind.Detail,
+								},
+								signal,
+							),
 						);
 			blocks.set(ref.blob, pending);
 		}
@@ -453,12 +455,15 @@ export const pointTriangles = async (
 							cached?.kind === 'geometry'
 								? Promise.resolve(cached)
 								: read(entry.blob).then((data) =>
-										pool.run({
-											kind: 'geometry',
-											data,
-											codec: pkg.blobs[entry.blob].codec,
-											rawLength: pkg.blobs[entry.blob].rawLength,
-										}),
+										pool.run(
+											{
+												kind: 'geometry',
+												data,
+												codec: pkg.blobs[entry.blob].codec,
+												rawLength: pkg.blobs[entry.blob].rawLength,
+											},
+											signal,
+										),
 									);
 						meshes.set(entry.blob, mesh);
 					}

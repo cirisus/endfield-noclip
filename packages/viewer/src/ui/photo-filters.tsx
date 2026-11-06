@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 
-import { parsePhotoFilters } from '../render/photo-filters.ts';
-import type { Viewer } from '../viewer.ts';
+import { parsePhotoFilters } from '../render/post/photo-filters.ts';
+import type { Viewer } from '../viewer/viewer.ts';
 
 import { useViewerState } from './use-viewer.ts';
 

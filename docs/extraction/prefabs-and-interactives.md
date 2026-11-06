@@ -22,6 +22,13 @@ UI node's RectTransform as its Transform (as the light, volume and effect walker
   vertices stay inside. a renderer is drawn in its authored pose
   ([skin pose](../extraction.md#asset-classes)) unless a looping clip moves its bones
   ([looping clips](#looping-clips)).
+- **locked looks**: a root `UnlockEffectConfigMono` that swaps models draws its locked model for a
+  placement with a mini-game or submit lock and its unlocked model otherwise
+  ([gameplay locks](../game-data/interactives.md#gameplay-locks)); whichever model the lock leaves
+  off is left out rather than standing in. the lock types come from LevelData's
+  `interactiveLockData` ([level-locks.ts](../../packages/formats/src/endfield/level-locks.ts)),
+  decoded whole, so a level whose LevelData the MemoryPack schema can't decode (Dijiang's) reports
+  `gameplay locks` in `unsupported-interactives.json` and its placements count as unlocked.
 - **resolution**: the packer resolves a prefab from its StringPathHash key, which must name exactly
   one manifest path.
 - **what else a prefab holds**: its environment volumes
@@ -105,16 +112,27 @@ view states are read from the model's own file, or from the model its `ModelTabl
 looks and facility forms alike.
 
 an interactive whose model has view states is drawn in its settled pose: every animator layer
-settled with its keys false. a pose holds one clip end pose per animator, each with its GameObject
-switches, the material values it sets on renderers and their particle pivots. `readPrefabRenderers`
-takes the pose, sets the bound local transforms and switches while walking the hierarchy, so skinned
-parts follow their bones. inside a clip that switches GameObjects, a node saved off and left alone
-by the clip draws nothing rather than a stand-in. clips name material properties by a hash, resolved
-against the saved property names of the renderer's materials (a property the material doesn't save
-is dropped); a renderer whose materials take posed values draws a
-[posed copy](../package-format.md#materials) of its material. each facility visual form with view
-states is posed the same way, under its own model id, with every key false (a facility's player-set
-keys aren't read). doodad-group shells aren't posed.
+settled with its keys false, except `state`, which holds the placement's starting
+[`state`](../game-data/interactives.md#the-state-key) when its template has a common-perform
+component (a model is settled once per starting value its placements use). a pose holds one clip end
+pose per animator, each with its GameObject switches, the material values it sets on renderers and
+their particle pivots. `readPrefabRenderers` takes the pose, sets the bound local transforms and
+switches while walking the hierarchy, so skinned parts follow their bones. inside a clip that
+switches GameObjects, a node saved off and left alone by the clip draws nothing rather than a
+stand-in. clips name material properties by a hash, resolved against the saved property names of the
+renderer's materials (a property the material doesn't save is dropped); a renderer whose materials
+take posed values draws a [posed copy](../package-format.md#materials) of its material. each
+facility visual form with view states is posed the same way, under its own model id, with every key
+false (a facility's player-set keys aren't read). doodad-group shells aren't posed.
+
+a pose also carries the [lengths](../game-data/interactives.md#lengths-view-states-set) its layers'
+length behaviours leave set, along every layer's path rather than only its resting state. a vertical
+rope's top port is settled per placement with `RopeLength` from its `target` port. while walking, a
+GameObject whose `VFXAdjustLength` gets a length scales its targets' local scale (before the
+Transform's clips apply) and its renderers' posed materials carry the stretched texture scale and
+offset. a component that also switches renderer bounds, particle lifetimes or moved Transforms fails
+the prefab, which then stands in as a box. `PositionFollower`s are moved once the whole hierarchy is
+placed, together with their subtrees, since the source can come later in the walk.
 
 poses with their own controls:
 
@@ -138,6 +156,23 @@ poses with their own controls:
   of the whole prefab per piece that switches everything but the piece off, moves it to its slot and
   applies its open-idle clip. that clip binds below the piece's own Animator, so its paths are
   re-keyed to paths below the root ([bridges](scene-controls.md#bridges)).
+
+### effects at rest
+
+a rest look (not a door, bridge or facility form) also places the effects its states leave playing
+([effects states play](../game-data/interactives.md#effects-states-play)): `settledPath` follows
+each layer from its starting state, and `restingEffects` keeps the persistent effects switched on
+along the way plus the resting state's other effects, skipping fire-and-forget ones. each effect's
+prefab is placed as a model of its own under the look's visibility, unless its `EffectSetting`s
+don't loop (`isOneShotEffect`) or the manifest lacks it (reported in
+`unsupported-interactives.json`). its GameObject's matrix comes from `prefabNodeMatrices`, which
+walks the model in the look's pose (clip end poses, so a looping clip's motion isn't followed); an
+effect that doesn't turn with its GameObject keeps the world's axes but the GameObject's scale.
+
+a jump pad's arrow ([the `state` key](../game-data/interactives.md#the-state-key)) is placed the
+same way, at the pad's position with its yaw towards the target and unit scale, under the pad's own
+visibility only. a vertical jump pad that starts on places its vent effect the same way, with the
+placement's position, rotation and scale but not its model scale.
 
 ### looping clips
 
@@ -189,3 +224,33 @@ rounding decides w), and interpolates stripped samples as ACL plays them; on Wul
 cube it agrees with upstream ACL's decompressor to 5e-6 in translations and 1.3e-4 in rotations. the
 clip then samples between frames like the dense block, wrapping when the buffer does, with tracks
 mapped to bindings through the sub-track masks and constant bindings held at their listed values.
+
+### moving platforms
+
+an [auto-moving platform](../game-data/interactives.md#auto-moving-platforms)
+([curve-move.ts](../../packages/extractor/src/game/curve-move.ts)) whose starting `state` is 1 and
+whose `spline_id` names a spline rides it. its level's LevelData files are decoded whole through the
+[MemoryPack schema](../extraction.md#memorypack-data) for their splines (`readLevelSplines`,
+[level-splines.ts](../../packages/formats/src/endfield/level-splines.ts)), once per level that has
+such a platform. `curvePath` builds the spline's Bézier curves in world space, measures them with a
+30-sample arc-length table per curve, and samples the platform's trip at 15 frames per second over
+one loop (the trip's length over the speed; twice that back and forth). each frame is the prefab
+root's translation in the placement's space, the pose's `path`; `poseFrames` poses the hierarchy on
+those frames, so every mesh renderer gets a `rigid` motion and skinned ones a `skinned` one, as for
+[looping clips](#looping-clips). a platform that turns along the curve, waits at knots, eases, or
+stops at its target (mode 0) is reported in `unsupported-interactives.json` and stays at its
+placement.
+
+### crane towers
+
+a [crane tower](../game-data/interactives.md#crane-towers)
+([crane-tower.ts](../../packages/extractor/src/game/crane-tower.ts)) is posed from its starting
+steps before the placements are drawn. `craneTowerOf` merges the tower component's parameters with
+the placement's own (component type 172), the `state_*` entity properties pick the steps, and
+`readCraneLook` walks the prefab for the postmodel MonoBehaviour's five Transforms. the pose is one
+clip on the prefab root: the rope's scale Transform, the rope end's position, and the base and hook
+rotations, each world yaw turned into a local rotation under its parent's posed world rotation. the
+same walk gives the attach point's world position and rotation; the tower's `target` container is
+drawn there, lowered by its `height`, instead of at its own placement. a tower whose step list is
+empty or whose prefab lacks the MonoBehaviour is reported in `unsupported-interactives.json` and
+drawn as saved; one whose container isn't placed is posed and reported.

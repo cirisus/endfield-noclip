@@ -93,6 +93,13 @@ render function to `ViewerApp` to receive the initialized viewer and its right-h
 the host owns navigation in that mode; package/level URL handling and their panels remain available
 in the ordinary standalone app. the host must use the same React instance as the renderer.
 
+the host facade lives in `viewer/viewer.ts`; scene controls remain owned by `SceneState`, GPU passes by
+`Renderer` and package residency by `openScene`. companion controls replace only the supplemental
+control union through `SceneState`, so its visibility consumers stay connected after an OEM point
+change. overlays encode after tonemapping and receive transient output and reversed-Z depth views;
+they must not retain those views across frames. camera subscriptions cover both control movement
+and immediate pose changes.
+
 World uses a fixed source revision and a separately pinned data catalog. package generation/source
 validation and the precomputed pose binding remain required. the host shares the existing package
 format conditions and story evaluator rather than implementing another condition engine.

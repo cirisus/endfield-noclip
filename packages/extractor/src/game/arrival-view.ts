@@ -1,6 +1,7 @@
+import type { Vec3 } from '@endfield-noclip/package-format/values';
+
 import { sampleRoute } from '@oem/ganglia';
 
-import type { Vec3 } from '../../../viewer/src/scene/camera.ts';
 import type { CameraPose } from '../../../viewer/src/scene/noclip-controls.ts';
 import { pointBlocked, pointFrameFits, type Triangle } from '../../../viewer/src/scene/point-view.ts';
 

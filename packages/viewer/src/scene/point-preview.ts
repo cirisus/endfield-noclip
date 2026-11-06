@@ -5,11 +5,11 @@ import {
 } from '@endfield-noclip/package-format/conditions';
 import type { PointView } from '@endfield-noclip/package-format/oem';
 import type { StatesInfo } from '@endfield-noclip/package-format/states';
+import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import type { DecodePool } from '../package/decode-pool.ts';
 import type { ViewerPackage } from '../package/viewer-package.ts';
 
-import type { Vec3 } from './camera.ts';
 import type { CameraPose } from './noclip-controls.ts';
 import {
 	type Triangle,
@@ -39,7 +39,7 @@ export const pointPreview = async (
 	},
 ): Promise<Omit<PointView, 'key'>> => {
 	const visibility = (values: Readonly<Record<string, number>>) =>
-		groupsShown(states, levelTag, conditionResults(states, resolveSceneValues(states, values)));
+		groupsShown(states, conditionResults(states, resolveSceneValues(states, values)));
 	const original = visibility(picks);
 	let triangles = await pointTriangles(pkg, pool, target, original, signal, { radius: framing ? 26 : 16 });
 	const visible = (shown: readonly boolean[]) =>

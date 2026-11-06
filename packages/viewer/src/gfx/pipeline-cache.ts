@@ -2,8 +2,8 @@
 export class PipelineCache {
 	#device: GPUDevice;
 	#modules = new Map<string, GPUShaderModule>();
-	#pipelines = new Map<string, GPURenderPipeline>();
-	#pending = new Map<string, Promise<GPURenderPipeline>>();
+	#render = new Compiled<GPURenderPipeline>();
+	#compute = new Compiled<GPUComputePipeline>();
 
 	/** @param device the device */
 	constructor(device: GPUDevice) {
@@ -27,16 +27,21 @@ export class PipelineCache {
 	 * @returns the pipeline
 	 */
 	prepare(key: string, describe: () => GPURenderPipelineDescriptor): Promise<GPURenderPipeline> {
-		const ready = this.#pipelines.get(key);
-		if (ready !== undefined) {
-			return Promise.resolve(ready);
-		}
-		return this.#pending.getOrInsertComputed(key, () =>
-			this.#device.createRenderPipelineAsync({ label: key, ...describe() }).then((pipeline) => {
-				this.#pipelines.set(key, pipeline);
-				this.#pending.delete(key);
-				return pipeline;
-			}),
+		return this.#render.prepare(key, () =>
+			this.#device.createRenderPipelineAsync({ label: key, ...describe() }),
+		);
+	}
+
+	/**
+	 * {@link prepare} for a compute pipeline.
+	 *
+	 * @param key unique key of the pipeline's state, e.g. `volumetric fog`
+	 * @param describe builds the descriptor; only called on a miss
+	 * @returns the pipeline
+	 */
+	prepareCompute(key: string, describe: () => GPUComputePipelineDescriptor): Promise<GPUComputePipeline> {
+		return this.#compute.prepare(key, () =>
+			this.#device.createComputePipelineAsync({ label: key, ...describe() }),
 		);
 	}
 
@@ -45,16 +50,44 @@ export class PipelineCache {
 	 * @returns the pipeline, or `undefined` while it compiles
 	 */
 	get(key: string): GPURenderPipeline | undefined {
-		return this.#pipelines.get(key);
+		return this.#render.ready.get(key);
+	}
+
+	/**
+	 * @param key a key passed to {@link prepareCompute}
+	 * @returns the pipeline, or `undefined` while it compiles
+	 */
+	getCompute(key: string): GPUComputePipeline | undefined {
+		return this.#compute.ready.get(key);
 	}
 
 	/** @returns how many pipelines are still compiling */
 	get compiling(): number {
-		return this.#pending.size;
+		return this.#render.pending.size + this.#compute.pending.size;
 	}
 
 	/** @returns compiled pipeline count */
 	get size(): number {
-		return this.#pipelines.size;
+		return this.#render.ready.size + this.#compute.ready.size;
+	}
+}
+
+/** one kind of pipeline: those compiled, and those compiling */
+class Compiled<P> {
+	readonly ready = new Map<string, P>();
+	readonly pending = new Map<string, Promise<P>>();
+
+	prepare(key: string, compile: () => Promise<P>): Promise<P> {
+		const pipeline = this.ready.get(key);
+		if (pipeline !== undefined) {
+			return Promise.resolve(pipeline);
+		}
+		return this.pending.getOrInsertComputed(key, () =>
+			compile().then((compiled) => {
+				this.ready.set(key, compiled);
+				this.pending.delete(key);
+				return compiled;
+			}),
+		);
 	}
 }

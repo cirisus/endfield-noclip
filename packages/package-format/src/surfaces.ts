@@ -629,8 +629,21 @@ export interface EffectVertexOffset {
 	bias: number;
 	/** how much the vertex alpha weighs it (VFXBaseV2) */
 	vertexAlphaWeight: number;
-	/** the most it pulls vertices towards the camera, in metres (VFXBaseV2) */
-	cameraPull: number;
+	/** VFXBaseV2's `_USE_VERTOFFSETMASK`; `null` without */
+	mask: EffectVertexOffsetMask | null;
+}
+
+/**
+ * a mask on VFXBaseV2's vertex offset: the offset (not the camera pull) is scaled by `1 − strength · (1 −
+ * r)`, r the mask texture's red at the offset texture's UV set
+ */
+export interface EffectVertexOffsetMask {
+	/** read after its `_ST`, unscaled and unrotated */
+	texture: EffectTexture;
+	/** the stack slot it's drawn from, one {@link EffectStackSurface.layers} leaves empty (1–5) */
+	slot: number;
+	/** `_OffsetMaskPower / 5` */
+	strength: number;
 }
 
 /**
@@ -655,8 +668,6 @@ export interface EffectSoftBody {
 	/** UV1's u is scaled by `uScale`, and the frame rows by `vScale` (the padding the bounds' digits encode) */
 	uScale: number;
 	vScale: number;
-	/** the most it pulls vertices towards the camera, in metres (`_VertCameraOffset`) */
-	cameraPull: number;
 }
 
 /** the fades by view depth every effect shader shares */
@@ -739,6 +750,11 @@ export interface EffectStackSurface {
 	/** VFXBaseV2's soft-body animation, which takes the vertex offset's slot */
 	softBody: EffectSoftBody | null;
 	/**
+	 * the most VFXBaseV2 pulls every vertex towards the camera, in metres (`_VertCameraOffset`): by up to this
+	 * much past the first metre, plus 1 mm. `null` when it doesn't pull (`_InParticle` not 0, other shaders)
+	 */
+	cameraPull: number | null;
+	/**
 	 * VFXBaseV2's `_USE_WATER_BLEND` height (world y): the blend changes only what lies below it, which isn't
 	 * drawn, so the viewer shows those fragments as unsupported. `null` without the blend or below every level
 	 */
@@ -749,6 +765,11 @@ export interface EffectStackSurface {
 	unfogged: boolean;
 	/** VFXBaseV2's `_BlendMode`: 0 blends over, 1 adds, 2 multiplies what lies behind */
 	blendMode: number;
+	/**
+	 * VFXBaseV2's opaque blend state (`Blend One Zero`): the colour times the alpha covers what's behind, and
+	 * the layer writes depth. never with a stencil, a soft blend or an edge colour
+	 */
+	opaque: boolean;
 	/** screen UVs scale by the object's view depth, and take v from the world height */
 	screenUv: { byDepth: boolean; heightAsV: boolean };
 	stencil: EffectStencil | null;

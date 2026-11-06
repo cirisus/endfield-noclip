@@ -11,8 +11,9 @@ an interactive's model comes from four sources:
 
 1. LevelData files (from LevelConfig `levelDataPathHashes`) place them. the sequential prefix up to
    the interactive list holds, per interactive: interactive id, `createState`, position, rotation,
-   scale, `modelScale` (0 = no override), and the per-component parameters (keyed by the game's
-   interactive component type). `createState` 0 means created with the level.
+   scale, `modelScale` (0 = no override), `isLocked`, the placement's own values for its entity's
+   properties (`properties`, overriding the template's) and the per-component parameters (keyed by
+   the game's interactive component type). `createState` 0 means created with the level.
 2. `Data/Json/Interactive/InteractiveTable.json` maps each interactive id to a template and each
    template to its data file. many ids share one template: the Wuling switch variants all
    instantiate `int_switch_wuling`.
@@ -21,6 +22,13 @@ an interactive's model comes from four sources:
    [variant table](#the-variant-table), keyed by interactive id, whose entries can override the
    model id.
 4. `Data/Json/GameplayConfig/ModelTable.json` maps each model id to a prefab path and `scaleFactor`.
+
+level scripts place interactives too: a script's `interactives` dictionary maps slots (40001, 40002,
+…) to rows of the same `LevelInteractiveData` shape, with `levelLogicId` 0 and `belongLevelScriptId`
+naming the script, which addresses them by slot. they exist while the script runs
+([script groups](scene-states.md#what-sets-a-script-group)). across the install thousands of such
+rows sit in hundreds of scripts: racing courses' coins and moving platforms, open-world butterflies,
+bubble chests, mission beacons and puzzle pieces.
 
 a placement's model is its variant's, else the template's. a variant whose model override is enabled
 but empty has no model of its own, rather than the template's. templates without a model (triggers,
@@ -50,6 +58,27 @@ LevelData is a sequential format that stores no field lengths, so a field can on
 reading it, and misreading one misframes every later row. polymorphic fields are MemoryPack unions
 whose tag indexes the subclasses in name order, with each subclass's members also in name order.
 gameplay tags are unmanaged four-byte values.
+
+## gameplay locks
+
+LevelData's `interactiveLockData`, the member after the interactive list, gives interactives their
+gameplay locks: per logic id (`logicIdGlobal`), a list of locks, each with an unlock type
+(`InteractiveUnlockType`: 1 script lock, 2 mini-game, 3 submit, 4 quest, 5 sludge) and its mini-game
+ids, submit id and panel texts. the placement's own `isLocked` flag is separate. across the
+install's decodable LevelData there are 1030 script, 127 mini-game, 19 submit, 57 quest and 58
+sludge locks.
+
+a mini-game or submit lock can swap the model's look. the game looks up an `UnlockEffectConfigMono`
+on the model's root GameObject, and when its `useDifferentModel` is set, switches its `lockedModel`
+on and its `unlockedModel` off while the interactive is locked by gameplay, the other way once
+unlocked, whether or not the component is enabled. other lock types never swap, so such a prefab
+keeps the models as saved. the lock opens when the player solves it, which the server saves; a fresh
+world starts with it locked.
+
+in map01_lv006's Origin Lodespring, the crane controllers (`int_crane_controller_2`) carry this
+component, with a `Broken` model (sparks and smoke, saved off) and a `Fixed` one (saved on).
+3500021687 (near 430, 36, 182) has a mini-game lock (`M01L06_B1_easy_1_1`), so it starts broken;
+3500021688 (near 435, 36, 187) has only a script lock, so it stays fixed.
 
 ## interactive view states
 
@@ -83,6 +112,102 @@ their own: the monitoring terminal's forms 1–4 (`int_system_kiteStation_<n>_po
 `Initial` state whose loop (`A_anm_fac_syspoikitestation+1_001_01a`…`01d`) flies the kites, and form
 0 has no clip. when each placement's loop starts is unknown. how clips store poses, switches and
 material values is in [animation clips](animation.md#animation-clips).
+
+### effects states play
+
+a state's effect behaviour (`MVSCEffectBehaviorData`) plays an effect by name when the state is
+entered. the game loads it from
+`Assets/Beyond/DynamicAssets/Gameplay/Effects/Prefabs/<name>.prefab`. it plays on the GameObject
+`effectNodeName` names, or on the animator's GameObject when that's empty or the model has no such
+GameObject. it follows that GameObject, turning with it only with `followRot`; with
+`dontFollowTrans` it's placed once at the GameObject's position and rotation instead. a
+fire-and-forget effect (`fireAndForget`) is left to play out on its own. otherwise:
+
+- a persistent effect (`isPersistence`) is switched on or off (`active`) by each state that names
+  it, so it outlasts the state that started it
+- any other effect replaces the instance the same behaviour played before; that it ends when its
+  state is left is assumed (`EffectPlayBehavior.ForceEnd` isn't read)
+
+so at rest a model plays the persistent effects its states left on and the other effects of the
+states it rests in. an effect whose `EffectSetting`s don't loop has run out by then
+([one-shot effects](effects.md#one-shot-effects)). across the install's view states there are about
+1800 effect behaviours: about 1060 on named GameObjects, 755 persistent and 110 fire-and-forget.
+
+### the `state` key
+
+an interactive whose template has a common-perform component (`InteractiveCommonPerformComponent`)
+always passes its entity's int `state` property to its view states under the same key: once when the
+view controller starts, and again whenever the property changes. the property starts at the
+template's saved property (`saveProperties`), which a variant's `diffProperties` and then the
+placement's own `properties` override (3582 placements in the install set `state` there); the
+server's saved value and level scripts can change it later. some placements set `state` among a
+component's parameters instead; that those reach the entity property too is assumed, since how
+component parameters reach the entity isn't read.
+
+the jump pads are the commonest case. `int_jumpmachine` saves `state` 1, so it starts on: its
+`BaseLayer` plays the ring's opening turn (`A_anm_zmdspring+1_001_open_01`, 3.3 s) into a looping
+idle turn, and its `EffectLayer` rests in `On`, which plays `P_common_bouncingplatform_01`. at 0 it
+rests in a one-frame closed idle with no effect. `int_jumpmachine_vertical` and
+`int_jumpmachine_electric` save 0. every jump pad placement in the install sets its own `state`: all
+31 vertical pads and 216 of the 223 plain, free, rock and Xirang pads start at 1, and 12 of the 14
+electric pads at 0. lifters, fans, attack switches, hydrants and ball receivers start at a nonzero
+`state` too.
+
+apart from its view states, a jump pad (`JumpMachineComponent`) that isn't locked or a free jump
+places a stationary effect named by its `effect` parameter (`P_common_bouncingplatform_arrow_01`, a
+looping arrow) at its own position. it counts as locked while its `state` is off (0, the logic
+components' off value; 1 is on), and then switches the arrow off; its `is_locked` property isn't
+read for this. so an off pad shows neither its `On` glow nor its arrow. `free_jump` and `effect` are
+the component's own parameters, which the component reads apart from its entity's properties: the
+template component's `propertyList`, overridden by the variant's `componentDiffProperties` entry
+(`Comp_JumpMachine`) and then the placement's parameters under component type 169. the entity's
+`free_jump` property, which variants set alongside, isn't what decides. `int_jumpmachine_free` turns
+it on, but all 13 of its placements turn it back off, so they show an arrow; 4 `int_jumpmachine`
+placements turn it on, and 12 of the 32 rock pads keep the variant's free jump. the effect turns
+about the vertical only, towards its `target_position` property: its rotation looks along the
+horizontal part of the target minus the pad's position. 237 pad placements set their own target. the
+template's (−8.3, 0.6, −0.07) is used as a world position all the same, so pads that keep it point
+towards about the world origin.
+
+the vertical jump pads (`int_jumpmachine_vertical`, a cave vent rock,
+`P_interactive_cavewell+1_001_01`) have a component of their own (`JumpMachineVerticalComponent`)
+and no view-state effects or arrow. while the entity's `state` is on (1) and its cooldown is done,
+which it is at start, the component plays `P_interactive_cavewell+1_001_01_loop` (two smoke emitters
+and a spark emitter) on the entity's root, and switches it off at any other `state`. the name is
+fixed in the game's code, not read from the template. whether the loop turns with the entity isn't
+read.
+
+### lengths view states set
+
+a state's length behaviour (`MVSCEffectLengthBehaviorData`) sets the length of the effect-length
+component (`VFXAdjustLength`) on the GameObject `nodeName` names. the length is the blackboard float
+`dependFloatKey` names when `dependBlackBoard` is set (nothing is set while that float is missing),
+else `val`, plus `deviation`. the length stays once its state is left. setting it applies the
+component's ratio `length / presetLength`:
+
+- **scale targets** (`useScaleTransform`): each listed Transform's local scale becomes the ratio
+  along `axisDir` (0 x, 1 y, 2 z) and 1 on the other axes
+- **tiling** (`useTillingOffset`): each listed renderer's property block sets the texture's `_ST`
+  from its material's: along `tillingDir` (0 u, 1 v) the scale is multiplied by the ratio (by its
+  inverse with `revertScale`) and the offset becomes `scale · offset · (1 − ratio)`
+- renderer bounds, particle lifetimes and moved Transforms have switches of their own
+
+a `PositionFollower` moves its GameObject to its `source` Transform's world position every frame,
+keeping its own rotation and scale, which is how something hangs off a stretched part's end.
+
+### vertical rope lifts
+
+a vertical rope lift is two placements of `int_rope_port`: the top port (`int_rope_port_top_right`
+or `_top`), whose arm holds the rope, and the bottom port. the top's `target` property names the
+bottom's logic id. its vertical-rope component (`InteractiveVerticalRopeComponent`) sets the float
+`RopeLength` to the height between the two ports' entities before its view states start. the top
+port's model (`int_rope_port_topright_postmodel`) starts in `start`. at `state` 0 it rests in the
+folded `off_idle`. above 0 it goes through `set_rope`, whose length behaviour sets the rope
+(`P_iprop_com_rope+1_001_02`, preset 0.5 m along y, colour and normal maps tiled along v) to
+`RopeLength` plus 1.4 m, into `on_idle`, which swings the arm 45° out over the bottom port. the
+rope's end block (`P_anm_com_machine+1_001_04`) follows the rope's `rope_mount_point`, so it hangs
+about a metre above the bottom port. as saved, the rope is 0.5 m long and the block sits under the
+arm. indie_race001's lift near 88, 116–123, 102 sets `state` 1, so it starts unrolled.
 
 ### keys the player sets
 
@@ -199,3 +324,67 @@ of its own model, so its `state` switches that row's `on`/`off` states (`SetActi
 copies, effects on the way). the magic bridge's model has no clips. that the empty model override
 alone keeps the game from loading the template's drawbridge there is inferred from the data; the
 model component's loading isn't read.
+
+## auto-moving platforms
+
+`int_platform_automove` (variants `_4m_4m`, `_5m_5m`, `_floatingtower`, …) is a platform that rides
+a spline. its template has an auto-move platform component
+(`InteractiveAutoMovePlatformComponentData`) and a custom curve move component
+(`CustomCurveMoveComponentData`, component type 107 in placements' parameters), whose parameters
+come from the template, then the variant's `Comp_InteractiveCustomCurveMove` diff, then the
+placement's own.
+
+- **starting**: the auto-move component starts the move when the entity's `state` is 1, on start and
+  whenever `state` becomes 1; another value pauses it. the template saves 0, so only placements that
+  set `state` 1 move with their level. nothing reacts to the player stepping on.
+- **the spline**: `spline_id` names a spline of the level's LevelData (`splines`, `LevelSplineData`:
+  `splineId`, `position`, Euler `rotation`, `closed`, Unity Splines `BezierKnot`s with tangents in
+  the knot's frame). an id with no spline (the template's 0) or a `speed` of 0 or less never moves.
+- **position**: `rotation · EvaluatePosition(spline, ratio) + position`, replacing the platform's
+  own position; its rotation stays unless `curve_move_direction` is 1 (along the tangent). the ratio
+  is the distance travelled from knot 0 over the spline's length, so the platform moves at `speed`
+  metres per second along the curve. `tween` 1 eases over `distance`; 0 is uniform.
+  `sync_speed_to_audio` only feeds the speed to an audio parameter.
+- **the trip**: it starts at `curve_start_index` and travels to `curve_target_index`; equal indices
+  close the spline for the trip and go round it whole. a later start than target runs backwards.
+  `curve_move_mode` 0 stops at the target, 1 starts over from the start knot (dropping the
+  overshoot), 2 goes back and forth. `initial_phase` starts it that fraction of the trip on. it
+  waits only at knots in `curve_node_index_list`. `knotProgresses` and `keyNodeIndexList` aren't
+  read.
+
+in indie_race001 every moving platform belongs to a level script: script 12800025038 places eight 4
+m platforms on spline 25012, a 144 m loop under the crane rails near unity 80, 122, 92, an eighth of
+the loop apart at 4 m/s. the level's own LevelData places eleven more that keep `state` 0, four of
+them (12800025316–19, near 104, 118, 85) without a spline, so those stand still.
+
+## crane towers
+
+a crane puzzle is a tower (`int_crane_tower`, a crane tower component, `CraneTowerComponent`), the
+container it carries (`int_crane_container`, its `_2` and `_stackedThree` variants) and switches
+(`int_crane_controller_2`) whose `target` names the tower. the tower's component parameters (the
+template's, overridden by the placement's own under component type 172) hold three step lists and
+the container's logic id (`target`); the entity properties `state_1`, `state_2` and `state_3` pick a
+step from each, clamped to the list, and the game saves them as the player operates the crane:
+
+| state     | list            | sets                                                       |
+| --------- | --------------- | ---------------------------------------------------------- |
+| `state_1` | `position_list` | the rope length                                            |
+| `state_2` | `rotation_list` | the arm's world yaw (the base Transform's world rotation)  |
+| `state_3` | `euler_angles`  | the hook's world yaw (the header Transform's), independent |
+
+the tower model (`int_crane_tower_postmodel`) has no view states. a MonoBehaviour on its root
+(`InteractiveCraneTowerPostmodelMono`) names the base (`BasePoint`), the hook's header
+(`RotatePoint`), the rope's end (`RopeEnd`, under `RopeStart` 18.07 m up and 22.25 m out along the
+arm), the rope's scale Transform (`ScaleBase`) and the attach point (`AttachPoint`, 1.71 m below the
+header). setting a rope length L sets the scale Transform's local scale to (1, 1, L + 1) and the
+rope end's local position to (0, −L, 0); the yaws set world rotations about the vertical.
+
+on its first tick the tower moves its container to the attach point's world position lowered by the
+container's `height` entity property (4 m when absent; 4.28 for the plain container, 6.6 for
+`_stackedThree`), and gives it the attach point's world rotation, wherever the container was placed.
+so a container's own placement is only where it was authored, often at another rope length.
+map01_lv006's Origin Lodespring has four towers: two containers were authored within about a metre
+of where their towers' starting steps hang them (3500021667 under 3500021670, 3500022098 under
+3500022095); tower 3500021909 (near 479, 58, 224) starts at its shorter rope, so its container
+(3500021665) hangs 5.5 m above where it was authored, and tower 3500021686 (near 420, 59, 192) at
+its longer one, so its container (3500021691) hangs 8.8 m below, just above the ground.

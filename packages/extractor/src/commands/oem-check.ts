@@ -109,7 +109,6 @@ export const run = async (args: string[]): Promise<void> => {
 				if (!point.view) {
 					throw new Error(`missing baked view: ${point.id}`);
 				}
-				const level = cores.get(point.scene)!.levels.find((l) => l.id === point.level)!;
 				let picks = completedProgressionPicks(merged.controls);
 				const areas = merged.streamAreas;
 				if (areas) {
@@ -119,11 +118,7 @@ export const run = async (args: string[]): Promise<void> => {
 					}
 					picks = { ...streamAreaValues(areas, areasShownIn(areas, zones)), ...picks };
 				}
-				const shown = groupsShown(
-					merged,
-					level.tag,
-					conditionResults(merged, resolveSceneValues(merged, picks)),
-				);
+				const shown = groupsShown(merged, conditionResults(merged, resolveSceneValues(merged, picks)));
 				// oxlint-disable-next-line no-await-in-loop -- validate each point against the exact selected profile
 				const key = await pointViewKey(
 					cores.get(point.scene)!.generation,

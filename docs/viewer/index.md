@@ -5,9 +5,35 @@ the viewer (`packages/viewer`) is a React shell around a WebGPU renderer. the pa
 [driving-the-viewer.md](../driving-the-viewer.md).
 
 the entry points are [`src/app.tsx`](../../packages/viewer/src/app.tsx) (UI, URL state) and
-[`src/viewer.ts`](../../packages/viewer/src/viewer.ts) (`Viewer`: device, frame loop, camera, loaded
-scene). the UI drives the viewer through `setOptions`, `showLevel`, `flyToLevel` and
-`setSceneValue`, and reads `stats` through `subscribe`.
+[`src/viewer/viewer.ts`](../../packages/viewer/src/viewer/viewer.ts) (`Viewer`: the loaded package,
+camera, scene states, options and the frame loop). the UI drives the viewer through `setOptions`,
+`flyToLevel` and `setSceneValue`, and reads `stats` through `subscribe`. beside it in `src/viewer/`,
+`Renderer` (`renderer.ts`) owns the GPU systems and submits each frame, `Traversal` (`traversal.ts`)
+selects and streams a frame's content, `openScene` (`scene-loader.ts`) wires an opened package to
+the renderers, `EnvironmentState` (`environment-state.ts`) blends the environment at the camera, and
+`options.ts`, `stats.ts` and `sky-textures.ts` hold the options, the stats and the sky texture
+requests.
+
+## layout
+
+| directory                                                   | holds                                                                                                                                                                                               |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/viewer/`                                               | the `Viewer` shell and what composes it: renderer, traversal, scene loading, environment state, options, stats                                                                                      |
+| `src/render/`                                               | GPU code by feature (`frame`, `shadows`, `terrain`, `instances`, `meshes`, `textures`, `lighting`, `sky`, `water`, `post`, `shaders/common`); `render/frame/frame-graph.ts` orders a frame's passes |
+| `src/gfx/`                                                  | device setup and feature-agnostic GPU helpers: pipelines, uniform ring, buffers, samplers, placeholders, profiler                                                                                   |
+| `src/streaming/`                                            | residency and selection: the stream manager, per-kind residency handlers, tile and mesh selection, texture requests                                                                                 |
+| `src/scene/`                                                | camera, controls, the tile tree, ground height and level poses                                                                                                                                      |
+| `src/scene-states/`                                         | scene controls (`SceneState`), their listing for the panel, water levels                                                                                                                            |
+| `src/environment/`                                          | environment profiles: blending at the camera and deriving what the renderers read                                                                                                                   |
+| `src/looks/`, `src/particles/`, `src/content/`, `src/math/` | materials as looks, particle evaluation, instance rows, math                                                                                                                                        |
+| `src/package/`                                              | package sources, opening and decode workers                                                                                                                                                         |
+| `src/ui/`                                                   | the React panels                                                                                                                                                                                    |
+
+the CPU-only domain directories (`looks`, `particles`, `content`, `math`, `environment`,
+`scene-states`, `scene`) don't import `render/` or `viewer/`, so they run under `node --test`.
+`render/` imports the domain directories, `gfx/`, `scene/` and `streaming/` types; `streaming/`
+reaches into `render/` only for the shadow layers' constants and the texture store it requests into.
+nothing but `ui/` and `app.tsx` imports `viewer/`.
 
 implementation pages link to the corresponding [game-data](../game-data/lighting.md) findings:
 

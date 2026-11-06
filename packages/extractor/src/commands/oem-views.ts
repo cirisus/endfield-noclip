@@ -246,12 +246,15 @@ export const run = async (args: string[]): Promise<void> => {
 									})
 								).buffer;
 							}
-							const decoded = await decoder.run({
-								kind: 'heights',
-								data,
-								codec: record.codec,
-								rawLength: record.rawLength,
-							});
+							const decoded = await decoder.run(
+								{
+									kind: 'heights',
+									data,
+									codec: record.codec,
+									rawLength: record.rawLength,
+								},
+								new AbortController().signal,
+							);
 							heights.set(blob, decoded.samples);
 						}
 					}
@@ -319,11 +322,7 @@ export const run = async (args: string[]): Promise<void> => {
 					if (!level) {
 						throw new Error(`missing point level ${point.id}`);
 					}
-					const shown = groupsShown(
-						states,
-						level.tag,
-						conditionResults(states, resolveSceneValues(states, picks)),
-					);
+					const shown = groupsShown(states, conditionResults(states, resolveSceneValues(states, picks)));
 					const key = await pointViewKey(pkg.manifest.generation, point.level, point.position, shown);
 					let view = saved[point.id];
 					if (values.rebuild || !view || view.key !== key) {

@@ -77,6 +77,15 @@ quarter of the scenery's VFXBaseV2 materials are such, among them the glare at t
 centre seen from Dijiang's deck. `_BlendMode` 2 writes `lerp(1, colour, alpha)` for a
 `Blend DstColor Zero` state, which multiplies what lies behind by it.
 
+**opaque.** a material whose `_SrcBlend` and `_DstBlend` are one and zero writes the shader's
+premultiplied colour (the colour times its alpha) over what lies behind, and its depth, in the
+opaque queue (2000); the shader's only pass is the forward one, so it writes no G-buffer and casts
+no shadow. the falling gravel by map01's mining pipes (`p_fxmap_common_gravel_02`, near unity 635,
+62, 632) is mesh particles of rock pieces in such a material, `M_fx_quicksand_1104`: lit at the
+world's up, with `_UseMainTexAsAlpha`, so each rock is the flat grey tint with its texture's red,
+times `_TintColorAlpha` 10, as its alpha, so only texels whose red is below 0.1 darken it. its near
+camera fade, out from 200 to 300 m, would turn rocks beyond 300 m black rather than hide them.
+
 ### edge colour
 
 `_USE_EDGECOLOR` marks where the surface meets what lies behind it, after the dissolve and before
@@ -93,10 +102,26 @@ without the keyword.
 `_USE_VERTOFFSET` moves each vertex along `_OffsetDir` (`_OffsetSwitchDir` 0: object space, 1: world
 space, 2: the vertex normal) by `_OffsetIntensity · (r · (1 + _Bi_Offset) − _Bi_Offset)`, where r is
 `_OffsetTex`'s red channel at UV set 0 (set 1 with `_OffsetUVSet`), after its `_ST`, scrolled by
-`_OffsetSpeed` per second. `_UseVertexColorAlphaAsVertOffsetWeight` weights it by the vertex alpha,
-and every vertex is also pulled towards the camera by up to `_VertCameraOffset` metres (plus 1 mm).
-the whole offset is scaled by `1 − _InParticle`, so it never moves particles, and a mesh material
-left at the default `_InParticle` of 1 doesn't move either.
+`_OffsetSpeed` per second. `_UseVertexColorAlphaAsVertOffsetWeight` weights it by the vertex alpha.
+the offset is scaled by `1 − _InParticle`, so it never moves particles, and a mesh material left at
+the default `_InParticle` of 1 doesn't move either.
+
+every VFXBaseV2 variant, with or without the keyword, also pulls each vertex towards the camera by
+`min(max(0, d − 1), _VertCameraOffset) + 0.001` metres, d its distance from the camera, scaled by
+the same `1 − _InParticle`. VFXDitherAlpha and VFXDecal don't pull. a pull lets a glow sit inside
+the object it lights without that object hiding it: Marker Stone's tower lamps
+(`P_fxmap_map_lv004_lamp_light_01`, one prefab for the whole tower) draw red streaks across the
+white lamp cubes from a mesh (`M_fxmap_map_lv004_lamp_light_01`, `_TintColor` red times 100) pulled
+1 m, and red stars from particle systems emitting from mesh shapes, pulled 3 m and, for the far
+stars that fade in past 200 m, 50 m; all three leave `_InParticle` at 0.
+
+`_USE_VERTOFFSETMASK` scales the offset, but not the pull towards the camera, by `1 − p·(1 − m)`,
+where `p = _OffsetMaskPower / 5` and m is `_OffsetMaskTex`'s red at the offset texture's UVs, after
+the mask's own `_ST`, scrolled by `_OffsetMaskSpeed`. the fragment stage doesn't read it. the glow
+over the collectible pieces (`M_fx_interactive_collection_2102` in `int_collection_piece_postmodel`)
+pushes its vertices up to 1.2 m along world y (`_OffsetDir` 0.1 times `_OffsetIntensity` 12.15) by a
+flow texture, masked by a star texture at a power of 3; Jingyu's butterflies and waterfalls and
+Wuling's ink drops use it too.
 
 `_USE_BRIGHT` with `_BrightType` 0 and no `_BrightCenter` (w 0) adds `_BrightColor` and a UV wobble
 within `_OuterRadius` of the player. the teal streams winding between Wuling City's floating pillars
@@ -465,7 +490,9 @@ stretched 1, horizontal 2, vertical 3. the fields its systems use, as the game's
   velocity-over-lifetime part, times that value. a curve thus scales the start speed as much as the
   module's own terms. the floating stones of Valley's Aberrants (`floatstone01` in
   `p_fxmap_map01_lv001_floatstone_*`) rise at 0.5–1.5 m/s under a modifier ramping from 0.39 to 1
-  over their 5–10 s. whether gravity's part of the velocity is scaled too isn't traced.
+  over their 5–10 s. gravity adds into the particle's own velocity, so the modifier scales its share
+  too. the modifier only scales the move: the speed limit, run before it, sees the velocity without
+  it.
 - **ring buffer.** `ringBufferMode` 1 holds a particle's age at its end until a newer one replaces
   it, 2 replays `ringBufferLoopRange`. a held particle isn't frozen: every module goes on moving and
   turning it, reading its curves at their end, and it moves by its velocity as before. emission
@@ -551,6 +578,22 @@ stretched 1, horizontal 2, vertical 3. the fields its systems use, as the game's
   `donutRadius` the tube's, `radiusThickness` the tube's outer part used, each particle leaving
   outwards from the tube's centre line, as Unity documents it (not checked against the engine). the
   mushroom's coin motes (`lizi1`) burst from one stretched tall by the shape's scale.
+- **mesh shape.** `ShapeModule.type` 6 emits from `m_Mesh`, read from the engine. its primitives are
+  every submesh's, or only `m_MeshMaterialIndex`'s (clamped) with `m_UseMeshMaterialIndex`:
+  triangles, lines, line strips, and a submesh without indices as a line strip through its vertices;
+  quads and points make the mesh invalid and nothing is emitted. `placementMode` 0 (vertex) picks a
+  primitive evenly, then one of its corners, so vertices shared by more primitives come up more
+  often; 1 (edge) picks a triangle by area (a line by length), then a point along its outline by
+  parameter, each side a third whatever its length; 2 (triangle) picks by area and a point evenly
+  within. `m_MeshSpawn.mode` steps vertex placement through the vertex buffer itself, one vertex per
+  emitted particle from a running count, wrapping (Loop) or back and forth (PingPong and
+  BurstSpread); edge placement in those modes walks the outline by `m_MeshSpawn.speed` over time,
+  and its `spread` snaps the place to steps (random mode too); triangles are always random. the
+  particle leaves along the point's interpolated normal, normalized ((0, 0, 1) without normals),
+  `m_MeshNormalOffset` moving it along the unnormalized normal first; with `m_UseMeshColors` and
+  vertex colours, its start colour is multiplied by the point's Color32. the shape's placement then
+  applies as for other shapes. the red mission portals' sparks (`dot_Line` in
+  `p_fxint_s_missionportal_entrance_red_narrowloop_2103`) start on the edges of a ring mesh.
 
 examples:
 

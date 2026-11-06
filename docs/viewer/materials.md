@@ -4,11 +4,17 @@ how the viewer draws the surface shaders [game-data/materials.md](../game-data/m
 describes. the extractor reads each material's properties and keywords into a
 [surface](../package-format.md#materials)
 ([game/material-surfaces.ts](../../packages/extractor/src/game/material-surfaces.ts)), which the
-viewer packs into a look in [`render/materials.ts`](../../packages/viewer/src/render/materials.ts),
-shaded in [`shaders/mesh.wgsl`](../../packages/viewer/src/render/shaders/mesh.wgsl); what's left out
-is in [status](../status.md).
+viewer packs into a look
+([`looks/material-looks.ts`](../../packages/viewer/src/looks/material-looks.ts) picks the builder by
+surface kind: Lit in [`lit-look.ts`](../../packages/viewer/src/looks/lit-look.ts), erosion, dithered
+surfaces and matte paintings in
+[`special-looks.ts`](../../packages/viewer/src/looks/special-looks.ts), [effects](effects.md) in
+[`effects/`](../../packages/viewer/src/looks/effects)), shaded in
+[`mesh.wgsl`](../../packages/viewer/src/render/meshes/mesh.wgsl); what's left out is in
+[status](../status.md).
 
-the mesh shader has seven texture slots (`SLOTS` in materials.ts; the frame group takes the rest of
+the mesh shader has seven texture slots (`SLOTS` in
+[`looks/look.ts`](../../packages/viewer/src/looks/look.ts); the frame group takes the rest of
 WebGPU's sixteen), so features that rarely meet share a slot or a parameter row, and a material that
 has both draws only one. each section below names what that leaves out.
 
@@ -57,7 +63,7 @@ uses its material's `_EmissiveColor`.
 ## foliage
 
 the viewer evaluates the game's [foliage model](../game-data/materials.md#foliage) per pixel
-(`foliage_sun` in [`frame.wgsl`](../../packages/viewer/src/render/shaders/frame.wgsl)).
+(`foliage_sun` in [`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl)).
 `HGRP/Foliage/Leaf`'s and the grass shaders' inputs are their surfaces' `foliage`
 ([game/material-surfaces.ts](../../packages/extractor/src/game/material-surfaces.ts)), packed by
 `leafParams` and `grassParams`; the grass takes `h` as the vertex's object-space height. the grass
@@ -100,8 +106,8 @@ sorting, and layers far apart in depth share one fog distance.
 
 the viewer has no GBuffer, so it draws a [decal](../game-data/materials.md#decals) like the VFXDecal
 boxes ([effects](effects.md#vfxbasev2-and-vfxdecal)): the box's back faces without a depth test, in
-the transparent pass ([`litDecalLook`](../../packages/viewer/src/render/effect-looks.ts),
-`fx_lit_decal` in [`effect.wgsl`](../../packages/viewer/src/render/shaders/effect.wgsl)). it takes
+the transparent pass ([`litDecalLook`](../../packages/viewer/src/looks/effects/lit-decal.ts),
+`fx_lit_decal` in [`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl)). it takes
 the surface's normal and roughness from the main pass where the masks keep them, shades the decal
 like any surface, and lays it over by its alpha. placements of one material share its look and draw
 the game's VFXDecal cube; each row's block word indexes its placement's colour and UV transform in a
@@ -112,8 +118,8 @@ decal that doesn't write them, the surface's occlusion and metallic are taken as
 the game keeps lit decals off surfaces by a stencil bit. the viewer carries it in the main pass's
 packed surface instead (bit 31, `SURFACE_NO_LIT_DECALS` in frame.wgsl), so it works without a
 stencil buffer: looks whose shader writes `_StencilRef` and whose value has bit 32 set it
-(`keepsLitDecalsOff` in [materials.ts](../../packages/viewer/src/render/materials.ts)), and
-laid-over and relit decals skip those pixels. VFXDecal boxes ignore it.
+(`keepsLitDecalsOff` in [lit-look.ts](../../packages/viewer/src/looks/lit-look.ts)), and laid-over
+and relit decals skip those pixels. VFXDecal boxes ignore it.
 
 decals that write no albedo can't be laid over the surface, because the main pass has already lit
 it. a pass between the main and the transparent pass (`fs_decal_relight`) adds the change in the
@@ -132,17 +138,24 @@ the opaque path, their box would show as a solid block.
 ## matte paintings
 
 [matte paintings](../game-data/materials.md#matte-paintings) are drawn by
-[`mattePaintingLook`](../../packages/viewer/src/render/materials.ts). the alpha scale is folded into
-the threshold so the shared alpha-test depth pass still applies, fog comes from the composite like
-everything else, and they're held back until their texture is resident. `_UseMainTexAsAlpha` isn't
-read, and a texture on a UV set other than 0 is dropped.
+[`mattePaintingLook`](../../packages/viewer/src/looks/special-looks.ts). the alpha scale is folded
+into the threshold so the shared alpha-test depth pass still applies, fog comes from the composite
+like everything else, and they're held back until their texture is resident. `_UseMainTexAsAlpha`
+isn't read, and a texture on a UV set other than 0 is dropped.
+
+## forward Lit
+
+[forward Lit](../game-data/materials.md#forward-lit) (`HGRP/LitForward`, the golden treasure chest)
+is drawn as Lit, deferred with everything else, so it reflects the scene's sky cubemap and
+screen-space reflections rather than its own `_CUSTOM_IBL` cubemap, and its metal reads darker than
+the game's. none of Lit's optional layers are read for it.
 
 ## erosion
 
 [erosion rock](../game-data/materials.md#erosion) is drawn by
-[`erosionLook`](../../packages/viewer/src/render/materials.ts) and `erosion_surface` in
-`shaders/mesh.wgsl`, without the soft blend into what lies behind (`_ObjectBlend*`). its textures
-reuse the Lit slots (`erosionLook` lists which). `HGRP/ErosionDynamic` has no look and shows as
+[`erosionLook`](../../packages/viewer/src/looks/special-looks.ts) and `erosion_surface` in
+`mesh.wgsl`, without the soft blend into what lies behind (`_ObjectBlend*`). its textures reuse the
+Lit slots (`erosionLook` lists which). `HGRP/ErosionDynamic` has no look and shows as
 [unsupported](#unsupported-materials).
 
 ## unsupported materials
@@ -153,16 +166,16 @@ since the checker covers what lies behind: "unsupported materials" for meshes in
 viewer lacks, and "missing content" for the package's [stand-ins](../package-format.md#stand-ins)
 for content it doesn't draw at all. off, those draws are skipped during
 [mesh selection](../../packages/viewer/src/streaming/mesh-selection.ts) (`unsupportedLook` in
-[`render/materials.ts`](../../packages/viewer/src/render/materials.ts)). it shows both faces, casts
-no shadow and keeps its colour at any exposure. this covers effect shaders without a look of their
-own ([effects](effects.md)), effect materials using keywords, blend modes, stencil operations or
-texture combinations their look doesn't handle, or sampling a texture from a UV set the look doesn't
-read (sets past 1, past 0 for VFXWater and VFXRefract), lit decals in variants the viewer lacks or
-without a placement or base colour map, additive materials outside the effects, since the opaque
-path can't blend, shaders without a family (`HGRP/CharacterNPR`, `Hidden/HGRP/LitEffectBlend`,
-`HGRP/Foliage/Glow`, `HGRP/LitForward`, `HGRP/ErosionDynamic` and the like, which `pack` lists per
-shader), and materials that didn't convert. stand-ins (`DrawRole.Unsupported`) take the same look
-whatever their material.
+[`looks/material-looks.ts`](../../packages/viewer/src/looks/material-looks.ts)). it shows both
+faces, casts no shadow and keeps its colour at any exposure. this covers effect shaders without a
+look of their own ([effects](effects.md)), effect materials using keywords, blend modes, stencil
+operations or texture combinations their look doesn't handle, or sampling a texture from a UV set
+the look doesn't read (sets past 1, past 0 for VFXWater and VFXRefract), lit decals in variants the
+viewer lacks or without a placement or base colour map, additive materials outside the effects,
+since the opaque path can't blend, shaders without a family (`HGRP/CharacterNPR`,
+`Hidden/HGRP/LitEffectBlend`, `HGRP/Foliage/Glow`, `HGRP/ErosionDynamic` and the like, which `pack`
+lists per shader), and materials that didn't convert. stand-ins (`DrawRole.Unsupported`) take the
+same look whatever their material.
 
 the extractor decides which materials are unsupported when it
 [describes their surfaces](../package-format.md#materials), and `pack` counts them by shader and

@@ -1,20 +1,19 @@
 import { useEffect, useCallback, type ReactNode, useRef, useState } from 'react';
 
+import { sourceFromParam } from './package/package-param.ts';
 import type { PackageSource } from './package/package-source.ts';
 import { CameraReadout } from './ui/camera-readout.tsx';
+import { describeError } from './ui/format.ts';
 import { LevelsPanel } from './ui/levels-panel.tsx';
 import { type OpenPackage, PackagePanel } from './ui/package-panel.tsx';
-import { sourceFromParam } from './ui/package-param.ts';
 import { PhotoFiltersPanel } from './ui/photo-filters.tsx';
-import { SceneControls } from './ui/scene-controls.tsx';
+import { SceneControls } from './ui/scene-controls/scene-controls.tsx';
 import { FiltersPanel, PhotographyPanel, SettingsPanel } from './ui/settings-panel.tsx';
 import { StatsPanel } from './ui/stats-panel.tsx';
-import { Viewer } from './viewer.ts';
+import { Viewer } from './viewer/viewer.ts';
 
 const PACKAGE_PARAM = 'package';
 const LEVEL_PARAM = 'level';
-
-const describeError = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /** sets or clears a search parameter of the page URL without a navigation */
 const setParam = (name: string, value: string | null): void => {
@@ -97,14 +96,14 @@ export const App = ({
 		};
 	}, [hosted, open]);
 
-	// the shown level lives in the URL, so a reload or a shared link opens the same level
+	// the current level lives in the URL, so a reload or a shared link opens over the same level
 	useEffect(() => {
 		if (viewer === null || hosted) {
 			return;
 		}
 		return viewer.subscribe(() => {
 			// nothing to record while no package is loaded (including mid-load)
-			if (viewer.scene !== null && new URL(location.href).searchParams.get(LEVEL_PARAM) !== viewer.level) {
+			if (viewer.manifest !== null && new URL(location.href).searchParams.get(LEVEL_PARAM) !== viewer.level) {
 				setParam(LEVEL_PARAM, viewer.level);
 			}
 		});

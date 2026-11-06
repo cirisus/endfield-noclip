@@ -6,10 +6,14 @@ conditional sets are in [package-format.md](../package-format.md#conditions).
 
 ## evaluation
 
-[`viewer.ts`](../../packages/viewer/src/viewer.ts) resolves every control's value when a pick
-changes (`resolveSceneValues`), recomputes `conditionVisible` for every set (`conditionResults`) and
-turns the results into the shown visibility groups (`groupsShown`), which go to the instance
-selector, the local lights, the water renderer, the irradiance regions and the environment blend.
+`SceneState`
+([`scene-states/scene-state.ts`](../../packages/viewer/src/scene-states/scene-state.ts)) resolves
+every control's value when a pick changes (`resolveSceneValues`), recomputes `conditionVisible` for
+every set (`conditionResults`) and turns the results into the shown visibility groups
+(`groupsShown`), which go to every consumer the viewer registers (the instance selector, the local
+lights, the water renderer, the irradiance regions). the resolved values also move the water levels,
+and the condition results feed the environment blend, which re-plans only when they change: the
+results array is replaced only when a result differs.
 
 ### stream areas
 
@@ -29,8 +33,9 @@ game's transition clips.
 
 ## the scene conditions panel
 
-[`scene-controls.tsx`](../../packages/viewer/src/ui/scene-controls.tsx) shows the "Scene conditions"
-panel:
+[`ui/scene-controls/`](../../packages/viewer/src/ui/scene-controls/) shows the "Scene conditions"
+panel, a module per section (`story-controls.tsx`, `water-levels.tsx`, `environment-volumes.tsx`)
+and per row (`control-row.tsx`, `drivers.tsx`):
 
 - **scene states**: a select per state, "Follow game (on/off)" for derived states, else on/off
 - **quests and missions**: quests run in order, so progress is picked as a story point rather than
@@ -66,14 +71,18 @@ panel:
 - **water levels**: a select per gameplay water volume's `waterLevel` control, over the fills
   scripts set it to, listing what sets each ("Set to 37% … by quest progress: …")
   ([water volumes](water.md#water-volumes))
-- **lighting / environment volumes**: volumes owned by the shown level or reaching into it, each a
-  checkbox over its `environmentVolume` control, which its group requires alongside its scene states
-  ("(not loaded)" when those fail). scripted-blend volumes (blend mode 3) default off, since the
-  script that fades them in isn't followed (see
+- **lighting / environment volumes**: volumes owned by the current level or reaching into it, then
+  the rest under their owning level, each a checkbox over its `environmentVolume` control, which its
+  group requires alongside its scene states ("(not loaded)" when those fail). scripted-blend volumes
+  (blend mode 3) default off, since the script that fades them in isn't followed (see
   [environment.md](../game-data/environment.md#activation))
 
-every row shows the control's rule and the assumption behind its default. controls are listed where
-their `levelTags` include 0 or the shown level's tag. "Reset" drops every pick. the settings panel's
-"stream areas at camera" toggle switches every area that follows the camera between following it and
-showing. conditional detail ignores HLOD refinement and stops streaming once its tile is below the
-screen error threshold ([streaming](streaming.md)).
+every row shows the control's rule and the assumption behind its default. each section lists first
+the controls whose `levelTags` include 0 or the [current level's](streaming.md#levels) tag, then,
+under "Other levels", a collapsed group per other level with the controls it gates; a control gating
+several levels is in each of their groups
+([`scene-states/listing.ts`](../../packages/viewer/src/scene-states/listing.ts), which also decides
+the volumes listed). "Reset" drops every pick. the settings panel's "stream areas at camera" toggle
+switches every area that follows the camera between following it and showing. conditional detail
+ignores HLOD refinement and stops streaming once its tile is below the screen error threshold
+([streaming](streaming.md)).

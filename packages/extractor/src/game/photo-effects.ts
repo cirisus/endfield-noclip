@@ -36,7 +36,11 @@ export const loadPhotoEffects = async (
 	}
 	const effects: PhotoEffect[] = [];
 	const unsupported: string[] = [];
-	for (const draw of await readPrefabRenderers(resolver, root, null, quad)) {
+	for (const draw of await readPrefabRenderers(resolver, root, {
+		viewPose: null,
+		particleQuad: quad,
+		locked: false,
+	})) {
 		const particles = draw.particles;
 		if (
 			particles === null ||

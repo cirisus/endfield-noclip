@@ -111,7 +111,8 @@ const fixture = (options: { gated: boolean; unsupported: boolean; areas: boolean
 		i32(0);
 		u8(0);
 		u8(0);
-		u8(1);
+		// isLocked on the first placement only
+		u8(n === 0 ? 1 : 0);
 		i32(-1);
 		i32(0);
 		f32(0);
@@ -124,7 +125,20 @@ const fixture = (options: { gated: boolean; unsupported: boolean; areas: boolean
 		} else {
 			u8(255);
 		}
-		i32(0);
+		if (n === 1) {
+			// one entity property: an int `state` of 2
+			i32(1);
+			u8(2);
+			i32(11);
+			u8(2);
+			i32(3);
+			i32(1);
+			u8(2);
+			u64(2n);
+			i32(12);
+		} else {
+			i32(0);
+		}
 	}
 	return bytes.slice(0, at);
 };
@@ -134,6 +148,8 @@ const STRINGS = new Map([
 	[8, 'test_quest'],
 	[9, 'system_inst_key'],
 	[10, 'construction_area_2'],
+	[11, 'state'],
+	[12, ''],
 ]);
 
 const string = (id: number): string => {
@@ -162,6 +178,12 @@ test('reads the complete interactive list through nullable properties and quest 
 		]),
 	);
 	assert.equal(rows[1].componentProperties.size, 0);
+	assert.deepEqual(
+		rows.map((r) => r.isLocked),
+		[true, false],
+	);
+	assert.deepEqual(rows[0].properties, []);
+	assert.deepEqual(rows[1].properties, [{ key: 'state', type: 3, values: [{ bits: 2n, text: '' }] }]);
 });
 
 test('an unsupported prefix cannot be bypassed to find a plausible placement later in the file', () => {

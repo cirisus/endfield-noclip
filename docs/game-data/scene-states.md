@@ -376,7 +376,9 @@ getter node (`CheckMissionOrQuestIsComplete`, `CompareQuestState`, …) named by
   around `position`; the player is inside while within any of them. `exitShapeStartIndex` is -1 in
   the volumes seen so far (shapes from that index presumably count only for leaving; unverified)
 - `EntityEvent_*`: an interactive's event; `targetEntity` names a slot of the script's own
-  `interactives` (template `entityDataIdKey`, `position`) or a LevelData placement by logic id
+  `interactives` (template `entityDataIdKey`, `position`; they exist while the script runs, see
+  [placements and models](interactives.md#placements-and-models)) or a LevelData placement by logic
+  id
 - `LevelEvent_OnQuestStateChanged` / `…OnMissionStateChanged`: a quest event (`filtedQuestId`)
 - `ScriptEvent_OnCustomEvent` / `LevelEvent_OnCustomEvent`: raised by `RaiseCustomScriptEvent` (to a
   receiver script) or `RaiseCustomLevelEvent` (to the level) with the same key, so the raiser's own

@@ -1,6 +1,6 @@
 import { isPointView, type PointView } from '@endfield-noclip/package-format/oem';
+import type { Vec3 } from '@endfield-noclip/package-format/values';
 
-import type { Vec3 } from './camera.ts';
 import type { CameraPose } from './noclip-controls.ts';
 
 const PREFIX = 'noclip-point-view-v7:';

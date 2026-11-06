@@ -7,7 +7,7 @@ how the viewer plays the billboards and particle systems that
 
 rows of a billboard chain ([assets](../game-data/assets.md#billboards)) turn to the camera on the
 GPU. when an instance block is uploaded, `markBillboardRows`
-([`render/instance-rows.ts`](../../packages/viewer/src/render/instance-rows.ts)) sets their
+([`content/instance-rows.ts`](../../packages/viewer/src/content/instance-rows.ts)) sets their
 `RowBillboard` bits by chain run, and `row_basis` in `frame.wgsl` multiplies the stored rotation by
 the camera's (`Facing`) or by its heading about the vertical (`Upright`) in every mesh and effect
 vertex stage, shadows included. the cull and LOD tests use the stored bounds, which already hold
@@ -23,12 +23,15 @@ placements.
 a chain draw that names a particle system ([package format](../package-format.md#particles)) makes
 its instance an emitter: the emitter culls and streams its geometry like any instance, but its
 bucket takes the rows of its live particles instead of its own
-([`render/particles.ts`](../../packages/viewer/src/render/particles.ts)). `ParticleField` keeps as
-many rows per emitter as the package's emission bound, up to `min(maxParticles, 1024)`, in the
-instance buffer, using the emitter's block origin, and rewrites them once per frame the emitter is
-selected. so every mesh shader draws particles unchanged, and shadow and effect passes need nothing
-of their own. each particle's colour goes into its row's colour word (`RowWord.color` in
-[`render/instance-rows.ts`](../../packages/viewer/src/render/instance-rows.ts), RGBA8, white for
+([`particles/`](../../packages/viewer/src/particles/): `simulation.ts` plays a system, its motion,
+forces and texture sheet in modules of their own, and `particle-rows.ts` writes the rows).
+`ParticleField` keeps as many rows per emitter as the package's emission bound, up to
+`min(maxParticles, 1024)`, in the instance buffer, using the emitter's block origin, and rewrites
+them once per frame the emitter is selected. an emitter not selected for 600 frames is forgotten and
+its rows freed, as are a block's emitters when it's released (pinned HLOD and global blocks never
+are). so every mesh shader draws particles unchanged, and shadow and effect passes need nothing of
+their own. each particle's colour goes into its row's colour word (`RowWord.color` in
+[`content/instance-rows.ts`](../../packages/viewer/src/content/instance-rows.ts), RGBA8, white for
 other rows), where it multiplies the mesh's vertex colours in the mesh and effect shaders. a
 renderer with several meshes is several emitters at one place; they share their random values, so
 each draws the particles that picked its mesh.
@@ -64,30 +67,41 @@ system and its index, so any moment can be evaluated on its own:
 - start values read their curves at the emission's place in its loop. the shape gives the start
   position and direction (cones towards the matching point of their far end, volumes anywhere up to
   their length, donuts outwards from the tube's centre line), placed by the shape's own transform.
+  mesh shapes (`mesh-shape.ts`) pick a primitive and a point on it as the game does, from the
+  particle's random values, and multiply the start colour by the point's vertex colour; vertex Loop
+  and PingPong number the rate's emissions from the start delay. a system without the rate numbers
+  its bursts' particles instead, in emission order, when it plays once or every loop emits the same
+  particles (`#burstsNumbered` in `simulation.ts`), so Wuling's tower lamps
+  (`p_fxmap_map02_lv002_citywall_lighting_02`, one 39-particle burst over a 39-vertex mesh) get one
+  glow and one streak each. other bursts, and those of systems that also stream, pick at random.
 
 ### motion
 
 - at age `a` a particle has moved `(start speed + linear velocity) · m · a`, where `m` is the
   velocity module's speed modifier and a world-space linear velocity is first turned into the
-  emitter's frame, plus `½ g a²` down the world's y (Unity's gravity, 9.81 m/s² times the gravity
+  emitter's frame, plus `½ g m a²` down the world's y (Unity's gravity, 9.81 m/s² times the gravity
   modifier) and the radial push times `m`, then turned about the orbit's centre by `ω · m · a`.
   linear, orbital and radial curves are integrated over the age (Simpson's rule), so Jingyu's
   drifting petals turn through their spin-up's integral. turning the whole path is exact when the
   rest of the motion runs along the orbit's axis.
 - a speed modifier curve (`modifierAt`) takes the place of `m · a` with its integral over the age,
   and the linear, orbital and radial curves are integrated times it, as the game
-  [scales every step](../game-data/effects.md#particle-systems); the fall isn't scaled. systems with
-  such a curve and drag, a speed limit or force fields stand in.
+  [scales every step](../game-data/effects.md#particle-systems); the fall, built up in the velocity
+  it scales, becomes `∫ g τ m(τ) dτ` (`½ g m a²` for a constant). systems with such a curve and drag
+  stand in.
 - drag slows the start velocity alone, by `k v` or `k v²` (k the amount, times the cross-section
   `π (size / 2)²` when it scales with size), and gravity falls towards the matching terminal speed;
-  the velocity module's own terms and orbits aren't slowed, and the size is the start size.
+  the velocity module's own terms and orbits aren't slowed, and the size is the start size. the
+  speed modifier then scales the slowed launch and fall alike.
 - under a speed limit or force fields (`steppedPath`) there is no closed form, so the particle is
   stepped to its age at 30 Hz (at most 600 steps, longer ones beyond), from its birth the first time
   it's drawn and from where the previous frame left it after that; a step back in time starts it
   from its birth again. each step adds gravity to its own velocity, lets the force fields change it
   (`applyForces`, from its place and age before the step), limits the whole speed, the velocity
   module's terms included, as [the game does](../game-data/effects.md#particle-systems), and moves
-  it by the whole velocity. the fields follow the
+  it by the whole velocity times the speed modifier read at the step's age (the limit sees the
+  velocity without it), so the collectible pieces' rings (`ringMid2`) slow as their modifier falls
+  while held near their limit. the fields follow the
   [game's sphere fields](../game-data/effects.md#particle-systems) term by term, with the viewer's
   own random values; drag by size reads the particle's x size. the module's terms, each read at the
   step's age, are its linear velocity, the orbit's velocity at the particle's current place (`ω × r`
@@ -149,7 +163,7 @@ and a `particleDisturb` stack scales its distortion by w.
 
 the game's random sequence can't be reproduced, so particles start elsewhere than in the game with
 the same distributions. looping systems are evaluated as if they had played since long before the
-package opened; others start when their emitter is first selected. particles move by the viewer's
-animation clock, like the effects' scrolling textures: they keep moving while the view settles and
-pause once the viewer idles ([performance](performance.md); `continuous` keeps them moving, and
-`animate` off freezes them).
+package opened; others start when their emitter is first selected, and again when it's selected
+after being [forgotten](#particles). particles move by the viewer's animation clock, like the
+effects' scrolling textures: they keep moving while the view settles and pause once the viewer idles
+([performance](performance.md); `continuous` keeps them moving, and `animate` off freezes them).

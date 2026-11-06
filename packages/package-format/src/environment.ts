@@ -104,8 +104,20 @@ export interface EnvironmentVolumeInfo {
 	phase: number | null;
 }
 
-/** how a volume blends in: 0 replaces, 1 by distance, 2 over time, 3 by a scripted factor */
-export type EnvironmentBlendMode = 0 | 1 | 2 | 3;
+/** how a volume blends in (the game's `EnvBlendMode`) */
+export const EnvironmentBlendMode = {
+	/** replaces wherever it holds the camera */
+	None: 0,
+	/** by depth inside, over the blend distance */
+	Distance: 1,
+	/** over time, by the fade durations */
+	Time: 2,
+	/** by a scripted factor */
+	Manual: 3,
+} as const;
+
+/** one of the {@link EnvironmentBlendMode} values */
+export type EnvironmentBlendMode = (typeof EnvironmentBlendMode)[keyof typeof EnvironmentBlendMode];
 
 /**
  * @param mode a volume's `_blendMode`

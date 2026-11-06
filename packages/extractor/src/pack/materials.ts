@@ -96,6 +96,7 @@ const LIT_UV_SET_FAMILIES: ReadonlySet<ShaderFamily> = new Set([
 	'lit',
 	'litTransparent',
 	'litEffect',
+	'litForward',
 	'trunk',
 ]);
 

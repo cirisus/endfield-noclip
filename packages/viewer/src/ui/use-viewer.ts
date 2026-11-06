@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { Viewer } from '../viewer.ts';
+import type { Viewer } from '../viewer/viewer.ts';
 
 /**
  * re-renders the caller when the package, the options or the shown level change.
@@ -12,6 +12,19 @@ export const useViewerState = (viewer: Viewer): number => {
 	return useSyncExternalStore(
 		(listener) => viewer.subscribe(listener),
 		() => viewer.stateRevision,
+	);
+};
+
+/**
+ * re-renders the caller when the environment at the camera changes (its name or applied volumes).
+ *
+ * @param viewer the viewer
+ * @returns the viewer's environment revision (only useful as a dependency)
+ */
+export const useViewerEnvironment = (viewer: Viewer): number => {
+	return useSyncExternalStore(
+		(listener) => viewer.subscribe(listener),
+		() => viewer.environmentRevision,
 	);
 };
 

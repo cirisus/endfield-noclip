@@ -17,3 +17,21 @@ export interface DevPackage {
 	/** byte length of the package's core archive */
 	coreSize: number;
 }
+
+/**
+ * @returns the packages the dev or preview server lists; none where the page isn't served by one (the index
+ *   is missing or isn't JSON)
+ * @throws when the request fails or the body isn't valid JSON
+ */
+export const fetchDevPackages = async (): Promise<DevPackage[]> => {
+	const response = await fetch(`${DEV_PACKAGES_PREFIX}${DEV_PACKAGES_INDEX}`);
+	if (!response.ok || !(response.headers.get('content-type') ?? '').includes('json')) {
+		return [];
+	}
+	const body: unknown = await response.json();
+	if (typeof body !== 'object' || body === null || !('packages' in body) || !Array.isArray(body.packages)) {
+		return [];
+	}
+	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- our own dev endpoint
+	return body.packages as DevPackage[];
+};

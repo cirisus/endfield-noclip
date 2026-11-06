@@ -340,6 +340,7 @@ export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 				randomDirection: 0,
 				sphericalDirection: 0,
 				randomPosition: 0,
+				mesh: null,
 			},
 			motion: { kind: 'spline', segments, speed },
 			sizeOverLifetime: [growth, growth, growth],

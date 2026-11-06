@@ -1,13 +1,17 @@
 import type { BlobCodec } from '@endfield-noclip/package-format/blobs';
 
-import type { InstanceRows, RowKinds } from '../render/instance-rows.ts';
+import type { InstanceRows, RowKinds } from '../content/instance-rows.ts';
 
-interface RequestBase {
-	id: number;
+/** a blob as stored, which every decode job carries */
+export interface StoredBlob {
 	/** stored blob bytes; transferred */
 	data: ArrayBuffer;
 	codec: BlobCodec;
 	rawLength: number;
+}
+
+interface RequestBase extends StoredBlob {
+	id: number;
 }
 
 /** a UV dequantization as a `_ST` transform: `uv = value · xy + zw` */
@@ -19,7 +23,8 @@ export type DecodeRequest =
 	| (RequestBase & { kind: 'surface' })
 	| (RequestBase & { kind: 'splat' })
 	| (RequestBase & { kind: 'layer' })
-	| (RequestBase & { kind: 'instances'; rowKinds: RowKinds })
+	/** without `rowKinds`, the rows are tier 0 HLOD rows */
+	| (RequestBase & { kind: 'instances'; rowKinds?: RowKinds })
 	| (RequestBase & { kind: 'geometry' })
 	| (RequestBase & { kind: 'texture' })
 	| (RequestBase & { kind: 'irradiance' });
@@ -44,7 +49,7 @@ export interface DecodedSurface {
 }
 
 /** a decoded terrain splat page, see `SplatPage` in package-format */
-export interface DecodedDetail {
+export interface DecodedSplat {
 	id: number;
 	kind: 'splat';
 	/** texels per image edge */
@@ -148,7 +153,7 @@ export interface DecodedIrradiance {
 export type Decoded =
 	| DecodedHeights
 	| DecodedSurface
-	| DecodedDetail
+	| DecodedSplat
 	| DecodedLayer
 	| DecodedInstances
 	| DecodedGeometry
