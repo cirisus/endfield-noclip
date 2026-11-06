@@ -83,14 +83,19 @@ export class GpuProfiler {
 				timestampWrites: { querySet, beginningOfPassWriteIndex: index, endOfPassWriteIndex: index + 1 },
 			});
 		};
+		// encoder methods must be called on the encoder itself; a frame looks them up dozens of times, so each
+		// is bound once
+		const bound = new Map<PropertyKey, unknown>();
 		return new Proxy(encoder, {
 			get(target, property) {
 				if (property === 'beginRenderPass') {
 					return beginRenderPass;
 				}
 				const value: unknown = Reflect.get(target, property);
-				// encoder methods must be called on the encoder itself
-				return typeof value === 'function' ? value.bind(target) : value;
+				if (typeof value !== 'function') {
+					return value;
+				}
+				return bound.getOrInsertComputed(property, () => value.bind(target));
 			},
 		});
 	}

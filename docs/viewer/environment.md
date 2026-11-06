@@ -31,13 +31,18 @@ satisfy.
 
 ## blending at the camera
 
-[`render/environment-blend.ts`](../../packages/viewer/src/render/environment-blend.ts) follows the
+[`environment/blend.ts`](../../packages/viewer/src/environment/blend.ts) follows the
 [game's blend](../game-data/environment.md#blending-at-the-camera). a "profile" here is a phase plus
 the post profile, not a Unity `VolumeProfile`.
 
-- start from every section of the shown level's base phase, inactive ones included, plus its post
-  profile (`seedProfile`). the scene's global volume and the level's base volume then apply as
-  volumes like any other.
+- start from every section of the [current level's](streaming.md#levels) base phase, inactive ones
+  included, plus its post profile; moving into another level's cells switches the base, keeping the
+  fades. the scene's global volume and the level's base volume then apply as volumes like any other.
+- `planBlend` works out the volumes and factors at the camera, and a key of them; the viewer blends
+  the sections (`applyBlend`) only when the key changes.
+  [`viewer/environment-state.ts`](../../packages/viewer/src/viewer/environment-state.ts) re-plans
+  only when the eye, the volume settings, the condition results or a fade changed, and hands the
+  renderers one derived look (environment, celestial layers, lens flare, wetness) per change.
 - visit volumes in ascending priority, then shape kind (global, box, prism). the game's order among
   equal priorities isn't known, so this tie-break is an assumption. the order and the shape tests
   are
@@ -62,8 +67,11 @@ the post profile, not a Unity `VolumeProfile`.
 
 the "volumes at camera" toggle turns blending by position off: the scene-wide global volumes and the
 level's base volume apply fully wherever the camera is, giving the level's own look. a pinned phase
-goes over that look instead of the volume blend. `volumeApplies` is the one place that decides
-whether a volume may apply: it has a phase and its visibility group's condition holds.
+goes over that look instead of the volume blend; the pin offers the phases of the volumes the scene
+conditions panel lists for the current level
+([listing](scene-states.md#the-scene-conditions-panel)), neighbours' volumes reaching into it
+included. `volumeApplies` is the one place that decides whether a volume may apply: it has a phase
+and its visibility group's condition holds.
 
 ## activation
 
@@ -81,10 +89,11 @@ aren't extracted. falling rain and snow aren't drawn, and `snowConfig` isn't pac
 
 ### wetness
 
-`rain_wet_surface` ([`shaders/frame.wgsl`](../../packages/viewer/src/render/shaders/frame.wgsl), fed
-by [`render/wetness.ts`](../../packages/viewer/src/render/wetness.ts)) wets the mesh and terrain
-surfaces as the [game's deferred lighting](../game-data/environment.md#wetness) does. the one-sided
-`enableWetness` blend is `lerpRain` in
-[`environment-blend.ts`](../../packages/viewer/src/render/environment-blend.ts). the rain occlusion
-map isn't rendered, so every surface counts as open to the sky, and its range is taken as 100 m; the
-coverage edges have no jitter, and walls don't run with water nor normal-mapped dips flood.
+`rain_wet_surface` ([`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl), fed by
+[`environment/wetness.ts`](../../packages/viewer/src/environment/wetness.ts)) wets the mesh and
+terrain surfaces as the [game's deferred lighting](../game-data/environment.md#wetness) does. the
+one-sided `enableWetness` blend is `lerpRain` in
+[`environment/blend.ts`](../../packages/viewer/src/environment/blend.ts), where a profile without a
+rain section counts as dry. the rain occlusion map isn't rendered, so every surface counts as open
+to the sky, and its range is taken as 100 m; the coverage edges have no jitter, and walls don't run
+with water nor normal-mapped dips flood.

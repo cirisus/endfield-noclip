@@ -25,11 +25,12 @@ import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import { encodeBlobTable } from '@endfield-noclip/package-format/blob-table';
 import { BLOB_KIND_NAMES, BlobKind } from '@endfield-noclip/package-format/blobs';
 import { resolveSceneValues } from '@endfield-noclip/package-format/conditions';
-import type {
-	EnvironmentPhaseInfo,
-	EnvironmentSchema,
-	PostProfile,
-	EnvironmentVolumeInfo,
+import {
+	EnvironmentBlendMode,
+	type EnvironmentPhaseInfo,
+	type EnvironmentSchema,
+	type PostProfile,
+	type EnvironmentVolumeInfo,
 } from '@endfield-noclip/package-format/environment';
 import type { GeometryTable } from '@endfield-noclip/package-format/geometry';
 import {
@@ -1434,6 +1435,7 @@ const collectEntities = async (
 	collected.facilities = [
 		...facilities.progressions,
 		...facilities.created,
+		...facilities.activities,
 		...cabins.controls,
 		...facilities.doors.map(({ control }) => control),
 		...facilities.bridges,
@@ -1461,6 +1463,7 @@ const collectEntities = async (
 			continue;
 		}
 		const { pose } = placement;
+		const locked = placement.locked ?? false;
 		/** the rows of an interactive placement that floats on a water volume */
 		let floating: number[] | undefined;
 		if (placement.source.startsWith('Data/Json/LevelData/')) {
@@ -1469,7 +1472,7 @@ const collectEntities = async (
 				floating = floaterRows.getOrInsertComputed(volume, () => []);
 			}
 		}
-		const prefab = prefabs.getOrInsertComputed(`${model.pathHash}:${pose?.key ?? ''}`, async () => {
+		const prefab = prefabs.getOrInsertComputed(`${model.pathHash}:${pose?.key ?? ''}:${locked}`, async () => {
 			const paths = unique(
 				resolver.manifest.findAssets(model.pathHash).map((asset) => resolver.manifest.assetPath(asset)),
 			);
@@ -1483,7 +1486,7 @@ const collectEntities = async (
 					{ hash: model.pathHash, path: paths[0] },
 					UnityClass.GameObject,
 				);
-				const renderers = await readPrefabRenderers(resolver, root, pose, particleQuad);
+				const renderers = await readPrefabRenderers(resolver, root, { viewPose: pose, particleQuad, locked });
 				for (const { name, unsupported } of renderers) {
 					if (unsupported !== null) {
 						standIns.push({ path: label, name, reason: unsupported, position: null });
@@ -1817,13 +1820,13 @@ const environmentVolumeControl = (index: number, volume: EnvironmentVolumeInfo):
 	name: volume.name,
 	rule: null,
 	assumption:
-		volume.blendMode === 3
+		volume.blendMode === EnvironmentBlendMode.Manual
 			? 'off: a level script fades it in, which isn’t followed; on previews it at full strength'
 			: 'on: it applies wherever it holds the camera',
 	followsCamera: false,
 	levelTags: [],
 	values: SWITCH_VALUES,
-	default: volume.blendMode === 3 ? 0 : 1,
+	default: volume.blendMode === EnvironmentBlendMode.Manual ? 0 : 1,
 	derived: null,
 });
 

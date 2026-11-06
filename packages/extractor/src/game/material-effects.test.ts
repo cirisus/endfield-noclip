@@ -531,7 +531,6 @@ describe('VFXBaseV2', () => {
 				// ten times the bounds land on whole numbers in f32, so neither pads
 				uScale: 1,
 				vScale: 1,
-				cameraPull: 0,
 			},
 		);
 		// 8-bit textures store a fraction of the bounds; `_displayFrame` is 1-based
@@ -629,6 +628,20 @@ describe('VFXBaseV2', () => {
 		assert.equal(noMain.layers[0], null);
 	});
 
+	it('pulls towards the camera outside particle mode, with or without a vertex offset', () => {
+		// Marker Stone's tower lamp stars (`M_fxmap_map_lv004_lamp_light_05`): particles left out of particle mode
+		const pull = (floats: Record<string, number>) =>
+			ofKind(stackOf({ keywords: ['_SAMPLE_TEX0', '_USE_SOFTBLEND'], floats }), 'effectStack').cameraPull;
+		assert.deepEqual(
+			[
+				pull({ _InParticle: 0, _VertCameraOffset: 50 }),
+				pull({ _InParticle: 0 }),
+				pull({ _VertCameraOffset: 50 }),
+			],
+			[50, 0, null],
+		);
+	});
+
 	it('draws with a vertex offset cancelled by particle mode, and moves vertices outside it', () => {
 		const cancelled = ofKind(
 			stackOf({
@@ -662,7 +675,49 @@ describe('VFXBaseV2', () => {
 			intensity: 0.5,
 			bias: 0,
 			vertexAlphaWeight: 0,
-			cameraPull: 0,
+			mask: null,
+		});
+	});
+
+	it('masks a vertex offset from a sample slot the stack leaves free', () => {
+		// the collectible pieces' glow (`M_fx_interactive_collection_2102`) masks its offset by a star texture
+		// each sample texture bound as a mask, drawn only with its keyword
+		const samples = [0, 1, 2, 3, 4];
+		const masked = (keywords: string[] = []) =>
+			stackOf({
+				keywords: ['_USE_VERTOFFSET', '_USE_VERTOFFSETMASK', ...keywords],
+				slots: {
+					_MainTex: slot(1),
+					_OffsetTex: slot(2),
+					_OffsetMaskTex: slot(3, [2, 2]),
+					...Object.fromEntries(samples.map((n) => [`_SampleTex${n}`, slot(10 + n)])),
+				},
+				floats: {
+					_InParticle: 0,
+					_OffsetIntensity: 12,
+					_OffsetMaskPower: 3,
+					...Object.fromEntries(samples.map((n) => [`_SampleTex${n}UseWeight3`, 1])),
+				},
+				vectors: { _OffsetMaskSpeed: [0.1, 0, 1, 1] },
+			});
+		const stack = ofKind(masked(), 'effectStack');
+		assert.deepEqual(stack.offset?.mask, {
+			texture: {
+				texture: 3,
+				scale: [2, 2],
+				offset: [0, 0],
+				scroll: [0.1, 0],
+				rotation: [1, 0],
+				customScroll: [0, 0],
+			},
+			slot: 5,
+			strength: 3 * 0.2,
+		});
+		// a fifth sample texture takes slot 5, so the mask moves down
+		assert.equal(ofKind(masked(['_SAMPLE_TEX4']), 'effectStack').offset?.mask?.slot, 4);
+		assert.deepEqual(masked(samples.map((n) => `_SAMPLE_TEX${n}`)), {
+			kind: 'unsupported',
+			reason: 'a vertex offset mask with every sample slot taken',
 		});
 	});
 
@@ -694,6 +749,35 @@ describe('VFXBaseV2', () => {
 			depthCompare: 'always',
 		});
 		assert.equal(ofKind(stackOf({}), 'effectStack').stencil, null);
+	});
+
+	it('draws an opaque blend state as an opaque layer, unless it reads the depth it writes', () => {
+		// the falling gravel's lit rocks (`M_fx_quicksand_1104`, in `p_fxmap_common_gravel_02`)
+		const opaque = (overrides: Partial<MaterialValues> = {}) =>
+			stackOf({
+				renderQueue: 2000,
+				blend: 'opaque',
+				blendFactors: null,
+				zWrite: true,
+				keywords: ['_USE_LIGHTING'],
+				floats: { _BlendMode: 0, _UseMainTexAsAlpha: 1, _RotateNormalToWorldUp: 1 },
+				...overrides,
+			});
+		const gravel = ofKind(opaque(), 'effectStack');
+		assert.equal(gravel.opaque, true);
+		assert.deepEqual(gravel.lighting, { worldUp: true });
+		assert.equal(gravel.layers[0]?.redAlpha, true);
+		assert.equal(ofKind(stackOf({}), 'effectStack').opaque, false);
+		// `_BlendMode` 2 writes `lerp(1, colour, alpha)`, which only a multiplying blend state makes sense of
+		assert.equal(opaque({ floats: { _BlendMode: 2 } }).kind, 'unsupported');
+		assert.equal(opaque({ zWrite: false }).kind, 'unsupported');
+		assert.deepEqual(
+			opaque({ keywords: ['_USE_SOFTBLEND'], floats: { _UseSoftBlend: 1, _SoftDistance: 1 } }),
+			{
+				kind: 'unsupported',
+				reason: 'opaque blending with a soft blend or edge colour',
+			},
+		);
 	});
 });
 
@@ -825,8 +909,9 @@ describe('VFXDitherAlpha effect variants', () => {
 			[4, [0.005, -0.05], 2, -0.5],
 		);
 		assert.deepEqual(
-			[moved.offset?.vertexAlphaWeight, moved.offset?.cameraPull, moved.offset?.uv1],
-			[0, 0, false],
+			// VFXDitherAlpha doesn't pull towards the camera
+			[moved.offset?.vertexAlphaWeight, moved.cameraPull, moved.offset?.uv1],
+			[0, null, false],
 		);
 		assert.equal(ofKind(trail({ _InParticle: 1 }), 'effectStack').offset, null);
 		// a vertex offset alone doesn't make it an effect variant, and the dithered surface doesn't draw it

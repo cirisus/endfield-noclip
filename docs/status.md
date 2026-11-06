@@ -11,8 +11,8 @@ packs or renders correctly.
 
 - container-aware asset resolution, conversion workers and the pack cache
   ([extraction](extraction.md))
-- one level at a time over shared terrain, with level-owned streaming, LOD and HLOD
-  ([world](game-data/world.md), [streaming](viewer/streaming.md))
+- a scene's levels shown together over shared terrain, streaming around the camera, then the current
+  level ([world](game-data/world.md), [streaming](viewer/streaming.md#levels))
 - static and dynamic stream areas switched by the camera through the game's trigger zones
   ([world](game-data/world.md#stream-areas))
 - terrain heights, baked surface pages and the close-up layer blend ([terrain](viewer/terrain.md))
@@ -140,9 +140,7 @@ packs or renders correctly.
   steady ones glow), so `_EMISSIVE_NOMAP` emits nothing; flicker and the emissive map's scroll
   (`_EmissiveSpeed`; Dijiang's shaft cargo rings) are drawn still, the pulse stops on looks with a
   parallax glow or layer, and the emission Fresnel term is left out. per-draw emission overrides set
-  at runtime aren't known, so the white lamp cubes on Wuling's and Marker Stone's towers
-  (`M_module_tylight+1_001_03`) glow white where the game shows green and red (always, per level);
-  what sets them for static scenery is untraced
+  at runtime aren't read
 - glass ([glass](game-data/materials.md#glass)): refraction, Fresnel opacity, planar reflections and
   subsurface scattering aren't drawn; overlapping layers share one fog distance; premultiplied glass
   is read from the blend state, and whether the game lets glass cast shadows is unchecked
@@ -173,8 +171,10 @@ packs or renders correctly.
 - shaders without a look, shown as [unsupported](viewer/materials.md#unsupported-materials) and
   counted per shader by `pack`: on map02 `Hidden/HGRP/Effect/VFXInkWashPaint`,
   `HGRP/Effect/VFXRadialBlur`, `HGRP/CharacterNPR` and `…_VFX`, `Hidden/HGRP/LitEffectBlend`,
-  `HGRP/Effect/VFXTransparentDepthOnly`, `HGRP/Foliage/Glow`, `HGRP/LitForward` and the factory
-  placement and outline shaders (28 materials)
+  `HGRP/Effect/VFXTransparentDepthOnly`, `HGRP/Foliage/Glow` and the factory placement and outline
+  shaders
+- forward Lit ([viewer](viewer/materials.md#forward-lit)): the golden treasure chest reflects the
+  scene instead of its own `_CUSTOM_IBL` cubemap; the shader's other variants aren't decoded
 - matte paintings ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` isn't read
   (no map01 material sets it)
 - erosion rock ([viewer](viewer/materials.md#erosion)): the soft blend into what lies behind
@@ -236,14 +236,16 @@ packs or renders correctly.
   (FogSimple, VFXFakeVolumeFog). other effect shaders (VFXAdvance, …) and these shaders' undrawn
   variants show as [unsupported](viewer/materials.md#unsupported-materials)
   - VFXBaseV2 and VFXDecal: additive blend states, `_BlendMode` 2 outside a multiplying blend or
-    with a stencil, the sixth sample texture alongside a vertex offset, object-relative screen UVs,
-    brightening that is a scan line or centred on a fixed point (the player-centred one is left
-    out), rigid-body, fluid and particle vertex animation, soft bodies that are lit, take a Fresnel
-    term or a vertex offset, or play from particle data (the Aurelyne blob is unchecked in game),
-    [water blending](game-data/effects.md#water-blending) (fragments below the authored height show
-    the checker; the height a water surface would set isn't followed), VFXDecal's
-    `_USE_IN_PARTICLE`, lighting, parallax and 3D-texture variants, and local lights and the
-    post-exposure division on lit effects
+    with a stencil, opaque blending with a stencil, a soft blend or an edge colour (opaque layers
+    are fogged by the composite and the falling gravel is unchecked in game), the sixth sample
+    texture alongside a vertex offset, a vertex offset mask alongside all five other sample
+    textures, object-relative screen UVs, brightening that is a scan line or centred on a fixed
+    point (the player-centred one is left out), rigid-body, fluid and particle vertex animation,
+    soft bodies that are lit, take a Fresnel term or a vertex offset, or play from particle data
+    (the Aurelyne blob is unchecked in game), [water blending](game-data/effects.md#water-blending)
+    (fragments below the authored height show the checker; the height a water surface would set
+    isn't followed), VFXDecal's `_USE_IN_PARTICLE`, lighting, parallax and 3D-texture variants, and
+    local lights and the post-exposure division on lit effects
   - VFXBaseV2's breathing pulses every placement in step (per-draw time scale and offset untraced);
     Dijiang's clue board and the aisle-guide panels' edge colour are unchecked in game
   - VFXDitherAlpha's effect variants blend rather than dither and write no depth; lit ones, other
@@ -281,17 +283,21 @@ packs or renders correctly.
     modules, use the viewer's own random values and move only while frames render (so the fish
     school circles without its noise's wobble); all copies of one flipbook step in phase
   - stand-ins at the emitter: systems that don't play on awake; a start delay, rate or drag curve; a
-    per-axis speed limit or one alongside drag; speed-modifier curves alongside drag, a speed limit
-    or force fields; force fields alongside drag, other than spheres or with a vector field; shapes
-    other than sphere, hemisphere, cone, box, circle and donut; sprite-mode sheets, sheet time modes
-    other than lifetime or frames per second, sheets over 64 tiles a side
+    per-axis speed limit or one alongside drag; speed-modifier curves alongside drag; force fields
+    alongside drag, other than spheres or with a vector field; shapes other than sphere, hemisphere,
+    cone, box, circle, donut and mesh (map02's 16 single-sided edge and 2 box-edge systems); mesh
+    shapes with a shape texture, edge placement in Loop or PingPong, or quads, points or lines mixed
+    with triangles; sprite-mode sheets, sheet time modes other than lifetime or frames per second,
+    sheets over 64 tiles a side
   - approximations: drag slows only the start velocity and the fall; orbits turn the whole path
     (exact only along the orbit's axis); force fields push only from within the system's own prefab
     (no wind zones or scene fields); a particle replaying a ring buffer's loop range replays its
     path; `Facing` turns to the camera's plane like `View`; velocity-aligned billboards roll by the
-    viewer's choice; cones and circles ignore the arc's mode and spread (about 20 map02 systems set
-    one), sphere and hemisphere arcs aren't applied; stretched quads ignore the camera's velocity
-    (no map02 system scales by it), the freeform mode and an `m_NormalDirection` below 1
+    viewer's choice; vertex Loop and PingPong mesh shapes pick at random for bursts and count the
+    rate's emissions from the start delay (when the game's count restarts isn't traced); cones and
+    circles ignore the arc's mode and spread (about 20 map02 systems set one), sphere and hemisphere
+    arcs aren't applied; stretched quads ignore the camera's velocity (no map02 system scales by
+    it), the freeform mode and an `m_NormalDirection` below 1
   - limits: at most 1024 live particles per emitter (two map01 systems can hold up to 1201), bounds
     that a ring-buffered particle moving far past its lifetime can outrun, colours clamped to 1
     (RGBA8), custom data in colour mode isn't packed (no map02 system uses it)
@@ -310,8 +316,11 @@ packs or renders correctly.
 ### world and streaming
 
 - separate scenes (interiors, offices, arenas) are unvalidated
-- the game's HLOD-unload volumes (`FBStreamArea` root slots 7–9) aren't decoded and the HLOD layer
-  load radii (`hlod0LayerLoadRadius`, …) aren't read ([world](game-data/world.md#stream-areas))
+- the game's HLOD-unload volumes (`FBStreamArea` root slots 7–9) aren't decoded
+  ([world](game-data/world.md#stream-areas)). the viewer follows the game's HLOD rings at its
+  highest preset but measures them in 3D to the tile's bounds rather than in XZ from the player,
+  keeps HLOD2 drawn past 2048 m, and doesn't apply the other layers' radii (`Tiny`, `Lighting`, …),
+  since an entity's layer isn't known ([streaming layers](game-data/world.md#streaming-layers))
 - HLOD clusters never stand in for global content, which always draws, so wherever a cluster covers
   global scenery both draw until its tile refines
   ([instance selection](viewer/streaming.md#instance-selection)); in indie_dg005 every static
@@ -331,15 +340,24 @@ packs or renders correctly.
 ### interactives and animation
 
 - interactives ([interactives](game-data/interactives.md)) with view states draw the pose their
-  state machines settle in, ignoring per-placement component properties.
-  [one-shot effects](game-data/effects.md#one-shot-effects) and the effects a state's
-  `EffectBehavior` plays (the talosites' activation burst) aren't drawn. a settled loop clip moves
-  skinned bones and the Transforms of mesh renderers, including ones under its bones, but not
-  billboarded renderers or particle systems; its material values and GameObject switches hold their
-  end values ([looping clips](extraction/prefabs-and-interactives.md#looping-clips)). every
-  placement plays in step from the viewer's clock (the game's start per placement is unknown), the
-  animation moves only while frames render, each moving renderer stores every frame of its own, and
-  the balloon's sway is unchecked against an in-game shot
+  state machines settle in from the placement's starting `state`, ignoring its other component
+  properties; a `state` the server or a level script sets later isn't followed. of the floats
+  components set before view states start, only a vertical rope's `RopeLength` is read; of
+  `VFXAdjustLength`, only scale targets and tiling (a component switching anything else boxes its
+  prefab), and a `PositionFollower` holds its walk position under a looping clip.
+  [one-shot effects](game-data/effects.md#one-shot-effects) and transitions' bursts (the talosites'
+  activation) aren't drawn. looping effects that rest looks' states play are
+  ([effects at rest](extraction/prefabs-and-interactives.md#effects-at-rest)), but not doors',
+  bridges' or facility forms'; that a non-persistent effect ends with its state is assumed, effects
+  on a looping clip's GameObjects hold its end pose, and of the effects components place themselves
+  only the jump pad's arrow and the vertical jump pad's vent are drawn, unchecked against an in-game
+  shot. a settled loop clip moves skinned bones and the Transforms of mesh renderers, including ones
+  under its bones, but not billboarded renderers or particle systems; its material values and
+  GameObject switches hold their end values
+  ([looping clips](extraction/prefabs-and-interactives.md#looping-clips)). every placement plays in
+  step from the viewer's clock (the game's start per placement is unknown), the animation moves only
+  while frames render, each moving renderer stores every frame of its own, and the balloon's sway is
+  unchecked against an in-game shot
 - facility visual forms settle with every key false. looks the player's presence changes follow the
   camera ([keys the player sets](game-data/interactives.md#keys-the-player-sets)); a campfire's
   `InZone` sphere uses the template's 2.5 m radius, not the runtime radius the game swaps in once
@@ -354,6 +372,21 @@ packs or renders correctly.
   ([template animator parameters](game-data/interactives.md#template-animator-parameters)), set by
   default, and int and trigger parameters aren't set; telescopic bridges draw retracted or extended
   ([telescopic bridges](game-data/interactives.md#telescopic-bridges)), retracted by default
+- level scripts' own interactives (indie_race001's moving platforms and coins, open-world event
+  pieces) aren't placed: they exist while their script runs, and which scripts the server starts
+  (the player's distance to its start shape, missions, activities) isn't known from the data
+- [auto-moving platforms](game-data/interactives.md#auto-moving-platforms) ride their splines from
+  the viewer clock's zero, and drop no overshoot at the end of a loop. ones that turn along the
+  curve, wait at knots, ease, or stop at their target stay at their placement
+  (`unsupported-interactives.json`); effects, particles and billboards on a moving platform stay
+  behind; other curve movers (coins, butterflies, kickable balls), which scripts start, hold still
+- [crane towers](game-data/interactives.md#crane-towers) draw their placement's starting steps, with
+  the container hung from the hook; the steps the player's operations save on the server aren't
+  offered as controls
+- interactives with a mini-game or submit lock draw their model's locked look
+  ([gameplay locks](game-data/interactives.md#gameplay-locks)); the unlocked look the player's
+  repair saves on the server isn't offered as a control, and the effects a lock mounts on the model
+  aren't drawn
 - rows created later (`createState` ≠ 0) draw only with their level's "created during play" toggle,
   off by default; one toggle covers a level's rows, since which of them the server or a script
   creates isn't followed
@@ -361,9 +394,10 @@ packs or renders correctly.
   their own (weapon-wall racks, some doors), templates where zero or several positions frame the
   variant table, door models with an ambiguous open-idle state (not drawn as doors), and LevelData
   with any populated field or condition the reader doesn't implement (the blackbox scenes' blackbox
-  settings; LevelData members after the interactive list aren't decoded) are reported in
-  `out/<map>/debug/unsupported-interactives.json`; those whose template or model wasn't found are
-  [stand-ins](package-format.md#stand-ins), the rest omitted
+  settings; the placement reader decodes no LevelData members after the interactive list, and
+  gameplay locks and splines come from decoding the whole file, which fails for Dijiang's) are
+  reported in `out/<map>/debug/unsupported-interactives.json`; those whose template or model wasn't
+  found are [stand-ins](package-format.md#stand-ins), the rest omitted
 - skeletons the reader can't pose and nonzero blend shapes (meshes with them are stand-ins);
   characters' skeletal animation isn't played. prefab
   [scenery animators](game-data/animation.md#scenery-animators) play their controllers' settled
@@ -389,13 +423,18 @@ packs or renders correctly.
 
 - entities controlled only by `ActivityControlComp` aren't gated; every owner's component is empty
   ([dynamic load gates](game-data/scene-states.md#dynamic-load-gates))
+- event photo spots share one control per scene, not one per event; other kinds of event placement
+  are recognised only through missions and dungeon scripts
+  ([event placements](game-data/scene-states.md#event-placements))
 - resource nodes (doodad groups) share one level control per level; the game's per-group level and
   its source in LevelData aren't read ([scene states](game-data/scene-states.md#doodad-groups))
 - interactive facilities are gathered from levels whose map is the packed scene, so a scene streamed
   by levels of other maps (`base01_lv001`, streamed by `base01_lv003` and `indie_dg014`) probably
   loses their facilities; select levels by `defaultState.exportedSceneConfigPath` instead. for the
   same reason `pack <scene> --level` only takes the scene's own map's levels, so such a level
-  (`dung02_rdg012` on `dung02_rdg008`) can't be packed with its own spawn and LevelData
+  (`dung02_rdg012` on `dung02_rdg008`) can't be packed with its own spawn and LevelData. packing
+  such levels would put overlapping levels in one package, which the viewer would then need to show
+  one at a time again
 - global variables gates number and MapConfig names stay separate controls (no name table is known);
   map variables map01's MapConfig doesn't name show as numbers, except each blight's, named after
   its core ([blight and its cores](game-data/scene-states.md#blight-and-its-cores); that the
@@ -435,9 +474,8 @@ packs or renders correctly.
 
 ## renderer and performance
 
-- show a scene's seamless levels together, with the chosen level as a streaming priority rather than
-  a filter ([architecture](architecture.md#decisions)); until then, terrain outside the shown level
-  is drawn bare and the tile tree has no per-subtree level masks to skip other levels
+- with every level shown, HLOD clusters the game would unload through its HLOD-unload volumes
+  (stream area slots 7–9, undecoded) may draw over neighbouring levels; none were seen on map02
 - teleport points as viewpoints: where the game stores them is unknown
   ([world](game-data/world.md#open))
 - GPU culling and indirect draws ([performance](viewer/performance.md#optimization-candidates))
@@ -467,8 +505,9 @@ packs or renders correctly.
 
 ## open unknowns
 
-- HLOD switch distances (the package uses a placeholder error) and the HLOD material/atlas mapping
-  ([LOD and HLOD](game-data/world.md#lod-and-hlod))
+- what the game measures an HLOD ring's distance to, and the HLOD material/atlas mapping
+  ([LOD and HLOD](game-data/world.md#lod-and-hlod),
+  [streaming layers](game-data/world.md#streaming-layers))
 - per-controller meaning of progression bit 0 ("unbuilt" versus "level 1";
   [progressions](game-data/scene-states.md#progressions))
 - weather/time state ids

@@ -99,6 +99,8 @@ export interface StructureModel {
 	visibility: ConditionalSetInfo;
 	/** the pose to draw the prefab in, `null` for the saved one */
 	pose: PrefabPose | null;
+	/** whether the placement starts locked, drawing its model's locked look; absent for placements without locks */
+	locked?: boolean;
 }
 
 /** an ECS entity of a dynamic structure */

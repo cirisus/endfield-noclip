@@ -1,183 +1,20 @@
-import { BlobKind } from '@endfield-noclip/package-format/blobs';
-
-import type { RangeAllocation } from '../gfx/range-allocator.ts';
 import type { DecodePool } from '../package/decode-pool.ts';
-import type {
-	Decoded,
-	DecodedGeometry,
-	DecodedDetail,
-	DecodedHeights,
-	DecodedInstances,
-	DecodedLayer,
-	DecodedIrradiance,
-	DecodedSurface,
-	DecodedTexture,
-	UvTransform,
-} from '../package/decode-protocol.ts';
+import type { Decoded } from '../package/decode-protocol.ts';
 import { PackageChangedError } from '../package/package-source.ts';
-import { type BlobRange, CORE_ARCHIVE_INDEX, type ViewerPackage } from '../package/viewer-package.ts';
-import type { RowKinds, RowSpins } from '../render/instance-rows.ts';
-import type { ResidentSkin } from '../render/skin-animation.ts';
+import { CORE_ARCHIVE_INDEX, type ViewerPackage } from '../package/viewer-package.ts';
+
+import { type QueuedRange, coalesceRanges } from './coalesce.ts';
+import { type ContentItem, MAX_READ_FAILURES } from './content-item.ts';
+import {
+	RESIDENT_KINDS,
+	type ResidencyHandlers,
+	decodeJob,
+	releaseResident,
+	uploadResident,
+} from './residency.ts';
+import type { Resident } from './resident.ts';
 
 // #region types
-
-/** lifecycle of a blob */
-export type ItemState = 'idle' | 'queued' | 'fetching' | 'decoding' | 'uploading' | 'ready' | 'failed';
-
-/** GPU residency of a height page */
-export interface ResidentHeights {
-	kind: 'heights';
-	/** GPU bytes */
-	bytes: number;
-	/** height pool slot */
-	slot: number;
-	/** the samples kept on the CPU for ground-height queries (pinned pages only) */
-	samples: Uint16Array | null;
-}
-
-/** GPU residency of a terrain surface page */
-export interface ResidentSurface {
-	kind: 'surface';
-	/** GPU bytes */
-	bytes: number;
-	/** layer of the surface texture arrays */
-	slot: number;
-}
-
-/** GPU residency of a terrain splat page */
-export interface ResidentDetail {
-	kind: 'splat';
-	/** GPU bytes */
-	bytes: number;
-	/** layer of the detail texture arrays */
-	slot: number;
-}
-
-/** GPU residency of a terrain layer texture (the terrain renderer owns the array) */
-export interface ResidentLayer {
-	kind: 'layer';
-	/** GPU bytes */
-	bytes: number;
-}
-
-/** GPU residency of an instance block */
-export interface ResidentInstances {
-	kind: 'instances';
-	/** GPU bytes */
-	bytes: number;
-	alloc: RangeAllocation;
-	/** its rect decal placements' range of the placement buffer */
-	placements: RangeAllocation;
-	blockSlot: number;
-	count: number;
-	/** world origin of the rows, f64 */
-	origin: [x: number, y: number, z: number];
-	/** (chain, first, count) runs */
-	runs: Uint32Array;
-	/** the rows as uploaded, kept for CPU-side LOD selection */
-	rowsF32: Float32Array<ArrayBuffer>;
-	/** per-row cull data, see {@link InstanceRows.cull} */
-	cull: Float32Array;
-	/** the spinning rows, which turn {@link rowsF32} in place by the clock; `null` when every row holds still */
-	spins: RowSpins | null;
-}
-
-/** GPU residency of a geometry */
-export interface ResidentGeometry {
-	kind: 'geometry';
-	/** GPU bytes */
-	bytes: number;
-	/** positions, then normals, UV sets 0 and 1, tangents and colours where present, in one buffer */
-	vertices: GPUBuffer;
-	positionBytes: number;
-	normalOffset: number | null;
-	uv0Offset: number | null;
-	/** UV set 1, or set 0 for meshes without it: the game reads a missing UV set as set 0 */
-	uv1Offset: number | null;
-	/** the UV streams' vertex format */
-	uvFormat: 'unorm16x2' | 'float32x2';
-	/** each UV set's dequantization */
-	uvTransforms: [uv0: UvTransform, uv1: UvTransform];
-	tangentOffset: number | null;
-	/** `unorm8x4` vertex colours */
-	colorOffset: number | null;
-	indices: GPUBuffer;
-	indexFormat: GPUIndexFormat;
-	positionOffset: [x: number, y: number, z: number];
-	positionScale: [x: number, y: number, z: number];
-	submeshes: { firstIndex: number; indexCount: number; baseVertex: number }[];
-	/** the skeletal animation skinned into {@link vertices} each frame, or `null` for a still geometry */
-	skin: ResidentSkin | null;
-}
-
-/** GPU residency of a texture piece (the texture store owns the texture) */
-export interface ResidentTexture {
-	kind: 'texture';
-	/** GPU bytes */
-	bytes: number;
-}
-
-/** GPU residency of an irradiance cell in the volume's cell buffer */
-export interface ResidentIrradiance {
-	kind: 'irradiance';
-	/** GPU bytes */
-	bytes: number;
-	/** u32 words of the cell buffer */
-	alloc: RangeAllocation;
-}
-
-/** what a ready blob holds on the GPU */
-export type Resident =
-	| ResidentHeights
-	| ResidentSurface
-	| ResidentDetail
-	| ResidentLayer
-	| ResidentInstances
-	| ResidentGeometry
-	| ResidentTexture
-	| ResidentIrradiance;
-
-/** a blob the viewer has asked for at some point */
-export interface ContentItem {
-	blob: number;
-	kind: BlobKind;
-	/** index of the archive holding the blob */
-	archive: number;
-	state: ItemState;
-	/** part of the always-resident coarse layer */
-	pinned: boolean;
-	/** highest priority requested in {@link wantedFrame} */
-	priority: number;
-	wantedFrame: number;
-	/** last frame it was used: wanted or marked used while resident, or uploaded */
-	usedFrame: number;
-	decoded: Decoded | null;
-	/** set exactly while the item is `ready` */
-	resident: Resident | null;
-	error: string | null;
-}
-
-/** GPU-side owners of uploaded content (the renderers) */
-export interface ContentStores {
-	/** @returns the residency, or `null` if there was no room */
-	uploadHeights(decoded: DecodedHeights, options: { keepSamples: boolean }): ResidentHeights | null;
-	/** @returns the residency, or `null` if there was no room */
-	uploadSurface(decoded: DecodedSurface): ResidentSurface | null;
-	/** @returns the residency, or `null` if there was no room */
-	uploadDetail(decoded: DecodedDetail): ResidentDetail | null;
-	/** @returns the residency */
-	uploadLayer(blob: number, decoded: DecodedLayer): ResidentLayer;
-	/** @returns the residency, or `null` if there was no room */
-	uploadInstances(blob: number, decoded: DecodedInstances): ResidentInstances | null;
-	/** @returns the residency */
-	uploadGeometry(blob: number, decoded: DecodedGeometry): ResidentGeometry;
-	/** @returns the residency */
-	uploadTexture(blob: number, decoded: DecodedTexture): ResidentTexture;
-	/** @returns the residency, or `null` if there was no room */
-	uploadIrradiance(blob: number, decoded: DecodedIrradiance): ResidentIrradiance | null;
-	/** frees a blob's GPU resources */
-	release(blob: number, resident: Resident): void;
-}
 
 /** counters for the UI */
 export interface StreamStats {
@@ -186,8 +23,6 @@ export interface StreamStats {
 	decoding: number;
 	uploading: number;
 	residentBytes: number;
-	/** {@link residentBytes} split by residency kind */
-	residentByKind: Record<Resident['kind'], number>;
 	pinnedBytes: number;
 	downloadedBytes: number;
 	requests: number;
@@ -209,17 +44,20 @@ export interface StreamOptions {
 
 // #endregion
 
-/** coalesce blobs whose ranges are at most this far apart, bytes */
-const COALESCE_GAP = 64 * 1024;
-/** largest coalesced request, bytes */
-const COALESCE_SPAN = 2 * 1024 * 1024;
-/** most blobs in one coalesced request */
-const COALESCE_COUNT = 96;
+/**
+ * fetched blobs, and blobs in range reads, kept waiting for a decode slot at most; past it no new reads
+ * start. fetching runs ahead of decoding, and blobs waiting in a long line would be decoded long after the
+ * camera moved on, while the ones it wants now wait behind them
+ */
+const MAX_UNDECODED = 384;
+/** fetched or decoded blobs nobody has wanted for this many frames are dropped instead of decoded or uploaded */
+const STALE_FRAMES = 30;
 
-interface QueuedRange {
-	item: ContentItem;
-	start: number;
-	end: number;
+/** a shard blob's byte range, with what reading its archive needs */
+interface ShardRange extends QueuedRange {
+	path: string;
+	/** the archive's size, which a read checks to notice a re-packed package */
+	archiveSize: number;
 }
 
 /** owns every {@link ContentItem} and drives fetch → decode → upload → evict */
@@ -231,16 +69,6 @@ export class StreamManager {
 		decoding: 0,
 		uploading: 0,
 		residentBytes: 0,
-		residentByKind: {
-			heights: 0,
-			surface: 0,
-			splat: 0,
-			layer: 0,
-			instances: 0,
-			geometry: 0,
-			texture: 0,
-			irradiance: 0,
-		},
 		pinnedBytes: 0,
 		downloadedBytes: 0,
 		requests: 0,
@@ -253,18 +81,30 @@ export class StreamManager {
 
 	#package: ViewerPackage;
 	#pool: DecodePool;
-	#stores: ContentStores;
-	#rowKinds: ReadonlyMap<number, RowKinds>;
+	#handlers: ResidencyHandlers;
 	/** by blob index */
 	#items: (ContentItem | undefined)[];
-	/** every item in {@link #items}, for sweeps */
-	#known: ContentItem[] = [];
+	/** by blob index: the order its item was made in, which breaks eviction ties */
+	#created: Int32Array;
+	#createdCount = 0;
+	/** by blob index: a queued shard blob's byte range, made when it's first queued */
+	#ranges: (ShardRange | undefined)[];
+	/** the ready, unpinned items: what eviction picks from */
+	#evictable = new Set<ContentItem>();
 	/** queued shard blobs */
 	#queued = new Set<ContentItem>();
 	/** queued core blobs, read from memory without a request slot */
 	#queuedCore = new Set<ContentItem>();
+	/** fetched blobs' stored bytes, waiting for a decode slot; the most wanted is decoded first */
+	#fetched = new Map<ContentItem, ArrayBuffer>();
+	/** blobs in range reads under way */
+	#fetching = 0;
 	#uploads: ContentItem[] = [];
+	/** the uploads a frame deferred, reused */
+	#deferred: ContentItem[] = [];
 	#inFlight = new Set<{ items: ContentItem[]; abort: AbortController }>();
+	/** cancels the decodes still queued in the pool when the stream is destroyed */
+	#decodes = new AbortController();
 	/** core reads and decodes under way */
 	#working = 0;
 	#frame = 0;
@@ -278,23 +118,17 @@ export class StreamManager {
 	/**
 	 * @param pkg the package
 	 * @param pool decode workers
-	 * @param stores GPU owners
-	 * @param rowKinds what the rows of each instance blob are; blobs without an entry are tier 0 HLOD rows
+	 * @param handlers how each kind of blob is decoded, made resident and freed
 	 * @param options tunables; read every frame, so callers may change them
 	 */
-	constructor(
-		pkg: ViewerPackage,
-		pool: DecodePool,
-		stores: ContentStores,
-		rowKinds: ReadonlyMap<number, RowKinds>,
-		options: StreamOptions,
-	) {
+	constructor(pkg: ViewerPackage, pool: DecodePool, handlers: ResidencyHandlers, options: StreamOptions) {
 		this.#package = pkg;
 		this.#pool = pool;
-		this.#stores = stores;
-		this.#rowKinds = rowKinds;
+		this.#handlers = handlers;
 		this.options = options;
 		this.#items = Array.from({ length: pkg.blobs.length });
+		this.#created = new Int32Array(pkg.blobs.length);
+		this.#ranges = Array.from({ length: pkg.blobs.length });
 	}
 
 	// #region per-frame API
@@ -308,6 +142,7 @@ export class StreamManager {
 			this.#queued.size === 0 &&
 			this.#queuedCore.size === 0 &&
 			this.#inFlight.size === 0 &&
+			this.#fetched.size === 0 &&
 			this.#working === 0 &&
 			this.#uploads.length === 0
 		);
@@ -382,6 +217,7 @@ export class StreamManager {
 		for (const blob of blobs) {
 			const item = this.#item(blob);
 			item.pinned = true;
+			this.#evictable.delete(item);
 			item.priority = Infinity;
 			item.wantedFrame = Infinity;
 			if (item.state === 'idle') {
@@ -397,6 +233,7 @@ export class StreamManager {
 	update(): void {
 		this.#cancelStale();
 		this.#dispatch();
+		this.#startDecodes();
 		this.#upload();
 		this.#evict(this.options.budgetBytes);
 		const stats = this.stats;
@@ -419,6 +256,22 @@ export class StreamManager {
 	}
 
 	/**
+	 * sums every resident blob, for inspection; walks every item, so don't call it per frame
+	 *
+	 * @returns {@link StreamStats.residentBytes} split by residency kind
+	 */
+	residentByKind(): Partial<Record<Resident['kind'], number>> {
+		const bytes: Partial<Record<Resident['kind'], number>> = {};
+		for (const item of this.#items) {
+			const resident = item?.resident;
+			if (resident != null) {
+				bytes[resident.kind] = (bytes[resident.kind] ?? 0) + resident.bytes;
+			}
+		}
+		return bytes;
+	}
+
+	/**
 	 * @param blob blob index
 	 * @returns the item, if it was ever requested
 	 */
@@ -426,20 +279,23 @@ export class StreamManager {
 		return this.#items[blob];
 	}
 
-	/** aborts requests and frees all GPU content */
+	/** aborts requests, cancels queued decodes and frees all GPU content */
 	destroy(): void {
 		this.#destroyed = true;
 		for (const request of this.#inFlight) {
 			request.abort.abort();
 		}
-		for (const item of this.#known) {
-			if (item.resident !== null) {
-				this.#stores.release(item.blob, item.resident);
+		this.#decodes.abort();
+		this.#fetched.clear();
+		for (const item of this.#items) {
+			if (item !== undefined && item.resident !== null) {
+				releaseResident(this.#handlers, item.resident.kind, item.blob, item.resident);
 				item.resident = null;
 			}
 		}
 		this.#items = [];
-		this.#known = [];
+		this.#ranges = [];
+		this.#evictable.clear();
 	}
 
 	// #endregion
@@ -459,12 +315,12 @@ export class StreamManager {
 				priority: 0,
 				wantedFrame: -1,
 				usedFrame: -1,
+				readFailures: 0,
 				decoded: null,
 				resident: null,
-				error: null,
 			};
 			this.#items[blob] = item;
-			this.#known.push(item);
+			this.#created[blob] = this.#createdCount++;
 		}
 		return item;
 	}
@@ -517,88 +373,76 @@ export class StreamManager {
 			this.#decodeCore(item);
 		}
 		this.#queuedCore.clear();
-		if (this.#queued.size === 0 || this.#inFlight.size >= this.options.maxRequests) {
+		if (
+			this.#queued.size === 0 ||
+			this.#inFlight.size >= this.options.maxRequests ||
+			this.#fetched.size + this.#fetching >= MAX_UNDECODED
+		) {
 			return;
 		}
 
-		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		const queued = [...this.#queued].sort((a, b) => b.priority - a.priority);
-		// per-archive lists by byte position, for coalescing neighbours
-		const byArchive = new Map<number, QueuedRange[]>();
-		for (const item of queued) {
-			const range = this.#package.blobRange(item.blob);
-			byArchive
-				.getOrInsertComputed(range.archive, () => [])
-				.push({ item, start: range.start, end: range.start + range.length });
-		}
-		const positions = new Map<ContentItem, number>();
-		for (const list of byArchive.values()) {
-			list.sort((a, b) => a.start - b.start);
-			for (let i = 0; i < list.length; i++) {
-				positions.set(list[i].item, i);
-			}
-		}
-
-		for (const seed of queued) {
-			if (this.#inFlight.size >= this.options.maxRequests) {
+		const queued = [...this.#queued];
+		const ranges = queued.map((item) => {
+			const range = this.#shardRange(item.blob);
+			range.priority = item.priority;
+			return range;
+		});
+		for (const read of coalesceRanges(ranges, this.options.maxRequests - this.#inFlight.size)) {
+			if (this.#fetched.size + this.#fetching >= MAX_UNDECODED) {
 				break;
 			}
-			const list = byArchive.get(seed.archive);
-			const at = positions.get(seed);
-			if (seed.state !== 'queued' || list === undefined || at === undefined) {
-				continue;
-			}
-			let lo = at;
-			let hi = at;
-			let start = list[at].start;
-			let end = list[at].end;
-			const usable = (i: number): boolean => i >= 0 && i < list.length && list[i].item.state === 'queued';
-			while (hi - lo + 1 < COALESCE_COUNT) {
-				const right = usable(hi + 1) && list[hi + 1].start - end <= COALESCE_GAP;
-				const left = usable(lo - 1) && start - list[lo - 1].end <= COALESCE_GAP;
-				if (right && Math.max(end, list[hi + 1].end) - start <= COALESCE_SPAN) {
-					hi++;
-					end = Math.max(end, list[hi].end);
-				} else if (left && end - list[lo - 1].start <= COALESCE_SPAN) {
-					lo--;
-					start = list[lo].start;
-				} else {
-					break;
-				}
-			}
-			const members = list.slice(lo, hi + 1).filter((entry) => entry.item.state === 'queued');
-			for (const { item } of members) {
+			const members = read.members.map((i) => queued[i]);
+			for (const item of members) {
 				item.state = 'fetching';
 				this.#queued.delete(item);
 			}
-			this.#fetch(this.#package.blobRange(seed.blob), start, end, members);
+			this.#fetch(ranges[read.members[0]], read.start, read.end, members);
 		}
 	}
 
-	#fetch(range: BlobRange, start: number, end: number, members: QueuedRange[]): void {
-		const request = { items: members.map((member) => member.item), abort: new AbortController() };
+	/** @returns a shard blob's byte range, made once */
+	#shardRange(blob: number): ShardRange {
+		let range = this.#ranges[blob];
+		if (range === undefined) {
+			const { archive, path, start, length, archiveSize } = this.#package.blobRange(blob);
+			range = { archive, start, end: start + length, priority: 0, path, archiveSize };
+			this.#ranges[blob] = range;
+		}
+		return range;
+	}
+
+	/**
+	 * @param shard the range of a blob in the archive to read
+	 * @param start the read's byte range, `[start, end)`
+	 * @param members the blobs it covers
+	 */
+	#fetch(shard: ShardRange, start: number, end: number, members: ContentItem[]): void {
+		const request = { items: members, abort: new AbortController() };
 		this.#inFlight.add(request);
+		this.#fetching += members.length;
 		this.stats.requests++;
 		this.#package.source
 			.readRange(
-				range.path,
-				{ offset: start, length: end - start, fileSize: range.archiveSize },
+				shard.path,
+				{ offset: start, length: end - start, fileSize: shard.archiveSize },
 				request.abort.signal,
 			)
 			.then((bytes) => {
 				this.stats.downloadedBytes += bytes.byteLength;
 				const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
-				for (const member of members) {
-					if (member.item.state !== 'fetching') {
+				for (const item of members) {
+					if (item.state !== 'fetching') {
 						continue;
 					}
+					const member = this.#shardRange(item.blob);
 					// each member is transferred to a worker on its own, so it needs a buffer of its own
 					const data =
 						whole && member.start === start && member.end === end
 							? bytes.buffer
 							: bytes.slice(member.start - start, member.end - start).buffer;
-					this.#decode(member.item, data);
+					this.#received(item, data);
 				}
+				this.#startDecodes();
 			})
 			.catch((err: unknown) => {
 				const aborted = request.abort.signal.aborted;
@@ -607,11 +451,14 @@ export class StreamManager {
 					this.stats.packageChanged = true;
 					console.warn(String(err));
 				}
-				for (const { item } of members) {
+				for (const item of members) {
 					if (item.state !== 'fetching') {
 						continue;
 					}
 					if (aborted || changed) {
+						item.state = 'idle';
+					} else if (++item.readFailures < MAX_READ_FAILURES) {
+						// wanted again, it's read again
 						item.state = 'idle';
 					} else {
 						this.#fail(item, err);
@@ -620,6 +467,7 @@ export class StreamManager {
 			})
 			.finally(() => {
 				this.#inFlight.delete(request);
+				this.#fetching -= members.length;
 			});
 	}
 
@@ -628,9 +476,52 @@ export class StreamManager {
 		this.#working++;
 		this.#package
 			.readCoreBlob(item.blob)
-			.then((data) => this.#decode(item, data))
+			.then((data) => {
+				this.#received(item, data);
+				this.#startDecodes();
+			})
 			.catch((err: unknown) => this.#fail(item, err))
 			.finally(() => this.#working--);
+	}
+
+	/** keeps a fetched blob's stored bytes until a decode slot frees */
+	#received(item: ContentItem, data: ArrayBuffer): void {
+		if (this.#destroyed) {
+			return;
+		}
+		item.state = 'fetched';
+		this.#fetched.set(item, data);
+		this.stats.decoding++;
+	}
+
+	/**
+	 * hands fetched blobs to the free decode slots, most wanted first, dropping the ones nobody wants any more.
+	 * the waiting line is short ({@link MAX_UNDECODED}), so a scan per slot is cheaper than keeping it sorted
+	 */
+	#startDecodes(): void {
+		const fetched = this.#fetched;
+		while (fetched.size > 0 && this.#pool.free > 0) {
+			let best: ContentItem | null = null;
+			for (const item of fetched.keys()) {
+				// while saturated, unpinned content would only be dropped once decoded
+				if (!item.pinned && (item.wantedFrame < this.#frame - STALE_FRAMES || this.#saturated)) {
+					fetched.delete(item);
+					item.state = 'idle';
+					this.stats.decoding--;
+				} else if (best === null || item.priority > best.priority) {
+					best = item;
+				}
+			}
+			if (best === null) {
+				return;
+			}
+			const data = fetched.get(best);
+			fetched.delete(best);
+			this.stats.decoding--;
+			if (data !== undefined) {
+				this.#decode(best, data);
+			}
+		}
 	}
 
 	#decode(item: ContentItem, data: ArrayBuffer): void {
@@ -638,46 +529,13 @@ export class StreamManager {
 			return;
 		}
 		const record = this.#package.blobs[item.blob];
-		const base = { data, codec: record.codec, rawLength: record.rawLength };
-		let job: Promise<Decoded>;
-		switch (record.kind) {
-			case BlobKind.TerrainHeights: {
-				job = this.#pool.run({ kind: 'heights', ...base });
-				break;
-			}
-			case BlobKind.TerrainSurface: {
-				job = this.#pool.run({ kind: 'surface', ...base });
-				break;
-			}
-			case BlobKind.TerrainSplat: {
-				job = this.#pool.run({ kind: 'splat', ...base });
-				break;
-			}
-			case BlobKind.TerrainLayer: {
-				job = this.#pool.run({ kind: 'layer', ...base });
-				break;
-			}
-			case BlobKind.Instances: {
-				job = this.#pool.run({ kind: 'instances', ...base, rowKinds: this.#rowKinds.get(item.blob) ?? [] });
-				break;
-			}
-			case BlobKind.Geometry: {
-				job = this.#pool.run({ kind: 'geometry', ...base });
-				break;
-			}
-			case BlobKind.Texture: {
-				job = this.#pool.run({ kind: 'texture', ...base });
-				break;
-			}
-			case BlobKind.Irradiance: {
-				job = this.#pool.run({ kind: 'irradiance', ...base });
-				break;
-			}
-			default: {
-				this.#fail(item, new Error(`blob kind ${record.kind} isn't supported yet`));
-				return;
-			}
+		const kind = RESIDENT_KINDS[record.kind];
+		if (kind === null) {
+			this.#fail(item, new Error(`blob kind ${record.kind} isn't supported yet`));
+			return;
 		}
+		const stored = { data, codec: record.codec, rawLength: record.rawLength };
+		const job = this.#pool.run(decodeJob(this.#handlers, kind, item.blob, stored), this.#decodes.signal);
 		item.state = 'decoding';
 		this.#working++;
 		this.stats.decoding++;
@@ -690,16 +548,21 @@ export class StreamManager {
 				item.state = 'uploading';
 				this.#uploads.push(item);
 			})
-			.catch((err: unknown) => this.#fail(item, err))
+			.catch((err: unknown) => {
+				// the decodes still queued when the stream was destroyed are cancelled
+				if (!this.#destroyed) {
+					this.#fail(item, err);
+				}
+			})
 			.finally(() => {
 				this.#working--;
 				this.stats.decoding--;
+				this.#startDecodes();
 			});
 	}
 
 	#fail(item: ContentItem, err: unknown): void {
 		item.state = 'failed';
-		item.error = String(err);
 		item.decoded = null;
 		this.stats.failed++;
 		console.warn(`blob ${item.blob}:`, err);
@@ -711,7 +574,7 @@ export class StreamManager {
 			return;
 		}
 		uploads.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.priority - a.priority);
-		const deferred: ContentItem[] = [];
+		const deferred = this.#deferred;
 		let uploaded = 0;
 		let next = 0;
 		for (; next < uploads.length && uploaded < this.options.uploadBytesPerFrame; next++) {
@@ -721,7 +584,7 @@ export class StreamManager {
 				continue;
 			}
 			// content nobody wants any more isn't worth the space, nor is anything unpinned while saturated
-			if (!item.pinned && (item.wantedFrame < this.#frame - 30 || this.#saturated)) {
+			if (!item.pinned && (item.wantedFrame < this.#frame - STALE_FRAMES || this.#saturated)) {
 				item.decoded = null;
 				item.state = 'idle';
 				continue;
@@ -739,46 +602,29 @@ export class StreamManager {
 			item.state = 'ready';
 			// fresh content counts as used, so the budget pass can't evict it before its first draw
 			item.usedFrame = this.#frame;
-			this.#count(item, resident, resident.bytes);
+			if (!item.pinned) {
+				this.#evictable.add(item);
+			}
+			this.#count(item, resident.bytes);
 			uploaded += resident.bytes;
 			this.version++;
 		}
-		this.#uploads = [...uploads.slice(next), ...deferred];
+		// the ones not reached, then the deferred ones
+		uploads.copyWithin(0, next);
+		uploads.length -= next;
+		for (const item of deferred) {
+			uploads.push(item);
+		}
+		deferred.length = 0;
 	}
 
 	#tryUpload(item: ContentItem, decoded: Decoded): Resident | null {
-		switch (decoded.kind) {
-			case 'heights': {
-				return this.#stores.uploadHeights(decoded, { keepSamples: item.pinned });
-			}
-			case 'surface': {
-				return this.#stores.uploadSurface(decoded);
-			}
-			case 'splat': {
-				return this.#stores.uploadDetail(decoded);
-			}
-			case 'layer': {
-				return this.#stores.uploadLayer(item.blob, decoded);
-			}
-			case 'instances': {
-				return this.#stores.uploadInstances(item.blob, decoded);
-			}
-			case 'geometry': {
-				return this.#stores.uploadGeometry(item.blob, decoded);
-			}
-			case 'texture': {
-				return this.#stores.uploadTexture(item.blob, decoded);
-			}
-			case 'irradiance': {
-				return this.#stores.uploadIrradiance(item.blob, decoded);
-			}
-		}
+		return uploadResident(this.#handlers, decoded.kind, item.blob, decoded, { pinned: item.pinned });
 	}
 
 	/** adds `bytes` to the resident counters */
-	#count(item: ContentItem, resident: Resident, bytes: number): void {
+	#count(item: ContentItem, bytes: number): void {
 		this.stats.residentBytes += bytes;
-		this.stats.residentByKind[resident.kind] += bytes;
 		if (item.pinned) {
 			this.stats.pinnedBytes += bytes;
 		}
@@ -786,21 +632,22 @@ export class StreamManager {
 
 	/** evicts unpinned content of the same kind not used this frame, oldest first, to make room for `item` */
 	#evictForSpace(item: ContentItem): boolean {
-		const candidates = this.#known
-			.filter(
-				(other) =>
-					other.state === 'ready' &&
-					!other.pinned &&
-					other.kind === item.kind &&
-					other.usedFrame < this.#frame &&
-					other.priority <= item.priority,
-			)
-			.toSorted((a, b) => a.usedFrame - b.usedFrame)
-			.slice(0, 16);
-		for (const other of candidates) {
-			this.#release(other);
+		const candidates: ContentItem[] = [];
+		for (const other of this.#evictable) {
+			if (other.kind === item.kind && other.usedFrame < this.#frame && other.priority <= item.priority) {
+				candidates.push(other);
+			}
 		}
-		return candidates.length > 0;
+		if (candidates.length === 0) {
+			return false;
+		}
+		const created = this.#created;
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh array
+		candidates.sort((a, b) => a.usedFrame - b.usedFrame || created[a.blob] - created[b.blob]);
+		for (let i = 0; i < Math.min(candidates.length, 16); i++) {
+			this.#release(candidates[i]);
+		}
+		return true;
 	}
 
 	#evict(budget: number): void {
@@ -808,9 +655,17 @@ export class StreamManager {
 			this.#saturated = false;
 			return;
 		}
-		const candidates = this.#known
-			.filter((item) => item.state === 'ready' && !item.pinned && item.usedFrame < this.#frame)
-			.toSorted((a, b) => a.usedFrame - b.usedFrame || a.priority - b.priority);
+		const candidates: ContentItem[] = [];
+		for (const item of this.#evictable) {
+			if (item.usedFrame < this.#frame) {
+				candidates.push(item);
+			}
+		}
+		const created = this.#created;
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh array
+		candidates.sort(
+			(a, b) => a.usedFrame - b.usedFrame || a.priority - b.priority || created[a.blob] - created[b.blob],
+		);
 		for (const item of candidates) {
 			if (this.stats.residentBytes <= budget) {
 				break;
@@ -825,8 +680,9 @@ export class StreamManager {
 		if (resident === null) {
 			return;
 		}
-		this.#stores.release(item.blob, resident);
-		this.#count(item, resident, -resident.bytes);
+		releaseResident(this.#handlers, resident.kind, item.blob, resident);
+		this.#count(item, -resident.bytes);
+		this.#evictable.delete(item);
 		item.resident = null;
 		item.state = 'idle';
 		this.stats.evictions++;

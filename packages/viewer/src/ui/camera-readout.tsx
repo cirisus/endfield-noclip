@@ -1,4 +1,4 @@
-import type { Viewer } from '../viewer.ts';
+import type { Viewer } from '../viewer/viewer.ts';
 
 import { useViewerStats } from './use-viewer.ts';
 

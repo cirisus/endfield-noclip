@@ -134,7 +134,7 @@ it('derives scene states from the quests they follow, unless the user overrides 
 	assert.equal(resolveSceneValues(states, { 'sceneState:0': 0 })['sceneState:0'], 0);
 });
 
-it('shows a group when the level owns it or every level does, and its condition holds', () => {
+it('shows a group of any level when its condition holds', () => {
 	const states: StatesInfo = {
 		controls: [],
 		conditionalSets: [
@@ -155,7 +155,5 @@ it('shows a group when the level owns it or every level does, and its condition 
 	};
 	const conditions = conditionResults(states, { 'sceneState:0': 1, 'sceneState:1': 0 });
 	assert.deepEqual(conditions, [true, false]);
-	assert.deepEqual(groupsShown(states, 1, conditions), [true, true, false, true, false]);
-	assert.deepEqual(groupsShown(states, 2, conditions), [true, false, true, false, false]);
-	assert.deepEqual(groupsShown(states, null, conditions), [true, true, true, true, false]);
+	assert.deepEqual(groupsShown(states, conditions), [true, true, true, true, false]);
 });

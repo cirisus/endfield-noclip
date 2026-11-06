@@ -1,17 +1,18 @@
 # water
 
 how the viewer draws the open-world water that [game-data/water.md](../game-data/water.md)
-describes: [water-renderer.ts](../../packages/viewer/src/render/water-renderer.ts) and
-[water.wgsl](../../packages/viewer/src/render/shaders/water.wgsl). the packed table is in
+describes: [water-renderer.ts](../../packages/viewer/src/render/water/water-renderer.ts) and
+[water.wgsl](../../packages/viewer/src/render/water/water.wgsl). the packed table is in
 [package-format.md](../package-format.md#water).
 
 ## placements
 
 surfaces are resident in the game, so the whole water table is in the core archive and every surface
-is always available. each frame the viewer selects the surfaces whose visibility group shows (the
-shown level's or tag 0's, with its scene states active) and whose geometry entry is ready. each
-wants its geometry blob at a priority falling with horizontal distance from the camera; resident
-ones inside the frustum are drawn, up to 4096.
+is always available. each frame the viewer selects the surfaces whose visibility group shows (its
+scene states active, whichever level owns it) and whose geometry entry is ready. each wants its
+geometry blob at a priority falling with horizontal distance from the camera, in view or not, so
+like the game's the shown surfaces stay resident (map02's 1310 share 392 meshes of 0.6 MiB packed);
+resident ones inside the frustum are drawn, up to 4096.
 
 ## surface meshes
 
@@ -48,7 +49,7 @@ where the game writes a G-buffer and lights it full-screen after the opaque scen
   scene: the sun through its shadow maps, the irradiance volume, and the level's sky reflection.
 - **reflection**: the game reflects water through its screen-space reflection pass, with water
   written into its inputs. water draws after the composite here, so it marches separately, with the
-  same march ([`ssr-trace.wgsl`](../../packages/viewer/src/render/shaders/ssr-trace.wgsl)).
+  same march ([`ssr-trace.wgsl`](../../packages/viewer/src/render/water/ssr-trace.wgsl)).
 
 it differs from the game in that:
 
@@ -69,19 +70,20 @@ it differs from the game in that:
 
 ## water volumes
 
-[water-levels.ts](../../packages/viewer/src/render/water-levels.ts) holds each
+[water-levels.ts](../../packages/viewer/src/scene-states/water-levels.ts) holds each
 [water volume](../game-data/water.md#water-volumes)'s fill. a volume's surface is packed at its
 authored fill; the water renderer raises its transform and bounds by the difference, and the
 floaters' instance rows (the package names each by block blob and row) move by the same amount, in
 the CPU copy the selection culls with and on the GPU.
 
 the "Water levels" section of the scene conditions panel
-([water-levels.tsx](../../packages/viewer/src/ui/water-levels.tsx)) lists the shown level's volumes
-that scripts move, each a select over its `waterLevel` scene control with what sets each fill. the
-viewer moves each volume to the fill its control's value picks, linearly at the speed the scripts
-move it at (else the volume's fill speed), so Suiming's stages take their two or three minutes;
-"Movement" speeds that up or jumps. "Reset" drops the picks with every other control's, putting
-every volume back at its authored fill.
+([water-levels.tsx](../../packages/viewer/src/ui/scene-controls/water-levels.tsx)) lists the volumes
+that scripts move, the current level's first and the others under their levels, each a select over
+its `waterLevel` scene control with what sets each fill, its surface's height and "Go" to fly over
+it (`waterHeight`, `surfaceView` in water-levels.ts). the viewer moves each volume to the fill its
+control's value picks, linearly at the speed the scripts move it at (else the volume's fill speed),
+so Suiming's stages take their two or three minutes; "Movement" speeds that up or jumps. "Reset"
+drops the picks with every other control's, putting every volume back at its authored fill.
 
 it differs from the game in that:
 
@@ -109,8 +111,8 @@ in the main view.
 
 [WaterDecal](../game-data/water.md#waterdecal) boxes are packed as `waterFoam` surfaces and drawn by
 the mesh renderer's effect family (`fs_water_foam` in
-[effect.wgsl](../../packages/viewer/src/render/shaders/effect.wgsl)), inside the water pass, when
-the frame has any:
+[effect.wgsl](../../packages/viewer/src/render/meshes/effect.wgsl)), inside the water pass, when the
+frame has any:
 
 1. **water depth.** the nearest surface's depth, laid down before the composite (above).
 2. **foam.** the boxes draw into an `rgba8unorm` target cleared to (0, 0, 0, 1), with the main

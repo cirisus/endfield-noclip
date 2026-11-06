@@ -62,7 +62,16 @@ walls such renderers stand in for cull their back faces. no Dijiang material cha
 - unverified: a point uses the first cascade containing it, dithered with the next one over the
   outer tenth of its bounding sphere's radius, and the sharp cascades fade into the far layer before
   their 80 m reach.
-- the cached far map is tent-filtered.
+- the cached far map is tent-filtered. it's a 16 × 16 grid of 200 m tiles, 256² each (about 0.78 m a
+  texel), over the 800 m around the camera; only tiles that changed re-render, up to 8 a frame, and
+  the whole cache after the camera moves far enough. it draws only static shadow casters, while the
+  cascades, which re-render every frame on PC, draw only realtime ones: a renderer casts into a
+  cascade with the render flags `CastShadow` (0x80000), `RealtimeShadowCaster` (0x2000000) and the
+  cascade's bit (0x100000 << i, all four or none), and into the far map with `CastShadow` and
+  `StaticShadowCaster` (0x1000000). about 9,900 of map02's 72,397 chunk draws have `CastShadow` but
+  neither, and cast into no sun shadow map. alpha-tested foliage isn't excluded from any map. each
+  map also skips casters below a screen size in its own view (0.005, 0.01 and 0.02 for the cascades,
+  0.01 for a far-map tile); the measure is native and not decoded.
 - the game's contact shadows are Bend Studio's screen-space shadows, on from PC low up. they
   multiply the sun's direct light by `mix(1, contact, contactShadowIntensity)` (0.5 in most of
   map02's open world, 0.9–1 in caves and interiors).
@@ -150,6 +159,10 @@ a hit is found, its colour replaces the sky reflection by a fade:
 `specular = (hit · fade + sky · (1 − fade)) · environment BRDF · specular occlusion`, where only the
 sky term carries the normalisation above and the indirect specular scale. where no hit is found, the
 sky reflection stays.
+
+every pass (march, resolve, temporal filter, fade) runs at half the render size on every PC tier;
+only very high quality upsamples to the full size before lighting. low quality marches 16 steps, and
+very low turns the reflections off.
 
 - **march.** the mirror ray is projected to the screen and stretched to its edge, then stepped in
   equal steps of uv and device depth, 4 taps per loop: 32 steps (PC high quality's

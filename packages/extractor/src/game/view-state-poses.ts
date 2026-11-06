@@ -148,24 +148,24 @@ const holds = (condition: ViewStateRecord, blackboard: Blackboard): boolean => {
 /**
  * @param layer an animator layer's state machine
  * @param blackboard the values its conditions test
- * @returns the state the layer rests in: from the starting state, the first transition whose conditions all
- *   hold is taken (one without conditions always is) until none holds
+ * @returns the states the layer enters, from its starting state to the one it rests in: the first transition
+ *   whose conditions all hold is taken (one without conditions always is) until none holds
  * @throws {FormatError} if the layer has no starting state or its transitions loop
  */
-export const settledState = (layer: ViewStateRecord, blackboard: Blackboard): ViewStateRecord => {
+export const settledPath = (layer: ViewStateRecord, blackboard: Blackboard): ViewStateRecord[] => {
 	const layerName = text(layer.layerName) ?? '?';
 	const states = new Map(records(layer.stateDatas).map((state) => [text(state.stateName) ?? '', state]));
 	const start = records(layer.stateDatas).find((candidate) => candidate.isStartingNode === true);
 	if (start === undefined) {
 		throw new FormatError(`view state layer ${layerName} has no starting state`);
 	}
+	const path: ViewStateRecord[] = [];
 	let state: ViewStateRecord = start;
-	const visited = new Set<ViewStateRecord>();
 	for (;;) {
-		if (visited.has(state)) {
+		if (path.includes(state)) {
 			throw new FormatError(`view state layer ${layerName} loops at ${text(state.stateName) ?? '?'}`);
 		}
-		visited.add(state);
+		path.push(state);
 		const next: ViewStateRecord | undefined = records(state.transitions).find((transition) =>
 			records(isRecord(transition.conditionGroup) ? transition.conditionGroup.conditions : []).every(
 				(condition) => holds(condition, blackboard),
@@ -174,10 +174,108 @@ export const settledState = (layer: ViewStateRecord, blackboard: Blackboard): Vi
 		const target: ViewStateRecord | undefined =
 			next === undefined ? undefined : states.get(text(next.targetStateName) ?? '');
 		if (target === undefined) {
-			return state;
+			return path;
 		}
 		state = target;
 	}
+};
+
+/**
+ * @param layer an animator layer's state machine
+ * @param blackboard the values its conditions test
+ * @returns the state the layer rests in ({@link settledPath})
+ * @throws {FormatError} if the layer has no starting state or its transitions loop
+ */
+export const settledState = (layer: ViewStateRecord, blackboard: Blackboard): ViewStateRecord =>
+	settledPath(layer, blackboard).at(-1) ?? layer;
+
+/** an effect a model's view states keep playing once they rest */
+export interface RestingEffect {
+	/** the effect's name, which names its prefab */
+	effect: string;
+	/** the GameObject it plays on, by name */
+	node: string | null;
+	/** where it plays when the model has no {@link node}: the animator's GameObject, `null` for the prefab root */
+	fallback: string | null;
+	/** whether it turns with its GameObject; one that doesn't keeps the world's axes */
+	followRotation: boolean;
+}
+
+/**
+ * the effects a layer's effect behaviours leave playing once it rests. a persistent effect is switched on or
+ * off by each state that names it, in the order the layer enters them; any other effect plays while the state
+ * that names it is active, so only the resting state's count. fire-and-forget effects are left to run out
+ *
+ * @param animator the GameObject the layer's animator drives, `null` for the prefab root
+ * @param path the states the layer enters ({@link settledPath})
+ * @returns the effects, one per effect and GameObject
+ */
+export const restingEffects = (
+	animator: string | null,
+	path: readonly ViewStateRecord[],
+): RestingEffect[] => {
+	const playing = new Map<string, RestingEffect>();
+	for (const [i, state] of path.entries()) {
+		const resting = i === path.length - 1;
+		for (const behavior of records(state.behaviors)) {
+			const effect = text(behavior.effectId);
+			if (!text(behavior.$type)?.endsWith('_MVSCEffectBehaviorDataForMemoryPack') || !effect) {
+				continue;
+			}
+			if (behavior.fireAndForget === true) {
+				continue;
+			}
+			const node = text(behavior.effectNodeName) || null;
+			const key = `${effect}@${node ?? ''}`;
+			const persistent = behavior.isPersistence === true;
+			if ((persistent && behavior.active !== true) || (!persistent && !resting)) {
+				if (persistent) {
+					playing.delete(key);
+				}
+				continue;
+			}
+			playing.set(key, {
+				effect,
+				node,
+				fallback: animator,
+				// a detached effect is placed once at its GameObject's pose
+				followRotation: behavior.followRot === true || behavior.dontFollowTrans === true,
+			});
+		}
+	}
+	return [...playing.values()];
+};
+
+/**
+ * the lengths a layer's length behaviours leave set: each sets its GameObject's `VFXAdjustLength` to its
+ * blackboard float, or its constant without one, plus its deviation, in the order the layer enters its
+ * states. one whose float isn't on the blackboard sets nothing. the length stays once its state is left
+ *
+ * @param path the states the layer enters ({@link settledPath})
+ * @param blackboard the values its conditions test
+ * @returns the lengths, by GameObject name
+ */
+export const restingLengths = (
+	path: readonly ViewStateRecord[],
+	blackboard: Blackboard,
+): Map<string, number> => {
+	const lengths = new Map<string, number>();
+	for (const state of path) {
+		for (const behavior of records(state.behaviors)) {
+			const node = text(behavior.nodeName);
+			if (!text(behavior.$type)?.endsWith('_MVSCEffectLengthBehaviorDataForMemoryPack') || !node) {
+				continue;
+			}
+			let value: number | boolean | undefined = Number(behavior.val ?? 0);
+			if (behavior.dependBlackBoard === true) {
+				value = blackboard.get(text(behavior.dependFloatKey) ?? '');
+			}
+			if (typeof value === 'number') {
+				lengths.set(node, value + Number(behavior.deviation ?? 0));
+			}
+		}
+	}
+	return lengths;
 };
 
 /**
@@ -258,7 +356,8 @@ export const statesPose = async (
  * @param states the model's view states
  * @param key tells this pose apart from the model's others, for caching
  * @param blackboard the values the state machines test
- * @returns the pose every animator layer settles in under those values, and the settled states' names
+ * @returns the pose every animator layer settles in under those values, with the lengths they leave set, the
+ *   settled states' names and the effects they leave playing
  * @throws {FormatError} if a layer can't settle or a clip can't be read
  */
 export const settledPose = async (
@@ -266,18 +365,30 @@ export const settledPose = async (
 	states: ViewStates,
 	key: string,
 	blackboard: Blackboard,
-): Promise<{ pose: PrefabPose; states: string[] }> => {
+): Promise<{ pose: PrefabPose; states: string[]; effects: RestingEffect[] }> => {
+	const effects: RestingEffect[] = [];
+	const lengths = new Map<string, number>();
 	const settled = records(states.data.modelAnimatorDatas).map((animator) => {
 		const name = text(animator.modelName);
-		return {
-			animator: name === '$$ROOT$$' ? null : name,
-			states: records(animator.layerFsmDatas).map((layer) => settledState(layer, blackboard)),
-		};
+		const driven = name === '$$ROOT$$' ? null : name;
+		const paths = records(animator.layerFsmDatas).map((layer) => settledPath(layer, blackboard));
+		effects.push(...paths.flatMap((path) => restingEffects(driven, path)));
+		for (const path of paths) {
+			for (const [node, length] of restingLengths(path, blackboard)) {
+				lengths.set(node, length);
+			}
+		}
+		return { animator: driven, states: paths.map((path) => path[path.length - 1]) };
 	});
+	const pose = await statesPose(context, states, key, settled);
 	return {
-		pose: await statesPose(context, states, key, settled),
+		pose:
+			lengths.size === 0
+				? pose
+				: { ...pose, key: `${pose.key} lengths ${JSON.stringify([...lengths])}`, lengths },
 		states: settled.flatMap(({ states: layerStates }) =>
 			layerStates.map((state) => text(state.stateName) ?? ''),
 		),
+		effects,
 	};
 };

@@ -1,8 +1,9 @@
 # world: maps, levels, streaming and terrain
 
 streaming scenes and their coordinate frames, levels as sets of 128 m cells, entity level tags, the
-static and dynamic streaming files, stream areas, terrain tiles, and LOD/HLOD data. which scenery a
-scene state, quest or variable switches on is in [scene-states.md](scene-states.md).
+static and dynamic streaming files, stream areas, terrain tiles, LOD/HLOD data and how the game
+streams them by layer. which scenery a scene state, quest or variable switches on is in
+[scene-states.md](scene-states.md).
 
 ## scenes, maps and levels
 
@@ -385,15 +386,67 @@ atlases.
   is (−1664, −832) on a 4096 m square, and indie_dg005's cells are 128 m from (−1728, −832), so its
   cells and dung02_dg002's HLOD1 cells are offset from the terrain quadtree by half a cell.
 
-the game streams HLOD as the streaming layers `HLOD0`–`HLOD2`, each with its own load radius
-(`hlod0LayerLoadRadius`, …, in its streaming settings), and calls a tier an HLOD level. the radii's
-values and the switch distances are unknown. the other layers are `Default`, `Persistent`,
-`Collider`, `Tiny`, `Water`, `Lighting`, `Audio` and `RendererWithCollider`; every one but
-`Persistent` has a load radius setting, and the game's grid identifiers carry a layer next to the
-scene state, area and cell, while the chunk file names carry none. so an entity likely streams by
-its layer's radius wherever its file puts it, Global included, and detail would then drop out where
-the HLOD layer shows; where an entity's layer is stored isn't found (the InitChunkData schema is
-native).
+## streaming layers
+
+the game streams static scenery by layer, each with its own grid and load radius around a streaming
+centre (most likely the player character, not the camera). the 128 m cell is the unit of file I/O;
+within the loaded files each layer's grid cell is the unit that enters the scene. the game calls an
+HLOD tier an HLOD level.
+
+| layer                  | grid  | its entities' file | priority |
+| ---------------------- | ----- | ------------------ | -------- |
+| `Persistent`           | —     | Global             | 0        |
+| `HLOD2`                | 256 m | Global             | 1        |
+| `HLOD1`                | 128 m | Global             | 2        |
+| `HLOD0`                | 64 m  | Global             | 3        |
+| `Collider`             | 64 m  | cell               | 4        |
+| `RendererWithCollider` | 64 m  | cell               | 5        |
+| `Lighting`             | 64 m  | cell               | 6        |
+| `Audio`                | 32 m  | cell               | 7        |
+| `Water`                | 128 m | Global             | 8        |
+| `Default`              | 64 m  | cell               | 9        |
+| `Tiny`                 | 32 m  | cell               | 10       |
+
+layers that read their entities from Global are why HLOD clusters and water decals occur only in
+Global chunk files. a lower priority loads first, then the nearer cells. where an entity's layer is
+stored in the chunk files isn't found (the InitChunkData schema is native).
+
+the radii come from the PC settings, by scene detail preset (1000 lowest to 5000 highest, 4000 being
+the high preset and 5000 very high; 2000 takes 1000's; values in brackets are inherited from a lower
+preset, which is assumed):
+
+| radius, m   | 1000 | 3000 | 4000  | 5000  |
+| ----------- | ---- | ---- | ----- | ----- |
+| chunk files | 128  | 128  | 160   | 256   |
+| `Default`   | 96   | 128  | 160   | 256   |
+| `HLOD0`     | 256  | 384  | 512   | 640   |
+| `HLOD1`     | 1024 | 1024 | 1024  | 1024  |
+| `HLOD2`     | 2048 | 2048 | 2048  | 2048  |
+| `Collider`  | 128  | 128  | 128   | 128   |
+| `Tiny`      | 96   | 128  | (128) | (128) |
+| `Lighting`  | 96   | 128  | (128) | (128) |
+
+`Water` (128 m) and `Audio` (16 m) take code defaults. `RendererWithCollider` uses the larger of
+`Collider` and `Default`. a low-memory device is forced to preset 1000, and on maps that ask for it
+(map02 does, map01 doesn't) to HLOD radii of 256, 1024 and 2048 m.
+
+- **selection.** distances are measured in XZ only. every 128 m file whose square meets the circle
+  of the chunk radius is read (with each scene-state and area file that exists for it), plus the
+  Global files; every layer cell whose square meets that layer's circle loads.
+- **hysteresis.** cells are added on a pass after the centre has moved 4 m and removed on a pass
+  after 20 m, so a cell unloads at up to 20 m past its radius.
+- **HLOD rings.** each HLOD tier hides inside the radius of the next finer layer: HLOD0 inside
+  `Default`'s, HLOD1 inside HLOD0's, HLOD2 inside HLOD1's. at preset 5000 that's detail to 256 m,
+  HLOD0 to 640 m, HLOD1 to 1024 m and HLOD2 to 2048 m, with nothing streamed beyond. what the
+  distance is measured to (cluster centre or bounds) and whether a tier waits for the finer one to
+  load isn't known.
+- **time budget.** loading gets 1.5 ms and unloading 2.5 ms per frame, scaled by the smoothed frame
+  time over 33.3 ms (0.1–2×), so about 0.75 and 1.25 ms at 60 fps; teleports have no limit.
+- **why 128 m** isn't stated anywhere. at the lower presets the chunk radius is one cell, so a few
+  files cover the detail radius, while the finer layer grids pick what enters the scene more closely
+  than the files are read.
+- the renderer's screen-size cull is off on PC. the LOD bias is 2 at preset 1000, 1.5 at 2000 and 1
+  from 3000 up.
 
 ## open
 
@@ -403,7 +456,7 @@ native).
 - the meaning of the `renderFlags` bits other than shadow-only, and of a negative `minSquared`
   (never culled by size, or culled below `√−minSquared`)
 - the size the LODGroup thresholds are authored against (the object's bounds, a LODGroup size, …)
-- HLOD switch distances, and the HLOD generated-material channel layout
+- what an HLOD ring's distance is measured to, and the HLOD generated-material channel layout
 - where a scene's HLOD grid (tier-0 cell and origin) is defined, and why it leaves the terrain
   quadtree in some scenes
 - whether HLOD clusters stand in for Global chunk content: indie_dg005 has every static renderer in

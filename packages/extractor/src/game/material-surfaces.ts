@@ -59,6 +59,8 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 		'HGRP/Lit': [...LIT_KEYWORDS, '_SIMPLE_VERTEXANIM', '_SIMPLE_VERTEXANIM_CLOTH'],
 		'HGRP/LitEffect': LIT_KEYWORDS,
 		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
+		// its own cubemap reflection (`_CUSTOM_IBL`) isn't drawn: the viewer lights Lit surfaces deferred
+		'HGRP/LitForward': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
 		'HGRP/Foliage/Trunk': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
 		'HGRP/Foliage/Leaf': [...SURFACE_KEYWORDS, '_NORMAL_MAP', '_CANOPY_COLOR_RAMP'],
 		'HGRP/Foliage/Grass': [...SURFACE_KEYWORDS, '_NORMAL_MAP', '_USE_CAMERA_BASED_TILLING'],
@@ -93,6 +95,7 @@ export const LIT_FAMILIES: ReadonlySet<ShaderFamily> = new Set([
 	'lit',
 	'litEffect',
 	'litTransparent',
+	'litForward',
 	'trunk',
 	'leaf',
 	'grass',

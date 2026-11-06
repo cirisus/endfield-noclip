@@ -153,15 +153,15 @@ a cluster left on a tile without that detail can't refine, so it would draw over
 stands for.
 
 **refinement contract** (REPLACE, at HLOD-cell granularity): a node draws its coarse content while
-its screen-space error, `geometricError · viewportHeight / (2 · distance · tan(fovY / 2))`, is
-within the threshold; otherwise it refines to its children, and a refined leaf draws its detail
-blocks. per-instance LOD inside detail uses the chain thresholds. conditional blocks have no HLOD
-stand-in, so they draw by their tile's screen size regardless of refinement
-([instance selection](viewer/streaming.md#instance-selection)). `manifest.global` content (the
-game's Global chunk scenery) is drawn whenever its group shows and never replaced. `geometricError`
-is a placeholder, `edge / 16` (64 m leaf → 4 m), until the game's HLOD switch distances are known;
-the viewer's SSE threshold tunes it. which entities become HLOD, detail, global and conditional
-content is in [extraction.md](extraction.md#how-the-packer-files-instances).
+the camera is outside the ring of its HLOD tier, the game's
+[HLOD rings](game-data/world.md#streaming-layers); otherwise it refines to its children, and a
+refined leaf draws its detail blocks. per-instance LOD inside detail uses the chain thresholds.
+conditional blocks have no HLOD stand-in, so they draw within the detail ring regardless of
+refinement ([instance selection](viewer/streaming.md#instance-selection)). `manifest.global` content
+(the game's Global chunk scenery) is drawn whenever its group shows and never replaced.
+`geometricError` (`edge / 16`, 64 m leaf → 4 m) now only orders requests. which entities become
+HLOD, detail, global and conditional content is in
+[extraction.md](extraction.md#how-the-packer-files-instances).
 
 **content refs** (`ContentRef`, `ContentKind`):
 
@@ -202,12 +202,12 @@ map02, a third of the core):
 | `subset`                                                                           | what `--level` / `--bounds` kept, or `null`                                                                                                                                                  |
 | `source`                                                                           | the bundle manifest's build guid and content hash: identifies the game build                                                                                                                 |
 
-a viewer shows one level at a time: content whose group carries the level's tag or tag 0 (shared
-content), over the shared terrain. scenes without levels show everything. a level's rect and
+a package's levels are its scene's own map's, which don't overlap, so a viewer can show them all at
+once; a group's level tag says who owns its content (0 for shared content). a level's rect and
 `playerInitPos` come from its [LevelConfig](game-data/world.md#levelconfig) (`rectLeftBottom`,
 `rectRightTop`, `playerInitPos`); the viewer lists levels with them and poses its first view of a
 level over the playable rectangle, falling back to the spawn height while coarse terrain loads
-([viewer.ts](../packages/viewer/src/viewer.ts)).
+([level-pose.ts](../packages/viewer/src/scene/level-pose.ts)).
 
 ### environments
 
@@ -627,11 +627,16 @@ unless the mode is Shape. the entry keeps:
   their curves and gradients are the `AnimationCurve` and `Gradient` of
   [`curves.ts`](../packages/package-format/src/curves.ts), which lens flares use too, with key times
   over 0–1 (the game stores gradient key times as 0–65535)
-- the shape (sphere, hemisphere, cone, cone volume, box, circle or donut, with its radius,
-  thickness, donut radius, angle, length, arc, placement and random-direction and -position amounts)
+- the shape (sphere, hemisphere, cone, cone volume, box, circle, donut or mesh, with its radius,
+  thickness, donut radius, angle, length, arc, placement and random-direction and -position
+  amounts). a [mesh shape](game-data/effects.md#particle-systems) carries its mesh: positions (to
+  0.1 mm), normals, the vertex colours as bytes when it uses them, and the primitives it emits from
+  (three or two corners each), with its placement, vertex spawn mode, edge spread and normal offset.
+  a shape texture, edge placement stepping by Loop or PingPong, and meshes the engine refuses or
+  that mix lines and triangles stand in
 - the velocity module (linear, orbital about an offset, radial and speed modifier, as curves too,
-  though a speed modifier curve not alongside drag or a speed limit), and size and rotation over
-  lifetime (curves too)
+  though a speed modifier curve not alongside drag), and size and rotation over lifetime (curves
+  too)
 - the Limit Velocity module as the free motion's `clamp`: its drag when its `dampen` is 0 (the
   amount and whether it scales with the particle's size and its speed squared), or its speed limit
   when the dampen is above 0 (the `magnitude` curve and the dampen), when it limits the whole speed
@@ -642,9 +647,8 @@ unless the mode is Shape. the entry keeps:
   scene aren't followed), each with its ranges, gravity focus, swirl tilt, curves and drag flags and
   `fromEmitter`, the emitter's matrix as seen from the field's (the inverse of the field's
   prefab-space matrix times the emitter's). a field of another shape or with a vector field makes
-  the system a stand-in, as do force fields alongside drag or a speed modifier curve; a multiplier
-  scalar of 0 packs no forces, as the engine skips the module. the viewer steps such particles at 30
-  Hz too
+  the system a stand-in, as do force fields alongside drag; a multiplier scalar of 0 packs no
+  forces, as the engine skips the module. the viewer steps such particles at 30 Hz too
 - the render alignment (Facing is kept as View; Velocity too) and pivot, in multiples of the
   particle's size: a mesh particle's pivot is first multiplied by the mesh's size
   ([pivot](game-data/effects.md#particle-systems))
@@ -733,10 +737,11 @@ every piece of placed content (instance blocks through their refs, lights, water
 environment volumes) names one `StatesInfo.groups` entry: the level that owns it (`levelTag`, 0 for
 content every level shows) and the conditional set that loads it (`condition`, `null` for content
 that always loads). the packer interns equal pairs into one group, and group 0 is always the shared,
-always-loaded one. a viewer evaluates `groupsShown` once whenever the shown level or a scene value
-changes, and every consumer filters by that one array, so "belongs to this level and is loaded" has
-a single definition. environment volumes are the exception that reads the parts: they apply wherever
-they hold the camera, whichever level owns them, so only their condition gates them.
+always-loaded one. a viewer evaluates `groupsShown` once whenever a scene value changes, and every
+consumer filters by that one array, so "is loaded" has a single definition. `groupsShown` reads only
+the condition: the level tag orders and groups a viewer's listings but doesn't hide content.
+environment volumes read the parts too: they apply wherever they hold the camera, whichever level
+owns them.
 
 ### conditional sets
 
@@ -883,7 +888,8 @@ provenance lives there rather than in the manifest, which only identifies the bu
 
 ## open
 
-- **geometricError** is a placeholder; calibrate against the game's HLOD switch distances.
+- **geometricError** is a placeholder the viewer uses only for request priority; the HLOD rings
+  replaced it for refinement.
 - **instance compression**: meshopt filters or quantized rows could roughly halve instance blobs.
 - **detail placement by centre**: a very large object at a leaf disappears while that leaf shows its
   HLOD, unless the HLOD covers it, as the game assumes.

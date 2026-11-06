@@ -1,27 +1,52 @@
 import { useId } from 'react';
 
-import { DEBUG_VIEWS } from '../render/frame-uniforms.ts';
-import { TONEMAPPERS } from '../render/post-process.ts';
-import type { Viewer, ViewerOptions } from '../viewer.ts';
+import { DEBUG_VIEWS } from '../render/frame/debug-views.ts';
+import { TONEMAPPERS } from '../render/post/settings.ts';
+import type { ViewerOptions } from '../viewer/options.ts';
+import type { Viewer } from '../viewer/viewer.ts';
 
-import { useViewerState } from './use-viewer.ts';
+import { Checkbox } from './controls.tsx';
+import { useViewerEnvironment, useViewerState } from './use-viewer.ts';
 
 const HLOD_TIERS = [0, 1, 2] as const;
 
-type BooleanKey = {
-	[K in keyof ViewerOptions]: ViewerOptions[K] extends boolean ? K : never;
+/** the options whose values are `T`s */
+type OptionKey<T> = {
+	[K in keyof ViewerOptions]: ViewerOptions[K] extends T ? K : never;
 }[keyof ViewerOptions];
 
-const Toggle = ({ viewer, name, label }: { viewer: Viewer; name: BooleanKey; label: string }) => (
-	<label className="toggle">
-		<input
-			type="checkbox"
-			checked={viewer.options[name]}
-			onChange={(event) => viewer.setOptions({ [name]: event.currentTarget.checked })}
-		/>
+const Toggle = ({ viewer, name, label }: { viewer: Viewer; name: OptionKey<boolean>; label: string }) => (
+	<Checkbox checked={viewer.options[name]} onChange={(checked) => viewer.setOptions({ [name]: checked })}>
 		{label}
-	</label>
+	</Checkbox>
 );
+
+/** a label and a select over `options`, calling `onChange` with the picked option's value */
+const Select = ({
+	label,
+	value,
+	options,
+	onChange,
+}: {
+	label: string;
+	value: string;
+	options: readonly { value: string; label: string }[];
+	onChange: (value: string) => void;
+}) => {
+	const id = useId();
+	return (
+		<div className="slider">
+			<label htmlFor={id}>{label}</label>
+			<select id={id} value={value} onChange={(event) => onChange(event.currentTarget.value)}>
+				{options.map((option) => (
+					<option key={option.value} value={option.value}>
+						{option.label}
+					</option>
+				))}
+			</select>
+		</div>
+	);
+};
 
 const Slider = ({
 	viewer,
@@ -33,15 +58,7 @@ const Slider = ({
 	unit,
 }: {
 	viewer: Viewer;
-	name:
-		| 'maxSse'
-		| 'terrainPixels'
-		| 'minBoxPixels'
-		| 'outlineMetres'
-		| 'budgetMiB'
-		| 'textureBias'
-		| 'exposure'
-		| 'renderScale';
+	name: OptionKey<number>;
 	label: string;
 	min: number;
 	max: number;
@@ -68,7 +85,7 @@ const Slider = ({
 	);
 };
 
-const Choice = <K extends 'tonemapper' | 'debugView'>({
+const Choice = <K extends OptionKey<string>>({
 	viewer,
 	name,
 	label,
@@ -78,66 +95,58 @@ const Choice = <K extends 'tonemapper' | 'debugView'>({
 	name: K;
 	label: string;
 	choices: readonly ViewerOptions[K][];
-}) => {
-	const id = useId();
+}) => (
+	<Select
+		label={label}
+		value={viewer.options[name]}
+		options={choices.map((choice) => ({ value: choice, label: choice }))}
+		onChange={(text) => {
+			const value = choices.find((choice) => choice === text);
+			if (value !== undefined) {
+				viewer.setOptions({ [name]: value });
+			}
+		}}
+	/>
+);
+
+/** the environment volumes in effect at the camera, re-rendered on their own as the camera moves */
+const AppliedVolumes = ({ viewer }: { viewer: Viewer }) => {
+	useViewerEnvironment(viewer);
 	return (
-		<div className="slider">
-			<label htmlFor={id}>{label}</label>
-			<select
-				id={id}
-				value={viewer.options[name]}
-				onChange={(event) => {
-					const value = choices.find((choice) => choice === event.currentTarget.value);
-					if (value !== undefined) {
-						viewer.setOptions({ [name]: value });
-					}
-				}}
-			>
-				{choices.map((choice) => (
-					<option key={choice} value={choice}>
-						{choice}
-					</option>
-				))}
-			</select>
-		</div>
+		<ol className="applied-volumes">
+			{viewer.appliedVolumes.map(({ id, name, phase, factor }) => (
+				<li key={id} title={name}>
+					{phase}
+					{factor < 1 ? ` · ${Math.round(factor * 100)}%` : ''}
+				</li>
+			))}
+		</ol>
 	);
+};
+
+/** the look section's legend, naming the environment profile at the camera */
+const LookLegend = ({ viewer }: { viewer: Viewer }) => {
+	useViewerEnvironment(viewer);
+	return <legend>look{viewer.environmentName === null ? '' : ` · ${viewer.environmentName}`}</legend>;
 };
 
 /** the environment volumes in effect at the camera, and a picker to pin one phase instead */
 const EnvironmentControls = ({ viewer }: { viewer: Viewer }) => {
-	const pinId = useId();
-	const phases = viewer.environmentPhases();
 	const pinned = viewer.options.environmentPin;
 	return (
 		<fieldset>
 			<legend>environment</legend>
 			<Toggle viewer={viewer} name="environmentVolumes" label="volumes at camera" />
-			<div className="slider">
-				<label htmlFor={pinId}>pin</label>
-				<select
-					id={pinId}
-					value={pinned ?? ''}
-					onChange={(event) => {
-						const value = event.currentTarget.value;
-						viewer.setOptions({ environmentPin: value === '' ? null : Number(value) });
-					}}
-				>
-					<option value="">none</option>
-					{phases.map(({ index, name }) => (
-						<option key={index} value={index}>
-							{name}
-						</option>
-					))}
-				</select>
-			</div>
-			<ol className="applied-volumes">
-				{viewer.appliedVolumes.map(({ id, name, phase, factor }) => (
-					<li key={id} title={name}>
-						{phase}
-						{factor < 1 ? ` · ${Math.round(factor * 100)}%` : ''}
-					</li>
-				))}
-			</ol>
+			<Select
+				label="pin"
+				value={pinned === null ? '' : String(pinned)}
+				options={[
+					{ value: '', label: 'none' },
+					...viewer.environmentPhases().map(({ index, name }) => ({ value: String(index), label: name })),
+				]}
+				onChange={(value) => viewer.setOptions({ environmentPin: value === '' ? null : Number(value) })}
+			/>
+			<AppliedVolumes viewer={viewer} />
 		</fieldset>
 	);
 };
@@ -168,7 +177,7 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 				<Toggle viewer={viewer} name="wireframe" label="wireframe" />
 			</fieldset>
 			<fieldset>
-				<legend>look{viewer.environmentName === null ? '' : ` · ${viewer.environmentName}`}</legend>
+				<LookLegend viewer={viewer} />
 				<Toggle viewer={viewer} name="sky" label="sky" />
 				<Toggle viewer={viewer} name="heightFog" label="height and volumetric fog" />
 				<Toggle viewer={viewer} name="atmosphereFog" label="atmosphere fog" />
@@ -201,17 +210,20 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 			<fieldset>
 				<legend>HLOD tiers</legend>
 				{HLOD_TIERS.map((tier) => (
-					<label className="toggle" key={tier}>
-						<input
-							type="checkbox"
-							checked={tiers[tier]}
-							onChange={(event) => setTier(tier, event.currentTarget.checked)}
-						/>
+					<Checkbox key={tier} checked={tiers[tier]} onChange={(checked) => setTier(tier, checked)}>
 						tier {tier}
-					</label>
+					</Checkbox>
 				))}
 			</fieldset>
-			<Slider viewer={viewer} name="maxSse" label="HLOD error" min={1} max={64} step={1} unit="px" />
+			<Slider
+				viewer={viewer}
+				name="detailDistance"
+				label="detail distance"
+				min={64}
+				max={1024}
+				step={32}
+				unit="m"
+			/>
 			<Slider
 				viewer={viewer}
 				name="terrainPixels"

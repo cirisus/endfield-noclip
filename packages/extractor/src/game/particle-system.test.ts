@@ -1,17 +1,26 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { type DecodedMesh, MeshTopology } from '@endfield-noclip/formats/unity/mesh';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import {
 	CurveMode,
 	GradientMode,
 	ParticleAlignment,
+	ParticleMeshPlacement,
+	ParticleMeshSpawn,
 	ParticleRenderMode,
 	ParticleShapeKind,
 	SheetRow,
 } from '@endfield-noclip/package-format/particles';
 
-import { InfluenceFilter, particleReach, readForceField, readParticleSystem } from './particle-system.ts';
+import {
+	InfluenceFilter,
+	particleReach,
+	particleShapeMesh,
+	readForceField,
+	readParticleSystem,
+} from './particle-system.ts';
 
 const constant = (value: number) => ({ minMaxState: 0, scalar: value, minScalar: 0 });
 const between = (min: number, max: number) => ({ minMaxState: 3, scalar: max, minScalar: min });
@@ -346,7 +355,10 @@ test('systems the viewer cannot play say why', () => {
 	assert.equal(reason(system({ UVModule: sheet({ timeMode: 1 }) })), 'sheet time mode 1');
 	assert.equal(reason(system({ UVModule: sheet({ tilesX: 65 }) })), 'sheet of 65×8 tiles');
 	assert.equal(reason(system(), renderer({ m_RenderAlignment: 5 })), 'alignment 5');
-	assert.equal(reason(system({ ShapeModule: { ...(system().ShapeModule as object), type: 6 } })), 'shape 6');
+	assert.equal(
+		reason(system({ ShapeModule: { ...(system().ShapeModule as object), type: 12 } })),
+		'shape 12',
+	);
 	assert.equal(reason(system(), renderer({ m_Mesh: pointer(0n) })), 'no mesh');
 	const turning = { ...curve([[0, 1]]), minMaxState: 1 };
 	// orbital and radial curves play (Jingyu's drifting petals spin up through theirs)
@@ -358,10 +370,20 @@ test('systems the viewer cannot play say why', () => {
 		reason(system({ VelocityModule: { ...(system().VelocityModule as object), orbitalZ: turning } })),
 		null,
 	);
-	// a speed modifier curve plays (the floating stones of Valley's Aberrants ramp theirs up), but not under
-	// drag or a speed limit
+	// a speed modifier curve plays (the floating stones of Valley's Aberrants ramp theirs up), under a speed
+	// limit too (the collectible pieces' rings slow under one), but not under drag
 	const ramping = { VelocityModule: { ...(system().VelocityModule as object), speedModifier: turning } };
 	assert.equal(reason(system(ramping)), null);
+	const limited = {
+		enabled: true,
+		dampen: 0.015,
+		separateAxis: false,
+		magnitude: constant(1),
+		drag: constant(0),
+		multiplyDragByParticleSize: true,
+		multiplyDragByParticleVelocity: true,
+	};
+	assert.equal(reason(system({ ...ramping, ClampVelocityModule: limited })), null);
 	const dragged = {
 		enabled: true,
 		dampen: 0,
@@ -373,7 +395,7 @@ test('systems the viewer cannot play say why', () => {
 	};
 	assert.equal(
 		reason(system({ ...ramping, ClampVelocityModule: dragged })),
-		'speed modifier curve with a velocity limit or drag',
+		'speed modifier curve with drag',
 	);
 	assert.equal(
 		reason(system({ EmissionModule: { enabled: true, rateOverTime: curve([[0, 1]]), m_Bursts: [] } })),
@@ -597,3 +619,149 @@ test('a system lists the force fields it feels for the packer to resolve, unless
 	);
 	assert.deepEqual(dragged, { reason: 'force fields with drag' });
 });
+
+// #region mesh shape
+
+/** a ShapeModule of type 6, as the red mission portal's edge sparks (`dot_Line`) set it */
+const meshShape = (overrides: Record<string, unknown> = {}, spawn: Record<string, unknown> = {}) => ({
+	enabled: true,
+	type: 6,
+	radius: { value: 0.75 },
+	radiusThickness: 0.5,
+	donutRadius: 0.2,
+	angle: 0,
+	length: 3,
+	arc: { value: 360 },
+	m_Position: vector(0, 0, 0),
+	m_Rotation: vector(0, 0, 0),
+	m_Scale: vector(1.5, 1.5, 1.5),
+	placementMode: 1,
+	m_MeshMaterialIndex: 0,
+	m_MeshNormalOffset: 0,
+	m_MeshSpawn: { mode: 0, spread: 0, ...spawn },
+	m_Mesh: pointer(7n),
+	m_Texture: pointer(0n),
+	m_UseMeshMaterialIndex: false,
+	m_UseMeshColors: false,
+	randomDirectionAmount: 0,
+	sphericalDirectionAmount: 0,
+	randomPositionAmount: 0.5,
+	...overrides,
+});
+
+/** a unit quad of two triangles as submesh 0 and a line strip without indices as submesh 1 */
+const decoded = (submeshes: DecodedMesh['submeshes']): DecodedMesh => ({
+	name: 'shape',
+	vertexCount: 4,
+	channels: [],
+	positions: new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0.123456]),
+	normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+	packedNormals: null,
+	tangents: null,
+	colors: {
+		dimension: 4,
+		format: 0,
+		data: new Float32Array([1, 0, 0, 1, 0, 1, 0, 0.5, 0, 0, 1, 1, 1, 1, 1, 0]),
+	},
+	uvs: [],
+	indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+	submeshes,
+	bounds: { center: [0.5, 0.5, 0], extents: [0.5, 0.5, 0] },
+	skin: null,
+});
+const submesh = (
+	topology: number,
+	firstIndex: number,
+	indexCount: number,
+): DecodedMesh['submeshes'][number] => ({
+	firstIndex,
+	indexCount,
+	topology,
+	baseVertex: 0,
+	firstVertex: 0,
+	vertexCount: 4,
+	bounds: { center: [0, 0, 0], extents: [0, 0, 0] },
+});
+const triangles = submesh(MeshTopology.Triangles, 0, 6);
+
+test('mesh shapes emit from their mesh', () => {
+	const read = readParticleSystem(system({ ShapeModule: meshShape() }), renderer());
+	assert.ok(read !== null && 'info' in read);
+	assert.equal(read.info.shape?.kind, ParticleShapeKind.Mesh);
+	assert.deepEqual(read.shapeMesh, { fileId: 0, pathId: 7n });
+
+	const mesh = particleShapeMesh(meshShape(), decoded([triangles]));
+	assert.ok(typeof mesh !== 'string');
+	assert.equal(mesh.placement, ParticleMeshPlacement.Edge);
+	assert.equal(mesh.corners, 3);
+	assert.deepEqual(mesh.primitives, [0, 1, 2, 0, 2, 3]);
+	// rounded to 0.1 mm
+	assert.equal(mesh.positions[11], 0.1235);
+	// colours only when the shape asks for them, as Color32 bytes
+	assert.equal(mesh.colors, null);
+	const colored = particleShapeMesh(meshShape({ m_UseMeshColors: true }), decoded([triangles]));
+	assert.ok(typeof colored !== 'string');
+	assert.deepEqual(colored.colors?.slice(4, 8), [0, 255, 0, 128]);
+});
+
+test('mesh shapes read submeshes and spawn modes as the engine does', () => {
+	// as map02's defence array threads (`zhuzi`) store it: no indices, no vertices
+	const strip = { ...submesh(MeshTopology.Triangles, 0, 0), vertexCount: 0 };
+	// a submesh without indices is a line strip through its vertices
+	const lines = particleShapeMesh(meshShape(), decoded([strip]));
+	assert.ok(typeof lines !== 'string');
+	assert.equal(lines.corners, 2);
+	assert.deepEqual(lines.primitives, [0, 1, 1, 2, 2, 3]);
+	// the material index keeps one submesh
+	const picked = particleShapeMesh(
+		meshShape({ m_UseMeshMaterialIndex: true, m_MeshMaterialIndex: 5 }),
+		decoded([triangles, submesh(MeshTopology.Lines, 0, 4)]),
+	);
+	assert.ok(typeof picked !== 'string');
+	assert.deepEqual(picked.primitives, [0, 1, 2, 0]);
+	assert.equal(
+		particleShapeMesh(meshShape(), decoded([triangles, strip])),
+		'mesh shape mixing lines and triangles',
+	);
+	assert.equal(
+		particleShapeMesh(meshShape(), decoded([submesh(MeshTopology.Quads, 0, 4)])),
+		'mesh shape topology 2',
+	);
+
+	const spawn = (placementMode: number, mode: number) => {
+		const mesh = particleShapeMesh(meshShape({ placementMode }, { mode }), decoded([triangles]));
+		assert.ok(typeof mesh !== 'string');
+		return mesh.spawn;
+	};
+	assert.equal(spawn(ParticleMeshPlacement.Vertex, 1), ParticleMeshSpawn.Loop);
+	// burst spread walks back and forth like ping-pong
+	assert.equal(spawn(ParticleMeshPlacement.Vertex, 3), ParticleMeshSpawn.PingPong);
+	// triangles are always random
+	assert.equal(spawn(ParticleMeshPlacement.Triangle, 1), ParticleMeshSpawn.Random);
+
+	const reason = (shape: TypeTreeObject) => {
+		const read = readParticleSystem(system({ ShapeModule: shape }), renderer());
+		return read !== null && 'reason' in read ? read.reason : null;
+	};
+	assert.equal(reason(meshShape({}, { mode: 1 })), 'edge mesh shape spawn mode 1');
+	assert.equal(reason(meshShape({ m_Texture: pointer(3n) })), 'mesh shape texture');
+});
+
+test('a mesh shape reaches its farthest vertex', () => {
+	const read = readParticleSystem(
+		system({ ShapeModule: meshShape({ randomPositionAmount: 0 }) }),
+		renderer(),
+	);
+	assert.ok(read !== null && 'info' in read && read.info.shape !== null);
+	const mesh = particleShapeMesh(meshShape(), decoded([triangles]));
+	assert.ok(typeof mesh !== 'string');
+	const still = {
+		...read.info,
+		shape: { ...read.info.shape, mesh, scale: [1, 1, 1] as [number, number, number] },
+	};
+	const plain = { ...still, shape: { ...still.shape, mesh: { ...mesh, positions: [0, 0, 0] } } };
+	const reach = particleReach(still, 0).extents[0] - particleReach(plain, 0).extents[0];
+	assert.ok(Math.abs(reach - Math.hypot(1, 1)) < 1e-3);
+});
+
+// #endregion

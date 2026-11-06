@@ -22,7 +22,8 @@ when an old archive is removed.
 the package panel ([`ui/package-panel.tsx`](../../packages/viewer/src/ui/package-panel.tsx)) offers
 all three. where both `showDirectoryPicker` and OPFS exist, "copy into browser storage" imports the
 picked folder into OPFS (skipping `debug/`, which the viewer never reads) so it can be reopened
-without picking it again.
+without picking it again. a failed copy, or a stored package that can't be reopened, is reported in
+the panel.
 
 ## dev package server
 
@@ -35,7 +36,10 @@ the repo's `out/`; set `NOCLIP_PACKAGES=/path` to point it elsewhere
   validators and `cache-control: no-cache`. deployments need range support and revalidation for
   `core.czar`, whose name is fixed. other archives have content-derived names.
 - `GET /packages/index.json` lists subdirectories that hold a core archive, with its size, skipping
-  hidden directories (the packer's staging and replaced packages). it's the one dev-only addition.
+  hidden directories (the packer's staging and replaced packages). it's the one dev-only addition;
+  the package panel reads it through `fetchDevPackages`
+  ([`package/dev-packages.ts`](../../packages/viewer/src/package/dev-packages.ts)), and lists
+  nothing where it's missing.
 
 ## opening
 
@@ -46,18 +50,22 @@ guessing at fields), and decodes its tables (tree, blob table, LOD chains, geome
 texture, water, light, particle and irradiance tables). shard JSON headers are never fetched: the
 blob table gives each shard blob's absolute byte range, so a blob costs one range read.
 
-`load` then builds the linked tile tree, the texture store, the irradiance volume and the stream
-manager, pins the coarse layer (see [residency](streaming.md#residency-and-budgets)), picks the
-initial level, and poses the camera over it. the `MeshSelector` exists only when at least one
-geometry converted; without it instances draw as boxes. terrain page sizes are `package-format`
-constants; the terrain renderer throws on a page of any other size, which fails that blob.
+`load` then sets the irradiance volume to the package's and `openScene`
+([`viewer/scene-loader.ts`](../../packages/viewer/src/viewer/scene-loader.ts)) builds the linked
+tile tree, the texture store, the stream manager and the selectors, and pins the coarse layer (see
+[residency](streaming.md#residency-and-budgets)); `load` then picks the initial level and poses the
+camera over it. the `MeshSelector` exists only when at least one geometry converted; without it
+instances draw as boxes. terrain page sizes are `package-format` constants; the terrain renderer
+throws on a page of any other size, which fails that blob.
 
 ## decode workers and zstd
 
 [`package/decode-pool.ts`](../../packages/viewer/src/package/decode-pool.ts) runs 2–4 module workers
 (half the hardware threads, clamped) and hands each job to the least busy one, transferring the
-blob's buffer. [`package/decode-worker.ts`](../../packages/viewer/src/package/decode-worker.ts)
-undoes the blob codec and builds GPU-ready arrays:
+blob's buffer. each worker holds at most two jobs at once; the rest wait in the pool, so the jobs of
+an unloaded package that no worker has taken yet are dropped instead of keeping the workers busy.
+[`package/decode-worker.ts`](../../packages/viewer/src/package/decode-worker.ts) undoes the blob
+codec and builds GPU-ready arrays:
 
 | kind                       | worker output                                                                                                                                              |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,10 +86,11 @@ reports no errors, so `decompressZstd` checks the decoded length and throws on a
 
 ## URL parameters
 
-| parameter | meaning                                                                                                                                                                                                                       |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `package` | a dev package name (served from `/packages/<name>/`), or a URL/path of a package directory if it starts with `/`, `./`, `../`, `http:/` or `https:/` ([`ui/package-param.ts`](../../packages/viewer/src/ui/package-param.ts)) |
-| `level`   | the level id to show first. if it isn't in the package or has no instances, the first level with instances is shown                                                                                                           |
+| parameter | meaning                                                                                                                                                                                                                                 |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package` | a dev package name (served from `/packages/<name>/`), or a URL/path of a package directory if it starts with `/`, `./`, `../`, `http:/` or `https:/` ([`package/package-param.ts`](../../packages/viewer/src/package/package-param.ts)) |
+| `level`   | the current level's id: the level to look over first. if it isn't in the package or has no instances, the first level with instances                                                                                                    |
 
 the app keeps both in sync with `history.replaceState`, so a reload or a shared link reopens the
-same package and level. packages opened from local folders have no `package` value.
+same package over the same level (every level shows either way; see [levels](streaming.md#levels)).
+packages opened from local folders have no `package` value.

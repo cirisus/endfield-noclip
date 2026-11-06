@@ -171,8 +171,8 @@ export interface EffectDistanceLod {
  * @param resolver bundle reader
  * @param setting an `EffectSetting` (see {@link isEffectSettingType})
  * @param data its fields
- * @returns the distances its GameObjects show at (docs/game-data/effects.md#effect-lod-tables), or `null` when
- *   the setting is disabled or doesn't switch by distance
+ * @returns the distances its GameObjects show at (docs/game-data/effects.md#effect-lod-tables), or `null`
+ *   when the setting is disabled or doesn't switch by distance
  * @throws {FormatError} on a malformed LOD entry or distance band
  */
 export const effectDistanceLod = async (

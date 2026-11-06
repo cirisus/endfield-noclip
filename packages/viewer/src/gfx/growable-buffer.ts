@@ -44,16 +44,6 @@ export class GrowableBuffer {
 		this.buffer = this.#create(units);
 	}
 
-	/** @returns units the buffer holds now */
-	get capacity(): number {
-		return this.#allocator.capacity;
-	}
-
-	/** @returns units the buffer can grow to */
-	get maxCapacity(): number {
-		return this.#maxUnits;
-	}
-
 	/** @returns bytes of the current buffer */
 	get bytes(): number {
 		return this.buffer.size;

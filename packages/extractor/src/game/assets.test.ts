@@ -284,8 +284,7 @@ test('prefab selection follows active hierarchy and LOD references, preserving m
 			file: owner,
 			info: objects[0],
 		},
-		null,
-		null,
+		{ viewPose: null, particleQuad: null, locked: false },
 	);
 	assert.equal(rows.length, 4);
 	assert.equal(rows[3].pose?.[0][12], 10);
@@ -379,8 +378,7 @@ test('skinned prefab meshes resolve bones under inactive GameObjects, whose rend
 			file: owner,
 			info: objects[0],
 		},
-		null,
-		null,
+		{ viewPose: null, particleQuad: null, locked: false },
 	);
 	assert.deepEqual(
 		rows.map((row) => [row.name, row.unsupported !== null]),
@@ -390,6 +388,79 @@ test('skinned prefab meshes resolve bones under inactive GameObjects, whose rend
 		],
 	);
 	assert.equal(rows[0].pose?.[0][12], 7);
+});
+
+test('a root UnlockEffectConfigMono draws the locked model of a locked placement, and never stands in the other', async () => {
+	const values = new Map<bigint, TypeTreeObject>();
+	const objects: ObjectInfo[] = [];
+	const add = (id: bigint, classId: number, data: TypeTreeObject, fields: string[] = []): void => {
+		const info = object(id, classId);
+		info.type?.nodes.push(
+			...fields.map((name, index) => ({
+				type: '',
+				name,
+				level: 1,
+				byteSize: -1,
+				typeFlags: 0,
+				metaFlag: 0,
+				version: 1,
+				index,
+				refTypeHash: 0n,
+			})),
+		);
+		objects.push(info);
+		values.set(id, data);
+	};
+	const vector = (x: number, y: number, z: number) => ({ x, y, z });
+	const transform = (go: bigint, children: bigint[]) => ({
+		m_GameObject: pointer(go),
+		m_LocalPosition: vector(0, 0, 0),
+		m_LocalRotation: { x: 0, y: 0, z: 0, w: 1 },
+		m_LocalScale: vector(1, 1, 1),
+		m_Children: children.map((id) => pointer(id)),
+	});
+	add(1n, UnityClass.GameObject, {
+		m_Name: 'root',
+		m_IsActive: true,
+		m_Component: [2n, 3n].map((id) => ({ component: pointer(id) })),
+	});
+	add(2n, UnityClass.Transform, transform(1n, [11n, 21n]));
+	add(
+		3n,
+		UnityClass.MonoBehaviour,
+		{ m_Enabled: 1, useDifferentModel: 1, lockedModel: pointer(20n), unlockedModel: pointer(10n) },
+		['m_Enabled', 'useDifferentModel', 'lockedModel', 'unlockedModel'],
+	);
+	// as saved, the fixed model is on and the broken one off
+	for (const [id, name, active] of [
+		[10n, 'Fixed', true],
+		[20n, 'Broken', false],
+	] as const) {
+		add(id, UnityClass.GameObject, {
+			m_Name: name,
+			m_IsActive: active,
+			m_Component: [id + 1n, id + 2n, id + 3n].map((componentId) => ({ component: pointer(componentId) })),
+		});
+		add(id + 1n, UnityClass.Transform, transform(id, []));
+		add(id + 2n, UnityClass.MeshFilter, { m_Mesh: pointer(50n) });
+		add(id + 3n, UnityClass.MeshRenderer, { m_Enabled: true, m_CastShadows: 1, m_Materials: [pointer(60n)] });
+	}
+	add(50n, UnityClass.Mesh, {
+		m_LocalAABB: { m_Center: vector(0, 0, 0), m_Extent: vector(1, 1, 1) },
+		m_SubMeshes: [{}],
+	});
+	add(60n, UnityClass.Material, {});
+	const owner = file('CAB-prefab', objects, values);
+	const read = async (locked: boolean) =>
+		(
+			await readPrefabRenderers(
+				resolver([owner]),
+				{ bundleIndex: 0, file: owner, info: objects[0] },
+				{ viewPose: null, particleQuad: null, locked },
+			)
+		).map((row) => [row.name, row.unsupported !== null]);
+	assert.deepEqual(await read(true), [['Broken', false]]);
+	assert.deepEqual(await read(false), [['Fixed', false]]);
 });
 
 test('prefab lights read the enabled lights of active GameObjects with their HG light data', async () => {

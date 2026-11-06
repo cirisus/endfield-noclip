@@ -104,6 +104,8 @@ export const ParticleShapeKind = {
 	/** from the base disc, along the cone */
 	Cone: 4,
 	Box: 5,
+	/** from a mesh's vertices, edges or triangles ({@link ParticleShapeInfo.mesh}) */
+	Mesh: 6,
 	/** from anywhere inside the cone, up to its length */
 	ConeVolume: 8,
 	Circle: 10,
@@ -141,6 +143,55 @@ export interface ParticleShapeInfo {
 	sphericalDirection: number;
 	/** each start position moves by up to this much along each axis, m */
 	randomPosition: number;
+	/** the mesh {@link ParticleShapeKind.Mesh} emits from; `null` for other kinds */
+	mesh: ParticleShapeMeshInfo | null;
+}
+
+/** {@link ParticleShapeMeshInfo.placement} values, Unity's `ParticleSystemMeshShapeType` */
+export const ParticleMeshPlacement = {
+	Vertex: 0,
+	Edge: 1,
+	Triangle: 2,
+} as const;
+
+export type ParticleMeshPlacement = (typeof ParticleMeshPlacement)[keyof typeof ParticleMeshPlacement];
+
+/** {@link ParticleShapeMeshInfo.spawn} values: how {@link ParticleMeshPlacement.Vertex} picks its vertex */
+export const ParticleMeshSpawn = {
+	/** a random primitive, then a random corner of it */
+	Random: 0,
+	/** the particle's emission number, wrapping around the vertex buffer */
+	Loop: 1,
+	/** the particle's emission number, back and forth along the vertex buffer */
+	PingPong: 2,
+} as const;
+
+export type ParticleMeshSpawn = (typeof ParticleMeshSpawn)[keyof typeof ParticleMeshSpawn];
+
+/**
+ * the mesh a {@link ParticleShapeKind.Mesh} shape emits from, in the shape's own frame before its placement. a
+ * particle starts at a point of a primitive: one of its corners ({@link ParticleMeshPlacement.Vertex}), a
+ * point on its outline, each side taking a third of the picks whatever its length (Edge), or a point anywhere
+ * on it (Triangle). Edge and Triangle pick the primitive by its area (a line's length); Vertex picks it
+ * evenly. it leaves along the point's normal, offset along it by {@link normalOffset}
+ */
+export interface ParticleShapeMeshInfo {
+	placement: ParticleMeshPlacement;
+	spawn: ParticleMeshSpawn;
+	/** Edge picks its place along the outline in steps of this fraction; 0 anywhere */
+	spread: number;
+	/** m along the interpolated normal, before it's normalized */
+	normalOffset: number;
+	/** xyz per vertex, m */
+	positions: number[];
+	/** xyz per vertex; `null` when the mesh has none, leaving along +z */
+	normals: number[] | null;
+	/** rgba per vertex, 0–255, multiplying the authored start colour; `null` when it doesn't */
+	colors: number[] | null;
+	/** vertex indices per primitive: 3 for triangles, 2 for lines */
+	corners: 2 | 3;
+	/** {@link corners} vertex indices per primitive */
+	primitives: number[];
 }
 
 /** a burst of particles (Unity's `ParticleSystem.Burst`), repeated within each loop */
@@ -286,7 +337,7 @@ export interface ParticleFreeMotionInfo {
 	clamp: ParticleClampInfo | null;
 	/**
 	 * the force fields pushing the particles (Unity's `ExternalForcesModule`); `null` without. the packer
-	 * leaves such systems without drag or a speed modifier curve
+	 * leaves such systems without drag
 	 */
 	forces: ParticleForcesInfo | null;
 }

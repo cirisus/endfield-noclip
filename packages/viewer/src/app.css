@@ -340,12 +340,14 @@ button {
 			font: inherit;
 		}
 	}
-	& .story-category h3 {
+	& .story-category h3,
+	& .other-levels h3 {
 		margin: 10px 0 2px;
 		font-size: 11px;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
+	& .other-levels > details,
 	& .story-mission {
 		margin-top: 2px;
 		padding-left: 8px;

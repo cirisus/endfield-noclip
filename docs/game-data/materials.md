@@ -24,6 +24,17 @@ steel display sculpture in Dijiang's hall (`M_prop_map01_zmdlife+1_005_01` on a 
 tangents, metallic from the base alpha, range 1 to 0) is a satin metal at roughness about 0.7 from
 its map's B, not the mirror that `_RoughnessMax` alone would give.
 
+## forward Lit
+
+`HGRP/LitForward` is Lit drawn in a forward pass instead of the GBuffer; in the packages surveyed
+only the golden treasure chest's body uses it (`M_anm_com_treasurechest+1_001_02`, in
+`int_trchest_common_gorgeous_postmodel`). its surface inputs are Lit's: the texture layouts, base
+colour, `0.08 · _Specular` reflectance, and the emission mask, whose emission is also multiplied by
+`_EnableEmissiveMap`. with `_CUSTOM_IBL` its ambient specular comes from the material's own cubemap
+(`_CustomIBL`, the chest's a 128² BC6H environment) times `_CustomIBLIntensity`, in place of the
+scene's reflections, sampled at a mip from the roughness. its other variants (`_THIN_FILM`,
+`_PLANAR_REFLECTION`, `_LAYERBLEND_MASK`) aren't decoded.
+
 ## base colour
 
 the Lit, LitTransparent and foliage shaders start from the base colour map times the linearized
@@ -82,13 +93,14 @@ factor. outside the band it is 0. Jingyu's clearable rock
 grey glow of 2.1 from its emissive map's G (alpha 1), which covers the whole rock.
 
 each draw also carries a runtime emission colour in its per-draw data, which replaces
-`_EmissiveColor` by its alpha. the static scenery's files store it as zero, yet the tower cubes glow
-green at Wuling and red at Marker Stone in the game, always, whatever the story state or time of
-day, each reading as a white cube with a coloured glow (likely a saturated colour too bright for the
-tonemapper to keep its hue; unverified), so something sets it while the game runs. the client's
-known setters work on GameObject renderers (interactives' emissive configs, VFX-driven emission),
-none covers static scenery, and the client declares no level- or environment-wide emission setting:
-the source is unknown.
+`_EmissiveColor` by its alpha. the static scenery's files store it as zero, and the client's known
+setters work on GameObject renderers (interactives' emissive configs, VFX-driven emission). the
+white lamp cubes on Wuling's and Marker Stone's towers (`M_module_tylight+1_001_03`) don't take a
+colour from it: they emit white, and the green and red glow over them comes from one effect prefab
+per tower, placed always ([pull towards the camera](effects.md#vertex-offset-and-brightening)).
+Wuling's (`P_fxmap_map02_lv002_citywall_lighting_02`) emits a round glow and a 40 × 5 m horizontal
+streak at each lamp from a mesh of their positions, both teal (`_TintColor` 0.45, 0.84, 0.75),
+added; Marker Stone's (`P_fxmap_map_lv004_lamp_light_01`) draws red.
 
 the mask channel is 0 for no emission, 1 for the base colour's alpha, 2 for the normal map's B
 (two-basemap layout) or the base alpha (MRO layout), and 3 or more for the normal map's alpha

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 
-import { DEV_PACKAGES_INDEX, DEV_PACKAGES_PREFIX, type DevPackage } from '../package/dev-packages.ts';
+import { type DevPackage, fetchDevPackages } from '../package/dev-packages.ts';
+import { sourceFromParam } from '../package/package-param.ts';
 import {
 	type PackageSource,
 	directorySource,
@@ -10,27 +11,13 @@ import {
 	openOpfsPackage,
 } from '../package/package-source.ts';
 
-import { formatBytes } from './format.ts';
-import { sourceFromParam } from './package-param.ts';
+import { describeError, formatBytes } from './format.ts';
 
 /** the open package: its source's label, and its `?package=` value if it has one */
 export interface OpenPackage {
 	label: string;
 	param: string | null;
 }
-
-const fetchDevPackages = async (): Promise<DevPackage[]> => {
-	const response = await fetch(`${DEV_PACKAGES_PREFIX}${DEV_PACKAGES_INDEX}`);
-	if (!response.ok || !(response.headers.get('content-type') ?? '').includes('json')) {
-		return [];
-	}
-	const body: unknown = await response.json();
-	if (typeof body !== 'object' || body === null || !('packages' in body) || !Array.isArray(body.packages)) {
-		return [];
-	}
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- our own dev endpoint
-	return body.packages as DevPackage[];
-};
 
 /** chooses a package: dev-server packages, a local folder, or one imported into OPFS */
 export const PackagePanel = ({
@@ -46,6 +33,8 @@ export const PackagePanel = ({
 	const [opfsPackages, setOpfsPackages] = useState<string[]>([]);
 	const [copyToOpfs, setCopyToOpfs] = useState(false);
 	const [importing, setImporting] = useState<string | null>(null);
+	/** why the last import or reopening from browser storage failed, until the next open */
+	const [failure, setFailure] = useState<string | null>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const copyId = useId();
 
@@ -57,6 +46,11 @@ export const PackagePanel = ({
 			.then(setOpfsPackages)
 			.catch(() => setOpfsPackages([]));
 	}, []);
+
+	const open = (source: PackageSource, param: string | null): void => {
+		setFailure(null);
+		onOpen(source, param);
+	};
 
 	const openFolder = async (): Promise<void> => {
 		if (window.showDirectoryPicker === undefined) {
@@ -71,16 +65,19 @@ export const PackagePanel = ({
 			return;
 		}
 		if (!copyToOpfs) {
-			onOpen(directorySource(handle), null);
+			open(directorySource(handle), null);
 			return;
 		}
+		setFailure(null);
 		setImporting(handle.name);
 		try {
 			const name = await importToOpfs(handle, (bytes) =>
 				setImporting(`${handle.name}: ${formatBytes(bytes)}`),
 			);
 			setOpfsPackages(await listOpfsPackages());
-			onOpen(directorySource(await openOpfsPackage(name)), null);
+			open(directorySource(await openOpfsPackage(name)), null);
+		} catch (err) {
+			setFailure(`couldn't copy ${handle.name} into browser storage: ${describeError(err)}`);
 		} finally {
 			setImporting(null);
 		}
@@ -99,7 +96,7 @@ export const PackagePanel = ({
 							<button
 								type="button"
 								aria-pressed={current?.param === pkg.name}
-								onClick={() => onOpen(sourceFromParam(pkg.name), pkg.name)}
+								onClick={() => open(sourceFromParam(pkg.name), pkg.name)}
 							>
 								{pkg.name} <span className="muted small">core {formatBytes(pkg.coreSize)}</span>
 							</button>
@@ -115,8 +112,10 @@ export const PackagePanel = ({
 								type="button"
 								onClick={() => {
 									openOpfsPackage(name)
-										.then((handle) => onOpen(directorySource(handle), null))
-										.catch((err: unknown) => console.error(err));
+										.then((handle) => open(directorySource(handle), null))
+										.catch((err: unknown) =>
+											setFailure(`couldn't open ${name} from browser storage: ${describeError(err)}`),
+										);
 								}}
 							>
 								{name} <span className="muted small">browser storage</span>
@@ -150,11 +149,13 @@ export const PackagePanel = ({
 				onChange={(event) => {
 					const files = event.currentTarget.files;
 					if (files !== null && files.length > 0) {
-						onOpen(fileListSource(files), null);
+						open(fileListSource(files), null);
 					}
 				}}
 			/>
-			{(importing !== null || status !== '') && <p className="muted small">{importing ?? status}</p>}
+			{(importing !== null || failure !== null || status !== '') && (
+				<p className="muted small">{importing ?? failure ?? status}</p>
+			)}
 		</section>
 	);
 };

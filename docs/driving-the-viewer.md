@@ -1,8 +1,9 @@
 # driving the viewer
 
 how an agent opens the viewer in a browser, poses the camera, reads its state and profiles it. how
-the viewer works is in [viewer/index.md](viewer/index.md); its options and stats are `ViewerOptions`
-and `ViewerStats` in [`src/viewer.ts`](../packages/viewer/src/viewer.ts).
+the viewer works is in [viewer/index.md](viewer/index.md); its options are `ViewerOptions` in
+[`src/viewer/options.ts`](../packages/viewer/src/viewer/options.ts) and its stats `ViewerStats` in
+[`src/viewer/stats.ts`](../packages/viewer/src/viewer/stats.ts).
 
 ## opening it
 
@@ -75,7 +76,8 @@ applies the budget.
   0 looks along +z, positive yaw turns towards +x, negative pitch looks down.
 - writing `viewer.camera.position` directly moves the view only while `continuous` is on, since it
   doesn't mark the frame dirty; this is useful for walking the camera per frame.
-- `viewer.showLevel(id)` shows one level alone; `viewer.flyToLevel(id)` only flies there.
+- `viewer.flyToLevel(id)` makes a level current and flies over it; every level shows either way.
+  after a flight lands, moving the camera into another level's cells makes that level current.
 
 ## inspecting
 
@@ -84,9 +86,10 @@ applies the budget.
   switch a volume with `viewer.setSceneValue(volume.control, 0 | 1)`. volumes have height bands, so
   pose near the ground to see a level's own look; a high camera gets only the scene's global
   environment.
-- `viewer.scene.pkg.manifest` holds levels, environment profiles, `environmentVolumes` and
-  `environmentPhases`. `await import('/src/render/environment.ts')` gives `deriveEnvironment` for
-  checking derived values against a profile.
+- `viewer.manifest` holds levels, environment profiles, `environmentVolumes` and
+  `environmentPhases`; `viewer.currentLevel` is the current level's entry.
+  `await import('/src/environment/derive.ts')` gives `deriveEnvironment` for checking derived values
+  against a profile.
 - scene states: `viewer.sceneValues` (every control), `viewer.scenePicks`,
   `viewer.conditionResults`, `viewer.setSceneValue(id, value)` (`null` drops the pick).
 - stream areas: `viewer.visibleStreamAreas` (the areas shown at the camera, `null` when every area
@@ -98,7 +101,7 @@ applies the budget.
   `viewer.options.autoExposure`, `viewer.stats.autoExposureEv` and `viewer.options.debugView`
   (`'clouds'` shows the raw cloud panorama).
 - `viewer.stats` (refreshed every 250 ms): draws, triangles, instances, residency, queue and request
-  counters, `cpuMs`, `cpuPhases` and `gpuMs`. `viewer.scene.stream.stats.residentByKind` splits the
+  counters, `cpuMs`, `cpuPhases` and `gpuMs`. `viewer.scene.stream.residentByKind()` splits the
   streamed residency by kind (textures, geometry, irradiance, …).
 
 ## profiling

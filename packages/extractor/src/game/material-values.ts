@@ -18,6 +18,7 @@ export type ShaderFamily =
 	| 'lit'
 	| 'litTransparent'
 	| 'litEffect'
+	| 'litForward'
 	| 'leaf'
 	| 'trunk'
 	| 'grass'

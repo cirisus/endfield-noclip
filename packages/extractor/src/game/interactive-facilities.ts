@@ -1,4 +1,5 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import type { DynamicModel } from '@endfield-noclip/formats/endfield/dynamic-resources';
 import {
 	readInteractiveBaseModel,
 	readInteractiveTable,
@@ -9,10 +10,18 @@ import {
 	readLevelDataPrefix,
 	UnsupportedLevelData,
 } from '@endfield-noclip/formats/endfield/level-interactives';
+import { InteractiveUnlockType, readLevelLocks } from '@endfield-noclip/formats/endfield/level-locks';
 import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
+import { type LevelSpline, readLevelSplines } from '@endfield-noclip/formats/endfield/level-splines';
 import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
 import { parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
+import {
+	multiplyMatrices,
+	quaternionUnityEuler,
+	trsMatrix,
+	unityEulerQuaternion,
+} from '@endfield-noclip/formats/unity/transform';
 import { isObject, numberField, objectField, stringField } from '@endfield-noclip/formats/unity/values';
 import type {
 	ConditionalSetInfo,
@@ -25,15 +34,26 @@ import type { Context } from '../context.ts';
 import { VfsGroup } from '../hg/vfs.ts';
 
 import { animatorParameterId, animatorPose } from './animator-defaults.ts';
+import { type ComponentKeys, componentParams } from './component-params.ts';
+import {
+	CRANE_TOWER_COMPONENTS,
+	craneSteps,
+	craneTowerOf,
+	DEFAULT_CONTAINER_HEIGHT,
+	readCraneLook,
+} from './crane-tower.ts';
+import { type CurveMove, curveMoveOf, curvePath, isAutoMovePlatform } from './curve-move.ts';
 import { readDoodadShell, type DoodadShell } from './doodad-shell.ts';
 import { readDoorPoses, type DoorPoses } from './door-poses.ts';
 import type { StructureModel } from './dynamic-structures.ts';
 import { allOf, type Alternatives } from './game-state.ts';
+import { prefabNodeMatrices } from './prefab-nodes.ts';
 import type { PrefabPose } from './prefab.ts';
 import { SWITCH_VALUES } from './scene-conditions.ts';
 import { progressionControl } from './scenery-variants.ts';
 import { readTelescopicPoses, type TelescopicPoses } from './telescopic-bridge.ts';
-import { type ModelViews, readViewStates, settledPose } from './view-state-poses.ts';
+import { isOneShotEffect } from './view-state-effects.ts';
+import { type ModelViews, readViewStates, type RestingEffect, settledPose } from './view-state-poses.ts';
 
 // templates with the model-upgrade component have their visual forms as a progression control; every other
 // template draws its base model only. templates carry no display name, so these labels are ours; other
@@ -50,6 +70,9 @@ const MODEL_UPGRADE_COMPONENTS = ['_InteractiveModelLevelUpComponentDataForMemor
 
 /** the MemoryPack wrapper of interactive templates */
 const TEMPLATE_ROOT = 'Beyond_Gameplay_InteractiveTemplateDataForMemoryPack';
+
+/** the MemoryPack wrapper of LevelData, decoded whole for its splines */
+const LEVEL_DATA_ROOT = 'Beyond_Gameplay_LevelDataForMemoryPack';
 
 /**
  * @param template a decoded interactive template
@@ -102,11 +125,97 @@ const REGION_WALL_COMPONENTS = ['_SpaceshipRegionWallDataForMemoryPack'];
 /** the component of campfires */
 const CAMPFIRE_COMPONENTS = ['_InteractiveCampfireComponentDataForMemoryPack'];
 
-/** a settled look of an interactive's model, and its settled states' names */
+/** a settled look of an interactive's model, its settled states' names and the effects they leave playing */
 interface SettledLook {
 	pose: PrefabPose;
 	states: string[];
+	effects: RestingEffect[];
 }
+
+/** the component of jump pads, which place an effect of their own */
+const JUMP_MACHINE: ComponentKeys = {
+	suffix: '_JumpMachineComponentDataForMemoryPack',
+	diffKey: 'Comp_JumpMachine',
+	type: 169,
+};
+const JUMP_MACHINE_COMPONENTS = [JUMP_MACHINE.suffix];
+
+/** the component of vertical jump pads (cave vents), which play an effect of their own while on */
+const JUMP_MACHINE_VERTICAL_COMPONENTS = ['_JumpMachineVerticalComponentDataForMemoryPack'];
+
+/** the looping effect a vertical jump pad's component plays on its root while on; the name is fixed in code */
+const VERTICAL_PAD_EFFECT = 'P_interactive_cavewell+1_001_01_loop';
+
+/** the component of vertical rope lifts, which set their rope's length from their two ports */
+const VERTICAL_ROPE_COMPONENTS = ['_InteractiveVerticalRopeComponentDataForMemoryPack'];
+
+/** the placement property naming the other port of a vertical rope */
+const TARGET_KEY = 'target';
+
+/**
+ * @param row a vertical rope's port
+ * @param rows placed interactives by id
+ * @returns the float keys its rope component sets before its view states start: `RopeLength`, the height
+ *   between it and the port its `target` property names; none without another placed port
+ */
+export const verticalRopeFloats = (
+	row: LevelInteractive,
+	rows: ReadonlyMap<bigint, LevelInteractive>,
+): Map<string, number> => {
+	const id = row.properties.find((param) => param.key === TARGET_KEY)?.values[0]?.bits;
+	const target = id === undefined || id === row.id ? undefined : rows.get(id);
+	return target === undefined
+		? new Map()
+		: new Map([['RopeLength', Math.abs(row.position[1] - target.position[1])]]);
+};
+
+/**
+ * @param name an effect's name
+ * @returns the bundle path of its prefab, where the game's effect manager loads it from
+ */
+const effectPrefab = (name: string): string =>
+	`assets/beyond/dynamicassets/gameplay/effects/prefabs/${name.toLowerCase()}.prefab`;
+
+/**
+ * @param m a rotation's matrix by row and column
+ * @returns the rotation as an xyzw quaternion
+ */
+const matrixQuaternion = (m: readonly (readonly number[])[]): [number, number, number, number] => {
+	const trace = m[0][0] + m[1][1] + m[2][2];
+	if (trace > 0) {
+		const s = 0.5 / Math.sqrt(trace + 1);
+		return [(m[2][1] - m[1][2]) * s, (m[0][2] - m[2][0]) * s, (m[1][0] - m[0][1]) * s, 0.25 / s];
+	}
+	if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+		const s = 2 * Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]);
+		return [0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s, (m[2][1] - m[1][2]) / s];
+	}
+	if (m[1][1] > m[2][2]) {
+		const s = 2 * Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]);
+		return [(m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s, (m[0][2] - m[2][0]) / s];
+	}
+	const s = 2 * Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]);
+	return [(m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s, (m[1][0] - m[0][1]) / s];
+};
+
+/**
+ * @param matrix an affine column-major matrix without shear or mirroring
+ * @param followRotation whether to keep its rotation; without, the placement keeps the world's axes
+ * @returns its position, Unity Euler angles (degrees) and axis scales
+ */
+const matrixPlacement = (
+	matrix: Float32Array,
+	followRotation: boolean,
+): Pick<DynamicModel, 'position' | 'rotation' | 'scale'> => {
+	const columns = [0, 1, 2].map((c) => [matrix[c * 4], matrix[c * 4 + 1], matrix[c * 4 + 2]]);
+	const scale = columns.map((column) => Math.hypot(...column));
+	let rotation: [number, number, number] = [0, 0, 0];
+	if (followRotation) {
+		const rows = [0, 1, 2].map((r) => [0, 1, 2].map((c) => columns[c][r] / (scale[c] || 1)));
+		rotation = quaternionUnityEuler(matrixQuaternion(rows));
+	}
+	return { position: [matrix[12], matrix[13], matrix[14]], rotation, scale: [scale[0], scale[1], scale[2]] };
+};
 
 /**
  * an interactive model's looks at rest. `away` and `near` are indexed by the activation (campfires: 0 not
@@ -204,6 +313,8 @@ const playerKeys = (template: MemoryPackValue): PlayerKey[] =>
  * @param model a ModelTable model and the model whose view states it uses
  * @param campfire whether the model's `Enabled` key is the player's activation
  * @param keys the player-set keys the template drives; one whose radius is largest counts
+ * @param state the `state` key's value, `null` when nothing sets it
+ * @param floats float keys the interactive's components set before its view states start
  * @returns the model's settled looks, or `null` when it has no view states
  * @throws {FormatError} if a state machine can't settle or a clip can't be read
  */
@@ -212,6 +323,8 @@ const readInteractiveLooks = async (
 	model: ModelViews,
 	campfire: boolean,
 	keys: readonly PlayerKey[],
+	state: number | null,
+	floats: ReadonlyMap<string, number>,
 ): Promise<InteractiveLooks | null> => {
 	const states = await readViewStates(context, model);
 	if (states === null) {
@@ -219,14 +332,17 @@ const readInteractiveLooks = async (
 	}
 	const activations = campfire ? [false, true] : [null];
 	const settle = (activated: boolean | null, near: boolean) => {
-		const blackboard = new Map<string, boolean>();
+		const blackboard = new Map<string, boolean | number>(floats);
+		if (state !== null) {
+			blackboard.set(STATE_KEY, state);
+		}
 		if (activated !== null) {
 			blackboard.set('Enabled', activated);
 		}
 		for (const { key } of keys) {
 			blackboard.set(key, near);
 		}
-		const key = `${activated === null ? '' : activated ? 'activated ' : 'locked '}${near ? 'near' : 'away'}`;
+		const key = `${state === null ? '' : `state ${state} `}${activated === null ? '' : activated ? 'activated ' : 'locked '}${near ? 'near' : 'away'}`;
 		return settledPose(context, states, key, blackboard);
 	};
 	const away: SettledLook[] = [];
@@ -279,9 +395,9 @@ const PARAM_SAVED = 300;
 /**
  * @param properties a template's keyed property list
  * @param key the property's key
- * @returns its first atom as a bool, or `null` when it's absent
+ * @returns its first atom's bits, or `null` when it's absent
  */
-const boolProperty = (properties: MemoryPackValue | undefined, key: string): boolean | null => {
+const propertyBits = (properties: MemoryPackValue | undefined, key: string): bigint | null => {
 	for (const property of Array.isArray(properties) ? properties : []) {
 		if (
 			property === null ||
@@ -298,7 +414,212 @@ const boolProperty = (properties: MemoryPackValue | undefined, key: string): boo
 				: [];
 		const bits =
 			atom !== null && typeof atom === 'object' && !Array.isArray(atom) ? atom.valueBit64 : undefined;
-		return typeof bits === 'string' || typeof bits === 'number' ? BigInt(bits) !== 0n : null;
+		return typeof bits === 'string' || typeof bits === 'number' ? BigInt(bits) : null;
+	}
+	return null;
+};
+
+/**
+ * @param properties a template's keyed property list
+ * @param key the property's key
+ * @returns its first atom as a bool, or `null` when it's absent
+ */
+const boolProperty = (properties: MemoryPackValue | undefined, key: string): boolean | null => {
+	const bits = propertyBits(properties, key);
+	return bits === null ? null : bits !== 0n;
+};
+
+/**
+ * @param properties a template's keyed property list
+ * @param key the property's key
+ * @returns its first atom as a 32-bit int, or `null` when it's absent
+ */
+const intProperty = (properties: MemoryPackValue | undefined, key: string): number | null => {
+	const bits = propertyBits(properties, key);
+	return bits === null ? null : Number(BigInt.asIntN(32, bits));
+};
+
+/** the component that passes an interactive's `state` property to its view states */
+const COMMON_PERFORM_COMPONENTS = ['_InteractiveCommonPerformComponentDataForMemoryPack'];
+
+/** the entity property, and view-state key, the common-perform component passes on */
+const STATE_KEY = 'state';
+
+/** the `state` an interactive template's entities start with */
+export interface StartState {
+	/** the template's own: its saved, else config, else temporary property, else 0 */
+	state: number;
+	/** variants whose diff properties set another, by interactive id */
+	variants: Map<string, number>;
+}
+
+/**
+ * @param template a decoded interactive template
+ * @returns the `state` its view states start with, or `null` when it has no common-perform component to pass
+ *   one on
+ */
+export const startState = (template: MemoryPackValue): StartState | null => {
+	if (!isRecord(template) || !hasComponent(template, COMMON_PERFORM_COMPONENTS)) {
+		return null;
+	}
+	const state =
+		intProperty(template.saveProperties, STATE_KEY) ??
+		intProperty(template.configProperties, STATE_KEY) ??
+		intProperty(template.tempProperties, STATE_KEY) ??
+		0;
+	const variants = new Map<string, number>();
+	for (const pair of Array.isArray(template.templateVariant) ? template.templateVariant : []) {
+		if (!Array.isArray(pair)) {
+			continue;
+		}
+		const [id, variant] = pair;
+		const value = isRecord(variant) ? intProperty(variant.diffProperties, STATE_KEY) : null;
+		if (typeof id === 'string' && value !== null) {
+			variants.set(id, value);
+		}
+	}
+	return { state, variants };
+};
+
+/** a property's value atoms: their raw bits and strings */
+type PropertyAtoms = { bits: bigint; text: string | null }[];
+
+/** where an interactive's entity properties start, below a placement's own `properties` */
+export interface EntityProperties {
+	/** the template's saved, config and temporary properties, in the order they're looked up */
+	lists: MemoryPackValue[];
+	/** by interactive id, a variant's diff properties, looked up before the template's */
+	variants: Map<string, MemoryPackValue>;
+}
+
+/**
+ * @param template a decoded interactive template
+ * @returns its entity property lists, or `null` when it isn't a record
+ */
+export const entityProperties = (template: MemoryPackValue): EntityProperties | null => {
+	if (!isRecord(template)) {
+		return null;
+	}
+	const variants = new Map<string, MemoryPackValue>();
+	for (const pair of Array.isArray(template.templateVariant) ? template.templateVariant : []) {
+		if (Array.isArray(pair) && typeof pair[0] === 'string' && isRecord(pair[1])) {
+			variants.set(pair[0], pair[1].diffProperties);
+		}
+	}
+	return {
+		lists: [template.saveProperties, template.configProperties, template.tempProperties],
+		variants,
+	};
+};
+
+/**
+ * @param properties a template's keyed property list
+ * @param key the property's key
+ * @returns its value atoms, or `null` when it's absent
+ */
+const templateAtoms = (properties: MemoryPackValue | undefined, key: string): PropertyAtoms | null => {
+	for (const property of Array.isArray(properties) ? properties : []) {
+		if (!isRecord(property) || property.key !== key || !isRecord(property.value)) {
+			continue;
+		}
+		const atoms = Array.isArray(property.value.valueArray) ? property.value.valueArray : [];
+		return atoms.filter(isRecord).map((atom) => ({
+			bits:
+				typeof atom.valueBit64 === 'string' || typeof atom.valueBit64 === 'number'
+					? BigInt(atom.valueBit64)
+					: 0n,
+			text: typeof atom.valueString === 'string' ? atom.valueString : null,
+		}));
+	}
+	return null;
+};
+
+/**
+ * @param entity the template's entity properties
+ * @param row a placed interactive
+ * @param key the property's key
+ * @returns the property's starting value atoms: the placement's own, else its variant's, else the template's;
+ *   `null` when none has it
+ */
+const entityProperty = (entity: EntityProperties, row: LevelInteractive, key: string): PropertyAtoms | null =>
+	row.properties.find((param) => param.key === key)?.values ??
+	templateAtoms(entity.variants.get(row.template), key) ??
+	entity.lists.reduce<PropertyAtoms | null>((found, list) => found ?? templateAtoms(list, key), null);
+
+/**
+ * @param bits a float's IEEE bits in a 64-bit atom
+ * @returns the float
+ */
+const atomFloat = (bits: bigint): number => {
+	const view = new DataView(new ArrayBuffer(4));
+	view.setUint32(0, Number(BigInt.asUintN(32, bits)));
+	return view.getFloat32(0);
+};
+
+/**
+ * @param entity the template's entity properties
+ * @param row a placed interactive
+ * @returns its starting `state`: the placement's, else its variant's, else the template's, else 0
+ */
+const entityState = (entity: EntityProperties, row: LevelInteractive): number =>
+	stateOf(row) ?? Number(BigInt.asIntN(32, entityProperty(entity, row, STATE_KEY)?.[0]?.bits ?? 0n));
+
+/**
+ * @param template the decoded vertical jump pad template
+ * @param row a placed vertical jump pad
+ * @returns the looping effect it plays on its root, or `null` unless its `state` starts on (1)
+ */
+export const verticalPadEffect = (template: MemoryPackValue, row: LevelInteractive): string | null => {
+	const entity = entityProperties(template);
+	return entity !== null && entityState(entity, row) === 1 ? VERTICAL_PAD_EFFECT : null;
+};
+
+/**
+ * the stationary effect a jump pad that isn't off (`state` 0) or a free jump places at itself, turned about
+ * the vertical towards its target position
+ *
+ * @param template the decoded jump pad template
+ * @param row a placed jump pad
+ * @returns the effect's name and its yaw in degrees, or `null` when it places none
+ */
+export const jumpPadArrow = (
+	template: MemoryPackValue,
+	row: LevelInteractive,
+): { effect: string; yaw: number } | null => {
+	const entity = entityProperties(template);
+	const params = componentParams(template, row, JUMP_MACHINE);
+	if (entity === null || params === null) {
+		return null;
+	}
+	// a pad is locked while its `state` is off (0), whatever its `is_locked` property says. `free_jump` and
+	// `effect` are the component's own parameters; the state and the target are the entity's
+	const locked = entityState(entity, row) === 0;
+	const free = (params.get('free_jump')?.values[0]?.bits ?? 0n) !== 0n;
+	const effect = params.get('effect')?.values[0]?.text;
+	if (locked || free || !effect) {
+		return null;
+	}
+	const target = (entityProperty(entity, row, 'target_position') ?? []).map((atom) => atomFloat(atom.bits));
+	const dx = (target[0] ?? 0) - row.position[0];
+	const dz = (target[2] ?? 0) - row.position[2];
+	// a zero direction looks along +z
+	return { effect, yaw: dx === 0 && dz === 0 ? 0 : (Math.atan2(dx, dz) * 180) / Math.PI };
+};
+
+/**
+ * @param row a placed interactive
+ * @returns its own `state` property, else its `state` parameter on any component, else null
+ */
+export const stateOf = (row: LevelInteractive): number | null => {
+	const own = row.properties.find((param) => param.key === STATE_KEY)?.values[0]?.bits;
+	if (own !== undefined) {
+		return Number(BigInt.asIntN(32, own));
+	}
+	for (const params of row.componentProperties.values()) {
+		const bits = params.find((param) => param.key === STATE_KEY)?.values[0]?.bits;
+		if (bits !== undefined) {
+			return Number(BigInt.asIntN(32, bits));
+		}
 	}
 	return null;
 };
@@ -382,6 +703,23 @@ const animatorStart = (template: MemoryPackValue): AnimatorStart | null => {
 
 /** the interactive logic type of telescopic bridges */
 const TELESCOPIC_LOGIC = 8;
+
+/** `InteractiveComponentType.ActivitySnapshotComponent`: a limited-time photo event's spot */
+const ACTIVITY_SNAPSHOT_COMPONENT = 2000;
+
+/** the scene's one control for limited-time event placements */
+const ACTIVITY_CONTROL: SceneControl = {
+	kind: 'activity',
+	id: 'activity:snapshot',
+	name: 'Event photo spots',
+	rule: null,
+	assumption: 'hidden: placed for limited-time photo events, which the server opens and closes',
+	followsCamera: false,
+	levelTags: [],
+	values: SWITCH_VALUES,
+	default: 0,
+	derived: null,
+};
 
 /** the template and placement property holding a telescopic bridge's piece count */
 const PIECES_KEY = 'pieces';
@@ -496,12 +834,16 @@ export interface InteractiveStandIn {
  * `bridge:<id>` control, retracted by default. a model without view states whose template sets its own
  * Animator's bools on load is posed in the states they settle; one bool from a saved property puts it under
  * an `activation:<id>` control, set by default. rows the game creates later (`createState` ≠ 0) are placed
- * the same way and also require their level's `created:<level id>` control, off by default
+ * the same way and also require their level's `created:<level id>` control, off by default. a limited-time
+ * photo event's spot also requires the scene's `activity:snapshot` control, off by default. an auto-moving
+ * platform that starts with its level rides its spline
  *
  * @param context install readers and the bundle resolver
  * @param scene owning map
  * @param level restricts decoding to one level, or null for the map
  * @param partition numeric level tags
+ * @param scripted logic ids of the interactives level scripts show and hide
+ * @param erosionCores by logic id, the conditions a blight core's erosion root loads under
  * @returns placements, controls, explicit unsupported-file diagnostics and the placements of interactives
  *   whose model wasn't found (a template that's missing or can't be read, or a model id the model table
  *   lacks); no partial file is used
@@ -521,6 +863,8 @@ export const loadInteractiveFacilities = async (
 	scriptControls: Map<string, ScriptControl>;
 	/** per level with rows the game creates later (`createState` ≠ 0), the control that shows them, off */
 	created: SceneControl[];
+	/** the control that shows limited-time event placements, off; empty when the scene has none */
+	activities: SceneControl[];
 	/** controls of interactives whose look follows the player's presence, and where each counts as near */
 	proximityControls: SceneControl[];
 	proximities: ProximityInfo[];
@@ -575,6 +919,8 @@ export const loadInteractiveFacilities = async (
 	}[] = [];
 	/** by level id, the control of its rows created later */
 	const createdControls = new Map<string, SceneControl>();
+	/** by level id, its LevelData files, which also hold the splines its moving platforms ride */
+	const levelDataPaths = new Map<string, string[]>();
 	{
 		const seen = new Set<bigint>();
 		const later: typeof placed = [];
@@ -588,6 +934,7 @@ export const loadInteractiveFacilities = async (
 				if (!path) {
 					throw new FormatError(`missing LevelData path ${hash}`);
 				}
+				levelDataPaths.getOrInsertComputed(config.id, () => []).push(path);
 				let prefix;
 				try {
 					// oxlint-disable-next-line no-await-in-loop -- level files are released after their prefix is decoded
@@ -829,8 +1176,47 @@ export const loadInteractiveFacilities = async (
 	// the player's presence changes away or near, within `radius`
 	const interactiveLooks = new Map<
 		string,
-		{ looks: InteractiveLooks; campfire: boolean; radius: number | null }
+		{
+			model: string;
+			looks: InteractiveLooks;
+			campfire: boolean;
+			keys: PlayerKey[];
+			radius: number | null;
+			/** the `state` `looks` were settled with, `null` when nothing passes one on */
+			state: number | null;
+			/** whether it's a vertical rope's port, whose look also follows its other port */
+			verticalRope: boolean;
+		}
 	>();
+	// a failed read reports and leaves the model drawn as saved
+	const attempt = async <T>(path: string, run: () => Promise<T>, failed: T): Promise<T> => {
+		try {
+			return await run();
+		} catch (error) {
+			if (!(error instanceof FormatError)) {
+				throw error;
+			}
+			unsupported.push({ path, reason: error.message });
+			return failed;
+		}
+	};
+	const looksByModel = new Map<string, Promise<InteractiveLooks | null>>();
+	const looksFor = (
+		model: string,
+		campfire: boolean,
+		keys: readonly PlayerKey[],
+		state: number | null,
+		floats: ReadonlyMap<string, number>,
+	): Promise<InteractiveLooks | null> =>
+		looksByModel.getOrInsertComputed(
+			`${model} ${campfire} ${keys.map((entry) => entry.key).join()} ${state} ${JSON.stringify([...floats])}`,
+			() =>
+				attempt(
+					model,
+					() => readInteractiveLooks(context, viewsOf(model), campfire, keys, state, floats),
+					null,
+				),
+		);
 	// facility forms with view states drawn as they rest (an idle loop keeps playing), by ModelTable id
 	const formPoses = new Map<string, PrefabPose>();
 	const regionWalls = new Set<string>();
@@ -838,27 +1224,40 @@ export const loadInteractiveFacilities = async (
 	const animatorStarts = new Map<string, AnimatorStart>();
 	/** telescopic bridges' piece counts and prefab roots, by key */
 	const telescopic = new Map<string, { pieces: number; prefab: string }>();
+	/** jump pads' decoded templates, which say whether and where they place their arrow, by key */
+	const jumpPads = new Map<string, MemoryPackValue>();
+	/** vertical jump pads' decoded templates, by key */
+	const verticalPads = new Map<string, MemoryPackValue>();
+	/** auto-moving platforms' decoded templates and starting `state`, by key */
+	const autoMoves = new Map<string, { template: MemoryPackValue; start: StartState | null }>();
+	/** crane towers' decoded templates, by key */
+	const craneTowers = new Map<string, MemoryPackValue>();
+	/** entity properties of other single-model templates (crane containers among them), by key */
+	const entities = new Map<string, EntityProperties>();
 	{
 		const templateKinds = new Map<
 			string,
 			| { kind: 'door' | 'regionWall' }
 			| { kind: 'telescopic'; pieces: number }
-			| { kind: 'other'; campfire: boolean; keys: PlayerKey[]; animator: AnimatorStart | null }
+			| {
+					kind: 'other';
+					campfire: boolean;
+					keys: PlayerKey[];
+					animator: AnimatorStart | null;
+					start: StartState | null;
+					/** a jump pad's decoded template, `null` for other templates */
+					jumpPad: MemoryPackValue | null;
+					/** a vertical jump pad's decoded template, `null` for other templates */
+					verticalPad: MemoryPackValue | null;
+					/** an auto-moving platform's decoded template, `null` for other templates */
+					autoMove: MemoryPackValue | null;
+					verticalRope: boolean;
+					/** a crane tower's decoded template, `null` for other templates */
+					craneTower: MemoryPackValue | null;
+					entity: EntityProperties | null;
+			  }
 		>();
 		const byModel = new Map<string, DoorPoses | null>();
-		const looksByModel = new Map<string, InteractiveLooks | null>();
-		// a failed read reports and leaves the model drawn as saved
-		const attempt = async <T>(path: string, run: () => Promise<T>, failed: T): Promise<T> => {
-			try {
-				return await run();
-			} catch (error) {
-				if (!(error instanceof FormatError)) {
-					throw error;
-				}
-				unsupported.push({ path, reason: error.message });
-				return failed;
-			}
-		};
 		for (const [key, { model, data, forms }] of authored) {
 			if (model === null) {
 				// a facility: each visual form is its own model, settled with every key false
@@ -869,7 +1268,7 @@ export const loadInteractiveFacilities = async (
 					// oxlint-disable-next-line no-await-in-loop -- one view state file and a clip per form
 					const looks = await attempt(
 						form.model,
-						() => readInteractiveLooks(context, viewsOf(form.model), false, []),
+						() => readInteractiveLooks(context, viewsOf(form.model), false, [], null, new Map()),
 						null,
 					);
 					if (looks !== null) {
@@ -900,12 +1299,40 @@ export const loadInteractiveFacilities = async (
 							campfire: hasComponent(decoded, CAMPFIRE_COMPONENTS),
 							keys: playerKeys(decoded),
 							animator: animatorStart(decoded),
+							start: startState(decoded),
+							jumpPad: hasComponent(decoded, JUMP_MACHINE_COMPONENTS) ? decoded : null,
+							verticalPad: hasComponent(decoded, JUMP_MACHINE_VERTICAL_COMPONENTS) ? decoded : null,
+							autoMove: isAutoMovePlatform(decoded) ? decoded : null,
+							verticalRope: hasComponent(decoded, VERTICAL_ROPE_COMPONENTS),
+							craneTower: hasComponent(decoded, CRANE_TOWER_COMPONENTS) ? decoded : null,
+							entity: entityProperties(decoded),
 						};
 					},
 					// an unreadable template is drawn as saved
-					{ kind: 'other' as const, campfire: false, keys: [], animator: null },
+					{
+						kind: 'other' as const,
+						campfire: false,
+						keys: [],
+						animator: null,
+						start: null,
+						jumpPad: null,
+						verticalPad: null,
+						autoMove: null,
+						verticalRope: false,
+						craneTower: null,
+						entity: null,
+					},
 				);
 				templateKinds.set(data, kind);
+			}
+			if (kind.kind === 'other' && kind.autoMove !== null) {
+				autoMoves.set(key, { template: kind.autoMove, start: kind.start });
+			}
+			if (kind.kind === 'other' && kind.craneTower !== null) {
+				craneTowers.set(key, kind.craneTower);
+			}
+			if (kind.kind === 'other' && kind.entity !== null) {
+				entities.set(key, kind.entity);
 			}
 			if (kind.kind === 'regionWall') {
 				regionWalls.add(key);
@@ -914,22 +1341,20 @@ export const loadInteractiveFacilities = async (
 				telescopic.set(key, { pieces: kind.pieces, prefab: forms[0].prefab });
 			}
 			// a doodad-group shell draws nothing itself; its forms attach to it instead
+			if (kind.kind === 'other' && kind.jumpPad !== null) {
+				jumpPads.set(key, kind.jumpPad);
+			}
+			if (kind.kind === 'other' && kind.verticalPad !== null) {
+				verticalPads.set(key, kind.verticalPad);
+			}
 			if (kind.kind === 'other' && !doodads.has(key)) {
-				const { campfire, keys } = kind;
-				const lookKey = `${model} ${campfire} ${keys.map((entry) => entry.key).join()}`;
-				let looks = looksByModel.get(lookKey);
-				if (looks === undefined) {
-					// oxlint-disable-next-line no-await-in-loop -- one view state file and a few clips per model
-					looks = await attempt(
-						model,
-						() => readInteractiveLooks(context, viewsOf(model), campfire, keys),
-						null,
-					);
-					looksByModel.set(lookKey, looks);
-				}
+				const { campfire, keys, start, verticalRope } = kind;
+				const state = start === null ? null : (start.variants.get(key) ?? start.state);
+				// oxlint-disable-next-line no-await-in-loop -- one view state file and a few clips per model
+				const looks = await looksFor(model, campfire, keys, state, new Map());
 				if (looks !== null) {
 					const radius = looks.near === null ? null : Math.max(...kind.keys.map((entry) => entry.radius));
-					interactiveLooks.set(key, { looks, campfire: kind.campfire, radius });
+					interactiveLooks.set(key, { model, looks, campfire, keys, radius, state, verticalRope });
 				} else if (kind.animator !== null) {
 					animatorStarts.set(key, kind.animator);
 				}
@@ -1050,15 +1475,177 @@ export const loadInteractiveFacilities = async (
 			}
 		});
 	};
+	/** effects to place once their prefabs' hashes are found, after every placement is read */
+	const pendingEffects: {
+		effect: string;
+		source: string;
+		levelTag: number;
+		visibility: ConditionalSetInfo;
+		/** the world matrix the effect is placed relative to: its model's placement, or its own */
+		frame: Float32Array;
+		/** the model and pose whose GameObject the effect plays on, `null` when placed at {@link frame} itself */
+		on: { prefab: string; pose: PrefabPose; rest: RestingEffect } | null;
+		followRotation: boolean;
+	}[] = [];
+	/** by level id, the splines its LevelData files hold */
+	const levelSplines = new Map<string, Promise<Map<number, LevelSpline>>>();
+	const splinesOf = (levelId: string): Promise<Map<number, LevelSpline>> =>
+		levelSplines.getOrInsertComputed(levelId, async () => {
+			const splines = new Map<number, LevelSpline>();
+			for (const path of levelDataPaths.get(levelId) ?? []) {
+				try {
+					// oxlint-disable-next-line no-await-in-loop -- one level's files, each released once read
+					for (const spline of readLevelSplines(reader.decode(await read(path), LEVEL_DATA_ROOT))) {
+						splines.set(spline.id, spline);
+					}
+				} catch (error) {
+					if (!(error instanceof FormatError)) {
+						throw error;
+					}
+					unsupported.push({ path, reason: `splines: ${error.message}` });
+				}
+			}
+			return splines;
+		});
+	/** by level id, the unlock types of its interactives' gameplay locks, by logic id */
+	const levelLocks = new Map<string, Promise<Map<bigint, number[]>>>();
+	const locksOf = (levelId: string): Promise<Map<bigint, number[]>> =>
+		levelLocks.getOrInsertComputed(levelId, async () => {
+			const locks = new Map<bigint, number[]>();
+			for (const path of levelDataPaths.get(levelId) ?? []) {
+				try {
+					// oxlint-disable-next-line no-await-in-loop -- one level's files, each released once read
+					for (const [id, types] of readLevelLocks(reader.decode(await read(path), LEVEL_DATA_ROOT))) {
+						locks.set(id, types);
+					}
+				} catch (error) {
+					if (!(error instanceof FormatError)) {
+						throw error;
+					}
+					unsupported.push({ path, reason: `gameplay locks: ${error.message}` });
+				}
+			}
+			return locks;
+		});
+	/**
+	 * @returns the spline an auto-moving platform rides and how, when it starts moving with its level (its
+	 *   `state` is 1 and it names a spline); otherwise `null`
+	 */
+	const rideOf = async (
+		row: LevelInteractive,
+		levelId: string,
+	): Promise<{ spline: LevelSpline; move: CurveMove } | null> => {
+		const auto = autoMoves.get(row.template);
+		if (auto === undefined) {
+			return null;
+		}
+		const state = stateOf(row) ?? auto.start?.variants.get(row.template) ?? auto.start?.state ?? 0;
+		const move = curveMoveOf(auto.template, row);
+		if (state !== 1 || move === null || move.splineId === 0) {
+			return null;
+		}
+		const spline = (await splinesOf(levelId)).get(move.splineId);
+		if (spline === undefined) {
+			unsupported.push({ path: levelId, reason: `spline ${move.splineId} of ${row.template} not found` });
+			return null;
+		}
+		return { spline, move };
+	};
 	const scriptControls = new Map<string, ScriptControl>();
+	// a vertical rope's port finds its other port by id
+	const rowsById = new Map(placed.map(({ row }) => [row.id, row]));
+	// a crane tower starts at its steps and hangs its container from its hook, wherever that was placed
+	/** by tower row id, its look */
+	const craneLooks = new Map<bigint, PrefabPose>();
+	/** by container row id, where its tower hangs it */
+	const hung = new Map<bigint, { position: [number, number, number]; rotation: [number, number, number] }>();
+	for (const { path, row } of placed) {
+		const template = craneTowers.get(row.template);
+		const entity = entities.get(row.template);
+		const form = authored.get(row.template)?.forms[0];
+		if (template === undefined || entity === undefined || form === undefined) {
+			continue;
+		}
+		const source = `${path}#${row.id}`;
+		const tower = craneTowerOf(template, row);
+		const state = (key: string) =>
+			Number(BigInt.asIntN(32, entityProperty(entity, row, key)?.[0]?.bits ?? 0n));
+		const steps = tower && craneSteps(tower, [state('state_1'), state('state_2'), state('state_3')]);
+		if (tower === null || steps === null) {
+			unsupported.push({ path: source, reason: 'crane tower has an empty step list; drawn as saved' });
+			continue;
+		}
+		const scale = row.modelScale > 0 ? row.modelScale : form.scale;
+		// oxlint-disable-next-line no-await-in-loop -- a few towers per map, each read once
+		const look = await attempt(
+			form.prefab,
+			async () => {
+				const resolver = await context.resolver();
+				const root = await resolver.findUnique(
+					{ hash: hashOf(form.prefab), path: form.prefab },
+					UnityClass.GameObject,
+				);
+				return readCraneLook(
+					resolver,
+					root,
+					form.prefab,
+					{
+						position: row.position,
+						rotation: unityEulerQuaternion(row.rotation),
+						scale: row.scale.map((axis) => axis * scale),
+					},
+					steps,
+				);
+			},
+			null,
+		);
+		if (look === null) {
+			unsupported.push({
+				path: source,
+				reason: 'crane tower prefab has no crane MonoBehaviour; drawn as saved',
+			});
+			continue;
+		}
+		craneLooks.set(row.id, look.pose);
+		const container = tower.target === null ? undefined : rowsById.get(tower.target);
+		const containerEntity = container && entities.get(container.template);
+		if (container === undefined || containerEntity === undefined) {
+			unsupported.push({ path: source, reason: `crane tower's container ${tower.target} isn't placed` });
+			continue;
+		}
+		const height = entityProperty(containerEntity, container, 'height')?.[0]?.bits;
+		const drop = height === undefined ? DEFAULT_CONTAINER_HEIGHT : atomFloat(height);
+		const [x, y, z] = look.attach.position;
+		hung.set(container.id, {
+			position: [x, y - drop, z],
+			rotation: quaternionUnityEuler(look.attach.rotation),
+		});
+	}
+	/** whether any placement needs {@link ACTIVITY_CONTROL} */
+	let activity = false;
 	for (const { path, levelId, levelTag, row, created } of placed) {
 		// a row created later also needs its level's `created` control on, and one a level script shows and hides
 		// its script control
 		const logicId = row.id.toString();
+		const source = `${path}#${row.id}`;
 		const switches: string[] = [];
 		if (created !== null) {
 			switches.push(created);
 		}
+		if (row.componentProperties.has(ACTIVITY_SNAPSHOT_COMPONENT)) {
+			switches.push(ACTIVITY_CONTROL.id);
+			activity = true;
+		}
+		// an auto-moving platform started with its level rides its spline
+		// oxlint-disable-next-line no-await-in-loop -- splines are read once per level
+		const ride = await rideOf(row, levelId);
+		// a mini-game or submit lock swaps the model to its locked look until the player opens it
+		// oxlint-disable-next-line no-await-in-loop -- locks are read once per level
+		const locks = (await locksOf(levelId)).get(row.id);
+		const locked =
+			locks?.some(
+				(type) => type === InteractiveUnlockType.MiniGame || type === InteractiveUnlockType.Submit,
+			) ?? false;
 		if (scripted.has(logicId)) {
 			const control = `script:${logicId}`;
 			switches.push(control);
@@ -1089,7 +1676,7 @@ export const loadInteractiveFacilities = async (
 			const reason = modelless.get(row.template);
 			if (reason !== undefined) {
 				standIns.push({
-					source: `${path}#${row.id}`,
+					source,
 					template: row.template,
 					reason,
 					levelTag,
@@ -1109,19 +1696,95 @@ export const loadInteractiveFacilities = async (
 			const visibility = gate(shown);
 			// zero is the authored "no scale override" sentinel on LevelInteractiveData.
 			const scale = row.modelScale > 0 ? row.modelScale : model.scale;
+			const scales: [number, number, number] = [
+				row.scale[0] * scale,
+				row.scale[1] * scale,
+				row.scale[2] * scale,
+			];
+			let posed = pose;
+			if (ride !== null) {
+				const placement = trsMatrix(row.position, unityEulerQuaternion(row.rotation), scales);
+				const moving = curvePath(ride.spline, ride.move, placement);
+				if ('reason' in moving) {
+					unsupported.push({ path: source, reason: moving.reason });
+				} else {
+					posed = {
+						key: `${pose?.key ?? ''} path:${source}`,
+						clips: pose?.clips ?? [],
+						active: pose?.active ?? new Map(),
+						path: moving.path,
+					};
+				}
+			}
+			// a crane's container hangs where its tower puts it
+			const hang = hung.get(row.id);
 			models.push({
 				model: {
 					pathHash: hashOf(model.prefab),
-					position: row.position,
-					rotation: row.rotation,
-					scale: [row.scale[0] * scale, row.scale[1] * scale, row.scale[2] * scale],
+					position: hang?.position ?? row.position,
+					rotation: hang?.rotation ?? row.rotation,
+					scale: scales,
 				},
 				levelTag,
-				source: `${path}#${row.id}`,
+				source,
 				visibility,
-				pose,
+				pose: posed,
+				locked,
 			});
 		};
+		// a settled look's model, and the looping effects its states leave playing on it
+		const placeLook = (
+			model: { prefab: string; scale: number },
+			shown: ConditionalSetInfo,
+			look: SettledLook,
+		): void => {
+			place(model, shown, look.pose);
+			const scale = row.modelScale > 0 ? row.modelScale : model.scale;
+			const frame = trsMatrix(row.position, unityEulerQuaternion(row.rotation), [
+				row.scale[0] * scale,
+				row.scale[1] * scale,
+				row.scale[2] * scale,
+			]);
+			for (const rest of look.effects) {
+				pendingEffects.push({
+					effect: rest.effect,
+					source,
+					levelTag,
+					visibility: gate(shown),
+					frame,
+					on: { prefab: model.prefab, pose: look.pose, rest },
+					followRotation: rest.followRotation,
+				});
+			}
+		};
+		const jumpPad = jumpPads.get(row.template);
+		const arrow = jumpPad === undefined ? null : jumpPadArrow(jumpPad, row);
+		if (arrow !== null) {
+			// a stationary effect, unscaled, independent of the pad's state
+			pendingEffects.push({
+				effect: arrow.effect,
+				source,
+				levelTag,
+				visibility: gate({ alternatives: [[]] }),
+				frame: trsMatrix(row.position, unityEulerQuaternion([0, arrow.yaw, 0]), [1, 1, 1]),
+				on: null,
+				followRotation: true,
+			});
+		}
+		const verticalPad = verticalPads.get(row.template);
+		const vent = verticalPad === undefined ? null : verticalPadEffect(verticalPad, row);
+		if (vent !== null) {
+			// played on the entity's root, so it follows the placement but not its model's scale
+			pendingEffects.push({
+				effect: vent,
+				source,
+				levelTag,
+				visibility: gate({ alternatives: [[]] }),
+				frame: trsMatrix(row.position, unityEulerQuaternion(row.rotation), row.scale),
+				on: null,
+				followRotation: true,
+			});
+		}
 		const bridge = telescopic.get(row.template);
 		if (bridge !== undefined) {
 			const pieces = piecesOf(row) ?? bridge.pieces;
@@ -1178,7 +1841,15 @@ export const loadInteractiveFacilities = async (
 		}
 		const rest = interactiveLooks.get(row.template);
 		if (rest !== undefined) {
-			const { looks, campfire, radius } = rest;
+			const { campfire, radius } = rest;
+			let { looks } = rest;
+			// a placement's own `state` overrides its template's
+			const state = (rest.state === null ? null : stateOf(row)) ?? rest.state;
+			const floats = rest.verticalRope ? verticalRopeFloats(row, rowsById) : new Map<string, number>();
+			if (state !== rest.state || floats.size > 0) {
+				// oxlint-disable-next-line no-await-in-loop -- one settle per model, state and rope length
+				looks = (await looksFor(rest.model, campfire, rest.keys, state, floats)) ?? looks;
+			}
 			const where = `(${Math.round(row.position[0])}, ${Math.round(row.position[2])})`;
 			const activation = `activation:${row.id}`;
 			if (campfire) {
@@ -1222,18 +1893,18 @@ export const loadInteractiveFacilities = async (
 				const requirements = campfire ? [{ control: activation, mask: 1 << i }] : [];
 				const near = looks.near?.[i];
 				if (near === undefined || near.states.join() === away.states.join()) {
-					place(template.forms[0], { alternatives: [requirements] }, away.pose);
+					placeLook(template.forms[0], { alternatives: [requirements] }, away);
 					continue;
 				}
-				place(
+				placeLook(
 					template.forms[0],
 					{ alternatives: [[...requirements, { control: nearness, mask: 1 }]] },
-					away.pose,
+					away,
 				);
-				place(
+				placeLook(
 					template.forms[0],
 					{ alternatives: [[...requirements, { control: nearness, mask: 2 }]] },
-					near.pose,
+					near,
 				);
 			}
 			continue;
@@ -1289,6 +1960,11 @@ export const loadInteractiveFacilities = async (
 			}
 			continue;
 		}
+		const crane = craneLooks.get(row.id);
+		if (crane !== undefined) {
+			place(template.forms[0], { alternatives: [[]] }, crane);
+			continue;
+		}
 		if (template.name === null) {
 			place(template.forms[0], { alternatives: [[]] }, null);
 			const doodad = doodads.get(row.template);
@@ -1322,6 +1998,79 @@ export const loadInteractiveFacilities = async (
 			);
 		}
 	}
+	if (pendingEffects.length > 0) {
+		findHashes(new Set(pendingEffects.map(({ effect }) => effectPrefab(effect))));
+		const resolver = await context.resolver();
+		/** by effect prefab, whether it keeps playing at rest; `null` when it's missing or unreadable */
+		const looping = new Map<string, Promise<boolean | null>>();
+		const loops = (prefab: string): Promise<boolean | null> =>
+			looping.getOrInsertComputed(prefab, async () => {
+				const hash = hashes.get(prefab);
+				if (hash === undefined) {
+					unsupported.push({ path: prefab, reason: 'effect prefab not in the bundle manifest' });
+					return null;
+				}
+				try {
+					const root = await resolver.findUnique({ hash, path: prefab }, UnityClass.GameObject);
+					// an effect that doesn't loop has run out by the time its state rests
+					return !(await isOneShotEffect(resolver, root));
+				} catch (error) {
+					if (!(error instanceof FormatError)) {
+						throw error;
+					}
+					unsupported.push({ path: prefab, reason: error.message });
+					return null;
+				}
+			});
+		/** by model prefab and pose, its GameObjects' matrices; `null` when unreadable */
+		const nodeMatrices = new Map<string, Promise<Map<string, Float32Array> | null>>();
+		const nodesOf = (prefab: string, pose: PrefabPose): Promise<Map<string, Float32Array> | null> =>
+			nodeMatrices.getOrInsertComputed(`${prefab}:${pose.key}`, async () => {
+				try {
+					const root = await resolver.findUnique(
+						{ hash: hashOf(prefab), path: prefab },
+						UnityClass.GameObject,
+					);
+					return await prefabNodeMatrices(resolver, root, pose);
+				} catch (error) {
+					if (!(error instanceof FormatError)) {
+						throw error;
+					}
+					unsupported.push({ path: prefab, reason: error.message });
+					return null;
+				}
+			});
+		for (const pending of pendingEffects) {
+			const prefab = effectPrefab(pending.effect);
+			// oxlint-disable-next-line no-await-in-loop -- one read per effect prefab
+			if ((await loops(prefab)) !== true) {
+				continue;
+			}
+			let matrix = pending.frame;
+			if (pending.on !== null) {
+				const { rest } = pending.on;
+				// oxlint-disable-next-line no-await-in-loop -- one walk per model prefab and pose
+				const nodes = await nodesOf(pending.on.prefab, pending.on.pose);
+				if (nodes === null) {
+					continue;
+				}
+				// a GameObject the model lacks falls back to the animator's, as in the game
+				const node =
+					(rest.node === null ? undefined : nodes.get(rest.node)) ??
+					(rest.fallback === null ? undefined : nodes.get(rest.fallback));
+				if (node !== undefined) {
+					matrix = multiplyMatrices(matrix, node);
+				}
+			}
+			models.push({
+				model: { pathHash: hashes.get(prefab)!, ...matrixPlacement(matrix, pending.followRotation) },
+				levelTag: pending.levelTag,
+				source: `${pending.source}:${pending.effect}`,
+				visibility: pending.visibility,
+				pose: null,
+			});
+		}
+	}
 	for (const [id, set] of doodadLevels) {
 		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
 		const levels = [...set].sort((a, b) => a - b);
@@ -1342,6 +2091,7 @@ export const loadInteractiveFacilities = async (
 		progressions,
 		scriptControls,
 		created: [...createdControls.values()],
+		activities: activity ? [structuredClone(ACTIVITY_CONTROL)] : [],
 		proximityControls,
 		proximities,
 		doors,

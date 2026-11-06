@@ -3,7 +3,7 @@
 how the viewer draws the terrain and foliage grids that [game-data/world.md](../game-data/world.md)
 describes. which pages a frame selects and streams is in
 [streaming.md](streaming.md#terrain-selection); the shader is
-[`render/shaders/terrain.wgsl`](../../packages/viewer/src/render/shaders/terrain.wgsl).
+[`render/terrain/terrain.wgsl`](../../packages/viewer/src/render/terrain/terrain.wgsl).
 
 ## terrain
 

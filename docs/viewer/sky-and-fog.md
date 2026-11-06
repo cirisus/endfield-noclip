@@ -6,15 +6,16 @@ how the viewer draws the sky, the layers beyond the atmosphere and the fogs that
 
 ## sky
 
-[`shaders/atmosphere.wgsl`](../../packages/viewer/src/render/shaders/atmosphere.wgsl) builds the
+[`atmosphere.wgsl`](../../packages/viewer/src/render/sky/atmosphere.wgsl)
+([`atmosphere-luts.ts`](../../packages/viewer/src/render/sky/atmosphere-luts.ts)) builds the
 transmittance, multiple-scattering and per-frame sky-view LUTs of the
 [atmosphere model](../game-data/sky-and-fog.md#sky). the game's LUT scale (`skyViewScale` in
-[`render/environment.ts`](../../packages/viewer/src/render/environment.ts)) is applied when
-[`shaders/sky.wgsl`](../../packages/viewer/src/render/shaders/sky.wgsl) samples the LUT rather than
-when it's rendered, which comes to the same. the sky-view LUT has no ground bounce below the horizon
-(only the multiple-scattering LUT takes the ground albedo), and the global colour adjustment is left
-out. at Power Plateau's overcast the sky stays 15–20 sRGB levels brighter than an in-game shot,
-while Wuling City's matches.
+[`environment/derive.ts`](../../packages/viewer/src/environment/derive.ts)) is applied when
+[`sky.wgsl`](../../packages/viewer/src/render/sky/sky.wgsl) samples the LUT rather than when it's
+rendered, which comes to the same. the sky-view LUT has no ground bounce below the horizon (only the
+multiple-scattering LUT takes the ground albedo), and the global colour adjustment is left out. at
+Power Plateau's overcast the sky stays 15–20 sRGB levels brighter than an in-game shot, while Wuling
+City's matches.
 
 the cloud panorama is drawn in the celestial pass (see
 [beyond the atmosphere](#beyond-the-atmosphere)), with contrast and rotation applied as authored and
@@ -22,22 +23,21 @@ its tint raw. the cloud flow isn't read, so it never moves.
 
 ## sun disc
 
-the disc is drawn in
-[`shaders/celestial.wgsl`](../../packages/viewer/src/render/shaders/celestial.wgsl), following the
-[game's lobe](../game-data/sky-and-fog.md#sun-disc), unchecked against an in-game shot facing the
-sun.
+the disc is drawn in [`celestial.wgsl`](../../packages/viewer/src/render/sky/celestial.wgsl),
+following the [game's lobe](../game-data/sky-and-fog.md#sun-disc), unchecked against an in-game shot
+facing the sun.
 
 ## beyond the atmosphere
 
 where the game shades these layers inside its one sky-dome draw, the viewer renders them per sky
-pixel in a pass of its own
-([`shaders/celestial.wgsl`](../../packages/viewer/src/render/shaders/celestial.wgsl), packed by
-[`render/celestial.ts`](../../packages/viewer/src/render/celestial.ts)), and the composite puts them
-over the atmosphere's sky before fogging it: `sky · (1 − cover) + layers`. the cloud panorama is
-drawn in the same pass so it can sit between the layers in the
-[game's order](../game-data/sky-and-fog.md#beyond-the-atmosphere).
+pixel in a pass of its own ([`celestial.wgsl`](../../packages/viewer/src/render/sky/celestial.wgsl),
+drawn by [`render/sky/celestial.ts`](../../packages/viewer/src/render/sky/celestial.ts) from the
+look [`environment/celestial-look.ts`](../../packages/viewer/src/environment/celestial-look.ts)
+derives), and the composite puts them over the atmosphere's sky before fogging it:
+`sky · (1 − cover) + layers`. the cloud panorama is drawn in the same pass so it can sit between the
+layers in the [game's order](../game-data/sky-and-fog.md#beyond-the-atmosphere).
 
-- **the ray-traced planet**: `render/celestial.ts` copies its parameters from the
+- **the ray-traced planet**: `environment/celestial-look.ts` copies its parameters from the
   `HGRP/Planet/PlanetBillboard` material, linearising the colours. its light is the viewer's
   pre-exposed sun; which light the game gives it in a space level is unchecked.
 - **sky planets**: the body's frame hands its right vector to the shader as "forward" and its
@@ -49,17 +49,16 @@ none of the layers is checked against an in-game shot.
 
 ## fog
 
-the analytic fogs are applied in
-[`shaders/sky.wgsl`](../../packages/viewer/src/render/shaders/sky.wgsl) by the composite (opaque
-surfaces and sky) and water passes. the height fog's packed base-2 units are `FOG_UNIT` in
-[`render/environment.ts`](../../packages/viewer/src/render/environment.ts).
+the analytic fogs are applied in [`sky.wgsl`](../../packages/viewer/src/render/sky/sky.wgsl) by the
+composite (opaque surfaces and sky) and water passes. the height fog's packed base-2 units are
+`FOG_UNIT` in [`environment/derive.ts`](../../packages/viewer/src/environment/derive.ts).
 
 the volumetric fog's froxels are computed each frame by a compute pass
-([`render/volumetric-fog.ts`](../../packages/viewer/src/render/volumetric-fog.ts)). it slices depth
-as the game does, but with the quality presets unrecovered it takes Unreal's defaults for the rest:
-a fixed 160 × 90 × 64 grid, 32 slices per doubling and 90 % history. its sky term takes the ambient
-probe without the native diffuse-ambient scale. local fog volumes and the volumetric light's flow
-noise aren't drawn.
+([`render/sky/volumetric-fog.ts`](../../packages/viewer/src/render/sky/volumetric-fog.ts)). it
+slices depth as the game does, but with the quality presets unrecovered it takes Unreal's defaults
+for the rest: a fixed 160 × 90 × 64 grid, 32 slices per doubling and 90 % history. its sky term
+takes the ambient probe without the native diffuse-ambient scale. local fog volumes and the
+volumetric light's flow noise aren't drawn.
 
 - the height fog's start distance and inscatter colour belong to the far fog while the volumetric
   fog is on; drawn alone with them, the height fog would put a hard, bright fog wall at the start

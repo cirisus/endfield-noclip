@@ -14,6 +14,7 @@ import type {
 	EffectTexture,
 	EffectUvSource,
 	EffectVertexOffset,
+	EffectVertexOffsetMask,
 	FadeRange,
 	LightBeamSurface,
 	LitDecalSurface,
@@ -317,7 +318,46 @@ const vertexOffsetOf = (reader: MaterialReader): EffectVertexOffset | null => {
 		intensity: float('_OffsetIntensity', 0),
 		bias: float('_Bi_Offset', 0),
 		vertexAlphaWeight: 0,
-		cameraPull: 0,
+		mask: null,
+	};
+};
+
+/** the stack slots a vertex offset's mask can take: the sample textures', but the sixth's (the offset's own) */
+const MASK_SLOTS = [5, 4, 3, 2, 1];
+
+/**
+ * VFXBaseV2's mask on the vertex offset (`_USE_VERTOFFSETMASK`), drawn from a slot the stack leaves empty
+ *
+ * @param reader the material's properties
+ * @param layers the stack's slots
+ * @returns the mask, `null` without one or where it changes nothing (an unset white texture), or
+ *   `unsupported`
+ */
+const offsetMaskOf = (
+	reader: MaterialReader,
+	layers: readonly (StackLayer | null)[],
+): EffectVertexOffsetMask | UnsupportedSurface | null => {
+	const { float, colorOrVector: color, has } = reader;
+	if (!has('_USE_VERTOFFSETMASK')) {
+		return null;
+	}
+	const bound = reader.slot('_OffsetMaskTex');
+	if (bound === undefined) {
+		// a red of 1 leaves the offset whole
+		return reader.shader.textures['_OffsetMaskTex'] === 'white'
+			? null
+			: unsupported('a vertex offset mask without its texture');
+	}
+	const slot = MASK_SLOTS.find((i) => layers[i] === null);
+	if (slot === undefined) {
+		return unsupported('a vertex offset mask with every sample slot taken');
+	}
+	return {
+		// sampled at the offset texture's UVs, scrolled by its speed's xy (zw scroll by custom data, only on
+		// particles, where the offset is off)
+		texture: effectTexture(bound, (color('_OffsetMaskSpeed') ?? [0, 0]).slice(0, 2)),
+		slot,
+		strength: float('_OffsetMaskPower', 0) * 0.2,
 	};
 };
 
@@ -411,7 +451,6 @@ const softBodyOf = (reader: MaterialReader): EffectSoftBody | UnsupportedSurface
 		fixedFrame,
 		uScale: vatPadding(min[2]),
 		vScale: vatPadding(max[0]),
-		cameraPull: float('_VertCameraOffset', 0),
 	};
 };
 
@@ -450,6 +489,10 @@ const baseKeywordDrawn = (keyword: string, reader: MaterialReader): boolean => {
 			// the sixth sample texture takes the vertex offset's slot
 			return vertexOffsetOf(reader) === null;
 		}
+		case '_USE_VERTOFFSETMASK': {
+			// drawn by `offsetMaskOf`, which rejects the materials it can't draw
+			return true;
+		}
 		case '_USE_WATER_BLEND': {
 			// the blend changes only what lies below `_WaterHeight`, which the viewer marks unsupported per fragment
 			// (`waterBlendOf`)
@@ -486,8 +529,18 @@ export const describeVfxBase = (
 	if (stencil !== null && 'kind' in stencil) {
 		return stencil;
 	}
-	if (material.blend === 'opaque') {
-		return stencil?.replace === true ? { kind: 'stencilMask', stencil } : unsupported('opaque blending');
+	// an opaque blend state writes the premultiplied colour over what's behind, drawn in the main pass
+	const opaque = material.blend === 'opaque';
+	if (opaque) {
+		if (stencil?.replace === true) {
+			return { kind: 'stencilMask', stencil };
+		}
+		if (stencil !== null) {
+			return unsupported('opaque blending with a stencil');
+		}
+		if (!material.zWrite) {
+			return unsupported('opaque blending without depth writes');
+		}
 	}
 	// the shader writes its alpha times `1 − _BlendMode`: 1 adds the premultiplied colour over what's behind, and
 	// 2 writes `lerp(1, colour, alpha)` for a blend state that multiplies what's behind by it
@@ -495,7 +548,14 @@ export const describeVfxBase = (
 	if (blendMode !== 0 && blendMode !== 1 && blendMode !== 2) {
 		return unsupported(`_BlendMode ${blendMode}`);
 	}
-	if (blendMode === 2 ? !multipliesBehind(reader) : material.blend !== 'premultiplied') {
+	let blendable = material.blend === 'premultiplied';
+	if (opaque) {
+		// under an opaque blend state, modes 0 and 1 write the same colour
+		blendable = blendMode !== 2;
+	} else if (blendMode === 2) {
+		blendable = multipliesBehind(reader);
+	}
+	if (!blendable) {
 		return unsupported(`_BlendMode ${blendMode} with ${material.blend} blending`);
 	}
 	// drawn over the composited scene, which has no stencil
@@ -590,7 +650,17 @@ export const describeVfxBase = (
 		return unsupported('no main texture and a non-white default');
 	}
 	const shared = sharedOf(reader, intensity);
+	const soft = softBlendOf(reader);
+	// both read the main pass's depth, which an opaque layer draws into
+	if (opaque && (soft !== null || has('_USE_EDGECOLOR'))) {
+		return unsupported('opaque blending with a soft blend or edge colour');
+	}
 	const offset = vertexOffsetOf(reader);
+	// the mask only scales the offset, so without one it changes nothing
+	const mask = offset === null ? null : offsetMaskOf(reader, layers);
+	if (mask !== null && 'kind' in mask) {
+		return mask;
+	}
 	return {
 		kind: 'effectStack',
 		variant: 'base',
@@ -620,7 +690,7 @@ export const describeVfxBase = (
 					opacity: float('_FresnelAffectOpacity', 0),
 				}
 			: null,
-		soft: softBlendOf(reader),
+		soft,
 		ignorePostExposure: shared.ignorePostExposure,
 		vertexColor: float('_DisableVertColor', 0) === 0,
 		near: shared.near,
@@ -649,13 +719,16 @@ export const describeVfxBase = (
 				: {
 						...offset,
 						vertexAlphaWeight: float('_UseVertexColorAlphaAsVertOffsetWeight', 0),
-						cameraPull: float('_VertCameraOffset', 0),
+						mask,
 					},
 		softBody,
+		// every variant pulls by `1 − _InParticle`, with or without a vertex offset
+		cameraPull: float('_InParticle', 1) === 0 ? float('_VertCameraOffset', 0) : null,
 		waterBlendBelow: waterBlendOf(reader),
 		lighting: has('_USE_LIGHTING') ? { worldUp: float('_RotateNormalToWorldUp', 0) !== 0 } : null,
 		unfogged: !has('_USE_FOG'),
 		blendMode,
+		opaque,
 		screenUv: {
 			byDepth: float('_ScreenUVUseDepth', 1) !== 0,
 			heightAsV: float('_UsePosYAsScreenV', 0) !== 0,
@@ -812,11 +885,13 @@ export const describeDitherEffect = (reader: MaterialReader): EffectStackSurface
 		alphaPower: float('_DitherAlphaExp', 1),
 		offset: vertexOffsetOf(reader),
 		softBody: null,
+		cameraPull: null,
 		waterBlendBelow: null,
 		lighting: null,
 		// a G-buffer surface, so the deferred fog covers it
 		unfogged: false,
 		blendMode: 0,
+		opaque: false,
 		screenUv: {
 			byDepth: float('_ScreenUVUseDepth', 1) !== 0,
 			heightAsV: float('_UsePosYAsScreenV', 0) !== 0,
@@ -1035,10 +1110,12 @@ export const describeVfxDecal = (reader: MaterialReader): EffectStackSurface | U
 		alphaPower: 1,
 		offset: null,
 		softBody: null,
+		cameraPull: null,
 		waterBlendBelow: null,
 		lighting: null,
 		unfogged: !has('_USE_FOG'),
 		blendMode: 0,
+		opaque: false,
 		screenUv: { byDepth: false, heightAsV: false },
 		stencil: null,
 	};

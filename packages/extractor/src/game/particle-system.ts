@@ -1,4 +1,5 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import { type DecodedMesh, MeshTopology } from '@endfield-noclip/formats/unity/mesh';
 import { inverseAffine } from '@endfield-noclip/formats/unity/transform';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import {
@@ -27,11 +28,14 @@ import {
 	type ParticleCustom,
 	type ParticleDragInfo,
 	type ParticleForceFieldInfo,
+	ParticleMeshPlacement,
+	ParticleMeshSpawn,
 	type ParticleSpeedLimitInfo,
 	ParticleRenderMode,
 	type ParticleRingBufferInfo,
 	type ParticleShapeInfo,
 	ParticleShapeKind,
+	type ParticleShapeMeshInfo,
 	type ParticleSystemInfo,
 	type ParticleTextureSheetInfo,
 	type ParticleVelocityInfo,
@@ -101,6 +105,11 @@ export type ParticleSystemRead =
 			 * {@link ParticleFreeMotionInfo.forces}; `null` without
 			 */
 			forces: ExternalForcesRead | null;
+			/**
+			 * the mesh a {@link ParticleShapeKind.Mesh} shape emits from, for the caller to decode into
+			 * {@link ParticleShapeInfo.mesh} with {@link particleShapeMesh}; `null` for other shapes
+			 */
+			shapeMesh: PPtr | null;
 	  }
 	| { reason: string };
 
@@ -258,6 +267,12 @@ const readShape = (shape: TypeTreeObject): ParticleShapeInfo | string => {
 	if (!isShapeKind(kind)) {
 		return `shape ${kind}`;
 	}
+	if (kind === ParticleShapeKind.Mesh) {
+		const unsupported = meshShapeUnsupported(shape);
+		if (unsupported !== null) {
+			return unsupported;
+		}
+	}
 	const radius = objectField(shape, 'radius');
 	const arc = objectField(shape, 'arc');
 	return {
@@ -274,8 +289,141 @@ const readShape = (shape: TypeTreeObject): ParticleShapeInfo | string => {
 		randomDirection: numberField(shape, 'randomDirectionAmount'),
 		sphericalDirection: numberField(shape, 'sphericalDirectionAmount'),
 		randomPosition: numberField(shape, 'randomPositionAmount'),
+		// the caller decodes the mesh (particleShapeMesh)
+		mesh: null,
 	};
 };
+
+// #region mesh shape
+
+/** `ShapeModule.m_MeshSpawn.mode` values */
+const MeshSpawnMode = { Random: 0, Loop: 1 } as const;
+
+/** @returns why the viewer can't emit from a mesh shape's settings, or `null` when it can */
+const meshShapeUnsupported = (shape: TypeTreeObject): string | null => {
+	if (isObject(shape.m_Texture) && pptrField(shape, 'm_Texture').pathId !== 0n) {
+		return 'mesh shape texture';
+	}
+	const spawn = numberField(objectField(shape, 'm_MeshSpawn'), 'mode');
+	// the edge's loop steps by the emission's place in the frame, which isn't traced
+	if (numberField(shape, 'placementMode') === ParticleMeshPlacement.Edge && spawn !== MeshSpawnMode.Random) {
+		return `edge mesh shape spawn mode ${spawn}`;
+	}
+	return null;
+};
+
+/** rounds to `scale` steps per unit, keeping the table small */
+const quantize = (values: ArrayLike<number>, scale: number): number[] =>
+	Array.from(values, (value) => Math.round(value * scale) / scale);
+
+/**
+ * reads the mesh a mesh shape emits from: every submesh's primitives, or only `m_MeshMaterialIndex`'s when
+ * `m_UseMeshMaterialIndex` is set, as the engine does. triangle submeshes give triangles, line and line-strip
+ * ones lines, and one without indices a line strip through all the mesh's vertices
+ *
+ * @param shape a `ShapeModule` of type 6
+ * @param mesh its `m_Mesh`, decoded
+ * @returns the mesh, or why the viewer can't emit from it: quads or points (which the engine refuses too),
+ *   lines alongside triangles, or no primitives
+ */
+export const particleShapeMesh = (
+	shape: TypeTreeObject,
+	mesh: DecodedMesh,
+): ParticleShapeMeshInfo | string => {
+	let submeshes = mesh.submeshes;
+	if (booleanField(shape, 'm_UseMeshMaterialIndex') && submeshes.length > 0) {
+		const index = Math.min(Math.max(numberField(shape, 'm_MeshMaterialIndex'), 0), submeshes.length - 1);
+		submeshes = [submeshes[index]];
+	}
+	let corners: 2 | 3 | null = null;
+	const primitives: number[] = [];
+	for (const submesh of submeshes) {
+		const at = (i: number) => mesh.indices[submesh.firstIndex + i] + submesh.baseVertex;
+		let kind: 2 | 3;
+		if (submesh.indexCount === 0) {
+			kind = 2;
+			// through all the mesh's vertices, whatever the submesh records
+			for (let v = 0; v + 1 < mesh.vertexCount; v++) {
+				primitives.push(v, v + 1);
+			}
+		} else {
+			switch (submesh.topology) {
+				case MeshTopology.Triangles: {
+					kind = 3;
+					for (let i = 0; i + 2 < submesh.indexCount; i += 3) {
+						primitives.push(at(i), at(i + 1), at(i + 2));
+					}
+					break;
+				}
+				case MeshTopology.Lines: {
+					kind = 2;
+					for (let i = 0; i + 1 < submesh.indexCount; i += 2) {
+						primitives.push(at(i), at(i + 1));
+					}
+					break;
+				}
+				case MeshTopology.LineStrip: {
+					kind = 2;
+					for (let i = 0; i + 1 < submesh.indexCount; i++) {
+						primitives.push(at(i), at(i + 1));
+					}
+					break;
+				}
+				default: {
+					return `mesh shape topology ${submesh.topology}`;
+				}
+			}
+		}
+		// the engine keeps one corner count for the whole mesh, so it samples a mix inconsistently
+		if (corners !== null && corners !== kind) {
+			return 'mesh shape mixing lines and triangles';
+		}
+		corners = kind;
+	}
+	if (corners === null || primitives.length === 0) {
+		return 'mesh shape without primitives';
+	}
+	const placement = numberField(shape, 'placementMode');
+	if (
+		placement !== ParticleMeshPlacement.Vertex &&
+		placement !== ParticleMeshPlacement.Edge &&
+		placement !== ParticleMeshPlacement.Triangle
+	) {
+		return `mesh shape placement ${placement}`;
+	}
+	const spawnModule = objectField(shape, 'm_MeshSpawn');
+	const spawnMode = numberField(spawnModule, 'mode');
+	// only vertices follow the spawn mode; Edge's loop stands in, triangles are always random. PingPong and
+	// BurstSpread both walk back and forth
+	let spawn: ParticleMeshSpawn = ParticleMeshSpawn.Random;
+	if (placement === ParticleMeshPlacement.Vertex && spawnMode !== MeshSpawnMode.Random) {
+		spawn = spawnMode === MeshSpawnMode.Loop ? ParticleMeshSpawn.Loop : ParticleMeshSpawn.PingPong;
+	}
+	const colors = booleanField(shape, 'm_UseMeshColors') ? mesh.colors : null;
+	return {
+		placement,
+		spawn,
+		spread: placement === ParticleMeshPlacement.Edge ? Math.max(numberField(spawnModule, 'spread'), 0) : 0,
+		normalOffset: numberField(shape, 'm_MeshNormalOffset'),
+		positions: quantize(mesh.positions, 1e4),
+		normals: mesh.normals === null ? null : quantize(mesh.normals, 1e3),
+		colors:
+			colors === null
+				? null
+				: Array.from({ length: mesh.vertexCount * 4 }, (_, i) =>
+						// the engine reads Color32; rgb without alpha reads as opaque
+						i % 4 < colors.dimension
+							? Math.round(
+									Math.min(Math.max(colors.data[Math.floor(i / 4) * colors.dimension + (i % 4)], 0), 1) * 255,
+								)
+							: 255,
+					),
+		corners,
+		primitives,
+	};
+};
+
+// #endregion
 
 const readVelocity = (velocity: TypeTreeObject): ParticleVelocityInfo => {
 	const curves = (names: readonly string[]) =>
@@ -541,9 +689,9 @@ export const readCustomData = (
  * @param system the emitter's `ParticleSystem`
  * @param renderer its `ParticleSystemRenderer`
  * @returns the system and the meshes its particles draw, or why the viewer can't play it: a render mode, a
- *   module, shape, texture sheet or ring buffer mode it doesn't evaluate, a speed modifier curve alongside a
- *   speed limit or drag, a per-axis speed limit or one alongside drag, a drag or rate curve, or no mesh.
- *   `null` for a system that doesn't play on awake, which shows nothing until a script starts it
+ *   module, shape, texture sheet or ring buffer mode it doesn't evaluate, a speed modifier curve alongside
+ *   drag, a per-axis speed limit or one alongside drag, a drag or rate curve, or no mesh. `null` for a system
+ *   that doesn't play on awake, which shows nothing until a script starts it
  */
 export const readParticleSystem = (
 	system: TypeTreeObject,
@@ -655,9 +803,9 @@ export const readParticleSystem = (
 			return { reason: 'velocity limit with drag' };
 		}
 		clamp = limit ?? drag;
-		// the viewer's stepped and dragged paths take the speed modifier as a constant
-		if (clamp !== null && velocity !== null && !isConstant(velocity.speedModifier)) {
-			return { reason: 'speed modifier curve with a velocity limit or drag' };
+		// the viewer's dragged path takes the speed modifier as a constant
+		if (drag !== null && velocity !== null && !isConstant(velocity.speedModifier)) {
+			return { reason: 'speed modifier curve with drag' };
 		}
 	}
 
@@ -667,12 +815,9 @@ export const readParticleSystem = (
 		const multiplier = readMinMaxCurve(objectField(module, 'multiplierCurve'));
 		// the engine skips the module unless the multiplier's scalar is above 0
 		if (multiplier.scalar > 0) {
-			// the stepped path the forces need takes no drag and a constant speed modifier
+			// the stepped path the forces need takes no drag
 			if (clamp?.kind === 'drag') {
 				return { reason: 'force fields with drag' };
-			}
-			if (velocity !== null && !isConstant(velocity.speedModifier)) {
-				return { reason: 'speed modifier curve with force fields' };
 			}
 			forces = {
 				multiplier,
@@ -782,6 +927,8 @@ export const readParticleSystem = (
 		},
 		meshes,
 		forces,
+		shapeMesh:
+			shape?.kind === ParticleShapeKind.Mesh ? pptrField(objectField(system, 'ShapeModule'), 'm_Mesh') : null,
 	};
 };
 
@@ -927,7 +1074,15 @@ export const particleReach = (info: ParticleSystemInfo, meshRadius: number): Aab
 		const s = info.shape;
 		const along = s.kind === ParticleShapeKind.ConeVolume ? s.length : 0;
 		const tube = s.kind === ParticleShapeKind.Donut ? s.donutRadius : 0;
-		const spread = s.radius + tube + along * Math.tan((Math.min(Math.abs(s.angle), 89) * Math.PI) / 180);
+		let spread = s.radius + tube + along * Math.tan((Math.min(Math.abs(s.angle), 89) * Math.PI) / 180);
+		if (s.mesh !== null) {
+			// the farthest vertex; edges and triangles lie within their vertices' hull
+			spread = 0;
+			const p = s.mesh.positions;
+			for (let i = 0; i < p.length; i += 3) {
+				spread = Math.max(spread, Math.hypot(p[i], p[i + 1], p[i + 2]));
+			}
+		}
 		shape =
 			Math.hypot(...s.position) +
 			Math.max(...s.scale.map(Math.abs)) * Math.hypot(spread, along) +

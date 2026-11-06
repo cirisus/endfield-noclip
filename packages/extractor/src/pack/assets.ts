@@ -713,7 +713,13 @@ const withSavedValues = (record: MaterialRecord, saved: MaterialValues | null): 
 			floats[name] = value;
 		}
 	}
-	return { ...record, floats, ints, colors: { ...record.colors, ...saved.colors } };
+	const textures = { ...record.textures };
+	for (const [name, transform] of Object.entries(saved.textures)) {
+		if (Object.hasOwn(textures, name)) {
+			textures[name] = { ...textures[name], ...transform };
+		}
+	}
+	return { ...record, floats, ints, colors: { ...record.colors, ...saved.colors }, textures };
 };
 
 /**

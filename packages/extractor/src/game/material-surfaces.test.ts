@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { describeMaterial } from './material-describe.ts';
+import { keywordsNotDrawn } from './material-surfaces.ts';
 import type { MaterialValues, ShaderEntry } from './material-values.ts';
 
 /** a shader entry declaring only the overrides' properties */
@@ -245,6 +246,29 @@ describe('the Lit model', () => {
 		assert.deepEqual([blended.blend, blended.opacity, blended.alphaFromNormal], ['alphaBlend', 0.5, true]);
 		assert.deepEqual([blended.layout, blended.metallicFromBaseAlpha], ['twoBasemap', true]);
 		assert.equal(glass('premultiplied').blend, 'premultiplied');
+	});
+
+	it('draws HGRP/LitForward as Lit in the MRO layout, emitting by its mask, without its own cubemap', () => {
+		const shader = shaderEntry({
+			name: 'HGRP/LitForward',
+			family: 'litForward',
+			normalMaps: ['_NormalMap'],
+		});
+		// M_anm_com_treasurechest+1_001_02, the golden treasure chest's body
+		const material = values({
+			keywords: ['_CUSTOM_IBL', '_EMISSIVE_MASK'],
+			baseTextureMapCount: 0,
+			slots: { _BaseColorMap: slot(1), _NormalMap: slot(2), _MROMap: slot(3), _CustomIBL: slot(4) },
+			floats: { _EmissiveMaskChannel: 4, _Metallic: 1, _Specular: 0.5 },
+			colors: { _EmissiveColor: [6.207, 6.323, 3.567, 1], _BaseColor: [1, 1, 1, 1] },
+		});
+		const chest = lit(describeMaterial(material, shader));
+		assert.deepEqual([chest.layout, chest.textures.mro?.texture], ['mro', 3]);
+		assert.deepEqual(
+			[chest.emission?.source, chest.emission?.maskChannel, chest.emission?.color],
+			['mask', 4, [6.207, 6.323, 3.567]],
+		);
+		assert.deepEqual(keywordsNotDrawn(shader.name, material.keywords), ['_CUSTOM_IBL']);
 	});
 
 	it('pulses _EMISSIVE_ANIM emission unless it flickers', () => {

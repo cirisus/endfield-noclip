@@ -1,0 +1,64 @@
+import type { DebugView } from '../frame/debug-views.ts';
+
+import type { AutoExposure } from './auto-exposure.ts';
+
+/**
+ * the tonemapping curves the final pass offers, in the order of their `Post.grade.w` codes: the game's
+ * modified ACES (its `TonemappingMode.ACES_modified`), Khronos PBR Neutral (not the game's own `Neutral`
+ * mode), or a clamp. the game's colour grading applies under the first two
+ */
+export const TONEMAPPERS = ['game', 'pbr neutral', 'none'] as const;
+
+export type Tonemapper = (typeof TONEMAPPERS)[number];
+
+/** what the post chain shows; mirrors the viewer's look options */
+export interface PostSettings {
+	/** exposure compensation, EV */
+	exposure: number;
+	/** follow the game's auto exposure on top of the compensation */
+	autoExposure: boolean;
+	tonemapper: Tonemapper;
+	sky: boolean;
+	heightFog: boolean;
+	atmosphereFog: boolean;
+	/** sway the fog with the environment's flow noise */
+	flowNoise: boolean;
+	ao: boolean;
+	/** screen-space reflections */
+	reflections: boolean;
+	bloom: boolean;
+	vignette: boolean;
+	/** anything but `lit` shows the main pass as it is: no exposure, tonemapping, effects or water */
+	debugView: DebugView;
+}
+
+/**
+ * @param settings the settings asked for
+ * @returns the settings in effect: debug views turn the look off
+ */
+export const effectiveSettings = (settings: PostSettings): PostSettings => {
+	if (settings.debugView === 'lit') {
+		return settings;
+	}
+	return {
+		...settings,
+		exposure: 0,
+		autoExposure: false,
+		tonemapper: 'none',
+		heightFog: false,
+		atmosphereFog: false,
+		flowNoise: false,
+		ao: false,
+		reflections: false,
+		bloom: false,
+		vignette: false,
+	};
+};
+
+/**
+ * @param settings the post settings
+ * @param autoExposure the auto exposure's state
+ * @returns the linear exposure the tonemap pass multiplies the scene by
+ */
+export const postExposure = (settings: PostSettings, autoExposure: AutoExposure): number =>
+	2 ** settings.exposure * (settings.autoExposure ? autoExposure.exposure : 1);
