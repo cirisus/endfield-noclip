@@ -555,3 +555,11 @@ with identical route and action output, one retained real-scene solve fell from 
 an experimental wider comparison found a 15.24-second descent in 38.53 seconds of solver time,
 but changed another point's candidate ordering and slightly worsened its route. that budget change
 is not enabled. future broader comparison must preserve the established incumbent independently.
+
+## solver integration
+
+alpha.31 retains geometric goal-distance estimates during repeated searches of the
+same immutable prepared graph. a changed target set invalidates those estimates;
+new action speeds still update the time lower bound. movement sampling, collision
+validation and route costs retain the alpha.30 rules. the v69 preview integration
+uses the same extractor route commands and source-bound physical inputs as before.
