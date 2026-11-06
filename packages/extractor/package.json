@@ -13,6 +13,6 @@
 		"@mary-ext/array-fns": "^0.1.0",
 		"@mary-ext/czar": "^0.1.2",
 		"meshoptimizer": "1.3.0",
-		"@oem/ganglia": "file:../../vendor/ganglia/oem-ganglia-0.1.0-alpha.29.tgz"
+		"@oem/ganglia": "file:../../vendor/ganglia/oem-ganglia-0.1.0-alpha.30.tgz"
 	}
 }
