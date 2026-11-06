@@ -16,6 +16,7 @@ const SWITCH_KINDS: ReadonlySet<SceneControlKind> = new Set([
 	'logic',
 	'cabin',
 	'created',
+	'activity',
 	'door',
 	'bridge',
 ]);

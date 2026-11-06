@@ -431,6 +431,9 @@ packs or renders correctly.
 
 - entities controlled only by `ActivityControlComp` aren't gated; every owner's component is empty
   ([dynamic load gates](game-data/scene-states.md#dynamic-load-gates))
+- event photo spots share one control per scene, not one per event; other kinds of event placement
+  are recognised only through missions and dungeon scripts
+  ([event placements](game-data/scene-states.md#event-placements))
 - resource nodes (doodad groups) share one level control per level; the game's per-group level and
   its source in LevelData aren't read ([scene states](game-data/scene-states.md#doodad-groups))
 - interactive facilities are gathered from levels whose map is the packed scene, so a scene streamed

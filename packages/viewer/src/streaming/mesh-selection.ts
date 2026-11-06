@@ -103,6 +103,20 @@ const CASTER_MIN_PIXELS = 16;
  * squared metric: the GPU measures rows in f32, so a row at a band's edge may land on either side
  */
 const BAND_SLACK = 1.02;
+/**
+ * a segment whose row centres spread wider than this fraction of their distance is measured row by row: its
+ * bound puts its largest row at its nearest centre, which near the camera rates rows far beyond their size on
+ * screen, and so streams their textures at full detail
+ */
+const LOOSE_SEGMENT = 0.25;
+
+/**
+ * @param slot the slot whose LOD band rows are drawn in
+ * @param viewportHeight px
+ * @returns the most pixels a row in the slot's band can cover: the band's upper edge
+ */
+const bandPixels = (slot: ChainSlot, viewportHeight: number): number =>
+	Math.sqrt(slot.maxSquared) * viewportHeight;
 
 /** @returns a number standing for the view options {@link slotHidden} reads */
 const slotFilterKey = (view: MeshView): number =>
@@ -470,13 +484,18 @@ export class MeshSelector {
 			const sy = this.#oy + segments[at + SegmentFloat.center + 1];
 			const sz = this.#oz + segments[at + SegmentFloat.center + 2];
 			const centre = Math.sqrt(sx * sx + sy * sy + sz * sz);
-			const nearest = Math.max(centre - segments[at + SegmentFloat.centersRadius], 0.1);
-			const far = Math.max(centre + segments[at + SegmentFloat.centersRadius], 0.1);
-			const largest = (2 * segments[at + SegmentFloat.maxSize] * pixelFactor) / (nearest * viewportHeight);
+			const centersRadius = segments[at + SegmentFloat.centersRadius];
+			const nearest = Math.max(centre - centersRadius, 0.1);
+			const far = Math.max(centre + centersRadius, 0.1);
+			const largest =
+				centersRadius > centre * LOOSE_SEGMENT
+					? this.#largestRelative(instances, first, end)
+					: (2 * segments[at + SegmentFloat.maxSize] * pixelFactor) / (nearest * viewportHeight);
 			const smallest = (2 * segments[at + SegmentFloat.minSize] * pixelFactor) / (far * viewportHeight);
 			const high = largest * largest * BAND_SLACK;
 			const low = (smallest * smallest) / BAND_SLACK;
-			const priority = largest * viewportHeight * (castOnly ? CASTER_PRIORITY : 1);
+			const scale = castOnly ? CASTER_PRIORITY : 1;
+			const priority = largest * viewportHeight * scale;
 			const slots = block.slots[run];
 			let count = 0;
 			let ready = true;
@@ -485,7 +504,8 @@ export class MeshSelector {
 					continue;
 				}
 				candidates[count++] = slot;
-				if (!this.#geometryReady(slot.geometry, priority, frame)) {
+				const slotPriority = Math.min(priority, bandPixels(slot, viewportHeight) * scale);
+				if (!this.#geometryReady(slot.geometry, slotPriority, frame)) {
 					ready = false;
 				}
 			}
@@ -544,6 +564,29 @@ export class MeshSelector {
 		}
 	}
 
+	/**
+	 * @returns the largest LOD metric (size relative to the screen height) of the block's rows `[first, end)`,
+	 *   as {@link #selectRows} measures each row
+	 */
+	#largestRelative(instances: ResidentInstances, first: number, end: number): number {
+		const view = this.#view;
+		if (view === null) {
+			return 0;
+		}
+		const f32 = instances.rowsF32;
+		const cull = instances.cull;
+		let largest = 0;
+		for (let i = first; i < end; i++) {
+			const at = i * ROW_WORDS;
+			const x = this.#ox + f32[at + 12];
+			const y = this.#oy + f32[at + 13];
+			const z = this.#oz + f32[at + 14];
+			const distance = Math.max(Math.sqrt(x * x + y * y + z * z), 0.1);
+			largest = Math.max(largest, cull[i * CULL_FLOATS + 1] / distance);
+		}
+		return (2 * largest * view.pixelFactor) / view.viewportHeight;
+	}
+
 	/** @returns whether candidate `c` shares its LOD with an earlier one of the first `count` candidates */
 	#seenLod(count: number, c: number): boolean {
 		const lod = this.#candidates[c].lod;
@@ -585,7 +628,11 @@ export class MeshSelector {
 		room.inView = group.inView && !target.shadowOnly ? rows : 0;
 		room.layers = casterLayerBits(target, this.#segment.layer);
 		room.rows = rows;
-		room.priority = priority;
+		// rows drawn in a coarse LOD's band are small on screen, whatever the segment's largest row is
+		const view = this.#view;
+		const cap =
+			view === null ? Infinity : bandPixels(band, view.viewportHeight) * (group.inView ? 1 : CASTER_PRIORITY);
+		room.priority = Math.min(priority, cap);
 		if (room.inView === 0 && room.layers === 0) {
 			return;
 		}

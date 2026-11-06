@@ -251,6 +251,21 @@ mission condition, `e1m9` completed, only locks interaction with it. Dijiang's o
 server creates it. some templates have no data file of their own (the weapon-wall racks, some
 doors), and some templates name no model.
 
+## event placements
+
+limited-time photo events (`ActivityTable` rows of type 4 PhotoTaking, and the conditional
+multi-stage event's photo stages) place their photo spots through ordinary LevelData rows with
+`createState` 0, in per-event layers (`<level>_lv_data_sub_snapshot_activity_v0d8`, `_v1d1`,
+`_v1d6`, and `base01_lv001_lv_data_sub_a1m10` for mission `a1m10`, "Snapshot: Etchings of Our Cosmic
+Dreams"). LevelConfig lists those layers like any other, and nothing in client data opens or closes
+them, so whether a spot exists is the server's call while its event runs. the spots are template
+`int_activity_snap_shot` (model `int_system_snapshot_postmodel`, a yellow light column; Dijiang has
+one in front of the logo wall at unity 12, 1, −16) and carry the `ActivitySnapshotComponent`
+(component type 2000: `identify`, camera pose, `conflictQuestIds`). every placement with that
+component in the install sits in an event layer: 25 rows in 15 layers. their `progressLockCondition`
+names a main-story mission or quest, which locks interaction, not existence. the layers'
+`int_snapshot_empty` rows are the invisible targets the photos check.
+
 ## destructible props
 
 map01 and map02's type-20 dynamic destructibles have one resource group with `logicState` 0 and no
@@ -464,7 +479,10 @@ state conditions, mission gates and level scripts.
   values are unavailable
 - `ActivityControlComp` gates: on map01 and map02 every entity's component holds no conditions
   (compare type 255), and no level script reads activity state, so limited-time events reach the
-  world only through missions and the scripts of event dungeons
+  world only through missions, the scripts of event dungeons and
+  [event placements](#event-placements)
+- which event photo spots belong to which event: the placements name no activity, only their own
+  `identify` key and, for some, the event mission's quests
 - script groups with no client driver: groups whose id equals a level script's own id, ghost-wall
   module decorations (`GhostWallModuleData.outerEffectDecoId`), and ids that scripts reference only
   as animator or attach targets; what shows them isn't traced

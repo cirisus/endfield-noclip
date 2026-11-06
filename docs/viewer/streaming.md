@@ -127,10 +127,18 @@ the group tests, the CPU:
 
 1. picks the slots whose bands the segment's rows can reach, from its nearest and farthest row
    centre and its sizes, with the bands widened 2% for the GPU's f32 arithmetic;
-2. requests their geometry at the segment's largest priority. a LOD with a slot not resident is
-   drawn by the slots of its stand-in in that LOD's band, as on the CPU path;
+2. requests their geometry at the segment's largest priority, capped at the top of each slot's band.
+   a LOD with a slot not resident is drawn by the slots of its stand-in in that LOD's band, as on
+   the CPU path;
 3. makes room in each picked slot's bucket for every row of the segment in view, and in each shadow
    layer the slot can cast into from the first one the segment's sphere reaches.
+
+the segment's largest priority puts its largest row at its nearest row centre, unless its row
+centres spread wider than a quarter of their distance; then each row is measured, as the CPU path
+does. near the camera that bound reaches the 0.1 m floor and rates every row as covering the screen,
+which requested every texture at full detail: at a close indie_race001 view the textures in use grew
+from 105 MiB on the CPU path to 973 MiB, filled the 768 MiB budget and left meshes as boxes.
+measured and capped, they take 141 MiB.
 
 each picked slot's GPU-culled bucket, one per (geometry, submesh, material, mirrored), holds the
 segment's rows in view and its casters out of view alike, in a region of the visible list for its

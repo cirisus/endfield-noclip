@@ -107,6 +107,8 @@ export interface VisibilityGroup {
  *   or a level script), shown (1) or not (0)
  * - `destruction`: a destructible interactive, intact (0) or destroyed (1); authored reward entities show after
  *   destruction
+ * - `activity`: placements of limited-time events (the game's activities), shown (1) or not (0); the server
+ *   opens and closes events, so they're off by default
  * - `door`: an interactive door, closed (0) or open (1); derived from its cabin slot for a Dijiang cabin's door
  * - `area`: a stream area, shown (1) or hidden (0). unless the user picks a value, a viewer sets it from the
  *   camera (see {@link StreamAreasInfo}); its `default` is only what holds without a camera
@@ -136,6 +138,7 @@ export type SceneControlKind =
 	| 'cabinLevel'
 	| 'created'
 	| 'destruction'
+	| 'activity'
 	| 'door'
 	| 'bridge'
 	| 'area'

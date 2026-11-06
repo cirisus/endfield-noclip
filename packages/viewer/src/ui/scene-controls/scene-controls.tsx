@@ -55,6 +55,12 @@ const SECTIONS: { kinds: SceneControlKind[]; title: string; note: string | null;
 		open: false,
 	},
 	{
+		kinds: ['activity'],
+		title: 'Limited-time events',
+		note: 'Placed only while the server runs an event, hidden by default.',
+		open: false,
+	},
+	{
 		kinds: ['door', 'bridge', 'destruction'],
 		title: 'Doors, bridges and destructibles',
 		note: null,

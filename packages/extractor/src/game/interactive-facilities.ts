@@ -704,6 +704,23 @@ const animatorStart = (template: MemoryPackValue): AnimatorStart | null => {
 /** the interactive logic type of telescopic bridges */
 const TELESCOPIC_LOGIC = 8;
 
+/** `InteractiveComponentType.ActivitySnapshotComponent`: a limited-time photo event's spot */
+const ACTIVITY_SNAPSHOT_COMPONENT = 2000;
+
+/** the scene's one control for limited-time event placements */
+const ACTIVITY_CONTROL: SceneControl = {
+	kind: 'activity',
+	id: 'activity:snapshot',
+	name: 'Event photo spots',
+	rule: null,
+	assumption: 'hidden: placed for limited-time photo events, which the server opens and closes',
+	followsCamera: false,
+	levelTags: [],
+	values: SWITCH_VALUES,
+	default: 0,
+	derived: null,
+};
+
 /** the template and placement property holding a telescopic bridge's piece count */
 const PIECES_KEY = 'pieces';
 
@@ -817,7 +834,8 @@ export interface InteractiveStandIn {
  * `bridge:<id>` control, retracted by default. a model without view states whose template sets its own
  * Animator's bools on load is posed in the states they settle; one bool from a saved property puts it under
  * an `activation:<id>` control, set by default. rows the game creates later (`createState` ≠ 0) are placed
- * the same way and also require their level's `created:<level id>` control, off by default. an auto-moving
+ * the same way and also require their level's `created:<level id>` control, off by default. a limited-time
+ * photo event's spot also requires the scene's `activity:snapshot` control, off by default. an auto-moving
  * platform that starts with its level rides its spline
  *
  * @param context install readers and the bundle resolver
@@ -845,6 +863,8 @@ export const loadInteractiveFacilities = async (
 	scriptControls: Map<string, ScriptControl>;
 	/** per level with rows the game creates later (`createState` ≠ 0), the control that shows them, off */
 	created: SceneControl[];
+	/** the control that shows limited-time event placements, off; empty when the scene has none */
+	activities: SceneControl[];
 	/** controls of interactives whose look follows the player's presence, and where each counts as near */
 	proximityControls: SceneControl[];
 	proximities: ProximityInfo[];
@@ -1652,6 +1672,8 @@ export const loadInteractiveFacilities = async (
 			rotation: quaternionUnityEuler(look.attach.rotation),
 		});
 	}
+	/** whether any placement needs {@link ACTIVITY_CONTROL} */
+	let activity = false;
 	for (const { path, levelId, levelTag, row, created } of placed) {
 		// a row created later also needs its level's `created` control on, and one a level script shows and hides
 		// its script control
@@ -1660,6 +1682,10 @@ export const loadInteractiveFacilities = async (
 		const switches: string[] = [];
 		if (created !== null && !rewards.has(logicId)) {
 			switches.push(created);
+		}
+		if (row.componentProperties.has(ACTIVITY_SNAPSHOT_COMPONENT)) {
+			switches.push(ACTIVITY_CONTROL.id);
+			activity = true;
 		}
 		// an auto-moving platform started with its level rides its spline
 		// oxlint-disable-next-line no-await-in-loop -- splines are read once per level
@@ -2122,6 +2148,7 @@ export const loadInteractiveFacilities = async (
 		progressions,
 		scriptControls,
 		created: [...createdControls.values()],
+		activities: activity ? [structuredClone(ACTIVITY_CONTROL)] : [],
 		proximityControls,
 		proximities,
 		doors,

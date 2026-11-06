@@ -1434,6 +1434,7 @@ const collectEntities = async (
 	collected.facilities = [
 		...facilities.progressions,
 		...facilities.created,
+		...facilities.activities,
 		...cabins.controls,
 		...facilities.doors.map(({ control }) => control),
 		...facilities.bridges,

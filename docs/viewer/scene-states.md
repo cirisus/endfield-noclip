@@ -59,6 +59,8 @@ and per row (`control-row.tsx`, `drivers.tsx`):
   select for the growth chamber
 - **created during play**: a checkbox per level for its interactives created after it loads
   (`createState` ≠ 0), off by default
+- **limited-time events**: one checkbox per scene for its event photo spots
+  ([event placements](../game-data/scene-states.md#event-placements)), off by default
 - **doors and bridges**: a checkbox per door, open or closed, or "Follow game" for a cabin's door; a
   checkbox per telescopic bridge, extended or retracted
 - **stream areas**: a select per area, "Follow camera (shown/hidden)", shown or hidden

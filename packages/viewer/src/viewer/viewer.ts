@@ -874,7 +874,7 @@ export class Viewer {
 		// the temporal antialiasing converges over a few more jittered frames of the same view
 		let settling = false;
 		if (changed) {
-			this.#settleFrames = options.antialiasing ? SETTLE_FRAMES : 0;
+			this.#settleFrames = options.antialiasing || options.depthOfField ? SETTLE_FRAMES : 0;
 		} else if (this.#settleFrames > 0) {
 			this.#settleFrames--;
 			settling = true;
