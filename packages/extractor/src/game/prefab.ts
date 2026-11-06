@@ -52,6 +52,12 @@ import { objectKey, type AssetResolver, type ObjectRef } from './assets.ts';
 import { isBillboardType, type PrefabBillboard, readBillboard } from './billboard.ts';
 import type { RootPath } from './curve-move.ts';
 import {
+	isEmissiveOverrideType,
+	overriddenEmission,
+	readEmissiveOverride,
+	type Rgba,
+} from './emissive-override.ts';
+import {
 	frozenParticleMatrix,
 	meshParticlePivot,
 	particleMeshSize,
@@ -122,8 +128,8 @@ export interface PrefabRenderer {
 	 */
 	billboard: PrefabBillboard | null;
 	/**
-	 * per material slot, the saved values the pose's clips replace on this renderer, `null` where they replace
-	 * none
+	 * per material slot, the saved values the pose's clips or an emission override replace on this renderer,
+	 * `null` where they replace none
 	 */
 	materialValues: (MaterialValues | null)[];
 	/** where the effect LOD tables above the renderer show it by camera distance; `null` when nothing does */
@@ -152,7 +158,10 @@ export interface DistanceBands {
 	origin: [x: number, y: number, z: number];
 }
 
-/** material values a pose sets on a renderer, by property name, replacing the material's saved ones */
+/**
+ * material values a pose or an emission override sets on a renderer, by property name, replacing the
+ * material's saved ones
+ */
 export interface MaterialValues {
 	floats: Record<string, number>;
 	colors: Record<string, [number, number, number, number]>;
@@ -332,6 +341,8 @@ export const readPrefabRenderers = async (
 	const rendererTransforms = new Map<string, string>();
 	// by component, the active and enabled force fields: their GameObject's layer and their prefab-space matrix
 	const forceFields = new Map<string, { data: TypeTreeObject; layer: number; matrix: Float32Array }>();
+	// by renderer, the emission colour an enabled `AnimationProperties_Emissive` writes to it
+	const emissiveOverrides = new Map<string, Rgba>();
 	// played systems whose force fields are resolved once every field's place is known, by candidate
 	const pendingForces = new Map<
 		(typeof candidates)[number],
@@ -513,6 +524,22 @@ export const readPrefabRenderers = async (
 					}
 					if (lockedModel !== null) {
 						lockModels.set(objectKey(lockedModel), locked ? true : null);
+					}
+				}
+			} else if (
+				off === null &&
+				ref.info.classId === UnityClass.MonoBehaviour &&
+				isEmissiveOverrideType(ref)
+			) {
+				// it starts playing when enabled, so only an active, enabled one sets the colour at rest
+				const overrideData = await resolver.read(ref);
+				if (booleanField(overrideData, 'm_Enabled')) {
+					const { renderers, color } = readEmissiveOverride(overrideData);
+					for (const pointer of renderers) {
+						const renderer = await resolver.resolve(ref, pointer);
+						if (renderer !== null) {
+							emissiveOverrides.set(objectKey(renderer), color);
+						}
 					}
 				}
 			} else if (ref.info.classId === UnityClass.MonoBehaviour && isPositionFollowerType(ref)) {
@@ -1009,12 +1036,11 @@ export const readPrefabRenderers = async (
 			materialValues.push(
 				material === null
 					? null
-					: await posedMaterialValues(
-							resolver,
-							material,
-							candidate.posedMaterials,
-							lengthTilings.get(key) ?? [],
-						),
+					: await posedMaterialValues(resolver, material, {
+							values: candidate.posedMaterials,
+							tilings: lengthTilings.get(key) ?? [],
+							emissive: emissiveOverrides.get(key) ?? null,
+						}),
 			);
 		}
 		result.push({
@@ -1050,16 +1076,24 @@ const byHash = (names: Iterable<string>): Map<number, string> =>
  * by a hash of the name, so a value whose property the material doesn't save is left out; so is the tiling of
  * a texture it doesn't save
  *
- * @param tilings textures whose tiling follows a length the pose sets, with that length over its preset
- * @returns the replaced values by name, or `null` when the pose replaces none of this material's
+ * @param sources.values the values the pose's clips set
+ * @param sources.tilings textures whose tiling follows a length the pose sets, with that length over its
+ *   preset
+ * @param sources.emissive the emission override the renderer's `AnimationProperties_Emissive` writes, or
+ *   `null`; folded into `_EmissiveColor` after the clips' values
+ * @returns the replaced values by name, or `null` when none of this material's are replaced
  */
 const posedMaterialValues = async (
 	resolver: AssetResolver,
 	material: ObjectRef,
-	values: readonly ClipMaterialValue[],
-	tilings: readonly { tiling: LengthTiling; ratio: number }[],
+	sources: {
+		values: readonly ClipMaterialValue[];
+		tilings: readonly { tiling: LengthTiling; ratio: number }[];
+		emissive: Rgba | null;
+	},
 ): Promise<MaterialValues | null> => {
-	if (values.length === 0 && tilings.length === 0) {
+	const { values, tilings, emissive } = sources;
+	if (values.length === 0 && tilings.length === 0 && emissive === null) {
 		return null;
 	}
 	const record = parseMaterial(await resolver.read(material));
@@ -1086,6 +1120,13 @@ const posedMaterialValues = async (
 		if (name !== undefined) {
 			colors[name] ??= [...record.colors[name]];
 			colors[name][component] = value;
+		}
+	}
+	{
+		const name = '_EmissiveColor';
+		const saved = colors[name] ?? record.colors[name];
+		if (emissive !== null && saved !== undefined) {
+			colors[name] = overriddenEmission(saved, emissive);
 		}
 	}
 	return Object.keys(floats).length + Object.keys(colors).length + Object.keys(textures).length === 0
