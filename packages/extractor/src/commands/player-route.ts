@@ -463,10 +463,7 @@ export const run = async (args: string[]): Promise<void> => {
 		maxDrop,
 		maxHorizontalDistance,
 		...limits,
-		// A route discovered during feasibility is only the first incumbent. Keep
-		// the original shared search budget for competing approaches; the small
-		// shortcut cap belongs to queries that already had a walking/device route.
-		maxShortcutCandidates: knownRoute.status === 'complete' ? 512 : limits.maxCandidates,
+		maxShortcutCandidates: 512,
 		waypoints: request.waypoints,
 		onProgress: (progress) => console.log(JSON.stringify(progress)),
 		model,
