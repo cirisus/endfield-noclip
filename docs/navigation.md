@@ -639,3 +639,29 @@ completed with the existing viewer warning and internal cache slot assertions.
 `player-ground --identity` is byte-identical before and after the alpha.39-to-alpha.47
 runtime upgrade, so this change does not invalidate the retained physical tile
 meshes; route results still bind the new solver release.
+
+## candidate lookup and serial work
+
+Ganglia alpha.53 reduces nearest-query wrapper allocation, packs bounds-tree construction scratch,
+skips empty landing streams and estimates jump duration without building trajectory phases for
+rejected candidates. nearest ties and budget prefixes retain the old order; admitted actions still
+need the same support and swept-body proofs. unchanged coarse-direction goal probes pass directly
+into the final phase within one solve, without a cross-query route cache.
+
+the extractor reads independent required inputs concurrently and keeps the walking result if device
+validation admits no new edges. source, profile, device and request validation remain in place.
+foreground walking/device jobs and background full search retain their existing scheduling. a tested
+combined progressive call did not improve the rear query's wall time, so that scheduling experiment
+is excluded.
+
+38 fresh-process requests retained identical complete routes, discovered actions and candidate
+limits. command time was 417.453 / 398.647 seconds for alpha.47 / alpha.53; search was 140.154 /
+129.342 seconds. this is a 4.5 percent command and 7.7 percent search reduction from alpha.47, or
+28.2 percent command reduction from alpha.31. eight single-run timings rose by 12–475 ms, and the
+largest RSS peak was 3.09 / 3.21 GiB. these measurements do not establish uniform per-point speedups
+or the requested 90 percent command reduction. the SDK's 190 tests passed.
+
+783 repository tests passed with alpha.53 installed. lint completed with the
+existing viewer and cache assertion warnings. the geometry generator identity is
+byte-identical to alpha.47; physical tile meshes do not need rebuilding for this
+runtime upgrade. route results still bind the new solver identity.

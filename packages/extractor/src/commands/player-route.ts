@@ -152,10 +152,10 @@ export const run = async (args: string[], context?: Context): Promise<void> => {
 				movement: values['movement-settings'],
 			})
 		: '';
-	const ground: Ground = context
-		? await context.cache.read('ground', values.ground)
-		: JSON.parse(await readFile(values.ground, 'utf8'));
-	const input: [Promise<Collision>, Promise<Movement>, Promise<Request>] = [
+	const input: [Promise<Ground>, Promise<Collision>, Promise<Movement>, Promise<Request>] = [
+		context
+			? context.cache.read<Ground>('ground', values.ground)
+			: readFile(values.ground, 'utf8').then(JSON.parse),
 		context
 			? context.cache.read<Collision>('collision', values.collision)
 			: readFile(values.collision, 'utf8').then(JSON.parse),
@@ -164,7 +164,7 @@ export const run = async (args: string[], context?: Context): Promise<void> => {
 			: readFile(values['movement-settings'], 'utf8').then(JSON.parse),
 		readFile(values.request, 'utf8').then(JSON.parse),
 	];
-	const [collision, movement, request] = await Promise.all(input).catch(async (error: unknown) => {
+	const [ground, collision, movement, request] = await Promise.all(input).catch(async (error: unknown) => {
 		// Drain parallel input reads before the worker clears its cache for the next request.
 		await Promise.allSettled(input);
 		throw error;
@@ -458,10 +458,12 @@ export const run = async (args: string[], context?: Context): Promise<void> => {
 		const devices = preparedDevices.value;
 		options.connections = [...(options.connections ?? []), ...devices.connections];
 		diagnostics.devices = devices;
-		const connected = groundPlanner.plan([arrival], goal, {
-			interaction: request.interaction,
-			connections: options.connections,
-		});
+		const connected = devices.connections.length
+			? groundPlanner.plan([arrival], goal, {
+					interaction: request.interaction,
+					connections: options.connections,
+				})
+			: walking;
 		knownRoute = connected;
 		knownConnections = options.connections;
 		timing.devices = performance.now() - deviceStart;

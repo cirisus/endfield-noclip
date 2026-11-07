@@ -45,8 +45,8 @@ importers:
         specifier: ^0.1.2
         version: 0.1.2
       '@oem/ganglia':
-        specifier: file:../../vendor/ganglia/oem-ganglia-0.1.0-alpha.47.tgz
-        version: file:vendor/ganglia/oem-ganglia-0.1.0-alpha.47.tgz
+        specifier: file:../../vendor/ganglia/oem-ganglia-0.1.0-alpha.53.tgz
+        version: file:vendor/ganglia/oem-ganglia-0.1.0-alpha.53.tgz
       meshoptimizer:
         specifier: 1.3.0
         version: 1.3.0
@@ -131,9 +131,9 @@ packages:
     resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
     engines: {node: '>= 20.19.0'}
 
-  '@oem/ganglia@file:vendor/ganglia/oem-ganglia-0.1.0-alpha.47.tgz':
-    resolution: {integrity: sha512-SGpPo8ajY32sUEdZxC7CPoeHmK53udkZrT9bo0DsD0+HgyIIrdVbU690kutlL5HyKYwgNXy8JQNzhY+AvRm1UA==, tarball: file:vendor/ganglia/oem-ganglia-0.1.0-alpha.47.tgz}
-    version: 0.1.0-alpha.47
+  '@oem/ganglia@file:vendor/ganglia/oem-ganglia-0.1.0-alpha.53.tgz':
+    resolution: {integrity: sha512-cGCgQ1wqVl7SbZjIABT+EAZ6Khoj/GacFKUZNEdthIBD5WgHQbj1WAvh3OJsoDSU1+xvIobQ9WZpbFZKEmweHA==, tarball: file:vendor/ganglia/oem-ganglia-0.1.0-alpha.53.tgz}
+    version: 0.1.0-alpha.53
     engines: {node: '>=22'}
 
   '@oxc-project/types@0.155.0':
@@ -989,7 +989,7 @@ snapshots:
 
   '@noble/ciphers@2.4.0': {}
 
-  '@oem/ganglia@file:vendor/ganglia/oem-ganglia-0.1.0-alpha.47.tgz':
+  '@oem/ganglia@file:vendor/ganglia/oem-ganglia-0.1.0-alpha.53.tgz':
     dependencies:
       '@recast-navigation/core': 0.44.0
 
