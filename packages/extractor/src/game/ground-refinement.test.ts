@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { createGoalProjector, type Surface, type Vec3 } from '@oem/ganglia';
 import { buildGroundSurfaces } from '@oem/ganglia/build';
+import { createCollisionWorld } from '@oem/ganglia/collision';
 
 import { refineGoalGround } from './ground-refinement.ts';
 
@@ -61,6 +62,15 @@ test('recovers a body-width landing omitted by coarse erosion while preserving l
 			model,
 			project: createGoalProjector(coarse),
 		});
+		const world = createCollisionWorld(geometry, { bounds: options.bounds });
+		const indexed = await refineGoalGround(geometry, coarse, {
+			build: options,
+			goal,
+			model,
+			project: createGoalProjector(coarse),
+			queryTriangles: world.trianglesInBounds?.bind(world),
+		});
+		assert.deepEqual(indexed, refined);
 		const accessible = createGoalProjector([...coarse, ...refined.surfaces])(goal, { maxVertical: 0.15 });
 		assert.equal(accessible.length > 0, !ceiling);
 		assert.deepEqual(coarse, before);

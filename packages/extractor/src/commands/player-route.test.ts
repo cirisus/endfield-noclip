@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { fork } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import type { Wall } from '@oem/ganglia';
+
+import { createRouteCache } from '../route-cache.ts';
 
 import { run } from './player-route.ts';
 
@@ -335,4 +339,164 @@ test('factory centres project only inside their explicit source volume and still
 	await assert.rejects(execute(data, { arrival: { ...arrival, groundRange: [20, -1] } }), /support range/);
 	data.ground.options.walls = [{ min: [0, -1, 0], max: [2, 2, 2], state: 'active' }];
 	assert.equal((await execute(data, { arrival }, 'walking')).status, 'unavailable');
+});
+
+test('preparation reuse preserves independent target searches and invalidates changed exclusions', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'player-route-reuse-'));
+	try {
+		const data = fixture({ min: [0, 0], max: [10, 10] });
+		const ground = { ...data.ground, build: { ...data.ground.build, cellSize: 0.15, cellHeight: 0.05 } };
+		const movement = {
+			...data.movement,
+			assets: [
+				{ ...data.movement.assets[0], settings: { ...data.movement.assets[0].settings, _stepOffset: 0.4 } },
+			],
+		};
+		for (const [name, value] of Object.entries({ ground, collision: data.collision, movement })) {
+			await writeFile(join(directory, name + '.json'), JSON.stringify(value));
+		}
+		const cache = createRouteCache();
+		const output = join(directory, 'cached.json');
+		const request = join(directory, 'request.json');
+		const args = [
+			'--ground',
+			join(directory, 'ground.json'),
+			'--collision',
+			join(directory, 'collision.json'),
+			'--movement-settings',
+			join(directory, 'movement.json'),
+			'--request',
+			request,
+			'-o',
+			output,
+		];
+		for (const [index, target] of [
+			[9, 0, 9],
+			[9, 0, 9],
+			[8, 0, 8],
+			[8, 0, 8],
+		].entries()) {
+			await writeFile(request, JSON.stringify({ ...data.request, target }));
+			await run(args, { cache, progress: () => {} });
+			const reused = JSON.parse(await readFile(output, 'utf8'));
+			await run([...args.slice(0, -1), join(directory, 'fresh.json')]);
+			const fresh = JSON.parse(await readFile(join(directory, 'fresh.json'), 'utf8'));
+			assert.deepEqual(reused.route, fresh.route);
+			assert.deepEqual(reused.connections, fresh.connections);
+			assert.equal(reused.diagnostics.prepareReuse.ground, index > 0);
+			assert.equal(reused.diagnostics.prepareReuse.collision, index > 0);
+			assert.equal(reused.diagnostics.prepareReuse.refinement, index === 1 || index === 3);
+		}
+		await writeFile(
+			request,
+			JSON.stringify({ ...data.request, walls: [{ min: [0, -1, 0], max: [2, 2, 2], state: 'active' }] }),
+		);
+		await run([...args, '--ground-only'], { cache, progress: () => {} });
+		const blocked = JSON.parse(await readFile(output, 'utf8'));
+		assert.equal(blocked.status, 'unavailable');
+		assert.equal(blocked.diagnostics.prepareReuse.ground, false);
+		const wrong = { ...movement, defaultProfile: { radius: 0.3, height: 1 } };
+		await writeFile(join(directory, 'movement.json'), JSON.stringify(wrong));
+		await assert.rejects(run(args, { cache, progress: () => {} }), /share body profile/);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test('the IPC worker keeps ordered progress and survives a failed request before reusing terrain', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'player-route-worker-'));
+	const child = fork(new URL('../route-worker.ts', import.meta.url), [], {
+		execArgv: [],
+		stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+	});
+	const messages: { type: string; id?: string; progress?: { phase: string }; error?: string }[] = [];
+	let stdout = '',
+		stderr = '';
+	child.stdout?.on('data', (bytes) => {
+		stdout += String(bytes);
+	});
+	child.stderr?.on('data', (bytes) => {
+		stderr += String(bytes);
+	});
+	child.on('message', (value) => {
+		messages.push(value as (typeof messages)[number]);
+	});
+	const waitFor = (id: string | undefined, terminal: string[]) =>
+		new Promise<void>((resolve, reject) => {
+			const ready = () => messages.some((value) => value.id === id && terminal.includes(value.type));
+			if (ready()) {
+				resolve();
+				return;
+			}
+			const timer = setTimeout(() => {
+				cleanup();
+				reject(new Error('worker request timed out: ' + String(id)));
+			}, 10000);
+			const listener = () => {
+				if (ready()) {
+					cleanup();
+					resolve();
+				}
+			};
+			const exited = () => {
+				cleanup();
+				reject(new Error('worker exited before completion'));
+			};
+			const cleanup = () => {
+				clearTimeout(timer);
+				child.off('message', listener);
+				child.off('exit', exited);
+			};
+			child.on('message', listener);
+			child.on('exit', exited);
+		});
+	try {
+		await waitFor(undefined, ['ready']);
+		child.send({ id: 'bad', args: [] });
+		await waitFor('bad', ['error']);
+		assert.match(messages.find((value) => value.id === 'bad')!.error!, /usage/);
+		const data = fixture();
+		for (const [name, value] of Object.entries(data)) {
+			await writeFile(join(directory, name + '.json'), JSON.stringify(value));
+		}
+		for (const [index, target] of [
+			[9, 0, 9],
+			[8, 0, 8],
+		].entries()) {
+			await writeFile(join(directory, 'request.json'), JSON.stringify({ ...data.request, target }));
+			const output = join(directory, 'result-' + index + '.json');
+			const args = [
+				'--ground',
+				join(directory, 'ground.json'),
+				'--collision',
+				join(directory, 'collision.json'),
+				'--movement-settings',
+				join(directory, 'movement.json'),
+				'--request',
+				join(directory, 'request.json'),
+				'-o',
+				output,
+				'--ground-only',
+			];
+			const id = 'query-' + index;
+			child.send({ id, args });
+			await waitFor(id, ['done', 'error']);
+			const events = messages.filter((value) => value.id === id);
+			assert.equal(events.at(-1)!.type, 'done');
+			assert.equal(events[0].progress!.phase, 'read-inputs');
+			const result = JSON.parse(await readFile(output, 'utf8'));
+			assert.equal(result.status, 'candidate');
+			assert.deepEqual(result.route.points.at(-1), target);
+			assert.equal(result.diagnostics.prepareReuse.ground, index > 0);
+		}
+		assert.equal(stdout, '', 'structured progress must use the ordered IPC channel');
+		assert.equal(stderr, '');
+	} finally {
+		if (child.exitCode === null && child.signalCode === null) {
+			const exited = once(child, 'exit');
+			child.kill();
+			await exited;
+		}
+		await rm(directory, { recursive: true, force: true });
+	}
 });

@@ -24,6 +24,7 @@ import { createCollisionWorld } from '@oem/ganglia/collision';
 import { walkableCollisionIndices, type CollisionRecord } from '../game/collision-ground.ts';
 import { refineGoalGround } from '../game/ground-refinement.ts';
 import { deviceConnections } from '../game/traversal-links.ts';
+import type { RouteCache } from '../route-cache.ts';
 
 type Source = { buildGuid: string; contentHash: string };
 type Profile = { radius: number; height: number };
@@ -94,14 +95,29 @@ const targetSupport = (surfaces: Surface[], target: Vec3) => {
 	return below;
 };
 
+type Context = { cache: RouteCache; progress: (progress: Record<string, unknown>) => void };
+
 /**
  * @param args matching physical ground, selected collision, movement and arbitrary endpoint request files
+ * @param context optional single-worker preparation storage and ordered progress sink
  * @returns after writing a source-bound candidate route or an explicit unavailable result
  * @throws for mismatched source/profile/selection or malformed required input; no gap links are inferred on
  *   failure
  */
-export const run = async (args: string[]): Promise<void> => {
+export const run = async (args: string[], context?: Context): Promise<void> => {
 	const started = performance.now();
+	const progress =
+		context?.progress ?? ((value: Record<string, unknown>) => console.log(JSON.stringify(value)));
+	const memo = async <T>(
+		slot: Parameters<RouteCache['memo']>[0],
+		key: string,
+		create: () => T | Promise<T>,
+	) => {
+		if (context) {
+			return context.cache.memo(slot, key, create);
+		}
+		return { value: await create(), reused: false };
+	};
 	const { values } = parseArgs({
 		args,
 		options: {
@@ -128,15 +144,31 @@ export const run = async (args: string[]): Promise<void> => {
 	if (files.some((path) => resolve(path) === resolve(values.output!))) {
 		throw new Error('route output must not overwrite an input');
 	}
-	console.log(JSON.stringify({ phase: 'read-inputs' }));
-	const ground: Ground = JSON.parse(await readFile(values.ground, 'utf8'));
-	let input = await Promise.all(
-		[values.collision, values['movement-settings'], values.request].map((path) => readFile(path, 'utf8')),
-	);
-	const collision: Collision = JSON.parse(input[0]),
-		movement: Movement = JSON.parse(input[1]),
-		request: Request = JSON.parse(input[2]);
-	input = [];
+	progress({ phase: 'read-inputs' });
+	const generation = context
+		? await context.cache.begin({
+				ground: values.ground,
+				collision: values.collision,
+				movement: values['movement-settings'],
+			})
+		: '';
+	const ground: Ground = context
+		? await context.cache.read('ground', values.ground)
+		: JSON.parse(await readFile(values.ground, 'utf8'));
+	const input: [Promise<Collision>, Promise<Movement>, Promise<Request>] = [
+		context
+			? context.cache.read<Collision>('collision', values.collision)
+			: readFile(values.collision, 'utf8').then(JSON.parse),
+		context
+			? context.cache.read<Movement>('movement', values['movement-settings'])
+			: readFile(values['movement-settings'], 'utf8').then(JSON.parse),
+		readFile(values.request, 'utf8').then(JSON.parse),
+	];
+	const [collision, movement, request] = await Promise.all(input).catch(async (error: unknown) => {
+		// Drain parallel input reads before the worker clears its cache for the next request.
+		await Promise.allSettled(input);
+		throw error;
+	});
 	if (
 		!ground ||
 		!collision ||
@@ -199,12 +231,18 @@ export const run = async (args: string[]): Promise<void> => {
 	const coverage = { ground: ground.coverage, collision: collision.coverage };
 	const timing: Record<string, number> = { input: performance.now() - started };
 	const limits = { maxCandidates: 8000, maxLinks: 64, sampleSpacing: 1 };
+	const prepareReuse: Record<string, boolean> = {};
 	const diagnostics: Record<string, unknown> = {
+		prepareReuse,
 		limits,
 		timingMs: timing,
 		truncated: false,
 	};
+	let collisionQueryStats: (() => unknown) | undefined;
 	const emit = async (result: object, optimizing = false) => {
+		if (collisionQueryStats) {
+			diagnostics.collisionQueries = collisionQueryStats();
+		}
 		timing.total = performance.now() - started;
 		const temporary = `${values.output!}.${process.pid}.tmp`;
 		try {
@@ -267,12 +305,17 @@ export const run = async (args: string[]): Promise<void> => {
 		await emit({ status: 'unavailable', reason: 'target-unmapped' });
 		return;
 	}
-	console.log(JSON.stringify({ phase: 'ground-search', surfaces: ground.surfaces.length }));
+	progress({ phase: 'ground-search', surfaces: ground.surfaces.length });
 	const groundStart = performance.now();
-	let groundPlanner: ReturnType<typeof createGroundPlanner> | undefined = createGroundPlanner(
-		ground.surfaces,
-		options,
-	);
+	const groundKey = JSON.stringify([generation, request.walls]);
+	let groundPlanner: ReturnType<typeof createGroundPlanner> | undefined;
+	{
+		const preparedGround = await memo('ground', groundKey, () =>
+			createGroundPlanner(ground.surfaces, { ...options }),
+		);
+		prepareReuse.ground = preparedGround.reused;
+		groundPlanner = preparedGround.value;
+	}
 	const candidates = groundPlanner.project(goal, { maxVertical: 0.5, interaction: request.interaction });
 	if (!candidates.length) {
 		await emit({ status: 'unavailable', reason: 'target-region-unmapped' });
@@ -293,7 +336,7 @@ export const run = async (args: string[]): Promise<void> => {
 			{ status: 'candidate', route: walking, connections: [], groundedTarget: walking.points.at(-1) },
 			!values['ground-only'] && !(values['devices-only'] && !values.devices),
 		);
-		console.log(JSON.stringify({ phase: 'ground-route', cost: walking.cost }));
+		progress({ phase: 'ground-route', cost: walking.cost });
 	}
 	if (values['ground-only'] || (values['devices-only'] && !values.devices)) {
 		if (walking.status !== 'complete') {
@@ -353,7 +396,7 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	const maxHorizontalDistance = maximumDuration * model.maxHorizontalSpeed;
 	diagnostics.model = { ...model, runAirSpeed };
-	console.log(JSON.stringify({ phase: 'collision-index', triangles: collision.indices.length / 3 }));
+	progress({ phase: 'collision-index', triangles: collision.indices.length / 3 });
 	// The complete body and curved-arc chord inflation must remain in the indexed world.
 	const curveInflationMargin =
 		(Math.hypot(
@@ -370,23 +413,49 @@ export const run = async (args: string[]): Promise<void> => {
 	};
 	diagnostics.collisionScope = { bounds, padding, curveInflationMargin };
 	const indexStart = performance.now();
-	const geometry = { positions: collision.positions, indices: walkableCollisionIndices(collision) };
-	const world = createCollisionWorld(geometry, { bounds });
+	const preparedCollision = await memo('collision', JSON.stringify([generation, bounds]), () => {
+		const geometry = { positions: collision.positions, indices: walkableCollisionIndices(collision) };
+		return { geometry, world: createCollisionWorld(geometry, { bounds }) };
+	});
+	prepareReuse.collision = preparedCollision.reused;
+	const { geometry, world } = preparedCollision.value;
+	const initialQueryStats = world.queryCacheStats;
+	if (context && initialQueryStats) {
+		collisionQueryStats = () => {
+			const current = world.queryCacheStats;
+			if (!current) {
+				return undefined;
+			}
+			return {
+				...current,
+				runHits: current.hits - initialQueryStats.hits,
+				runMisses: current.misses - initialQueryStats.misses,
+			};
+		};
+	}
+
 	timing.collision = performance.now() - indexStart;
 	let knownRoute = walking;
 	let knownConnections = options.connections ?? [];
 	if (values.devices) {
-		console.log(JSON.stringify({ phase: 'device-links' }));
+		progress({ phase: 'device-links' });
 		const deviceStart = performance.now();
-		const devices = deviceConnections(JSON.parse(await readFile(values.devices, 'utf8')), {
-			scene: ground.scene,
-			source: ground.source,
-			surfaces: ground.surfaces,
-			world,
-			settings,
-			profile,
-			walls: options.walls,
-		});
+		const deviceInput: Parameters<typeof deviceConnections>[0] = context
+			? await context.cache.read('devices', values.devices)
+			: JSON.parse(await readFile(values.devices, 'utf8'));
+		const preparedDevices = await memo('devices', JSON.stringify([groundKey, deviceInput]), () =>
+			deviceConnections(deviceInput, {
+				scene: ground.scene,
+				source: ground.source,
+				surfaces: ground.surfaces,
+				world,
+				settings,
+				profile,
+				walls: options.walls,
+			}),
+		);
+		prepareReuse.devices = preparedDevices.reused;
+		const devices = preparedDevices.value;
 		options.connections = [...(options.connections ?? []), ...devices.connections];
 		diagnostics.devices = devices;
 		const connected = groundPlanner.plan([arrival], goal, {
@@ -426,33 +495,54 @@ export const run = async (args: string[]): Promise<void> => {
 	}
 	let surfaces = ground.surfaces;
 	if (ground.build?.cellSize !== undefined && ground.build.cellHeight !== undefined && ground.build.bounds) {
-		console.log(JSON.stringify({ phase: 'goal-refinement' }));
+		progress({ phase: 'goal-refinement' });
 		const refineStart = performance.now();
-		const refined = await refineGoalGround(geometry, surfaces, {
-			build: {
-				profile,
-				maxSlope,
-				stepUp: numberField(settings, '_stepOffset'),
-				stepDown: numberField(settings, '_stepDownOffset'),
-				cellSize: ground.build.cellSize,
-				cellHeight: ground.build.cellHeight,
-				bounds: ground.build.bounds,
+		const refinementBuild = {
+			profile,
+			maxSlope,
+			stepUp: numberField(settings, '_stepOffset'),
+			stepDown: numberField(settings, '_stepDownOffset'),
+			cellSize: ground.build.cellSize,
+			cellHeight: ground.build.cellHeight,
+			bounds: ground.build.bounds,
+		};
+		const preparedRefinement = await memo(
+			'refinement',
+			JSON.stringify([groundKey, goal, request.interaction, model]),
+			async () => {
+				if (!groundPlanner) {
+					throw new Error('missing coarse ground preparation');
+				}
+				const refined = await refineGoalGround(geometry, surfaces, {
+					build: refinementBuild,
+					goal,
+					project: groundPlanner.project,
+					interaction: request.interaction,
+					model,
+					queryTriangles: world.trianglesInBounds?.bind(world),
+				});
+				if (refined.surfaces.length) {
+					const combined = [...surfaces, ...refined.surfaces];
+					// The one-shot CLI does not retain base preparation. Release its
+					// old graph before allocating the full replacement, as before.
+					groundPlanner = undefined;
+					return {
+						refined,
+						surfaces: combined,
+						planner: createGroundPlanner(combined, { ...options, connections: [] }),
+					};
+				}
+				return { refined, surfaces, planner: groundPlanner };
 			},
-			goal,
-			project: groundPlanner.project,
-			interaction: request.interaction,
-			model,
-		});
+		);
+		prepareReuse.refinement = preparedRefinement.reused;
+		const { refined } = preparedRefinement.value;
+		surfaces = preparedRefinement.value.surfaces;
+		groundPlanner = preparedRefinement.value.planner;
 		diagnostics.refinement = { bounds: refined.bounds, addedSurfaces: refined.surfaces.length };
-		if (refined.surfaces.length) {
-			surfaces = [...surfaces, ...refined.surfaces];
-			// release the old large snapshot before allocating its replacement.
-			groundPlanner = undefined;
-			groundPlanner = createGroundPlanner(surfaces, options);
-		}
 		timing.refinement = performance.now() - refineStart;
 	}
-	console.log(JSON.stringify({ phase: 'jump-discovery', goalFaces: candidates.length }));
+	progress({ phase: 'jump-discovery', goalFaces: candidates.length });
 	const searchStart = performance.now();
 	const result = planJumpRoute(surfaces, world, [arrival], goal, {
 		...options,
@@ -465,13 +555,13 @@ export const run = async (args: string[]): Promise<void> => {
 		...limits,
 		maxShortcutCandidates: 512,
 		waypoints: request.waypoints,
-		onProgress: (progress) => console.log(JSON.stringify(progress)),
+		onProgress: progress,
 		model,
 	});
 	timing.search = performance.now() - searchStart;
 	Object.assign(diagnostics, result.diagnostics);
 	const { route, connections } = result;
-	console.log(JSON.stringify({ phase: 'route-search', connections: connections.length }));
+	progress({ phase: 'route-search', connections: connections.length });
 	if (route.status === 'complete') {
 		await emit({ status: 'candidate', route, connections, groundedTarget: route.points.at(-1) });
 	} else {

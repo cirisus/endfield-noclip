@@ -15,6 +15,8 @@ type Options = {
 	goal: Vec3;
 	interaction?: InteractionGoal;
 	model: JumpModel;
+	/** complete inclusive XZ AABB candidates from this exact geometry, in input triangle order. */
+	queryTriangles?: (bounds: NonNullable<BuildOptions['bounds']>) => number[];
 };
 
 /**
@@ -27,7 +29,7 @@ type Options = {
 export const refineGoalGround = async (
 	geometry: CollisionGeometry,
 	surfaces: Surface[],
-	{ build, project, goal, interaction, model }: Options,
+	{ build, project, goal, interaction, model, queryTriangles }: Options,
 ) => {
 	const duration = jumpDuration(goal[1], goal[1], { ...model, mode: 'jump' });
 	if (!duration || !build.bounds) {
@@ -50,18 +52,43 @@ export const refineGoalGround = async (
 		return { surfaces: [], bounds };
 	}
 	const positions: number[] = [];
-	for (let offset = 0; offset < geometry.indices.length; offset += 3) {
-		const ids = [geometry.indices[offset], geometry.indices[offset + 1], geometry.indices[offset + 2]];
+	const selected = queryTriangles?.(bounds);
+	if (
+		selected?.some(
+			(id, index) =>
+				!Number.isSafeInteger(id) ||
+				id < 0 ||
+				id >= geometry.indices.length / 3 ||
+				(index > 0 && id <= selected[index - 1]),
+		)
+	) {
+		throw new Error('refinement triangle query must return sorted input triangle indices');
+	}
+	const count = selected?.length ?? geometry.indices.length / 3;
+	for (let triangle = 0; triangle < count; triangle++) {
+		const offset = (selected ? selected[triangle] : triangle) * 3;
+		const a = geometry.indices[offset],
+			b = geometry.indices[offset + 1],
+			c = geometry.indices[offset + 2];
 		if (
+			selected === undefined &&
 			!([0, 2] as const).every(
 				(axis, index) =>
-					Math.min(...ids.map((id) => geometry.positions[id * 3 + axis])) <= bounds.max[index] &&
-					Math.max(...ids.map((id) => geometry.positions[id * 3 + axis])) >= bounds.min[index],
+					Math.min(
+						geometry.positions[a * 3 + axis],
+						geometry.positions[b * 3 + axis],
+						geometry.positions[c * 3 + axis],
+					) <= bounds.max[index] &&
+					Math.max(
+						geometry.positions[a * 3 + axis],
+						geometry.positions[b * 3 + axis],
+						geometry.positions[c * 3 + axis],
+					) >= bounds.min[index],
 			)
 		) {
 			continue;
 		}
-		for (const id of ids) {
+		for (const id of [a, b, c]) {
 			positions.push(
 				geometry.positions[id * 3],
 				geometry.positions[id * 3 + 1],
@@ -83,6 +110,11 @@ export const refineGoalGround = async (
 		while (parents.get(current) !== current) {
 			current = parents.get(current)!;
 		}
+		while (parents.get(id) !== id) {
+			const next = parents.get(id)!;
+			parents.set(id, current);
+			id = next;
+		}
 		return current;
 	};
 	for (const edge of graph.edges) {
@@ -90,6 +122,9 @@ export const refineGoalGround = async (
 	}
 	const covered = new Set<string>();
 	for (const surface of fine) {
+		if (covered.has(root(surface.id))) {
+			continue;
+		}
 		if (
 			surface.vertices.some(
 				(point) =>

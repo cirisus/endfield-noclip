@@ -563,3 +563,54 @@ same immutable prepared graph. a changed target set invalidates those estimates;
 new action speeds still update the time lower bound. movement sampling, collision
 validation and route costs retain the alpha.30 rules. the v69 preview integration
 uses the same extractor route commands and source-bound physical inputs as before.
+
+## persistent local route workers
+
+`packages/extractor/src/route-worker.ts` is an IPC entry point for hosts retaining a route process.
+it accepts `{ id, args }`, with the same argument list as `player-route` after the command name. one
+request runs at a time. the worker emits `ready` with protocol `version: 1`, ordered `progress`
+messages carrying the request id, then `done` or `error`. results retain the ordinary atomic
+output-file contract. `done` also reports node's memory usage. failed requests clear preparations
+and do not terminate the worker. disconnecting its IPC owner releases the process.
+
+each process retains one ground/collision/movement input region, one base ground planner, one
+collision world, one device interpretation and at most one target refinement. input identities
+include resolved paths, device/inode, size, nanosecond modification and change times. changes
+between preparation and decoding fail the request. a new region drops the preceding region before
+decoding; an input change or worker failure invalidates all its derived preparations. changed
+exclusions rebuild ground planners, while changed goals replace only the target refinement.
+connections supplied by a query do not become defaults in the prepared planners.
+
+the retention ceiling is 512 MiB of serialized region inputs. larger inputs still compute without
+retained preparations. this limits retained input scope, not node heap or RSS: decoded numbers,
+graph structures and collision indices require additional memory. hosts should bound worker count
+and retire idle processes. `diagnostics.prepareReuse` reports preparation hits, while `timingMs`
+still charges each request's actual work. neither full route results nor discovered movement actions
+are cached by this worker; a warmed request still performs route search. the ordinary one-shot CLI
+uses the same solver with preparation reuse disabled.
+
+## first-query preparation
+
+Ganglia alpha.39 builds collision indices with exact median partitions and reuses
+that index to select local refinement triangles. refinement candidates retain all
+heights and original input triangle order; the native mesh and motion checks have
+the same inputs. coarse and refined planners share owned geometric primitives,
+while global portal ownership and traversal order are rebuilt for each planner.
+the one-shot CLI releases its obsolete coarse planner before allocating a full
+replacement. worker retention remains explicit and separate from this lifetime.
+
+fresh-process first-query time is the primary performance gate, with retained
+physical input files and no prepared process state. same-region workers remain an
+auxiliary reuse path. performance comparisons must preserve complete route,
+connection and limit objects across the fixed input population; completed-result
+cache hits do not count as solver speedups. the current work does not complete
+regional entry/exit contraction or establish a globally shortest route.
+
+38 fixed successful requests were replayed in separate fresh Node processes. complete
+route, connection and candidate-limit objects matched the alpha.31 baseline for all
+38. aggregate command time was 554.891 / 452.624 seconds; search was 202.690 / 152.695
+seconds. this is an 18.4 percent command reduction, not the requested 90 percent.
+these are local fixed-input measurements rather than population latency percentiles.
+783 repository tests passed on Node 26, with the final release-lifetime adjustment
+also covered by the 17 focused route/cache/refinement tests. the lint command
+completed with warnings, including the cache's internal typed-slot assertions.
