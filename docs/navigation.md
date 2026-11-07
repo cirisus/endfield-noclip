@@ -614,3 +614,28 @@ these are local fixed-input measurements rather than population latency percenti
 783 repository tests passed on Node 26, with the final release-lifetime adjustment
 also covered by the 17 focused route/cache/refinement tests. the lint command
 completed with warnings, including the cache's internal typed-slot assertions.
+
+## reducing repeated graph work
+
+alpha.47 shares the validated, wall-filtered ground graph and SCC computation
+between exact routing and action discovery. distance fields advance from newly
+improved endpoints when validated actions extend the graph, restarting for changed
+roots, removed/changed actions or different ground. these labels belong to one
+query and are not kept by the route worker for the next request. the original
+edge graph and its forward adjacency are reused without a full weighted edge copy.
+ground tracing addresses polygon boundaries by face ID and edge ordinal, retaining
+the same portal and neighbour order without global serialized edge keys.
+
+all 38 fixed requests again returned identical routes, connections and limits in
+fresh processes. aggregate command time was 554.891 / 417.453 seconds, a 24.8 percent
+reduction from alpha.31; search time was 202.690 / 140.154 seconds. incremental
+distance fields expanded 1,960,025 nodes, against 5,953,562 for the corresponding
+complete passes. per-search diagnostics report resets, expansions, outgoing-edge
+visits and reachable label counts. 188 SDK tests passed. peak RSS did not uniformly
+decrease, and the requested 90 percent command-time reduction remains unmet.
+
+783 repository tests passed with the installed alpha.47 package. the lint command
+completed with the existing viewer warning and internal cache slot assertions.
+`player-ground --identity` is byte-identical before and after the alpha.39-to-alpha.47
+runtime upgrade, so this change does not invalidate the retained physical tile
+meshes; route results still bind the new solver release.
