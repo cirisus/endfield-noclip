@@ -418,8 +418,10 @@ packs or renders correctly.
     clamped to 1 (RGBA8), custom data in colour mode isn't packed (no map02 system uses it)
 - [spline movers](game-data/particles.md#spline-movers) (Dijiang's shaft cargo) take their lifetime
   span as the spline's length over the speed (unverified) and draw each LOD group's renderers at the
-  group's origin; those with noise, an alpha fade, a speed or lifetime curve, an emission type other
-  than the box, or more than four LOD groups stand in
+  group's origin; those with noise, a speed or lifetime curve, an emission type other than the box,
+  or more than four LOD groups stand in. objects draw opaque through their
+  [fade](game-data/particles.md#spline-movers), so Qingbo's buckets and Sword Vault Dale's floating
+  stones appear and leave without fading (the stones also shrink from and to nothing)
 - temporal smoothing of effects: moving particles, scrolling and animated effects have no motion
   vectors, and transparent layers write no depth, so the temporal antialiasing reprojects them by
   the opaque scene behind ([frame](viewer/frame.md)). the game's effect variants carry

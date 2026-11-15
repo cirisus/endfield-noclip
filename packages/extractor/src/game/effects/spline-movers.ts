@@ -208,22 +208,18 @@ const clamp01 = (value: number): number => Math.min(Math.max(value, 0), 1);
  * reads an `HGSplineMovingObjects` (`docs/game-data/particles.md#spline-movers`): meshes the game emits at a
  * steady rate and moves along a spline, each picking one of the desc's LOD groups. it becomes a particle
  * system whose particles follow a spline ({@link ParticleSystemInfo.motion}). a lifetime is taken as the
- * start lifetime's fraction of the time the spline takes at the speed
+ * start lifetime's fraction of the time the spline takes at the speed. objects draw opaque through the fade
+ * `hasAlphaControl` gives them
  *
  * @param data the component's fields (see {@link isSplineMoverType})
- * @returns the system and its LOD groups, or why the viewer can't play it: noise, an alpha fade, an emission
- *   type other than the box, a start lifetime or speed curve, more than four LOD groups, no spline or no LOD
- *   group
+ * @returns the system and its LOD groups, or why the viewer can't play it: noise, an emission type other than
+ *   the box, a start lifetime or speed curve, more than four LOD groups, no spline or no LOD group
  */
 export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 	const desc = objectField(data, 'desc');
 	const curve = (name: string) => readSerializedMinMaxCurve(objectField(desc, name));
 	if (booleanField(desc, 'hasNoise')) {
 		return { reason: 'spline noise' };
-	}
-	// the game draws objects whose alpha falls below `transparentAlpha` as transparent
-	if (booleanField(desc, 'hasAlphaControl') && numberField(desc, 'transparentAlpha') > 0) {
-		return { reason: 'spline alpha fade' };
 	}
 	if (numberField(desc, 'emissionType') !== EMISSION_BOX) {
 		return { reason: `spline emission type ${numberField(desc, 'emissionType')}` };

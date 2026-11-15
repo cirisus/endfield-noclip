@@ -253,6 +253,11 @@ form (`m_Mode`, `m_ConstantMin/Max`, `m_CurveMultiplier`, `m_CurveMin/Max`), and
   read. Sword Vault Dale's floating stones (`p_fxmap_map02_lv006_*stone_01`) tumble so at up to
   10°/s about each axis; the shaft's movers neither spin nor wander. the object's matrix is the
   mover's `objectToWorld`, updated from its transform.
-- **fades** with `hasAlphaControl`: an object whose `alphaOverLifeTime` falls below
-  `transparentAlpha` draws transparent at that alpha. the shaft's movers set `transparentAlpha` 0,
-  so they stay opaque.
+- **fades** with `hasAlphaControl`: each step reads `alphaOverLifeTime` at the object's age over its
+  lifetime, with the object's random value, and while it's below `transparentAlpha` hands the
+  renderer the object marked for fading at that value. how the renderer draws it isn't traced. the
+  authored curves suggest the value is how far the object has faded out, 0 showing it whole
+  (unverified): Qingbo's bucket chain (`p_fxmap_lv003_bucke_2101`/`2102`) runs 1 to 0 over the first
+  7% of the trip and back to 1 over the last 5%, and Sword Vault Dale's stones 1 to 0 over their
+  first 2–5%, with `transparentAlpha` 1 in both; read as opacity, either would hide its objects for
+  most of their trip. the shaft's movers set `transparentAlpha` 0, so they never fade.

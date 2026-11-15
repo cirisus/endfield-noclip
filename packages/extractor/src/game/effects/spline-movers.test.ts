@@ -93,6 +93,8 @@ describe('readSplineMover', () => {
 	});
 	it('names what it cannot play', () => {
 		assert.deepEqual(readSplineMover(mover({ hasNoise: 1 })), { reason: 'spline noise' });
-		assert.deepEqual(readSplineMover(mover({ transparentAlpha: 0.5 })), { reason: 'spline alpha fade' });
+	});
+	it('plays movers that fade, opaque', () => {
+		assert.ok('info' in readSplineMover(mover({ transparentAlpha: 1 })));
 	});
 });
