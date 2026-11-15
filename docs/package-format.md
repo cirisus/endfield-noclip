@@ -729,9 +729,9 @@ a [spline mover](game-data/particles.md#spline-movers) packs as such a system
 ([spline-movers.ts](../packages/extractor/src/game/effects/spline-movers.ts)): one entry per
 renderer of each LOD group's first LOD, the mesh index naming the group, all at the mover's
 GameObject. its start lifetime becomes seconds: the clamped fraction times the spline's length over
-the speed. the fade of `hasAlphaControl` isn't packed. a mover with noise, another emission type, a
-lifetime or speed curve, or more than four groups draws its first group once at its origin as a
-stand-in.
+the speed, the faster of a random speed's two constants. the fade of `hasAlphaControl` isn't packed.
+a mover with noise, another emission type, a lifetime or speed curve, or more than four groups draws
+its first group once at its origin as a stand-in.
 
 a `ParticleSystemRenderer` ([particle systems](game-data/particles.md#particle-systems)) whose
 `ParticleSystem` plays on awake is packed one of three ways. mesh-mode renderers draw their meshes;

@@ -255,13 +255,14 @@ export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 
 	const speed = curve('velocityOverLifeTime');
 	const startLifetime = curve('startLifeTime');
-	if (speed.mode !== CurveMode.Constant || speed.scalar <= 0) {
+	if (!isConstantCurve(speed) || speed.scalar <= 0) {
 		return { reason: 'spline speed curve' };
 	}
 	if (!isConstantCurve(startLifetime)) {
 		return { reason: 'spline lifetime curve' };
 	}
-	// the time the whole spline takes at the speed; the start lifetime is a fraction of it
+	// the time the whole spline takes at the speed, the larger of a random one's constants, where the field a
+	// single constant is stored in; the start lifetime is a fraction of it
 	const traverse = total / speed.scalar;
 	let lifetime: MinMaxCurveInfo;
 	switch (startLifetime.mode) {

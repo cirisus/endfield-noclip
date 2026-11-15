@@ -91,6 +91,13 @@ describe('readSplineMover', () => {
 		assert.ok('info' in still);
 		assert.equal(still.info.rotationOverLifetime, null);
 	});
+	it('times a random speed by its faster constant', () => {
+		// Sword Vault Dale's small stones (`line (2)` in `p_fxmap_map02_lv006_slow_smallstone_01`)
+		const read = readSplineMover(mover({ velocityOverLifeTime: constant(1.5, 1, CurveMode.TwoConstants) }));
+		assert.ok('info' in read);
+		assert.ok(Math.abs(read.info.startLifetime.scalar - 60.001 / 1.5) < 1e-9);
+		assert.equal(read.info.motion.kind === 'spline' && read.info.motion.speed.mode, CurveMode.TwoConstants);
+	});
 	it('names what it cannot play', () => {
 		assert.deepEqual(readSplineMover(mover({ hasNoise: 1 })), { reason: 'spline noise' });
 	});
