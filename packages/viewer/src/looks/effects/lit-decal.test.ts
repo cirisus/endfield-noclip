@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { LitDecalSurface } from '@endfield-noclip/package-format/surfaces';
+import type { LitDecalSurface, WetnessDecalSurface } from '@endfield-noclip/package-format/surfaces';
 
 import { LookFlags } from '../look.ts';
 import { materialLooks } from '../material-looks.ts';
@@ -104,4 +104,27 @@ test('a lit decal draws its maps through the placement or the PBR map’s own tr
 	assert.equal(sludged.textures[2], 4);
 	assert.deepEqual([...sludged.params.subarray(EffectRow.uv + 8, EffectRow.uv + 10)], [2, 3]);
 	assert.deepEqual([...sludged.params.subarray(DecalLitRow.sludge, DecalLitRow.sludge + 4)], [1, 3, 5.75, 0]);
+	assert.equal(look.params[DecalLitRow.wetMask], 0);
+});
+
+test('a wetness decal relights through its mask, its opacity in the tint', () => {
+	const decal: WetnessDecalSurface = {
+		kind: 'wetnessDecal',
+		mask: { texture: 5, scale: [2, 3], offset: [0.5, 0], softBias: 0.25 },
+		distanceFade: 200,
+		opacity: 0.8,
+	};
+	const [masked, even] = materialLooks({
+		entries: [described(decal), described({ ...decal, mask: null })],
+	});
+	assert.deepEqual([masked.flags, masked.queue], [LookFlags.Effect, 'decalRelight']);
+	assert.equal(masked.textures[0], 5);
+	assert.deepEqual([...masked.params.subarray(EffectRow.uv, EffectRow.uv + 4)], [2, 3, 0.5, 0]);
+	assert.equal(Math.round(masked.params[EffectRow.tint + 3] * 1000) / 1000, 0.8);
+	assert.deepEqual(
+		[...masked.params.subarray(DecalLitRow.wetMask, DecalLitRow.wetMask + 4)],
+		[1, 1, 0.25, Math.fround(1 / 200)],
+	);
+	assert.equal(masked.params[EffectRow.unfogged + 1], EffectKind.LitDecal);
+	assert.deepEqual([...even.params.subarray(DecalLitRow.wetMask, DecalLitRow.wetMask + 3)], [1, 0, 0]);
 });

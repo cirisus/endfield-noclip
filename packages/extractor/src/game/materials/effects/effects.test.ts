@@ -514,6 +514,35 @@ describe('lit decals', () => {
 	});
 });
 
+describe('wetness decals', () => {
+	const wetnessDecal = shader('HGRP/WetnessDecal', 'decal');
+	// the waterwheels' `M_fxmap_common_wateringtruck_wetnessdecal_01`
+	const floats = { _DistanceFade: 300, _OverallOpacity: 1, _SoftBias: 0.25, _UseSoftBlend: 1 };
+
+	it('wets through its mask with the soft bias, or the whole box without one', () => {
+		const masked = ofKind(
+			describeMaterial(
+				material({ keywords: ['_USE_MASK'], slots: { _BaseColorMap: slot(1, [2, 3]) }, floats }),
+				wetnessDecal,
+			),
+			'wetnessDecal',
+		);
+		assert.deepEqual(masked, {
+			kind: 'wetnessDecal',
+			mask: { texture: 1, scale: [2, 3], offset: [0, 0], softBias: 0.25 },
+			distanceFade: 300,
+			opacity: 1,
+		});
+		const even = ofKind(
+			describeMaterial(material({ slots: { _BaseColorMap: slot(1) }, floats }), wetnessDecal),
+			'wetnessDecal',
+		);
+		assert.equal(even.mask, null);
+		const unmasked = describeMaterial(material({ keywords: ['_USE_MASK'], floats }), wetnessDecal);
+		assert.equal(unmasked.kind, 'unsupported');
+	});
+});
+
 describe('VFXBaseV2', () => {
 	const base = shader('HGRP/Effect/VFXBaseV2', 'vfxBase');
 	const stackOf = (overrides: Partial<MaterialValues>, entry = base) =>

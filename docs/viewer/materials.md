@@ -206,6 +206,13 @@ is darkened and laid over by the decal's, the normal and roughness mix by the al
 opacity, and the difference in light, sky reflection and surface are taken whole rather than blended
 by the alpha.
 
+[wetness decals](../game-data/materials.md#wetness-decals) (`HGRP/WetnessDecal`,
+[`wetnessDecalLook`](../../packages/viewer/src/looks/effects/lit-decal.ts)) go through the relight
+pass too (`wd_wetness`), darkening the estimated colour and lowering the roughness by the game's
+formulas, with the change taken whole. the viewer has no wetness mask, so each box relights on its
+own: overlapping boxes wet twice where the game keeps the wetter, and the porosity is taken from
+Lit's default factors, since the main pass doesn't keep each material's.
+
 lit decals with keywords past `_COMPLETE_PBR`, `_NORMAL_ANGLE_BLEND`, `_BLEND_WATER_FLOW`,
 `_BLEND_EMISSIVE`, `_BLEND_SLUDGE_EROSION` and `_BLEND_WETNESS` (footprints, UV noise, arcs), a
 sludge decal without its texture or with a water flow or emission, and a wetness decal with another

@@ -585,7 +585,7 @@ documents.
 **rect decals**: a rect decal placement draws the game's VFXDecal cube with its material
 ([decals](game-data/materials.md#decals)), its colour and UV transform being its row's
 [placement](#instance-block-inst-efin); its `litDecal` surface holds the material's `_DecalOpacity`,
-which multiplies the placement's alpha.
+and a `wetnessDecal` surface its `_OverallOpacity`, which multiplies the placement's alpha.
 
 **posed copies**: a prefab renderer whose placement's pose sets material values (an interactive's
 settled view state; [view-state poses](extraction/prefabs-and-interactives.md#view-state-poses))

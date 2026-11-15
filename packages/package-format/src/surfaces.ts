@@ -53,6 +53,7 @@ export type MaterialSurface =
 	| WaterSheetSurface
 	| SixWaySmokeSurface
 	| LitDecalSurface
+	| WetnessDecalSurface
 	| RefractSurface
 	| WaterFoamSurface;
 
@@ -1258,6 +1259,25 @@ export interface LitDecalSurface {
 	 * fractional values blend between neighbours)
 	 */
 	emission: { color: Rgb; channel: number; albedoAffect: Weight; ignorePostExposure: Weight } | null;
+}
+
+/**
+ * `HGRP/WetnessDecal`, a box that wets the surfaces it covers, darkening them and lowering their roughness by
+ * their porosity (`docs/game-data/materials.md#wetness-decals`). each placement's alpha and UV transform are
+ * its instance row's (`DecalPlacements` in instances.ts)
+ */
+export interface WetnessDecalSurface {
+	kind: 'wetnessDecal';
+	/**
+	 * `_USE_MASK`: the texture whose red is the wetness, through the placement's UV transform and then its own
+	 * `_ST`, faded towards the box's faces along the projection axis, which `softBias` (`_SoftBias` with
+	 * `_UseSoftBlend`, else 0) pushes outwards. `null` wets the whole box evenly
+	 */
+	mask: { texture: number; scale: Vec2; offset: Vec2; softBias: number } | null;
+	/** `_DistanceFade`: the camera distance (m) at which it's gone */
+	distanceFade: number;
+	/** `_OverallOpacity`, which multiplies the placement's alpha */
+	opacity: number;
 }
 
 /** where a VFXRefract texture's UVs start: UV set 0, or polar coordinates about its centre */

@@ -444,6 +444,33 @@ the alpha in two: `a`, the base map's alpha × the colour's alpha, and `o = a ·
 the puddles have `_DecalOpacity` 0 and `_Wetness` 0.3: they colour nothing, darken the floor by up
 to 30% and replace its normal and roughness with their own smooth ones.
 
+### wetness decals
+
+`HGRP/WetnessDecal` wets what a rect decal box covers without colouring it: Qingbo's big waterwheel
+(map02_lv003 near unity −278, 293, −1404) carries a few dozen over its wheel and frame, where water
+runs (`M_fxmap_common_wateringtruck_wetnessdecal_01`, the only such material on map02). it writes no
+G-buffer target. the game draws it after the decals into the water wetness mask, the target the
+water proxies mark the ground around them in ([WaterProxy](water.md#waterproxy-and-waterdecal)),
+storing `1 − wetness` and keeping the smaller value where boxes overlap. its wetness at a point in
+the box:
+
+- the placement's alpha × `_OverallOpacity`, fading out linearly with the camera's distance to
+  `_DistanceFade` metres (300 on the waterwheel's)
+- with `_USE_MASK`, times the base map's red and a fade towards the box's faces. the projection axis
+  is the box axis the surface faces most: the geometric normal (from the depth's screen gradients)
+  in the box's frame, each component scaled by the box's size along it. the other two local
+  coordinates, plus 0.5, go through the placement's UV transform and then the map's `_ST`; the fade
+  is `saturate(1 − 2·|d| + _SoftBias · _UseSoftBlend)` with `d` the local coordinate along the axis.
+  the placement's colour isn't read
+
+the deferred lighting reads the mask (only while `_WaterWetnessMaskParam0.x` is above 1/2048, a
+global whose setter isn't traced) with the porosity Lit's G-buffer stores,
+`saturate(_PorosityFactorX · roughness + _PorosityFactorZ · metallic + _PorosityFactorY)`, or 0 with
+`_DisableVerticalFlow`. with `w` the wetness, the albedo is multiplied by `1 − porosity · w²` and
+the roughness falls towards `min(1 − porosity · w, roughness)` by `w²`; the normal stays. Lit's
+defaults (0.2, 0.4 and 0, which the waterwheel's materials keep) darken a surface of roughness 0.7
+to about 46% and smooth it to 0.46 at full wetness.
+
 ## matte paintings
 
 `HGRP/MattePainting` draws the painted mountain ranges on the horizon: a few alpha-tested ring

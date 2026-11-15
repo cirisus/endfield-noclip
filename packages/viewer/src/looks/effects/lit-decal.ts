@@ -1,4 +1,4 @@
-import type { LitDecalSurface } from '@endfield-noclip/package-format/surfaces';
+import type { LitDecalSurface, WetnessDecalSurface } from '@endfield-noclip/package-format/surfaces';
 
 import {
 	EffectKind,
@@ -55,6 +55,12 @@ export const DecalLitRow = {
 	 * the tint's alpha leaves out for these
 	 */
 	pbrPlaced: 104,
+	/**
+	 * an `HGRP/WetnessDecal` box ({@link wetnessDecalLook}), which reads only this row and its mask's slot 0: 1
+	 * when it is one, 1 with a mask (`_USE_MASK`), the mask's soft bias, `1 / _DistanceFade`. its alpha is the
+	 * tint's
+	 */
+	wetMask: 108,
 	/**
 	 * `_BLEND_SLUDGE_EROSION`: 1 when on, `_SludgeDecalAlphaScale`, `_SludgeDecalHeightFalloff`, 0. in the
 	 * texture stack's edge colour row, which decals don't read
@@ -130,6 +136,29 @@ export const litDecalLook = (decal: LitDecalSurface): EffectLook => {
 			DecalLitRow.emissiveMask,
 		);
 	}
+	params.set([0, EffectKind.LitDecal], EffectRow.unfogged);
+	return look;
+};
+
+/**
+ * a wetness decal ({@link WetnessDecalSurface}), drawn by the decal relight pass: its mask's red, through
+ * each placement's UV transform, wets the surface beneath
+ *
+ * @param decal the decal
+ * @returns its look
+ */
+export const wetnessDecalLook = (decal: WetnessDecalSurface): EffectLook => {
+	const look = emptyEffect();
+	const params = look.params;
+	const { mask } = decal;
+	if (mask !== null) {
+		setSlot(look, 0, { ...still(mask.texture), scale: mask.scale, offset: mask.offset }, ROLE_NONE);
+	}
+	params.set([1, 1, 1, decal.opacity], EffectRow.tint);
+	params.set(
+		[1, mask === null ? 0 : 1, mask?.softBias ?? 0, 1 / Math.max(decal.distanceFade, 1e-3)],
+		DecalLitRow.wetMask,
+	);
 	params.set([0, EffectKind.LitDecal], EffectRow.unfogged);
 	return look;
 };

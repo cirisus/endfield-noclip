@@ -1657,6 +1657,7 @@ const LD_FLOW_FADE = 23u;
 const LD_EMISSIVE = 24u;
 const LD_EMISSIVE_MASK = 25u;
 const LD_PBR_PLACED = 26u;
+const LD_WET_MASK = 27u;
 const LD_SLUDGE = 32u;
 // the sludge texture's slot, whose UV row holds its scale
 const LD_SLUDGE_SLOT = 2u;
@@ -1870,10 +1871,56 @@ fn decal_relit(before: Surface, after: Surface, alpha: f32, emission: vec3f, rel
 	return out;
 }
 
+// Lit's default `_PorosityFactorX` and `_PorosityFactorY`: the porosity the game's G-buffer stores is
+// `saturate(x · roughness + y)` (plus `_PorosityFactorZ` · metallic, 0 by default)
+const WD_POROSITY_PER_ROUGHNESS = 0.2;
+const WD_POROSITY_BASE = 0.4;
+
+// `HGRP/WetnessDecal`'s wetness (0 to 1) at the point `local` in its box (docs/game-data/materials.md#wetness-decals):
+// the placement's alpha times the opacity, fading out with the camera's distance and, with a mask, times its red
+// projected along the box axis the surface faces most, fading towards the box's faces on that axis. `local_dx` and
+// `local_dy` are `local`'s screen gradients, `row` the look's `LD_WET_MASK`
+fn wd_wetness(in: EffectOut, rel: vec3f, rel_dx: vec3f, rel_dy: vec3f, local: vec3f, local_dx: vec3f,
+	local_dy: vec3f, row: vec4f) -> f32 {
+	var wet = in.placement_color.a * fx_row(in.look, FX_TINT).a * (1.0 - saturate(length(rel) * row.w));
+	if (row.y < 0.5) {
+		return wet;
+	}
+	// the geometric normal in the box's frame, each axis weighed by the box's size along it as the game's
+	// object-to-world rotation does: to_object rows are the box's axes over their lengths
+	let geometric = cross(rel_dy, rel_dx);
+	let axis_n = abs(vec3f(
+		dot(in.to_object0.xyz, geometric) / dot(in.to_object0.xyz, in.to_object0.xyz),
+		dot(in.to_object1.xyz, geometric) / dot(in.to_object1.xyz, in.to_object1.xyz),
+		dot(in.to_object2.xyz, geometric) / dot(in.to_object2.xyz, in.to_object2.xyz),
+	));
+	let lead = axis_n.xy - max(axis_n.yz, axis_n.zx);
+	// project along that axis: `p.xy` are the UVs, `p.z` the depth along it
+	var p = local.xzy;
+	var p_dx = local_dx.xzy;
+	var p_dy = local_dy.xzy;
+	if (lead.x > 0.0) {
+		p = local.yzx;
+		p_dx = local_dx.yzx;
+		p_dy = local_dy.yzx;
+	} else if (lead.y <= 0.0) {
+		p = local;
+		p_dx = local_dx;
+		p_dy = local_dy;
+	}
+	let placed = in.placement_uv;
+	let st = fx_row(in.look, FX_UV);
+	let scale = placed.xy * st.xy;
+	let uv = ((p.xy + 0.5) * placed.xy + placed.zw) * st.xy + st.zw;
+	let mask = textureSampleGrad(fx_tex0, fx_samp0, uv, p_dx.xy * scale, p_dy.xy * scale).r;
+	return wet * mask * saturate(1.0 - abs(p.z) * 2.0 + row.z);
+}
+
 // lit decals that write no albedo, between the main and the transparent pass (docs/viewer/materials.md#decals):
 // each adds the difference between the surface lit with and without its changes, times its alpha, to the
 // radiance and to the sky reflection it holds, and hands the screen-space reflections the changed surface. the
-// surface's colour is its diffuse ambient over the ambient light at its normal (taken as a dielectric's)
+// surface's colour is its diffuse ambient over the ambient light at its normal (taken as a dielectric's).
+// wetness decals go through here too
 @fragment
 fn fs_decal_relight(in: EffectOut) -> DecalRelit {
 	let px = vec2i(in.position.xy);
@@ -1882,17 +1929,15 @@ fn fs_decal_relight(in: EffectOut) -> DecalRelit {
 	let p = vec4f(rel, 1.0);
 	let object_p = vec3f(dot(in.to_object0, p), dot(in.to_object1, p), dot(in.to_object2, p));
 	let uv = object_p.xz + 0.5;
-	let dx = dpdx(uv);
-	let dy = dpdy(uv);
+	let object_dx = dpdx(object_p);
+	let object_dy = dpdy(object_p);
+	let dx = object_dx.xz;
+	let dy = object_dy.xz;
 	let rel_dx = dpdx(rel);
 	let rel_dy = dpdy(rel);
 	let n = fx_surface_normal(px);
 	// pixels it leaves alone keep the surface an earlier decal wrote
 	if (any(abs(object_p) >= vec3f(0.5)) || scene_depth >= 1e9 || all(n == vec3f(0.0)) || fx_keeps_lit_decals_off(px)) {
-		discard;
-	}
-	let d = ld_decal(in, rel, rel_dx, rel_dy, object_p, uv, dx, dy, n, fx_surface_roughness(px));
-	if (d.alpha <= 0.0) {
 		discard;
 	}
 	let ambient = textureLoad(fx_ambient, px, 0);
@@ -1902,6 +1947,24 @@ fn fs_decal_relight(in: EffectOut) -> DecalRelit {
 	before.roughness = fx_surface_roughness(px);
 	before.occlusion = ambient.a;
 	var after = before;
+	let wet_mask = fx_row(in.look, LD_WET_MASK);
+	if (wet_mask.x > 0.5) {
+		// the game's deferred lighting takes the wetness `w` from its wetness mask: the albedo darkens by
+		// `porosity · w²` and the roughness falls towards `1 − porosity · w` by `w²`, never rising. the change is
+		// added whole, as the game's mask applies before lighting
+		let w = wd_wetness(in, rel, rel_dx, rel_dy, object_p, object_dx, object_dy, wet_mask);
+		if (w <= 0.0) {
+			discard;
+		}
+		let porosity = saturate(WD_POROSITY_PER_ROUGHNESS * before.roughness + WD_POROSITY_BASE);
+		after.albedo = diffuse * (1.0 - porosity * w * w);
+		after.roughness = mix(before.roughness, min(1.0 - porosity * w, before.roughness), w * w);
+		return decal_relit(before, after, 1.0, vec3f(0.0), rel, in.position.xy);
+	}
+	let d = ld_decal(in, rel, rel_dx, rel_dy, object_p, uv, dx, dy, n, before.roughness);
+	if (d.alpha <= 0.0) {
+		discard;
+	}
 	after.normal = d.normal;
 	after.roughness = d.roughness;
 	let wet = fx_row(in.look, LD_PBR_PLACED);

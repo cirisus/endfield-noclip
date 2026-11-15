@@ -16,7 +16,7 @@ import { skinFrame } from '../render/meshes/skin-frame.ts';
 
 import type { EffectLook } from './effects/effect-look.ts';
 import { lightBeamLook } from './effects/light-beam.ts';
-import { litDecalLook } from './effects/lit-decal.ts';
+import { litDecalLook, wetnessDecalLook } from './effects/lit-decal.ts';
 import { mistCardLook, mistVolumeLook } from './effects/mist.ts';
 import { refractLook } from './effects/refract.ts';
 import { sixWaySmokeLook } from './effects/six-way-smoke.ts';
@@ -249,6 +249,13 @@ const surfaceLook = (entry: ReadyMaterial): MaterialLook => {
 			return effectMaterialLook(litDecalLook(surface), {
 				// a wetness decal darkens the surface's own albedo, which only the relight pass estimates
 				queue: surface.relight || surface.wetness !== null ? 'decalRelight' : 'litDecal',
+				box: true,
+				cull: entry.cull,
+			});
+		}
+		case 'wetnessDecal': {
+			return effectMaterialLook(wetnessDecalLook(surface), {
+				queue: 'decalRelight',
 				box: true,
 				cull: entry.cull,
 			});

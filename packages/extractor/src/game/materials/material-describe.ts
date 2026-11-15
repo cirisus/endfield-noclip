@@ -5,8 +5,8 @@
  * reason, which the pack lists in `debug/assets.json`. stays out of the conversion worker's imports.
  *
  * each shader the viewer draws has a describer module, in `surfaces/` for the shaders shaded as surfaces (the
- * Lit model, matte paintings, erosion, dithered effects, lit decals) and `effects/` for the effect looks,
- * built from the shared steps beside them (`describe-steps.ts`, `effects/effect-steps.ts`,
+ * Lit model, matte paintings, erosion, dithered effects, lit and wetness decals) and `effects/` for the
+ * effect looks, built from the shared steps beside them (`describe-steps.ts`, `effects/effect-steps.ts`,
  * `effects/texture-stack.ts`) and picked by {@link DESCRIBERS}
  */
 
@@ -38,6 +38,7 @@ import { describeLitDecal } from './surfaces/lit-decal.ts';
 import { swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
 import { describeLit } from './surfaces/lit.ts';
 import { describeMattePainting } from './surfaces/matte-painting.ts';
+import { describeWetnessDecal } from './surfaces/wetness-decal.ts';
 
 /**
  * shader families drawn only through effect looks of their own (fog volumes, light beams, effects, projected
@@ -83,7 +84,11 @@ const DESCRIBERS: { readonly [F in ShaderFamily]?: Describer | ReadonlyMap<strin
 	erosion: describeErosion,
 	vfxDitherAlpha: (reader) =>
 		isDitherEffect(reader) ? describeDitherEffect(reader) : describeDithered(reader),
-	decal: byShader({ 'HGRP/Effect/VFXDecal': describeVfxDecal, 'HGRP/DecalLit': describeLitDecal }),
+	decal: byShader({
+		'HGRP/Effect/VFXDecal': describeVfxDecal,
+		'HGRP/DecalLit': describeLitDecal,
+		'HGRP/WetnessDecal': describeWetnessDecal,
+	}),
 	fogSimple: describeMistCard,
 	vfxFakeVolumeFog: byShader({ 'HGRP/Effect/VFXFakeVolumeFog': describeMistVolume }),
 	volumetricBeam: describeLightBeam,

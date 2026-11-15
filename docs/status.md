@@ -233,9 +233,13 @@ packs or renders correctly.
   occlusion and metallic as they were, add their emission over the surface's, and hand the
   screen-space reflections only the last overlapping decal's surface; under a laid-over decal that
   doesn't write them, the surface's occlusion and metallic are taken as 1 and 0. terrain decals
-  (InitChunkData component 28) aren't packed and `HGRP/DecalUnlit` has no look; prefabs'
-  `HGDecalProjector`s (about 20 on each of the Qingbo waterwheels' prefabs) aren't read, and their
-  drop isn't reported in `debug/`
+  (InitChunkData component 28) aren't packed and `HGRP/DecalUnlit` has no look.
+  [wetness decals](viewer/materials.md#decals) (Qingbo's big waterwheel) take the porosity from
+  Lit's default factors rather than each material's `_PorosityFactor*` and `_DisableVerticalFlow`,
+  wet twice where they overlap, aren't gated by the global that gates the game's wetness mask, and
+  are unchecked against an in-game shot; whether the game's screen-space reflections see their
+  roughness is unchecked (the viewer's do); prefabs' `HGDecalProjector`s (about 20 on each of the
+  Qingbo waterwheels' prefabs) aren't read, and their drop isn't reported in `debug/`
 - terrain close up ([terrain](viewer/terrain.md#close-up-layers)): smooth triplanar replaces the
   game's random plane choice; the cliff projection, cone-map parallax and the `A` page's subsurface
   curvature aren't drawn; the fade distances are the viewer's own and the blend's GPU cost is
