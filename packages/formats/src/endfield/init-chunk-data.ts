@@ -180,7 +180,10 @@ export interface RectDecal {
 	color: [r: number, g: number, b: number, a: number];
 	/** scales the colour */
 	intensity: number;
-	/** an angle in degrees the decal's shaders don't read (270 and 90 seen) */
+	/**
+	 * an angle in degrees (270 and 90 seen) that the wetness decal's vertex stage bends the box into a sector
+	 * by, when its per-draw shape byte is 2; whether that byte is `flags`' low byte is unchecked
+	 */
 	sectorAngle: number;
 	/** flag word, 0 on every decal seen */
 	flags: number;
