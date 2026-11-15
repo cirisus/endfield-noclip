@@ -245,9 +245,14 @@ form (`m_Mode`, `m_ConstantMin/Max`, `m_CurveMultiplier`, `m_CurveMin/Max`), and
   (0.6–0.75) stop part of the way up. the span read as the spline's length over the speed is
   unverified.
 - **sizes and turns** it: uniform scale `startSize` times `sizeOverLifeTime`, Euler angles in
-  degrees from `startRotationX/Y/Z` in Unity's order (only z without `has3dStartRotation`), plus
-  rotation over lifetime with `hasRotation` and a noise offset with `hasNoise`; the shaft's movers
-  use neither. the object's matrix is the mover's `objectToWorld`, updated from its transform.
+  degrees from `startRotationX/Y/Z` in Unity's order (only z without `has3dStartRotation`), plus a
+  noise offset with `hasNoise`. with `hasRotation` each step adds a rate times the step to the
+  angles: `rotationOverLifeTime` about z and, with `has3dRotation`, `rotationXOverLifeTime` and
+  `rotationYOverLifeTime` about x and y, in degrees per second of the mover's time, read at the
+  object's age over its lifetime with the one random value the object's size and speed curves also
+  read. Sword Vault Dale's floating stones (`p_fxmap_map02_lv006_*stone_01`) tumble so at up to
+  10°/s about each axis; the shaft's movers neither spin nor wander. the object's matrix is the
+  mover's `objectToWorld`, updated from its transform.
 - **fades** with `hasAlphaControl`: an object whose `alphaOverLifeTime` falls below
   `transparentAlpha` draws transparent at that alpha. the shaft's movers set `transparentAlpha` 0,
   so they stay opaque.

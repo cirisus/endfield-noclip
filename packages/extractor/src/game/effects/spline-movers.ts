@@ -211,18 +211,15 @@ const clamp01 = (value: number): number => Math.min(Math.max(value, 0), 1);
  * start lifetime's fraction of the time the spline takes at the speed
  *
  * @param data the component's fields (see {@link isSplineMoverType})
- * @returns the system and its LOD groups, or why the viewer can't play it: noise, rotation over lifetime, an
- *   alpha fade, an emission type other than the box, a start lifetime or speed curve, more than four LOD
- *   groups, no spline or no LOD group
+ * @returns the system and its LOD groups, or why the viewer can't play it: noise, an alpha fade, an emission
+ *   type other than the box, a start lifetime or speed curve, more than four LOD groups, no spline or no LOD
+ *   group
  */
 export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 	const desc = objectField(data, 'desc');
 	const curve = (name: string) => readSerializedMinMaxCurve(objectField(desc, name));
 	if (booleanField(desc, 'hasNoise')) {
 		return { reason: 'spline noise' };
-	}
-	if (booleanField(desc, 'hasRotation') || booleanField(desc, 'has3dRotation')) {
-		return { reason: 'spline rotation over lifetime' };
 	}
 	// the game draws objects whose alpha falls below `transparentAlpha` as transparent
 	if (booleanField(desc, 'hasAlphaControl') && numberField(desc, 'transparentAlpha') > 0) {
@@ -297,6 +294,17 @@ export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 	const radians = Math.PI / 180;
 	// without 3D start rotations the game turns objects about z alone
 	const turned = booleanField(desc, 'has3dStartRotation');
+	// rates in degrees per second of the mover's time, read at the object's age over its lifetime: about z with
+	// `hasRotation`, and about x and y too with `has3dRotation`
+	let spin: ParticleSystemInfo['rotationOverLifetime'] = null;
+	if (booleanField(desc, 'hasRotation')) {
+		const spun = booleanField(desc, 'has3dRotation');
+		spin = [
+			spun ? scaled(curve('rotationXOverLifeTime'), radians) : ZERO_CURVE,
+			spun ? scaled(curve('rotationYOverLifeTime'), radians) : ZERO_CURVE,
+			scaled(curve('rotationOverLifeTime'), radians),
+		];
+	}
 	return {
 		info: {
 			renderMode: ParticleRenderMode.Mesh,
@@ -333,7 +341,7 @@ export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 			motion: { kind: 'spline', segments, speed },
 			emitterMotion: null,
 			sizeOverLifetime: [growth, growth, growth],
-			rotationOverLifetime: null,
+			rotationOverLifetime: spin,
 			alignment: ParticleAlignment.Local,
 			pivot: [0, 0, 0],
 			meshWeights: groups.map(() => 1),

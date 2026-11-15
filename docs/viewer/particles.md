@@ -125,7 +125,9 @@ system and its index, so any moment can be evaluated on its own:
 - a system with a spline ([spline movers](../game-data/particles.md#spline-movers)) ignores the
   above: a particle lies at the path's point its travelled distance reaches (the speed integrated
   over its age), plus its start position in the shape, and leaves once that distance passes the
-  path's end. `splinePoint` finds the point as the game does.
+  path's end. `splinePoint` finds the point as the game does. a mover's spin is the rotation over
+  lifetime below, each axis's rate with its own random value where the game's share the object's
+  one.
 
 ### pose and colour
 

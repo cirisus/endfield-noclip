@@ -67,6 +67,30 @@ describe('readSplineMover', () => {
 		assert.ok('info' in read);
 		assert.ok(Math.abs(read.info.startLifetime.scalar - 0.7 * 60.001) < 1e-9);
 	});
+	it('spins objects by the rates in degrees, about x and y only with 3D rotation', () => {
+		// the rates of Sword Vault Dale's floating stones (`line` in `p_fxmap_map02_lv006_slow_middlestone_01`)
+		const rates = { rotationOverLifeTime: constant(10, 0, 3), rotationXOverLifeTime: constant(10, 0, 3) };
+		const flat = readSplineMover(
+			mover({ hasRotation: 1, ...rates, rotationYOverLifeTime: constant(10, 0, 3) }),
+		);
+		assert.ok('info' in flat);
+		assert.deepEqual(
+			flat.info.rotationOverLifetime?.map((curve) => curve.scalar),
+			[0, 0, (10 * Math.PI) / 180],
+		);
+		const spun = readSplineMover(
+			mover({ hasRotation: 1, has3dRotation: 1, ...rates, rotationYOverLifeTime: constant(5, -5, 3) }),
+		);
+		assert.ok('info' in spun);
+		assert.deepEqual(spun.info.rotationOverLifetime?.[1], {
+			mode: CurveMode.TwoConstants,
+			scalar: (5 * Math.PI) / 180,
+			min: (-5 * Math.PI) / 180,
+		});
+		const still = readSplineMover(mover({ has3dRotation: 1, ...rates }));
+		assert.ok('info' in still);
+		assert.equal(still.info.rotationOverLifetime, null);
+	});
 	it('names what it cannot play', () => {
 		assert.deepEqual(readSplineMover(mover({ hasNoise: 1 })), { reason: 'spline noise' });
 		assert.deepEqual(readSplineMover(mover({ transparentAlpha: 0.5 })), { reason: 'spline alpha fade' });
