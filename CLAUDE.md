@@ -73,7 +73,6 @@ Last verified: 2026-11-10
 
 ### commit workflow
 
-- commit directly on `trunk`; this repo doesn't use feature branches
 - one logical change per commit; choose the type for the whole change, not each file category
 - accepted types:
   - `feat`: additions to the public API
@@ -84,45 +83,32 @@ Last verified: 2026-11-10
 - ship related tests and comments with their feature or fix
 - no scopes: `feat: ...`
 - mark breaking changes with `!`: `feat!: ...`
+- add a body only to carry _why_ that isn't evident from the diff; keep it succinct
 
 ### documentation
 
 - use lowercase in READMEs, comments, JSDoc, and commit messages, except for proper nouns, acronyms,
   and 'I'. public-facing interfaces (web UI) are exempt
-- omit boilerplate and obvious restatements in documentation and user-facing messages. keep shared
-  explanations in one place; link instead of repeating
+- omit boilerplate and obvious restatements in documentation and user-facing messages, with required
+  JSDoc being an exception. keep shared explanations in one place
 - comment only non-trivial code; explain why
-- counts and measurements taken from the game data or a run (how many materials a gap affects, a
-  phase's time) go stale as the game patches and the code changes. give one only where its scale
-  informs a decision, rounded ("about 90 map02 materials"); format constants and the game's authored
-  values are exact
-- add JSDoc to new publicly exported functions, methods, classes, fields, and enums:
-  - `@param` for parameters (no dashes after param names)
-  - `@returns` for return values
-  - `@throws` for exceptions when applicable
+  - leave CSS uncommented: how something looks is understood by seeing it rendered, not by reading a
+    description. comment only substantial workarounds (browser bugs, non-obvious hacks), stating
+    what they work around
+- add JSDoc to new publicly exported functions, methods, classes, fields, and enums. give each a
+  description and `@param` for every parameter, even when they restate the name or signature;
+  complete JSDoc keeps editor hovers and generated docs uniform
+  - write `@param` without dashes after param names
+  - add `@returns` when it returns a value, and `@throws` when it throws
   - describe the caller-facing contract, including preconditions. put implementation details and
     rationale in regular comments unless they constrain callers
+  - keep restating descriptions to one line and spend detail on what the signature doesn't convey.
+    describe what a React component is for, not what it renders or how it looks
+  - tags may be omitted where the signature is conventional, like React components: document their
+    props on the props type's fields instead
 
 ### agentic coding
 
-- use root `.research/` for experiments, probes, plans, and reference materials like cloned Git
+- use root `.research/` for experiments, analysis, plans, and reference materials like cloned Git
   repositories; create it if absent. it is local and disposable: committed code, documentation, and
-  commit messages must not reference paths inside it or depend on its contents. when a finding there
-  settles, write it into the matching `docs/` page, following that page's rules on what stays out
-- to see a change in the viewer, drive it with `agent-browser` as described in
-  [docs/driving-the-viewer.md](docs/driving-the-viewer.md)
-- before building a decoder, dumper, or other reverse-engineering tool, search GitHub
-  (`gh search code '<identifier>'`, `gh search repos`) for existing Endfield tooling and build only
-  the missing part. MIT code can be adapted; GPL, AGPL, and non-commercial tools are reference only
-
-### what the repo holds
-
-the repo ships extractors and the viewer, never the game's keys or content.
-
-- keys come from the user's install: `init` derives what it can, takes the rest from `--keys-from`,
-  validates each against the install, and saves them to the gitignored `endfield.local.json`
-- extracted output stays in the gitignored `out/` or outside the repo
-- decompiled shaders and C#, paraphrases of them, binary addresses, and other listings of
-  Hypergryph's code stay out of the repo, including `docs/`. describe the behavior our code
-  implements instead
-- check each diff for keys and game-derived files before committing
+  commit messages must not reference paths inside it or depend on its contents
