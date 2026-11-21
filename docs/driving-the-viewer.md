@@ -33,19 +33,35 @@ read the port from the `Local:` line the server prints. the URL takes the
 ### on Linux
 
 `--webgpu` runs WebGPU on SwiftShader, a software Vulkan, so the viewer crawls and screenshots time
-out. run a headed browser on the hardware Vulkan driver instead. the flags depend on the machine, so
-keep them in the gitignored `agent-browser.local.json` rather than in the repo or a global
-agent-browser config:
+out. run the browser headed on the hardware Vulkan driver, inside
+[gamescope](https://github.com/ValveSoftware/gamescope)'s headless backend: a compositor with no
+window or display output, so nothing appears on the desktop while the browser keeps GPU compositing.
+frame times, GPU timings, screenshots, video, input and pointer lock behave as in a visible window.
+the flags and paths depend on the machine, so keep them in the gitignored `agent-browser.local.json`
+rather than in the repo or a global agent-browser config:
 
 ```json
 {
 	"headed": true,
-	"args": "--enable-unsafe-webgpu\n--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan\n--use-vulkan=native\n--use-angle=vulkan\n--ignore-gpu-blocklist\n--ozone-platform=wayland\n--disable-gpu-vsync\n--disable-frame-rate-limit\n--disable-renderer-backgrounding\n--disable-background-timer-throttling"
+	"executablePath": "<repo>/agent-browser-gamescope.local.sh",
+	"args": "--enable-unsafe-webgpu\n--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan\n--use-vulkan=native\n--use-angle=vulkan\n--ignore-gpu-blocklist\n--disable-gpu-vsync\n--disable-frame-rate-limit\n--disable-renderer-backgrounding\n--disable-background-timer-throttling"
 }
 ```
 
-point agent-browser at it from `mise.local.toml` (add that file to `.git/info/exclude`), then run
-`mise trust`:
+`executablePath` is a wrapper (add it to `.git/info/exclude`) that starts agent-browser's newest
+Chrome under gamescope. `-r 1000` lifts gamescope's 60 Hz pacing, and Chrome runs on X11 through
+gamescope's Xwayland:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+chrome=$(ls -d "$HOME"/.agent-browser/browsers/chrome-* | sort -V | tail -1)/chrome
+exec gamescope --backend headless -w 2560 -h 1600 -W 2560 -H 1600 -r 1000 --force-windows-fullscreen -- \
+	env -u WAYLAND_DISPLAY "$chrome" --ozone-platform=x11 "$@"
+```
+
+point agent-browser at the config from `mise.local.toml` (add that file to `.git/info/exclude`),
+then run `mise trust`:
 
 ```toml
 [env]
@@ -55,16 +71,37 @@ AGENT_BROWSER_CONFIG = "{{config_root}}/agent-browser.local.json"
 - interactive shells pick the variable up on entering the repo. non-interactive shells, such as an
   agent's, skip mise's prompt hook: launch with `mise exec -- agent-browser open '<url>'`. later
   commands reuse the open browser and can be plain `agent-browser`.
-- `--ozone-platform=wayland` is for Wayland sessions; drop it under X11.
-- the vsync and frame-rate flags keep the browser drawing when its window is on a hidden workspace.
-  without them Wayland stops sending frame callbacks, the page drops to about 1 fps, and screenshots
-  time out. the page still reports itself visible, so `document.visibilityState` can't detect this.
+- `agent-browser close` also ends that session's gamescope. sessions (`--session <name>`) each get
+  their own gamescope and GPU device, so several can run at once, though they share the GPU and CPU:
+  measure one at a time.
 - with the frame-rate limit off, `continuous` renders as fast as the GPU allows; turn it off when
   done.
-- headless mode reaches the GPU but captures the canvas as blank, because Chrome disables WebGPU
-  interop with the compositor there. keep `headed` on.
+- the window is 2560×1600 with the browser's own toolbar inside it; `agent-browser set viewport`
+  sets the page size.
+- to see the window, drop `executablePath` and add `--ozone-platform=wayland` (on a Wayland session)
+  to `args`. the vsync and frame-rate flags then also keep it drawing on a hidden workspace, where
+  Wayland otherwise stops sending frame callbacks and the page drops to about 1 fps while still
+  reporting itself visible.
 - check the adapter with `viewer.stats.adapter` (the stats panel shows it too); `google swiftshader`
   means the config wasn't loaded.
+
+#### Chrome's own headless mode
+
+`"headed": false`, with `--disable-vulkan-surface` added to `args` (without it there's no adapter),
+also reaches the hardware GPU, with no gamescope. it fits where gamescope is missing, but Chrome
+composites in software there (`chrome://gpu` reads "Compositing: Software only", "WebGPU interop:
+Disabled"), with two consequences:
+
+- every frame is copied back to the CPU, which slows the frame and its CPU spans (on map02,
+  `mesh select` 8 ms rather than 6.5, flight median 11.7 ms rather than 7.4). compare headless runs
+  with each other only.
+- `agent-browser screenshot` shows the canvas blank. read the canvas itself instead: `toDataURL`
+  returns the last drawn frame, even with `continuous` off, without the UI panels:
+
+```sh
+agent-browser eval 'document.querySelector("canvas").toDataURL("image/png")' \
+	| jq -r | cut -d, -f2 | base64 -d > /abs/path/shot.png
+```
 
 ## posing
 
