@@ -268,6 +268,14 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 		return;
 	}
 	const system = { ref: systemComponent.ref, data: await systemComponent.read() };
+	// the renderer's second material is its trails' (Unity's `trailMaterial`), not another pass over the
+	// particles' mesh as on a mesh renderer
+	const materials = arrayField(renderer.data, 'm_Materials');
+	const particleRenderer = {
+		ref: renderer.ref,
+		data: { ...renderer.data, m_Materials: materials.filter((_, i) => i !== 1) },
+	};
+	const trailMaterials = materials.slice(1, 2);
 	const parent = parentFrame(node);
 	const local = state.local;
 	const rendererData = posedPivot(renderer.data, state.posedRenderer);
@@ -283,7 +291,7 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 	if (frozen !== null) {
 		walk.candidates.push(
 			candidateOf(node, state, {
-				...renderer,
+				...particleRenderer,
 				matrix: frozen.matrix,
 				mesh: frozen.mesh,
 				particles: null,
@@ -297,8 +305,6 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 	}
 	const read = await readPlayedSystem(walk, system, rendererData);
 	const drawsParticles = numberField(rendererData, 'm_RenderMode') !== ParticleRenderMode.None;
-	// the trails draw with the renderer's second material
-	const trailMaterials = arrayField(renderer.data, 'm_Materials').slice(1, 2);
 	// a system a script starts is still there to see, so it gets a stand-in too
 	let reason = state.standIn;
 	if (reason === null && read === null) {
@@ -320,7 +326,7 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 			const placed = particleStandInMatrix(parent, local, scalingMode);
 			walk.candidates.push(
 				candidateOf(node, state, {
-					...renderer,
+					...particleRenderer,
 					matrix: placed,
 					mesh,
 					particles: null,
@@ -358,7 +364,7 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 		}
 		candidates.push(
 			candidateOf(node, state, {
-				...renderer,
+				...particleRenderer,
 				matrix: emitter,
 				mesh,
 				particles: { ...read.info, pivot, mesh: i },
@@ -368,6 +374,8 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 				decal: null,
 			}),
 		);
+	}
+	if (read.trail !== null && drawsParticles) {
 	}
 	if (read.trail !== null && trailMaterials.length > 0 && walk.particleQuad !== null) {
 		// every particle's trail, whichever mesh it picked, as one strip of quads
