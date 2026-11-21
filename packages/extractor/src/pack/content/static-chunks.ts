@@ -5,6 +5,7 @@ import { type TileKey, tileAt, tileId } from '@endfield-noclip/package-format/ti
 import type { Visibility } from '../../game/state/scene-control.ts';
 import type { ChunkSource, WorldIndex } from '../../game/world/world-index.ts';
 import { orderedPool } from '../../pool.ts';
+import { chunkEntityPlacement } from '../instances/chains.ts';
 import type { CollectedRow } from '../instances/collector.ts';
 import { HLOD_NAME, type HlodCandidates, hlodCandidates, pickHlodTile } from '../instances/hlod-cells.ts';
 import { type InstanceInput, rowReach } from '../instances/instances.ts';
@@ -213,7 +214,7 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 					draws = [decal];
 				}
 				const row: InstanceInput = {
-					chain: content.chains.intern(draws),
+					chain: content.chains.intern(draws, chunkEntityPlacement({ ...entity, matrix: entity.matrix })),
 					matrix: entity.matrix,
 					bounds: entity.bounds,
 					entityId: entity.id,

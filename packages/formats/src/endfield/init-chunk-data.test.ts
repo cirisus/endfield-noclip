@@ -27,6 +27,7 @@ const buildChunk = (
 		version?: number;
 		drawCount?: number;
 		decal?: boolean;
+		distanceLod?: boolean;
 		localSpin?: boolean;
 		cloth?: boolean;
 	} = {},
@@ -94,6 +95,9 @@ const buildChunk = (
 		[69, 8 + 40 * 2],
 		...(options.localSpin ? [[Component.LocalSpin, 16] as [number, number]] : []),
 		...(options.cloth ? [[Component.ClothHash, 4] as [number, number]] : []),
+		...(options.distanceLod
+			? [[Component.LodInfo, 20] as [number, number], [Component.DistanceLod, 1] as [number, number]]
+			: []),
 	];
 	const descriptorVector = w.vector(8, descriptors.length);
 	w.link(group.fields[3], descriptorVector.at);
@@ -164,6 +168,11 @@ const buildChunk = (
 				case Component.LocalSpin: {
 					// 3.5° per second about local +y, as the hub frames store it
 					[0.0610865, 0, 1, 0].forEach((v, k) => w.view.setFloat32(at + k * 4, v, true));
+					break;
+				}
+				case Component.LodInfo: {
+					// a mist card's: its centre, then its half size squared
+					[967.39, 292.1, 971.29 + e, 696.56].forEach((v, k) => w.view.setFloat32(at + k * 4, v, true));
 					break;
 				}
 				case Component.ClothHash: {
@@ -240,6 +249,13 @@ test('readChunkEntities reads a rect decal’s matrix and placement values', () 
 		sectorAngle: 270,
 		flags: 0,
 	});
+});
+
+test('readChunkEntities measures a light-art entity’s LODs from its LOD centre', () => {
+	const [plain] = readChunkEntities(parseInitChunk(buildChunk()));
+	assert.equal(plain.lodDistanceFrom, null);
+	const [, second] = readChunkEntities(parseInitChunk(buildChunk({ distanceLod: true })));
+	assert.deepEqual(second.lodDistanceFrom, [Math.fround(967.39), Math.fround(292.1), Math.fround(972.29)]);
 });
 
 test('readChunkEntities turns a local spin into a world spin through the entity origin', () => {

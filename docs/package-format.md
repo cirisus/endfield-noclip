@@ -323,12 +323,14 @@ a free id.
   which the instance's transform takes to the world. the packer sets it on prefab renderers an
   [effect LOD table](game-data/effects.md#effect-lod-tables) switches by distance, with one draw per
   span of distances they show at, and puts the origin on the effect's own GameObject as the game
-  measures it (to the millimetre, so placements of a prefab share chains); under a billboard the
-  stored rotation turns the offset, not the one the camera gives. it switches without the game's
-  fade. an effect a dynamic structure places takes its band from its LOD proxy instead, so its
-  renderers have no distance chain: a renderer its root's table shows at only some proxy levels is
-  placed once per rectangle of where the streaming centre puts the proxy at them, each copy in a
-  block with that rectangle as its [reach](#tile-tree).
+  measures it (to the millimetre, so placements of a prefab share chains), and on static entities
+  whose bounds the game stores as [distances](game-data/world.md#lod-and-hlod) (component 58), with
+  the origin at their LOD centre; under a billboard the stored rotation turns the offset, not the
+  one the camera gives. it switches without the game's fade. an effect a dynamic structure places
+  takes its band from its LOD proxy instead, so its renderers have no distance chain: a renderer its
+  root's table shows at only some proxy levels is placed once per rectangle of where the streaming
+  centre puts the proxy at them, each copy in a block with that rectangle as its
+  [reach](#tile-tree).
 
 ### asset tables
 

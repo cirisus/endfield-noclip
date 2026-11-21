@@ -2,6 +2,7 @@ import { transformBounds } from '@endfield-noclip/formats/unity/transform';
 
 import { gridIdReach } from '../../game/dynamic/dynamic-grids.ts';
 import type { DynamicStructures } from '../../game/dynamic/dynamic-structures.ts';
+import { chunkEntityPlacement } from '../instances/chains.ts';
 
 import { decalPlacement, type PackContent, UNIT_CUBE_BOUNDS } from './pack-content.ts';
 import { decalSkipReason } from './static-chunks.ts';
@@ -67,7 +68,10 @@ export const placeDynamicEntities = (
 		}
 		content.addStructure(
 			{
-				chain: content.chains.intern(entity.renderer.draws.map((draw) => content.rendererDraw(draw))),
+				chain: content.chains.intern(
+					entity.renderer.draws.map((draw) => content.rendererDraw(draw)),
+					chunkEntityPlacement({ ...entity, matrix: entity.matrix }),
+				),
 				matrix: entity.matrix,
 				bounds: entity.bounds,
 				entityId: entity.id,

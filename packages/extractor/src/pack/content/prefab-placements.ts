@@ -1,7 +1,6 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import {
-	inverseTransformPoint,
 	multiplyMatrices,
 	transformBounds,
 	transformPoint,
@@ -24,6 +23,7 @@ import { placePrefabLight, readPrefabLights, type PrefabLight } from '../../game
 import type { PrefabRoots } from '../../game/prefabs/prefab-root.ts';
 import { type EffectLodSource, readPrefabRenderers, type PrefabRenderer } from '../../game/prefabs/prefab.ts';
 import type { WorldIndex } from '../../game/world/world-index.ts';
+import { chainDistanceOrigin } from '../instances/chains.ts';
 
 import { onPivot } from './interactives.ts';
 import {
@@ -216,7 +216,7 @@ const placeRenderer = (
 				distanceOrigin:
 					renderer.distances === null
 						? null
-						: distanceOrigin(matrix, transformPoint(rootMatrix, renderer.distances.origin)),
+						: chainDistanceOrigin(matrix, transformPoint(rootMatrix, renderer.distances.origin)),
 			}),
 			matrix,
 			bounds,
@@ -301,28 +301,6 @@ const squaredSpan = (
 	minSquared: min > 0 ? min * min : -1,
 	maxSquared: Number.isFinite(max) ? max * max : FLT_MAX,
 });
-
-/**
- * @param matrix an instance's transform
- * @param origin a world point
- * @returns the point in the instance's frame, to the millimetre so placements of one prefab share chains; the
- *   instance's own origin when its transform has no inverse (a zero scale, so nothing draws)
- */
-const distanceOrigin = (matrix: Float32Array, origin: readonly number[]): [number, number, number] => {
-	let local: [number, number, number] = [0, 0, 0];
-	try {
-		local = inverseTransformPoint(matrix, origin);
-	} catch (error) {
-		if (!(error instanceof RangeError)) {
-			throw error;
-		}
-	}
-	return [
-		Math.round(local[0] * 1000) / 1000,
-		Math.round(local[1] * 1000) / 1000,
-		Math.round(local[2] * 1000) / 1000,
-	];
-};
 
 /**
  * @returns the mesh at a path (the quad billboard particles draw, the decal cube), or `null` if the install

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { DrawFlags } from '@endfield-noclip/formats/endfield/init-chunk-data';
+import { type ChunkEntity, DrawFlags } from '@endfield-noclip/formats/endfield/init-chunk-data';
+import { inverseTransformPoint } from '@endfield-noclip/formats/unity/transform';
 import {
 	type Chain,
 	ChainDrawFlags,
@@ -56,6 +57,47 @@ export interface ChainPlacement {
 }
 
 const SCREEN_SIZED: ChainPlacement = { billboard: 0, distanceOrigin: null };
+
+/**
+ * a camera-distance chain's origin ({@link ChainPlacement.distanceOrigin})
+ *
+ * @param matrix an instance's transform
+ * @param origin a world point
+ * @returns the point in the instance's frame, to the millimetre so placements of one prefab share chains; the
+ *   instance's own origin when its transform has no inverse (a zero scale, so nothing draws)
+ */
+export const chainDistanceOrigin = (
+	matrix: Float32Array,
+	origin: readonly number[],
+): [number, number, number] => {
+	let local: [number, number, number] = [0, 0, 0];
+	try {
+		local = inverseTransformPoint(matrix, origin);
+	} catch (error) {
+		if (!(error instanceof RangeError)) {
+			throw error;
+		}
+	}
+	return [
+		Math.round(local[0] * 1000) / 1000,
+		Math.round(local[1] * 1000) / 1000,
+		Math.round(local[2] * 1000) / 1000,
+	];
+};
+
+/**
+ * @param entity a chunk entity with a matrix
+ * @returns its chain's placement: measured by camera distance from its LOD centre when the game stores its
+ *   thresholds as distances (`ChunkEntity.lodDistanceFrom`), else by screen-relative size
+ */
+export const chunkEntityPlacement = (
+	entity: Pick<ChunkEntity, 'lodDistanceFrom'> & { matrix: Float32Array },
+): ChainPlacement => {
+	if (entity.lodDistanceFrom === null) {
+		return SCREEN_SIZED;
+	}
+	return { billboard: 0, distanceOrigin: chainDistanceOrigin(entity.matrix, entity.lodDistanceFrom) };
+};
 
 /** what a package id no chain holds stores */
 const EMPTY_CHAIN: Chain = { flags: 0, draws: [], distanceOrigin: null };

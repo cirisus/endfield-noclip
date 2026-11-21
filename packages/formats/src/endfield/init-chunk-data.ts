@@ -142,6 +142,11 @@ export interface ChunkEntity {
 	 */
 	decal: RectDecal | null;
 	/**
+	 * the world point a light-art entity's (component 58) LOD thresholds are camera distances from, its
+	 * component-6 LOD centre; `null` for entities whose thresholds are screen-relative sizes
+	 */
+	lodDistanceFrom: [x: number, y: number, z: number] | null;
+	/**
 	 * a constant spin the entity turns with (component 54, or 52 turned into world space), or `null` for
 	 * entities that hold still
 	 */
@@ -200,6 +205,11 @@ export interface RectDecal {
 export const Component = {
 	/** f32 world AABB centre x; ids 0–5 are centre xyz then extents xyz */
 	BoundsCenterX: 0,
+	/**
+	 * 20 bytes, the game's `RenderObjectLODInfoComponent`: `f32×3` LOD centre (world), `f32` half size squared,
+	 * `u8` dither, `u8` culling options (0 on every map02 entity), 2 padding
+	 */
+	LodInfo: 6,
 	/** 4 + 32·2ⁿ bytes for n = id − 8: `u32 count`, 2ⁿ × 24-byte draw infos, 2ⁿ × `(f32 max², f32 min²)` */
 	DrawInfoFirst: 8,
 	DrawInfoLast: 14,
@@ -221,6 +231,12 @@ export const Component = {
 	Rotator: 54,
 	/** `u32`: the hash of the entity's cloth simulation */
 	ClothHash: 60,
+	/**
+	 * 1 byte (0 seen), on the light-art entities alone (mist cards and boxes, light beams): their draws' LOD
+	 * thresholds are squared camera distances from the LOD centre (6) rather than squared screen-relative
+	 * sizes
+	 */
+	DistanceLod: 58,
 	/** 24 bytes: `u8 lodCount`, …, at 16 `u8[8]` cumulative draw count per LOD */
 	LodRanges: 67,
 	/** 8 + 40·2ⁿ bytes for n = id − 68: `u64 count`, 2ⁿ × `(u64 material, u64 mesh, 24 bytes)` */
@@ -407,6 +423,11 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 		const matrixColumn = column(Component.InstanceData) ?? decalColumn;
 		const rotatorColumn = column(Component.Rotator);
 		const localSpinColumn = column(Component.LocalSpin);
+		const lodInfoColumn = column(Component.LodInfo);
+		const distanceLod = column(Component.DistanceLod) !== undefined;
+		if (distanceLod && lodInfoColumn?.stride !== LOD_INFO_SIZE) {
+			throw new FormatError('a group has distance LODs without a 20-byte LOD centre');
+		}
 		const clothColumn = column(Component.ClothHash);
 		if (clothColumn !== undefined && clothColumn.stride !== 4) {
 			throw new FormatError(`a group has a ${clothColumn.stride}-byte cloth hash`);
@@ -470,6 +491,8 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 				bounds,
 				renderer,
 				decal: decalColumn === undefined ? null : readRectDecal(blobView, decalColumn, i, id),
+				lodDistanceFrom:
+					distanceLod && lodInfoColumn !== undefined ? readLodCentre(blobView, lodInfoColumn, i) : null,
 				rotator,
 				clothHash: clothColumn === undefined ? null : blobView.getUint32(clothColumn.offset + i * 4, true),
 				components: ids,
@@ -534,6 +557,14 @@ const readLocalSpin = (
 		axis: [world[0] / length, world[1] / length, world[2] / length],
 		pivot: [matrix[12], matrix[13], matrix[14]],
 	};
+};
+
+const LOD_INFO_SIZE = 20;
+
+/** component 6's LOD centre */
+const readLodCentre = (view: DataView, column: ComponentColumn, index: number): [number, number, number] => {
+	const at = column.offset + index * column.stride;
+	return [view.getFloat32(at, true), view.getFloat32(at + 4, true), view.getFloat32(at + 8, true)];
 };
 
 const RECT_DECAL_SIZE = 160;

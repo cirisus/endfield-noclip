@@ -179,6 +179,7 @@ column selectors; the ones with established meaning:
 | id    | content                                                                                                                                                                                                                                                                                                      |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0–5   | world AABB, centre xyz then extents xyz (f32 each)                                                                                                                                                                                                                                                           |
+| 6     | the game's `RenderObjectLODInfoComponent` (20 bytes): LOD centre (world), half size squared, dither byte, culling options byte (0 on every map02 entity)                                                                                                                                                     |
 | 8–14  | draw infos for capacity `2^(id − 8)`: count, 24-byte infos (the game's `RendererInfo`: submesh, `renderFlags`), then `(max², min²)` LOD bounds                                                                                                                                                               |
 | 18    | 256-byte instance constants starting with the object-to-world matrix                                                                                                                                                                                                                                         |
 | 21    | 64-byte name prefix (root object names win when present)                                                                                                                                                                                                                                                     |
@@ -190,6 +191,7 @@ column selectors; the ones with established meaning:
 | 44    | on collider-only entities (`…_COL1`, `P_box_collider`, `MergedCollider_…`), always with 21 alone (tens of thousands on map02); content unread                                                                                                                                                                |
 | 52    | a constant spin about the entity's own origin (16 bytes): speed (rad/s, non-negative), unit axis (local); only on the originium hub frames ([spinning scenery](animation.md#spinning-scenery))                                                                                                               |
 | 54    | a constant spin (92 bytes): speed (rad/s, non-negative), unit axis, pivot (world), six floats not checked (a local box, by their values), then the stored position, rotation quaternion xyzw and scale; only on Qingbo Stockade's waterwheels' renderers ([spinning scenery](animation.md#spinning-scenery)) |
+| 58    | one byte (0 seen), on map02's light-art entities alone (about 1250: mist cards and boxes, light beams): their draws' LOD bounds are [camera distances](#lod-and-hlod)                                                                                                                                        |
 | 60    | a cloth hash (u32): the entity's vertices follow the [cloth](#cloth-groups) with that hash ([cloth simulation](materials.md#cloth-simulation))                                                                                                                                                               |
 | 61    | an oriented box (44 bytes): u32 0, centre xyz, a size xyz (half or full unchecked), rotation quaternion xyzw; with 21 and the 1-byte 62 on map02's `shadowOC_CAVE_*` entities, the only ones seen                                                                                                            |
 | 63    | the same light's settings, zero-filled (448 bytes)                                                                                                                                                                                                                                                           |
@@ -610,6 +612,12 @@ atlases.
   by size, but every one seen is `−k²` with `k` between 0.005 and 0.05 (−0.000225 on many map02
   draws, −0.0001 on every map02 HLOD cluster, −0.0025 on every indie_dg005 one, −0.0004, −0.000025),
   so they may be ordinary cull heights stored negated.
+- **distance LODs.** the draws of entities with component 58 (map02's mist cards and boxes and
+  volumetric light beams, about 1250) store squared camera distances in metres instead: the cards
+  show from 20–74 m out to 180–685 m, most boxes out to 255 m, and `(0, FLT_MAX]` never culls. every
+  other map02 draw's bounds stay at or below 0.7225, so the two never overlap. that the distance is
+  measured from the component-6 LOD centre (the entity's bounds centre on those seen) is inferred,
+  not read from the culling code.
 - **foliage cards.** imposter card meshes (`…_cardmesh`) appear as ordinary LODs, usually the last
   but not always: thousands of map02 card draws are an earlier LOD with a size cull (LOD 3 of 5, 4
   of 6).
