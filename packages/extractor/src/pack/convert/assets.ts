@@ -1,3 +1,4 @@
+import type { WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { MaterialRecord, ShaderSummary } from '@endfield-noclip/formats/unity/material';
 import { BlobKind } from '@endfield-noclip/package-format/blobs';
 import type { GeometryEntry } from '@endfield-noclip/package-format/geometry';
@@ -18,6 +19,7 @@ import {
 	type ObjectRef,
 	recordBundleReads,
 } from '../../game/assets/assets.ts';
+import { placedWaterFoam } from '../../game/materials/effects/water-foam.ts';
 import {
 	describeMaterial,
 	materialSway,
@@ -58,10 +60,12 @@ import { convertMaterial, ShaderTable } from './materials.ts';
 
 // #region types
 
-/** what a material variant (`AssetIds.internObjectVariant`) changes */
+/** what a material variant (`AssetIds.internObjectVariant`, `internVariant`) changes */
 export interface MaterialOverrides {
-	/** saved values replaced before conversion, as a pose's clips set them */
-	saved: MaterialValues;
+	/** saved values replaced before conversion, as a pose's clips set them, or `null` */
+	saved: MaterialValues | null;
+	/** a static WaterDecal box's renderer values, folded into its foam once described, or `null` */
+	waterDecal: WaterDecal | null;
 }
 
 /** what {@link convertAssets} needs */
@@ -492,7 +496,11 @@ const describeSurfaces = (
 			return { status: 'failed' };
 		}
 		const shader = materials.shaders.shaders[material.shader];
-		const surface = describeMaterial(material, shader);
+		let surface = describeMaterial(material, shader);
+		const placement = overrides.get(id)?.waterDecal ?? null;
+		if (placement !== null && surface.kind === 'waterFoam') {
+			surface = placedWaterFoam(surface, placement);
+		}
 		if (surface.kind === 'unsupported') {
 			const key = `${shader.name}: ${surface.reason}`;
 			unsupported[key] = (unsupported[key] ?? 0) + 1;
@@ -504,7 +512,7 @@ const describeSurfaces = (
 		const drawn = surface.kind !== 'unsupported' && surface.kind !== 'undrawn';
 		const gaps = drawn ? surfaceGaps(readerOf(material, shader)) : [];
 		// a looping clip's floats, as the numbers of the surface they change
-		const played = overrides.get(id)?.saved.motion ?? null;
+		const played = overrides.get(id)?.saved?.motion ?? null;
 		let motion: MaterialMotion | null = null;
 		if (drawn && played !== null) {
 			const moving = surfaceMotion(surface, played, (floats) =>

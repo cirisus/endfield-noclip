@@ -292,10 +292,15 @@ packs or renders correctly.
   fills between that a pump can stop at; whether the server's starting amount always equals the
   authored one, and whether an empty pool's surface still draws in game, aren't checked
 - waterfalls missing: Jingyu's pool falls (near unity −763, 209, −1190) and the small cascades
-  beside it show white in game, but the viewer's VFXWater sheet there sits inside the rocks in front
-  of it, and the steep river surface running down the lip draws as clear water. what the game draws
-  there is unknown; the leads are the unpacked static [foam boxes](viewer/water.md#foam-boxes)
-  (component 31), some of which enclose the falls, and the steep segment's own mesh normals
+  beside it, and the cascade over the lip of Si's Painting's lily pool (near 980, 293, 972), show
+  white in game, but the steep river surface running down each lip draws as clear water, so only
+  rock shows there (and at Jingyu the VFXWater sheet sits inside the rocks in front of it). the
+  static [foam boxes](viewer/water.md#foam-boxes) around them are drawn, but foam shows only on
+  water the viewer draws; the lead is the steep segment's own mesh normals, which the viewer faces
+  up
+- WaterDecal: the displacement pass (`_BLEND_DISPLACEMENT`) isn't drawn, `_BLEND_BASECOLOR2` boxes
+  (11 map02 materials) stay unsupported, and prefab boxes' renderer values aren't packed
+  ([foam boxes](viewer/water.md#foam-boxes))
 
 ## effects and particles
 
@@ -378,7 +383,11 @@ packs or renders correctly.
     including Valley Pass's fire column and its screen-space blend layer
   - [mist](game-data/effects.md#mist): lit cards light by the mesh normal rather than their normal
     map, the cards' own fog and the boxes' depth prepass and vertex colour aren't drawn, and only
-    additive boxes draw; Suiming's cave-exit light card is unchecked in game
+    additive boxes draw; Suiming's cave-exit light card is unchecked in game. at Si's Painting's
+    lily pool (946, 295, 973) a box hazes the pads 15 m out more than the game does, though the box
+    follows the shader; `_VFXParams1` and the PC value of the exposure the box divides by are the
+    untraced inputs. that cards' and boxes' [distance LODs](game-data/world.md#lod-and-hlod) are
+    measured from their LOD centre is inferred
   - across effects: the game's global scene-effect colour adjustment (`_VFXParams1`, set natively;
     the Jingyu blight reads less saturated than in game)
   - stencil [portals](game-data/effects.md#portals) draw without their masks' own colour and depth,

@@ -141,11 +141,16 @@ samplers follow the textures' wrap modes, so the flowmap and the gradient have t
 half a texel inside their edges in place of the game's clamping sampler, and the gradient's mip
 level leaves out the noise's share of its u.
 
-materials with keywords beyond `_BLEND_BASECOLOR`, `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`,
-`_USE_DISSOLVE` and `_USE_WATER_EROSION`, or a `_ZTest` other than 4, 5 or 8, show as
-[unsupported](materials.md#unsupported-materials). it differs from the game in that the
-per-placement `HGWaterDecalRenderer` values (and so the displacement pass) aren't packed (every
-map02 prefab has the neutral ones), the static boxes of InitChunkData component 31 aren't packed
-(they're counted in `debug/skipped-entities.json`; some of them enclose Jingyu's pool falls, which
-show white in game and clear in the viewer), the soft blend's device depths use the viewer's near
+the static boxes of InitChunkData component 31 are packed like rect decals: their cube under their
+matrix, with their material, which a box whose renderer values aren't neutral gets a variant of. the
+variant's foam takes those values once described (`placedWaterFoam` in
+[water-foam.ts](../../packages/extractor/src/game/materials/effects/water-foam.ts)): the tiling
+scales the base map's UVs, the speed its scroll, and the opacity, brightness and tint the output.
+
+materials with keywords beyond `_BLEND_BASECOLOR`, `_BLEND_DISPLACEMENT`, `_USE_DISTURB`,
+`_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE` and `_USE_WATER_EROSION`, or a `_ZTest` other than 4,
+5 or 8, show as [unsupported](materials.md#unsupported-materials). it differs from the game in that
+the displacement pass isn't drawn (`_BLEND_DISPLACEMENT` boxes draw their foam alone, and the
+displacement value is read but unused), prefab boxes' `HGWaterDecalRenderer` values aren't packed
+(every map02 prefab has the neutral ones), the soft blend's device depths use the viewer's near
 plane, and the distortion texture's mip bias is left out (its material value is unidentified).

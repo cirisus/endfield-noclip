@@ -25,7 +25,7 @@ import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-par
 import {
 	assetProperty,
 	parseStreamingChunk,
-	RECT_DECAL_MATERIAL_KEY,
+	DECAL_MATERIAL_KEY,
 } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
 import { unpackHgPayload } from '@endfield-noclip/formats/hg/payload';
 import type { RowPath } from '@endfield-noclip/package-format/instances';
@@ -461,7 +461,7 @@ class DynamicFiles {
 					mapDefined(
 						parseStreamingChunk(streamingPayload).records,
 						(record): [number, bigint] | undefined => {
-							const material = assetProperty(record, RECT_DECAL_MATERIAL_KEY);
+							const material = assetProperty(record, DECAL_MATERIAL_KEY);
 							return material === undefined ? undefined : [record.id, material];
 						},
 					),

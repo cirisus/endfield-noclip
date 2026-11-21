@@ -273,7 +273,7 @@ const rendererDraws = (content: PackContent, renderer: PrefabRenderer): ChainDra
 			id = content.materials.internObject(material);
 		} else {
 			id = content.materials.internObjectVariant(material, `posed ${JSON.stringify(saved)}`);
-			content.materialOverrides.set(id, { saved });
+			content.materialOverrides.set(id, { saved, waterDecal: null });
 		}
 		// a prefab renderer has no game flag word; its role says whether it only casts shadows
 		return spans.map((span) =>

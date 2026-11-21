@@ -61,8 +61,14 @@ export interface HlodLink {
 	index: number;
 }
 
-/** the property key of a rect decal entity's (InitChunkData component 27) material */
-export const RECT_DECAL_MATERIAL_KEY = 0xff010000;
+/**
+ * the property key of a decal entity's material: a rect decal's (InitChunkData component 27) or a WaterDecal
+ * box's (31)
+ */
+export const DECAL_MATERIAL_KEY = 0xff010000;
+
+/** the property key of a WaterDecal box's (InitChunkData component 31) mesh, the render pipeline's cube */
+export const WATER_DECAL_MESH_KEY = 0xff000000;
 
 /** the property key of a renderer entity's {@link HlodLink} (the key is a mesh asset on other archetypes) */
 const HLOD_LINK_KEY = 0xff000000;

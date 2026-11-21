@@ -29,6 +29,23 @@ export class AssetIds {
 	}
 
 	/**
+	 * interns a variant of an asset known by its hash: the same asset under an id of its own, for uses that
+	 * change some of its values before it's converted (see `MaterialOverrides`)
+	 *
+	 * @param hash StringPathHash key
+	 * @param resolve looks up the path, called once per new variant
+	 * @param variant tells variants of one asset apart
+	 * @returns the variant's id
+	 */
+	internVariant(hash: bigint, resolve: (hash: bigint) => string | undefined, variant: string): number {
+		return this.#variants.getOrInsertComputed(`${hash.toString(16)}/${variant}`, (variantKey) => {
+			const id = this.assets.push({ hash, path: resolve(hash) ?? null }) - 1;
+			this.#variantKeys.set(id, variantKey);
+			return id;
+		});
+	}
+
+	/**
 	 * interns an exact prefab dependency without inventing a game asset path
 	 *
 	 * @param ref resolved dependency

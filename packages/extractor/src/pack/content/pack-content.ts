@@ -3,6 +3,7 @@ import {
 	DrawFlags,
 	type RectDecal,
 	type RendererDraw,
+	type WaterDecal,
 } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import { transformBounds } from '@endfield-noclip/formats/unity/transform';
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
@@ -10,6 +11,7 @@ import { type ChainDraw, DrawRole } from '@endfield-noclip/package-format/instan
 import { tileAt } from '@endfield-noclip/package-format/tiles';
 import type { Rect } from '@endfield-noclip/package-format/values';
 
+import { isNeutralWaterDecal } from '../../game/materials/effects/water-foam.ts';
 import type { Visibility } from '../../game/state/scene-control.ts';
 import type { WorldIndex } from '../../game/world/world-index.ts';
 import { ControlRegistry } from '../control-registry.ts';
@@ -198,6 +200,27 @@ export class PackContent {
 			material: this.materials.intern(material, this.scene.pathOf),
 			minSquared: 0,
 		});
+	}
+
+	/**
+	 * a static WaterDecal box draws its mesh with its material; a placement whose renderer values aren't
+	 * neutral gets a variant of the material, whose foam takes them (`placedWaterFoam`)
+	 *
+	 * @param mesh the box's mesh path hash
+	 * @param material its material path hash
+	 * @param placement the box's renderer values
+	 * @returns its draw
+	 */
+	waterDecalDraw(mesh: bigint, material: bigint, placement: WaterDecal): ChainDraw {
+		const { pathOf } = this.scene;
+		let id: number;
+		if (isNeutralWaterDecal(placement)) {
+			id = this.materials.intern(material, pathOf);
+		} else {
+			id = this.materials.internVariant(material, pathOf, `placed ${JSON.stringify(placement)}`);
+			this.materialOverrides.set(id, { saved: null, waterDecal: placement });
+		}
+		return chainDraw({ geometry: this.geometries.intern(mesh, pathOf), material: id, minSquared: 0 });
 	}
 
 	/**

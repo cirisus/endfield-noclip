@@ -171,7 +171,7 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 				}
 				content.count('unique');
 				const { renderer } = entity;
-				/** a decal's draw; a renderer's are interned once the entity is known to pack */
+				/** a decal's or WaterDecal box's draw; a renderer's are interned once the entity is known to pack */
 				let decal: ChainDraw | null = null;
 				if (entity.decal !== null) {
 					const material = read.decalMaterials.get(entity.id);
@@ -182,6 +182,16 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 						continue;
 					}
 					content.count('decal');
+				} else if (entity.waterDecal !== null) {
+					const material = read.decalMaterials.get(entity.id);
+					const mesh = read.waterDecalMeshes.get(entity.id);
+					if (material === undefined || mesh === undefined) {
+						content.count('waterDecalSkipped');
+						content.skipped.add('static', 'water decal without its mesh or material', entity);
+						continue;
+					}
+					decal = content.waterDecalDraw(mesh, material, entity.waterDecal);
+					content.count('waterDecal');
 				} else if (renderer === null) {
 					content.count('noRenderer');
 					content.skipped.add('static', 'no renderer', entity);

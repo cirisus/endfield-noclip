@@ -7,6 +7,8 @@ import type { MaterialSurface } from '@endfield-noclip/package-format/surfaces';
 import { describeMaterial } from '../material-describe.ts';
 import type { MaterialValues, ShaderEntry, ShaderFamily } from '../material-values.ts';
 
+import { isNeutralWaterDecal, placedWaterFoam } from './water-foam.ts';
+
 const shader = (name: string, family: ShaderFamily, overrides: Partial<ShaderEntry> = {}): ShaderEntry => ({
 	name,
 	family,
@@ -1955,6 +1957,47 @@ describe('WaterDecal', () => {
 		);
 		assert.equal(foam.depthTest, 'always');
 		assert.deepEqual(foam.mipBias, { base: 3, mask: 2, dissolve: 2 });
+	});
+
+	it('folds a static box’s renderer values in, and draws its foam without the displacement', () => {
+		// the streaks over Si's Painting's pool falls (`M_fx_map_common_map02_waterdecal_2503`), under
+		// renderer values like its box's (`waterdecal_01#10_1115149`)
+		const foam = ofKind(
+			describeMaterial(
+				material({
+					keywords: [
+						'_BLEND_BASECOLOR',
+						'_BLEND_DISPLACEMENT',
+						'_USE_DISTURB',
+						'_USE_MASK',
+						'_USE_SOFTBLEND',
+					],
+					slots: { _BaseColorMap: slot(1, [1.5, 3]), _DisturbTex1: slot(2), _MaskTex: slot(3) },
+					floats: { _ZTest: 5, _MeshType: 1, _OverallOpacity: 0.8 },
+					colors: { _BaseColorTint: [1.9, 2.1, 2, 1], _BaseColor: [0.2, 0.2, 0.2, 0] },
+					vectors: { _BaseColorSpeed: [0, -0.4, 0, 0] },
+				}),
+				waterDecal,
+			),
+			'waterFoam',
+		);
+		const placed = placedWaterFoam(foam, {
+			params: [2, 0, 0.5, 0.5],
+			displacementTint: [0.354, 1, 0.5, 0.25],
+		});
+		assert.deepEqual(
+			[placed.textures.base.scale, placed.textures.base.scroll],
+			[
+				[3, 6],
+				[0, -0],
+			],
+		);
+		assert.deepEqual(placed.tint, [1.9, 1.05, 0.5]);
+		assert.deepEqual(placed.baseColor, [0.2, 0.1, 0.05]);
+		assert.ok(Math.abs(placed.opacity - 0.8 * 0.25) < 1e-9);
+		assert.deepEqual(placed.textures.disturb, foam.textures.disturb);
+		assert.ok(isNeutralWaterDecal({ params: [1, 1, 1, 1], displacementTint: [1, 1, 1, 1] }));
+		assert.ok(!isNeutralWaterDecal({ params: [1, 0, 1, 1], displacementTint: [1, 1, 1, 1] }));
 	});
 
 	it('leaves variants without the base colour blend, or with other keywords, unsupported', () => {

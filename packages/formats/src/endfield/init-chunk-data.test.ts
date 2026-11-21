@@ -18,15 +18,28 @@ import {
 
 const encoder = new TextEncoder();
 
+/** @returns the component holding a test entity's matrix, and its stride */
+const matrixComponent = (options: { decal?: boolean; waterDecal?: boolean }): [number, number] => {
+	if (options.decal) {
+		return [Component.RectDecal, 160];
+	}
+	if (options.waterDecal) {
+		return [Component.WaterDecal, 172];
+	}
+	return [Component.InstanceData, 256];
+};
+
 /**
  * builds a chunk with one object row per entity and one component group holding them, with components 0–5
- * (bounds), 18 (instance data, or 27 with `decal`), 21 (name), 67 (lod ranges), 9 + 69 (two draws)
+ * (bounds), 18 (instance data, or 27 with `decal`, or 31 with `waterDecal`), 21 (name), 67 (lod ranges), 9 +
+ * 69 (two draws)
  */
 const buildChunk = (
 	options: {
 		version?: number;
 		drawCount?: number;
 		decal?: boolean;
+		waterDecal?: boolean;
 		distanceLod?: boolean;
 		localSpin?: boolean;
 		cloth?: boolean;
@@ -88,7 +101,7 @@ const buildChunk = (
 		[3, 4],
 		[4, 4],
 		[5, 4],
-		options.decal ? [Component.RectDecal, 160] : [Component.InstanceData, 256],
+		matrixComponent(options),
 		[Component.Name, 64],
 		[Component.LodRanges, 24],
 		[9, 4 + 32 * 2],
@@ -124,6 +137,17 @@ const buildChunk = (
 				case 4:
 				case 5: {
 					w.view.setFloat32(at, id + e * 10, true);
+					break;
+				}
+				case Component.WaterDecal: {
+					w.view.setUint32(at, 1, true);
+					for (let k = 0; k < 16; k++) {
+						w.view.setFloat32(at + 12 + k * 4, k % 5 === 0 ? 1 : 0, true);
+					}
+					w.view.setFloat32(at + 12 + 48, 100 + e, true);
+					w.view.setFloat32(at + 12 + 56, -200 - e, true);
+					// Si's Painting's pool box: still streaks, dimmed, with a displacement
+					[1, 0, 1, 0.535, 0.354, 1, 1, 1].forEach((v, k) => w.view.setFloat32(at + 108 + k * 4, v, true));
 					break;
 				}
 				case Component.InstanceData:
@@ -248,6 +272,18 @@ test('readChunkEntities reads a rect decal’s matrix and placement values', () 
 		intensity: 2,
 		sectorAngle: 270,
 		flags: 0,
+	});
+});
+
+test('readChunkEntities reads a WaterDecal box’s matrix and renderer values', () => {
+	const [plain] = readChunkEntities(parseInitChunk(buildChunk()));
+	assert.equal(plain.waterDecal, null);
+	const [first] = readChunkEntities(parseInitChunk(buildChunk({ waterDecal: true })));
+	assert.deepEqual([first.matrix?.[0], first.matrix?.[12], first.matrix?.[14]], [1, 100, -200]);
+	assert.equal(first.decal, null);
+	assert.deepEqual(first.waterDecal, {
+		params: [1, 0, 1, Math.fround(0.535)],
+		displacementTint: [Math.fround(0.354), 1, 1, 1],
 	});
 });
 

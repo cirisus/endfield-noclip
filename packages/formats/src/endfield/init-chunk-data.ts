@@ -142,6 +142,11 @@ export interface ChunkEntity {
 	 */
 	decal: RectDecal | null;
 	/**
+	 * a WaterDecal foam box's placement values (component 31), or `null` for other entities; like a rect
+	 * decal's, its material lives in StreamingChunkData
+	 */
+	waterDecal: WaterDecal | null;
+	/**
 	 * the world point a light-art entity's (component 58) LOD thresholds are camera distances from, its
 	 * component-6 LOD centre; `null` for entities whose thresholds are screen-relative sizes
 	 */
@@ -194,6 +199,21 @@ export interface RectDecal {
 	flags: number;
 }
 
+/**
+ * a static WaterDecal box's per-placement values (component 31, the game's `HGWaterDecalComponent`): its
+ * `HGWaterDecalRenderer`'s, which the shader reads from two per-draw vectors. the box is the render
+ * pipeline's unit cube under the entity's matrix
+ */
+export interface WaterDecal {
+	/**
+	 * `animParam0`: the renderer's tiling, speed, opacity and brightness; (1, 1, 1, 1) leaves the material as
+	 * is
+	 */
+	params: [tiling: number, speed: number, opacity: number, brightness: number];
+	/** `animParam1`: the renderer's displacement, then its tint's rgb */
+	displacementTint: [displacement: number, r: number, g: number, b: number];
+}
+
 // #endregion
 
 // #region component ids
@@ -219,6 +239,11 @@ export const Component = {
 	Name: 21,
 	/** 160-byte rect decal constants: matrix, inverse, params, packed color + flags */
 	RectDecal: 27,
+	/**
+	 * 172-byte WaterDecal box (`HGWaterDecalComponent`): `u32` render type mask, mesh and material ids (0 in
+	 * the file), the object-to-world matrix at 12, two vectors, then four `animParam` vectors at 108
+	 */
+	WaterDecal: 31,
 	/**
 	 * 16-byte spin about the entity's own origin: `f32 speed` (rad/s, non-negative), `f32×3 axis` (unit, local
 	 * space)
@@ -420,7 +445,20 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 
 		const boundsOf = groupBounds(group);
 		const decalColumn = column(Component.RectDecal);
-		const matrixColumn = column(Component.InstanceData) ?? decalColumn;
+		const waterDecalColumn = column(Component.WaterDecal);
+		if (waterDecalColumn !== undefined && waterDecalColumn.stride !== WATER_DECAL_SIZE) {
+			throw new FormatError(`a group has a ${waterDecalColumn.stride}-byte water decal`);
+		}
+		// the matrix's column and its offset in each element
+		let matrixSource: { column: ComponentColumn; at: number } | undefined;
+		{
+			const own = column(Component.InstanceData) ?? decalColumn;
+			if (own !== undefined) {
+				matrixSource = { column: own, at: 0 };
+			} else if (waterDecalColumn !== undefined) {
+				matrixSource = { column: waterDecalColumn, at: WATER_DECAL_MATRIX };
+			}
+		}
 		const rotatorColumn = column(Component.Rotator);
 		const localSpinColumn = column(Component.LocalSpin);
 		const lodInfoColumn = column(Component.LodInfo);
@@ -440,11 +478,12 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 		// the group's matrices packed into one buffer rather than a buffer per entity, so they don't pin the
 		// chunk's payload either
 		let matrices: Float32Array | undefined;
-		if (matrixColumn !== undefined) {
+		if (matrixSource !== undefined) {
+			const { column: matrixColumn, at } = matrixSource;
 			matrices = new Float32Array(group.ids.length * 16);
 			const bytes = new Uint8Array(matrices.buffer);
 			for (let i = 0; i < group.ids.length; i++) {
-				const start = matrixColumn.offset + i * matrixColumn.stride;
+				const start = matrixColumn.offset + i * matrixColumn.stride + at;
 				bytes.set(group.blob.subarray(start, start + 64), i * 64);
 			}
 		}
@@ -491,6 +530,7 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 				bounds,
 				renderer,
 				decal: decalColumn === undefined ? null : readRectDecal(blobView, decalColumn, i, id),
+				waterDecal: waterDecalColumn === undefined ? null : readWaterDecal(blobView, waterDecalColumn, i),
 				lodDistanceFrom:
 					distanceLod && lodInfoColumn !== undefined ? readLodCentre(blobView, lodInfoColumn, i) : null,
 				rotator,
@@ -559,6 +599,8 @@ const readLocalSpin = (
 	};
 };
 
+const RECT_DECAL_SIZE = 160;
+
 const LOD_INFO_SIZE = 20;
 
 /** component 6's LOD centre */
@@ -567,7 +609,16 @@ const readLodCentre = (view: DataView, column: ComponentColumn, index: number): 
 	return [view.getFloat32(at, true), view.getFloat32(at + 4, true), view.getFloat32(at + 8, true)];
 };
 
-const RECT_DECAL_SIZE = 160;
+const WATER_DECAL_SIZE = 172;
+const WATER_DECAL_MATRIX = 12;
+const WATER_DECAL_ANIM = 108;
+
+/** component 31's first two `animParam` vectors; the stride is checked per group */
+const readWaterDecal = (view: DataView, column: ComponentColumn, index: number): WaterDecal => {
+	const at = column.offset + index * column.stride + WATER_DECAL_ANIM;
+	const f = (k: number): number => view.getFloat32(at + k * 4, true);
+	return { params: [f(0), f(1), f(2), f(3)], displacementTint: [f(4), f(5), f(6), f(7)] };
+};
 
 /** component 27 after the matrix and its inverse: UV scale, UV offset, RGBA8 colour, intensity, angle, flags */
 const readRectDecal = (

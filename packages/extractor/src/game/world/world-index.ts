@@ -27,7 +27,8 @@ import {
 	assetProperty,
 	hlodLink,
 	parseStreamingChunk,
-	RECT_DECAL_MATERIAL_KEY,
+	DECAL_MATERIAL_KEY,
+	WATER_DECAL_MESH_KEY,
 	type HlodLink,
 } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
 import type { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
@@ -416,13 +417,14 @@ export class WorldIndex {
 	}
 
 	/**
-	 * like {@link readChunk}, with the chunk's local lights, foliage grids, rect decal materials and HLOD
-	 * clusters too
+	 * like {@link readChunk}, with the chunk's local lights, foliage grids, decal materials (rect decals' and
+	 * WaterDecal boxes') and HLOD clusters too
 	 *
 	 * @param file chunk file
 	 * @param partition the scene's partition, or `undefined` for scenes without levels
-	 * @returns its entities, lights, grass and tree grids, each rect decal's material key by entity id, and the
-	 *   link of each entity on an HLOD layer that other entities name as their parent, by entity id
+	 * @returns its entities, lights, grass and tree grids, each decal's material key and each WaterDecal box's
+	 *   mesh key by entity id, and the link of each entity on an HLOD layer that other entities name as their
+	 *   parent, by entity id
 	 * @throws {Error} if the chunk has foliage grids, decals or HLOD-layer entities but no StreamingChunkData
 	 *   sibling
 	 */
@@ -434,6 +436,7 @@ export class WorldIndex {
 		lights: ChunkLight[];
 		foliage: FoliageGrid[];
 		decalMaterials: Map<number, bigint>;
+		waterDecalMeshes: Map<number, bigint>;
 		hlodClusters: Map<number, HlodLink>;
 	}> {
 		const data = await this.readInitPayload(file);
@@ -441,7 +444,7 @@ export class WorldIndex {
 		const lights = readChunkLights(data, chunk);
 		const entities = indexEntities(chunk, file, partition);
 		const foliaged = hasFoliageGrids(data);
-		const decals = entities.some((entity) => entity.decal !== null);
+		const decals = entities.some((entity) => entity.decal !== null || entity.waterDecal !== null);
 		// clusters load on the HLOD layers; the links of their children, in the cell files, aren't read
 		const hlodLayers = new Set(
 			entities.filter((entity) => isHlodLayer(entity.layer)).map((entity) => entity.id),
@@ -457,12 +460,20 @@ export class WorldIndex {
 		}
 		const foliage = foliaged && streaming !== null ? readFoliageGrids(data, streaming) : [];
 		const decalMaterials = new Map<number, bigint>();
+		const waterDecalMeshes = new Map<number, bigint>();
+		const waterDecals = new Set(
+			entities.filter((entity) => entity.waterDecal !== null).map((entity) => entity.id),
+		);
 		const hlodClusters = new Map<number, HlodLink>();
 		if ((decals || hlodLayers.size > 0) && streaming !== null) {
 			for (const record of parseStreamingChunk(streaming).records) {
-				const material = assetProperty(record, RECT_DECAL_MATERIAL_KEY);
+				const material = assetProperty(record, DECAL_MATERIAL_KEY);
 				if (material !== undefined) {
 					decalMaterials.set(record.id, material);
+				}
+				const mesh = waterDecals.has(record.id) ? assetProperty(record, WATER_DECAL_MESH_KEY) : undefined;
+				if (mesh !== undefined) {
+					waterDecalMeshes.set(record.id, mesh);
 				}
 				if (hlodLayers.has(record.id)) {
 					const link = hlodLink(record);
@@ -472,7 +483,7 @@ export class WorldIndex {
 				}
 			}
 		}
-		return { entities, lights, foliage, decalMaterials, hlodClusters };
+		return { entities, lights, foliage, decalMaterials, waterDecalMeshes, hlodClusters };
 	}
 
 	/**

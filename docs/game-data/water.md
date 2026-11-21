@@ -381,11 +381,16 @@ height (some sit up to 0.5 m above the surface) is then what keeps them above it
 
 no static InitChunkData renderer uses an `HGRP/WaterProxy` or `HGRP/WaterDecal` material; both
 arrive through prefab content, and WaterDecal boxes also through InitChunkData component 31
-([world](world.md#initchunkdata-layout)): entities without a renderer (a couple hundred on map02),
-each a 172-byte row naming a mesh (the cube), a material, a matrix and animation parameters whose
-meaning isn't recovered. `HGRP/WaterProxy` has only the water pipeline's passes (top-down prepass,
-wetness mask, depth, the water G-buffer), none of which a scene renderer draws in the main view; a
-few map02 river meshes carry it (`M_river_proxy_22`).
+([world](world.md#initchunkdata-layout)): entities without a renderer (347 on map02), each a
+172-byte `HGWaterDecalComponent` row holding a matrix and the box's `HGWaterDecalRenderer` values,
+its mesh (the render pipeline's cube) and material named in StreamingChunkData. the first
+`animParam` vector holds the renderer's tiling, speed, opacity and brightness and the second its
+displacement and tint (the shader's two per-draw vectors, below); most rows are neutral (all 1), the
+rest dim, slow, stop or tint their box: the one over Si's Painting's pool falls
+(`waterdecal_01#10_1115149`) has speed 0, brightness 0.535 and displacement 0.354. `HGRP/WaterProxy`
+has only the water pipeline's passes (top-down prepass, wetness mask, depth, the water G-buffer),
+none of which a scene renderer draws in the main view; a few map02 river meshes carry it
+(`M_river_proxy_22`).
 
 ### WaterDecal
 

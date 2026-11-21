@@ -1,3 +1,4 @@
+import type { WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type {
 	EffectTexture,
 	UnsupportedSurface,
@@ -12,9 +13,47 @@ import { isUnsupported, type MaterialReader, unsupported } from '../material-val
 
 import { dissolveOf, disturbIntensityOf, effectTexture, speedOf, UNSET_WHITE } from './effect-steps.ts';
 
+/**
+ * @param placement a static WaterDecal box's renderer values
+ * @returns whether they leave its material as it is
+ */
+export const isNeutralWaterDecal = (placement: WaterDecal): boolean =>
+	[...placement.params, ...placement.displacementTint].every((value) => value === 1);
+
+/**
+ * a static box's foam under its renderer values: the tiling scales the base map's UVs, the speed its scroll,
+ * and the opacity, brightness and tint the whole output, both colour terms with it. the displacement is left
+ * out with the displacement pass
+ *
+ * @param foam the box material's foam
+ * @param placement the box's renderer values
+ * @returns the foam the box draws
+ */
+export const placedWaterFoam = (foam: WaterFoamSurface, placement: WaterDecal): WaterFoamSurface => {
+	const [tiling, speed, opacity, brightness] = placement.params;
+	const [, ...tint] = placement.displacementTint;
+	const { base } = foam.textures;
+	return {
+		...foam,
+		textures: {
+			...foam.textures,
+			base: {
+				...base,
+				scale: [base.scale[0] * tiling, base.scale[1] * tiling],
+				scroll: [base.scroll[0] * speed, base.scroll[1] * speed],
+			},
+		},
+		baseColor: [foam.baseColor[0] * tint[0], foam.baseColor[1] * tint[1], foam.baseColor[2] * tint[2]],
+		tint: [foam.tint[0] * tint[0], foam.tint[1] * tint[1], foam.tint[2] * tint[2]],
+		opacity: foam.opacity * opacity * brightness,
+	};
+};
+
 /** WaterDecal keywords that are drawn; `_BLEND_BASECOLOR` must be among them */
 const WATER_FOAM_KEYWORDS = new Set([
 	'_BLEND_BASECOLOR',
+	// the displacement pass raises the water's surface under the box; the foam is drawn without it
+	'_BLEND_DISPLACEMENT',
 	'_USE_DISTURB',
 	'_USE_MASK',
 	'_USE_SOFTBLEND',
