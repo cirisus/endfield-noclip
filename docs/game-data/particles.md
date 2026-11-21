@@ -227,14 +227,15 @@ read):
   `inheritParticleColor` multiplies in the particle's colour.
 - texture mode 0 (Stretch) maps the texture once over the trail's length.
 
-ribbon mode (`mode` 1) joins the particles to each other instead: the water poured by Qingbo's big
+ribbon mode (`mode` 1) joins the particles to each other instead: the water poured by map02's big
 wheel, fake waterfall and water pipes (`Particle System` and `(1)` in `int_big_wheel_postmodel`,
 `int_fake_waterfall_postmodel` and `int_waterpipe_postmodel`) draws only such ribbons.
 
 the purification devices of Valley's Aberrants (`trail` in `int_purification_device_postmodel`,
 dung01_wrdg001 ~2, 355, 208) draw only trails: particles leaving a 0.25 m sphere at 0.05–0.1 m/s,
 swept round the device's z by orbital velocity, each trailing 0.35–0.5 of its 2–3 s life behind it,
-0.05 m wide at its head narrowing to about a third, the colour of its particle.
+0.037–0.05 m wide at its head and 0.017–0.023 m at its tail (random between two curves), the colour
+of its particle.
 
 ### examples
 

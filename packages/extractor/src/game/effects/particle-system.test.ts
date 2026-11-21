@@ -515,7 +515,7 @@ test('trails the viewer cannot draw stand in without particles, and are left off
 		const read = readParticleSystem(system({ TrailModule: trail, ...overrides }), none);
 		return read !== null && 'reason' in read ? read.reason : null;
 	};
-	// the water pouring off Qingbo's wheels joins its particles into ribbons
+	// map02's big wheel, fake waterfall and water pipes join their particles into ribbons
 	assert.equal(reason(purificationTrail({ mode: 1 })), 'ribbon trails');
 	assert.equal(reason(purificationTrail({ textureMode: 1 })), 'trail texture mode 1');
 	assert.equal(reason(purificationTrail({ dieWithParticles: false })), 'trails outliving their particles');
