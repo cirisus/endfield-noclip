@@ -1077,7 +1077,7 @@ describe('VFXDitherAlpha effect variants', () => {
 			ring({ _DitherAlphaExp: 3 }, ['_USE_DISSOLVE', '_USE_DISTURB', '_USE_MASK']),
 			'effectStack',
 		);
-		assert.equal(raised.alphaPower, 3);
+		assert.deepEqual([raised.alphaPower, raised.colorTimesAlpha], [3, false]);
 	});
 
 	it('multiply the colour by _MainTex2Color when _USE_MAIN2 takes the second texture as alpha', () => {
@@ -1187,8 +1187,15 @@ describe('VFXDitherAlpha effect variants', () => {
 			);
 		const ink = ofKind(sheet(['_USE_DISTURB', '_USE_MASK', '_USE_VERTOFFSET']), 'effectStack');
 		assert.deepEqual(
-			[ink.variant, ink.disturbNormal, ink.masked, ink.maskAlphaOnly, ink.offset?.intensity],
-			['dither', true, true, true, -0.1],
+			[
+				ink.variant,
+				ink.disturbNormal,
+				ink.masked,
+				ink.maskAlphaOnly,
+				ink.colorTimesAlpha,
+				ink.offset?.intensity,
+			],
+			['dither', true, true, true, true, -0.1],
 		);
 		assert.equal(
 			ofKind(sheet(['_USE_DISTURB'], { _DisturbTex1Normal: 0 }), 'effectStack').disturbNormal,

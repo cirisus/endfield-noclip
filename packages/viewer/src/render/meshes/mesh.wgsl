@@ -132,6 +132,7 @@ const DITHER_VERTEX_COLOR = 2u;
 const DITHER_MASK = 4u;
 const DITHER_MASK_RED = 8u;
 const DITHER_SURFACE = 16u;
+const DITHER_ALPHA_COLOR = 32u;
 
 const BASE_SLOT = 0u;
 const NORMAL_SLOT = 1u;
@@ -548,6 +549,21 @@ fn dither_bits(look: Look, flags: u32) -> u32 {
 	return select(u32(look.canopy.w), 0u, (flags & (FOLIAGE | FOLIAGE_LEAF | TRUNK)) != 0u);
 }
 
+// a dithered look's alpha before its mask, saturation and power: the tested texture's alpha (or red) times the
+// alpha scale, the vertex alpha and the near camera fade, at a view depth
+fn dither_alpha(look: Look, bits: u32, texel: vec4f, vertex_alpha: f32, depth: f32) -> f32 {
+	var alpha = select(texel.a, texel.r, (bits & DITHER_RED_ALPHA) != 0u) * look.canopy.x;
+	if ((bits & DITHER_VERTEX_COLOR) != 0u) {
+		alpha *= vertex_alpha;
+	}
+	// the near camera fade: in over the first range of view depths, out over the second
+	let near = look.canopy_color;
+	if (any(near != vec4f(0.0))) {
+		alpha *= saturate((depth - near.x) / (near.y - near.x)) * saturate((depth - near.z) / (near.w - near.z));
+	}
+	return alpha;
+}
+
 // what multiplies a VFXDitherAlpha look's colour: the vertex colour, a particle's, under
 // `DitherFlags.VertexColor`; 1 on other looks
 fn dither_vertex_color(look: Look, flags: u32, color: vec4f) -> vec3f {
@@ -605,6 +621,13 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 			c *= base.rgb;
 		}
 		c *= dither_vertex_color(look, flags, in.color);
+		// VFXDitherAlphaNoLighting writes its colour times the alpha before the mask and the power
+		// (`DitherFlags.AlphaColor`)
+		let bits = dither_bits(look, flags);
+		if ((bits & DITHER_ALPHA_COLOR) != 0u) {
+			let texel = select(base, packed, (flags & ALPHA_NORMAL) != 0u);
+			c *= saturate(dither_alpha(look, bits, texel, in.color.a, 1.0 / in.position.w));
+		}
 		// materials the viewer can't draw (`unsupportedLook` in material-looks.ts): a world-space checker of the tint
 		// and black
 		if (look.surface.z > 0.0) {
@@ -1205,18 +1228,9 @@ fn fs_cutout_depth(in: CutoutDepthVaryings) {
 	if (look.tint.w < 0.0) {
 		let dither = look.canopy;
 		let bits = u32(dither.w);
-		var scaled = select(texel.a, texel.r, (bits & DITHER_RED_ALPHA) != 0u) * dither.x;
-		if ((bits & DITHER_VERTEX_COLOR) != 0u) {
-			scaled *= in.color.a;
-		}
+		var scaled = dither_alpha(look, bits, texel, in.color.a, 1.0 / in.position.w);
 		if ((bits & DITHER_MASK) != 0u) {
 			scaled *= select(masking.a, masking.r, (bits & DITHER_MASK_RED) != 0u);
-		}
-		// the near camera fade: in over the first range of view depths, out over the second
-		let near = look.canopy_color;
-		if (any(near != vec4f(0.0))) {
-			let depth = 1.0 / in.position.w;
-			scaled *= saturate((depth - near.x) / (near.y - near.x)) * saturate((depth - near.z) / (near.w - near.z));
 		}
 		let alpha = pow(saturate(scaled), dither.y);
 		// the pattern moves each frame, so the temporal antialiasing resolves the surviving pixels into coverage

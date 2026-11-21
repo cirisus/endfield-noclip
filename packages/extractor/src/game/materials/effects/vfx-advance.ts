@@ -297,6 +297,7 @@ const describeFixedSlots = (
 		edge: null,
 		decalFade: null,
 		alphaPower: 1,
+		colorTimesAlpha: false,
 		offset,
 		softBody: null,
 		// as VFXBaseV2's, by `1 − _InParticle`

@@ -129,6 +129,8 @@ export const describeDithered = (reader: MaterialReader): DitheredSurface | Unsu
 		const test = {
 			alphaScale: (color('_TintColor') ?? [1, 1, 1, 1])[3] * float('_TintColorAlpha', 1),
 			exponent: float('_DitherAlphaExp', 1),
+			// the NoLighting variant's colour pass writes its colour times the alpha before the mask and the power
+			colorTimesAlpha: reader.shader.name === NO_LIGHTING_SHADER,
 			tiling: float('_DitherTilling', 1),
 			near: nearFadeOf(reader),
 		};

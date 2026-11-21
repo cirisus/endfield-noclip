@@ -456,6 +456,7 @@ export const describeVfxBase = (
 			: null,
 		decalFade: null,
 		alphaPower: 1,
+		colorTimesAlpha: false,
 		offset:
 			offset === null
 				? null

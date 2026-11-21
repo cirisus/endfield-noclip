@@ -291,6 +291,7 @@ export const describeVfxDecal = (reader: MaterialReader): EffectStackSurface | U
 			angle: has('_USE_NORMALBLEND') ? float('_AngleBlendFallOff', 1) : 0,
 		},
 		alphaPower: 1,
+		colorTimesAlpha: false,
 		offset: null,
 		softBody: null,
 		cameraPull: null,

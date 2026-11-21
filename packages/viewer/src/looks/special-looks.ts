@@ -135,6 +135,8 @@ export const DitherFlags = {
 	MaskRed: 8,
 	/** set on every dithered look, so the shading can tell its row from an empty one */
 	Surface: 16,
+	/** the colour is times the alpha before the mask and the power (`colorTimesAlpha`) */
+	AlphaColor: 32,
 } as const;
 
 /** a hue (0–1) as a fully saturated colour */
@@ -178,7 +180,8 @@ export const ditheredLook = (surface: DitheredSurface, cull: MaterialCull): Mate
 		} else if (surface.baseMap === null) {
 			setTexture(look, Slot.Base, dither.texture);
 		}
-		flags |= dither.redAlpha ? DitherFlags.RedAlpha : 0;
+		flags |=
+			(dither.redAlpha ? DitherFlags.RedAlpha : 0) | (dither.colorTimesAlpha ? DitherFlags.AlphaColor : 0);
 		if (dither.mask !== null) {
 			// only the depth pass samples the mask, so it takes a slot the surface's shading leaves alone, without
 			// the slot's flag: unloaded, the slot binds white and the test runs unmasked

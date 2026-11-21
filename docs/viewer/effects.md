@@ -168,7 +168,10 @@ the colour takes the vertex colour as the game's does (`DitheredSurface.vertexCo
 multiplied into the tint and the texture before the albedo saturates, so the look keeps its tint
 unclamped. every dithered look sets `DitherFlags.Surface` in its row, which tells the shading the
 row is a dithered look's (`dither_bits` in `mesh.wgsl`); a mesh's vertex colours are taken as
-linear, unchecked.
+linear, unchecked. the NoLighting variant's colour is also times its alpha
+(`dither.colorTimesAlpha`, `DitherFlags.AlphaColor`): the shading recomputes the test's alpha before
+the mask and the power (`dither_alpha`), with the mesh's own vertex alpha, which the test leaves
+out.
 
 `_SUBSURFACE` surfaces take the game's [subsurface model](../game-data/materials.md#subsurface) for
 the sun and the ambient light (`subsurface_sun` and `Surface.scatter` in `frame.wgsl`): the look
@@ -179,8 +182,9 @@ unlit VFXDitherAlpha materials with a distortion, a dissolve, a mask or polar or
 through VFXBaseV2's texture stack (`describeDitherEffect`, `stackLook`), as do
 VFXDitherAlphaNoLighting ones with a distortion, a mask and a vertex offset (the passes read so
 far), fogged, blended by the alpha the game dithers with rather than dithered, which the temporal
-antialiasing would average to the same coverage. the NoLighting variant's colour leaves out its
-extra factor of the unmasked alpha, and its fog is the G-buffer surface's, unchecked against the
+antialiasing would average to the same coverage. the NoLighting variant's colour is also times the
+alpha before the mask and the power (`colorTimesAlpha`, `EffectRow.colorTimesAlpha`), which
+`fx_combine` hands back unmasked, and its fog is the G-buffer surface's, unchecked against the
 game's (its passes apply none themselves). that alpha is raised to `_DitherAlphaExp` as the game's
 is, which thins the Very Large Rift's red sky ring (`wenli_01_red` in
 `p_fxmap_dung02_dg005_boss_semicircle_sky_02`, exponent 3) to streaks. unlike the game's, they don't

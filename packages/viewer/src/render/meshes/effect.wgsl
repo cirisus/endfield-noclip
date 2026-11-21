@@ -67,7 +67,9 @@ const FX_EDGE_COLOR = 32u;
 const FX_EDGE = 33u;
 // z, w: the vertex offset mask's slot and strength (`EffectRow.offsetMask`)
 const FX_EDGE_ALPHA = 34u;
-// the pull towards the camera's most (m), 1 when it pulls (`EffectRow.cameraPull`)
+// the pull towards the camera's most (m), 1 when it pulls (`EffectRow.cameraPull`); z, w: 1 when the mask
+// scales only the alpha (`EffectRow.maskAlphaOnly`), 1 when the colour is times the unmasked alpha
+// (`EffectRow.colorTimesAlpha`)
 const FX_CAMERA_PULL = 35u;
 // the texture stack's per-slot custom data shifts (u, v), from row 36 on (`EffectRow.customScroll` in
 // effect-look.ts)
@@ -426,8 +428,17 @@ fn fx_custom_shift(id: u32, slot: u32, custom: vec4f) -> vec2f {
 // the blend layer and the dissolve, whose threshold the particle's custom data's z adds to as the schedule.
 // `vertex_color` scales the blend tint where the look says so. a decal's parallax (`cracked`) shifts the main
 // texture by `parallax` and adds its cracks before the dissolve. returns the colour (before exposure) and alpha
-fn fx_combine(id: u32, bases: FxBases, tint: vec4f, custom: vec4f, vertex_color: vec4f, cracked: bool, parallax: vec2f)
-	-> vec4f {
+// `unmasked` receives the alpha before the mask scales it
+fn fx_combine(
+	id: u32,
+	bases: FxBases,
+	tint: vec4f,
+	custom: vec4f,
+	vertex_color: vec4f,
+	cracked: bool,
+	parallax: vec2f,
+	unmasked: ptr<function, f32>,
+) -> vec4f {
 	let weight_row = fx_row(id, FX_WEIGHT);
 	let disturb = fx_row(id, FX_DISTURB);
 	let flags = fx_row(id, FX_STACK_FLAGS);
@@ -501,6 +512,7 @@ fn fx_combine(id: u32, bases: FxBases, tint: vec4f, custom: vec4f, vertex_color:
 	if (fx_row(id, FX_CAMERA_PULL).z != 0.0) {
 		mask = vec4f(1.0, 1.0, 1.0, mask.a);
 	}
+	*unmasked = tint.a * main_sample.a;
 	let c = tint * main_sample * mask;
 	let blend_tint = fx_row(id, FX_BLEND_TINT) * select(vec4f(1.0), vertex_color, flags.w != 0.0);
 	var color = blend.rgb * saturate((c.a + blend.a) * blend_tint.w) * blend_tint.rgb + c.rgb;
@@ -732,7 +744,8 @@ fn fx_stack_layer(in: EffectOut, bases: FxBases, front: bool) -> vec4f {
 	if (fx_row(id, FX_APPEAR_NOISE).w > 0.0) {
 		tint = fx_appear(in, bases, tint);
 	}
-	var combined = fx_combine(id, bases, tint, in.custom, in.color, false, vec2f(0.0));
+	var unmasked = 0.0;
+	var combined = fx_combine(id, bases, tint, in.custom, in.color, false, vec2f(0.0), &unmasked);
 	let depth = dot(in.rel, frame.view_forward.xyz);
 	// `_USE_EDGECOLOR` marks where the surface nears what lies behind it: mode 1 adds the edge colour and the tint
 	// alpha by its strength, 0 multiplies the colour by the edge colour and the alpha by the strength
@@ -774,6 +787,11 @@ fn fx_stack_layer(in: EffectOut, bases: FxBases, front: bool) -> vec4f {
 		color = clamp(color, vec3f(0.0), vec3f(1000.0)) * (ambient_irradiance(in.rel + frame.eye.xyz, n) + sun);
 	} else {
 		color = clamp(color * mix(1.0, frame.ambient.y, soft.z), vec3f(0.0), vec3f(1000.0));
+	}
+	// VFXDitherAlphaNoLighting's colour pass writes its colour times the alpha before the mask and the power
+	// (`EffectRow.colorTimesAlpha`)
+	if (fx_row(id, FX_CAMERA_PULL).w != 0.0) {
+		color *= saturate(unmasked * fx_near_fade(id, depth));
 	}
 	var soft_fade = 1.0;
 	if (soft.x > 0.0) {
@@ -1620,7 +1638,8 @@ fn fs_effect_decal(in: EffectOut) -> EffectAccumulated {
 	if (cracked) {
 		parallax = fx_decal_parallax(id, in, bases, normalize(-rel));
 	}
-	let combined = fx_combine(id, bases, fx_row(id, FX_TINT), in.custom, in.color, cracked, parallax);
+	var unmasked = 0.0;
+	let combined = fx_combine(id, bases, fx_row(id, FX_TINT), in.custom, in.color, cracked, parallax, &unmasked);
 	let soft = fx_row(id, FX_SOFT);
 	let color = clamp(combined.rgb, vec3f(0.0), vec3f(1000.0)) * mix(1.0, frame.ambient.y, soft.z);
 

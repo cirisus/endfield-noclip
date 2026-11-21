@@ -517,6 +517,11 @@ export interface DitheredSurface {
 		alphaScale: number;
 		/** the power the alpha is raised to, which sets the share of pixels that survive */
 		exponent: number;
+		/**
+		 * the colour is also times the alpha, saturated before the mask and the power (VFXDitherAlphaNoLighting's
+		 * colour pass), so the surviving pixels darken where the alpha is low
+		 */
+		colorTimesAlpha: boolean;
 		/** the dither pattern's tiling */
 		tiling: number;
 		/** the near camera fade, which scales the alpha; `null` without it */
@@ -990,6 +995,11 @@ export interface EffectStackSurface {
 	} | null;
 	/** the power the alpha is raised to (VFXDitherAlpha's `_DitherAlphaExp`) */
 	alphaPower: number;
+	/**
+	 * the colour is also times the alpha, saturated after the near camera fade and before the mask and the
+	 * power (VFXDitherAlphaNoLighting's colour pass)
+	 */
+	colorTimesAlpha: boolean;
 	offset: EffectVertexOffset | null;
 	/** VFXBaseV2's soft-body animation, which takes the vertex offset's slot */
 	softBody: EffectSoftBody | null;

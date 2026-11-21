@@ -53,6 +53,7 @@ test('dithered effects shade as opaque shadowless surfaces, or unlit, and dither
 					redAlpha: false,
 					alphaScale: 0.75,
 					exponent: 1,
+					colorTimesAlpha: false,
 					tiling: 1,
 					near: null,
 					mask: null,
@@ -71,6 +72,8 @@ test('dithered effects shade as opaque shadowless surfaces, or unlit, and dither
 					redAlpha: true,
 					alphaScale: 0.5,
 					exponent: 14,
+					// VFXDitherAlphaNoLighting's
+					colorTimesAlpha: true,
 					tiling: 0.1,
 					near: null,
 					mask: null,
@@ -103,7 +106,7 @@ test('dithered effects shade as opaque shadowless surfaces, or unlit, and dither
 		0.5,
 		14,
 		Math.fround(0.1),
-		DitherFlags.RedAlpha | DitherFlags.Surface,
+		DitherFlags.RedAlpha | DitherFlags.Surface | DitherFlags.AlphaColor,
 	]);
 });
 
@@ -125,6 +128,7 @@ test('lit dithered effects with a red alpha dither through the base slot and tak
 						redAlpha: true,
 						alphaScale: 2,
 						exponent: 2,
+						colorTimesAlpha: false,
 						tiling: 1,
 						near: [1, 2, 120, 80],
 						mask: null,
@@ -172,6 +176,7 @@ test('a dithered surface tests its mask from the noise slot, which its shading n
 						redAlpha: false,
 						alphaScale: 2,
 						exponent: 1,
+						colorTimesAlpha: false,
 						tiling: 1,
 						near: null,
 						mask: { texture: { ...slot(11), scale: [3, 2] }, redAlpha: true },
@@ -211,6 +216,7 @@ test('a lit dithered surface without a base map tests its texture from the base 
 						redAlpha: false,
 						alphaScale: 1,
 						exponent: 15,
+						colorTimesAlpha: false,
 						tiling: 15,
 						near: null,
 						mask: null,

@@ -65,9 +65,7 @@ export const isDitherEffect = (reader: MaterialReader): boolean => {
 /**
  * an unlit `HGRP/Effect/VFXDitherAlpha` or `…NoLighting` effect variant, optionally with a vertex offset, as
  * a texture stack. the game draws such a surface where its alpha beats a per-pixel noise; the viewer blends
- * it over by that alpha instead, which its temporal antialiasing would average the dither to anyway. the
- * NoLighting variant's colour pass also multiplies the colour by the alpha before the mask and the power,
- * which the stack leaves out
+ * it over by that alpha instead, which its temporal antialiasing would average the dither to anyway
  *
  * @param reader the material's properties
  * @returns its surface, or `unsupported`
@@ -210,6 +208,7 @@ export const describeDitherEffect = (reader: MaterialReader): EffectStackSurface
 		decalFade: null,
 		// the depth pass tests the saturated alpha raised to this power, which sets the share of pixels that survive
 		alphaPower: float('_DitherAlphaExp', 1),
+		colorTimesAlpha: reader.shader.name === NO_LIGHTING_SHADER,
 		offset: vertexOffsetOf(reader),
 		softBody: null,
 		cameraPull: null,

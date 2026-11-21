@@ -61,6 +61,7 @@ const stack = (overrides: Partial<EffectStackSurface> = {}): EffectStackSurface 
 	edge: null,
 	decalFade: null,
 	alphaPower: 1,
+	colorTimesAlpha: false,
 	offset: null,
 	softBody: null,
 	cameraPull: null,
@@ -250,6 +251,16 @@ test('a texture stack flags a mask that scales only the alpha', () => {
 		entries: [described(stack({ maskAlphaOnly: true })), described(stack())],
 	});
 	assert.deepEqual([dithered.params[EffectRow.maskAlphaOnly], plain.params[EffectRow.maskAlphaOnly]], [1, 0]);
+});
+
+test('a texture stack flags a colour times its unmasked alpha', () => {
+	const [unlit, plain] = materialLooks({
+		entries: [described(stack({ colorTimesAlpha: true })), described(stack())],
+	});
+	assert.deepEqual(
+		[unlit.params[EffectRow.colorTimesAlpha], plain.params[EffectRow.colorTimesAlpha]],
+		[1, 0],
+	);
 });
 
 test('a texture stack flags screen UVs taken about the object’s origin', () => {

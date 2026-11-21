@@ -116,6 +116,7 @@ describe('dithered effects', () => {
 				redAlpha: false,
 				alphaScale: 0.75,
 				exponent: 1,
+				colorTimesAlpha: false,
 				tiling: 1,
 				near: null,
 				mask: null,
@@ -130,6 +131,7 @@ describe('dithered effects', () => {
 				redAlpha: true,
 				alphaScale: 0.5,
 				exponent: 14,
+				colorTimesAlpha: false,
 				tiling: 0.1,
 				near: null,
 				mask: null,
@@ -172,6 +174,7 @@ describe('dithered effects', () => {
 				redAlpha: true,
 				alphaScale: 2,
 				exponent: 2,
+				colorTimesAlpha: false,
 				tiling: 1,
 				near: null,
 				mask: null,
@@ -273,7 +276,7 @@ describe('dithered effects', () => {
 		assert.deepEqual(off.lighting?.subsurface, [0, 0, 0, 0]);
 	});
 
-	it('draw the NoLighting variant unlit, though it declares no lighting switch', () => {
+	it('draw the NoLighting variant unlit, though it declares no lighting switch, its colour times its alpha', () => {
 		// Si's Painting's ink plane (`M_fxmap_map02_lv010_inkpattern_huge_01_fj_03_d02`)
 		const { _UseLighting, ...floats } = shader.floats;
 		const surface = describeMaterial(
@@ -296,6 +299,8 @@ describe('dithered effects', () => {
 				redAlpha: true,
 				alphaScale: 1,
 				exponent: 1,
+				// its colour pass writes the colour times the alpha
+				colorTimesAlpha: true,
 				tiling: 1,
 				near: null,
 				mask: null,

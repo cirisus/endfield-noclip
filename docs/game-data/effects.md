@@ -405,12 +405,13 @@ the dithered alpha (`_UseMainTexAsAlpha`, raised to 2).
 the G-buffer, and doesn't declare `_UseLighting`. its depth pass is the dithered test below; the
 forward pass then draws only where that depth survived (ZTest Equal, blend One Zero), writing
 `_TintColor · _TintColorIntensity` times `_MainTex` (the tint alone with `_UseMainTexAsAlpha`) and
-times the alpha before the dither's power. Si's Painting's ink plane
+times the alpha, saturated, without the mask and before the dither's power, so where few pixels
+survive they're also dark. Si's Painting's ink plane
 (`M_fxmap_map02_lv010_inkpattern_huge_01_fj_03_d02`, in `p_fxmap_map02_lv010_inkpattern_huge_01`) is
-one: its shape comes from a mask texture's red alone. its effect variants (below) test the same
-alpha as VFXDitherAlpha's in the depth pass, mask included, and their colour pass computes the same
-colour, times that alpha without the mask and before the power; neither pass applies fog. the ink
-sheet hanging down the cliff over Si's Painting's cave
+one: its shape comes from a mask texture's red alone, tinted 2. its effect variants (below) test the
+same alpha as VFXDitherAlpha's in the depth pass, mask included, and their colour pass computes the
+same colour, times that alpha without the mask and before the power; neither pass applies fog. the
+ink sheet hanging down the cliff over Si's Painting's cave
 (`M_fxmap_map02_lv010_inkpattern_crack_cave_01_fj_01_d` in
 `p_fxmap_map02_lv010_inkpattern_crack_cave_01`, near unity 1100, 356, 1246, under the level script
 group 37900000011) is one, with a distortion read as a normal, a mask and a vertex offset, and a
