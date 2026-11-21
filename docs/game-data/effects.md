@@ -121,6 +121,11 @@ white lamp cubes from a mesh (`M_fxmap_map_lv004_lamp_light_01`, `_TintColor` re
 1 m, and red stars from particle systems emitting from mesh shapes, pulled 3 m and, for the far
 stars that fade in past 200 m, 50 m; all three leave `_InParticle` at 0.
 
+the pull follows each vertex's own view ray by its own distance, so within `_VertCameraOffset + 1`
+of a large quad's corners they move by different amounts and its texture bends along the triangles'
+diagonal. Si's Painting's grid (`P_fxint_s_micro_008_decal_2501`, a 5.5 m quad pulled 5 m in
+`int_drawing_puzzle_01_postmodel`) skews this way from a few metres off.
+
 `_USE_VERTOFFSETMASK` scales the offset, but not the pull towards the camera, by `1 − p·(1 − m)`,
 where `p = _OffsetMaskPower / 5` and m is `_OffsetMaskTex`'s red at the offset texture's UVs, after
 the mask's own `_ST`, scrolled by `_OffsetMaskSpeed`. the fragment stage doesn't read it. the glow
