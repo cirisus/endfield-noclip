@@ -111,6 +111,8 @@ export interface MaterialDebug extends AssetDebug {
 	shader: string | null;
 	/** why the viewer can't draw the material (its surface is `unsupported`), or `null` */
 	unsupported: string | null;
+	/** why the game draws nothing visible with the material (its surface is `undrawn`), or `null` */
+	undrawn: string | null;
 	/** keywords of the material's surface shader that the viewer doesn't draw */
 	keywordsNotDrawn: string[];
 	/** bound texture slots whose PPtr couldn't be followed, with the error; the slot is left empty */
@@ -422,6 +424,7 @@ const loadMaterials = async (
 					shader: null,
 					error: jobs.fail('material', result),
 					unsupported: null,
+					undrawn: null,
 					keywordsNotDrawn: [],
 					slotErrors: {},
 				});
@@ -462,6 +465,7 @@ const loadMaterials = async (
 				shader: loaded.shader.name,
 				error: null,
 				unsupported: null,
+				undrawn: null,
 				keywordsNotDrawn: notDrawn,
 				slotErrors,
 			});
@@ -493,6 +497,9 @@ const describeSurfaces = (
 			const key = `${shader.name}: ${surface.reason}`;
 			unsupported[key] = (unsupported[key] ?? 0) + 1;
 			materials.debug[id].unsupported = surface.reason;
+		}
+		if (surface.kind === 'undrawn') {
+			materials.debug[id].undrawn = surface.reason;
 		}
 		const drawn = surface.kind !== 'unsupported' && surface.kind !== 'undrawn';
 		const gaps = drawn ? surfaceGaps(readerOf(material, shader)) : [];
