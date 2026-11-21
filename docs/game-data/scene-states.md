@@ -468,13 +468,16 @@ the entity starts and whenever its source level changes:
   isn't read. the form is the last one whose need the level meets; below entry 1 the game indexes
   form 0, which fails, leaving the template's model.
 - `doodad_form_list` lists the four forms' ModelTable ids. both lists are entity properties, so a
-  placement can override the template's: map02's crates need `0,1,6,9,15` in most levels and
-  `0,1,9,15,24` in Si's Painting.
+  placement can override the template's: map02's crates need `0,1,6,9,15` in Jingyu Valley through
+  the Test Area (lv001–lv005), `0,1,2,3,4` in Sword Vault Dale (lv006) and `0,1,9,15,24` from
+  Yinglung Pass on (lv007–lv010).
 
 Wuling's crates follow the domain development level: form 1 (`int_doodad_artificial_1`) is a
 cardboard box, 2 a taped plank crate, 3 and 4 a framed crate (the same mesh and material). the
-supply boxes follow inn level, but their four forms are one model. the domain level is held by the
-player's save and sent by the server.
+supply boxes (`int_doodad_food_*`) list one model for all four forms; their upgrade source and their
+food component's own model loading weren't read. the domain level is held by the player's save and
+sent by the server. the swap goes through the model component's view-state proxy, which exists for
+models without view-state data too.
 
 ## script groups
 

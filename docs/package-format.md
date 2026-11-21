@@ -913,7 +913,7 @@ left out; a set whose alternatives all go never holds.
 
 - **masks**: an on/off requirement uses mask 2 (value 1); a quest or variable requirement the values
   its test accepts; a progression requirement the group's `logicState`; a facility form `1 << form`,
-  a doodad form `1 << level`.
+  a doodad-group form `1 << level`, a graded doodad form the levels showing it.
 - **combined conditions** become alternatives by distributing conjunctions over disjunctions, with
   `reverse` pushed down to the tests (each test's mask complemented within its control's values);
   requirements on one control in a conjunction merge, and impossible conjunctions drop.
