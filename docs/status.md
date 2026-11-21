@@ -311,6 +311,9 @@ packs or renders correctly.
     walls, Yinglung Pass's ink rooms (`…_inkroom_floor_*`, the `inkarea_*` walls, shown only within
     8 m of the camera) and Si's Painting's ink road over the cave falls (which draws mostly white)
     are unchecked against an in-game shot, and the ink simulation isn't run
+  - [ink wash](game-data/effects.md#vfxbasev2): the ink-wash screen effect isn't drawn, so the
+    VFXBaseV2 materials shown only during it aren't either (listed by `undrawn` in
+    `debug/assets.json`)
   - [CharacterNPR_VFX](game-data/effects.md#characternpr_vfx): drawn as VFXAdvance's stack; its
     dissolve, a nonzero `_VertCameraOffset` and its other keywords aren't. on Marker Stone
     Interiors' rift monsters, the shell's screen UVs about the mesh's origin measure from the

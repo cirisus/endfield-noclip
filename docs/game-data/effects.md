@@ -84,12 +84,12 @@ centre seen from Dijiang's deck. `_BlendMode` 2 writes `lerp(1, colour, alpha)` 
 `Blend DstColor Zero` state, which multiplies what lies behind by it.
 
 **ink wash.** `_OnlyShowAfterInkWash` scales the alpha, and with it the premultiplied colour, by
-`lerp(1, _InkWashGlobalParams.x, _OnlyShowAfterInkWash)`. the global belongs to the ink-wash screen
-effect (`VFXPPInkWash`, whose intensity the game tweens in and out), and outside it such a material
-draws nothing: Si's Painting's grid quad (`M_fxint_s_micro_008_decal_2501` in
+`lerp(1, _InkWashGlobalParams.x, _OnlyShowAfterInkWash)`. outside the ink wash such a material draws
+nothing: Si's Painting's grid quad (`M_fxint_s_micro_008_decal_2501` in
 `int_drawing_puzzle_01_postmodel`, near unity 753, 278, 1308) is absent from an in-game shot of the
-wall, which shows only the carved grid beneath. what the global holds during the effect isn't
-traced.
+wall, which shows only the carved grid beneath. what writes the global isn't traced: it's a
+`ShaderVariablesGlobal` field beside the VFX parameters, and its link to the ink-wash screen effect
+(`VFXPPInkWash`, whose intensity `PaintingScrollComponent` tweens in and out) is by name only.
 
 **opaque.** a material whose `_SrcBlend` and `_DstBlend` are one and zero writes the shader's
 premultiplied colour (the colour times its alpha) over what lies behind, and its depth, in the
@@ -131,8 +131,8 @@ stars that fade in past 200 m, 50 m; all three leave `_InParticle` at 0.
 
 the pull follows each vertex's own view ray by its own distance, so within `_VertCameraOffset + 1`
 of a large quad's corners they move by different amounts and its texture bends along the triangles'
-diagonal. Si's Painting's grid quad, 5.5 m across and pulled 5 m, skews so from a few metres off
-while the [ink wash](#vfxbasev2) shows it.
+diagonal. Si's Painting's grid quad, 5.5 m across and pulled 5 m, would skew so from a few metres
+off while the [ink wash](#vfxbasev2) shows it.
 
 `_USE_VERTOFFSETMASK` scales the offset, but not the pull towards the camera, by `1 − p·(1 − m)`,
 where `p = _OffsetMaskPower / 5` and m is `_OffsetMaskTex`'s red at the offset texture's UVs, after
