@@ -575,6 +575,8 @@ function* surveyCandidates(
 						rotation,
 						scale,
 						source: model.source,
+						...(model.grid !== undefined && { grid: model.grid }),
+						...(model.lodGrids !== undefined && { lodGrids: model.lodGrids }),
 						visibility,
 						alternatives: model.visibility.alternatives,
 						standIns: reasons,
