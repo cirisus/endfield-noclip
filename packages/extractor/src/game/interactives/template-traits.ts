@@ -5,6 +5,7 @@ import { type AnimatorStart, animatorStart } from './animator-starts.ts';
 import { telescopicPieces } from './bridges.ts';
 import { CRANE_TOWER_COMPONENTS } from './crane-tower.ts';
 import { isAutoMovePlatform } from './curve-move.ts';
+import { DOODAD_GRADE_COMPONENTS } from './doodad-grades.ts';
 import { DOOR_COMPONENTS } from './doors.ts';
 import { ELECTRIC_FENCE_COMPONENTS } from './electric-fences.ts';
 import type { FacilitySources } from './facility-sources.ts';
@@ -49,6 +50,8 @@ export type TemplateTraits =
 			fixableRobot: MemoryPackValue | null;
 			/** a lift's decoded template, `null` for other templates */
 			lifter: MemoryPackValue | null;
+			/** whether its model is swapped for a graded doodad's form */
+			doodadGrade: boolean;
 			entity: EntityProperties | null;
 	  };
 
@@ -67,6 +70,7 @@ const UNREADABLE: TemplateTraits = {
 	craneTower: null,
 	fixableRobot: null,
 	lifter: null,
+	doodadGrade: false,
 	entity: null,
 };
 
@@ -111,6 +115,7 @@ export const readTemplateTraits = (template: MemoryPackValue, path: string): Tra
 		craneTower: hasComponent(template, CRANE_TOWER_COMPONENTS) ? template : null,
 		fixableRobot: hasComponent(template, FIXABLE_ROBOT_COMPONENTS) ? template : null,
 		lifter: hasComponent(template, LIFTER_CORE_COMPONENTS) ? template : null,
+		doodadGrade: hasComponent(template, DOODAD_GRADE_COMPONENTS),
 		entity: entityProperties(template),
 	};
 };

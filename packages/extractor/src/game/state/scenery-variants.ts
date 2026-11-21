@@ -314,7 +314,7 @@ export const labelProgression = (
  * @returns its control
  */
 export const progressionControl = (
-	kind: 'settlement' | 'poi' | 'factoryRegion' | 'facility' | 'doodadGroups',
+	kind: 'settlement' | 'poi' | 'factoryRegion' | 'facility' | 'doodadGroups' | 'doodadGrade',
 	id: string,
 	name: string,
 	levels: readonly number[],

@@ -601,6 +601,10 @@ packs or renders correctly.
   ([event placements](game-data/scene-states.md#event-placements))
 - resource nodes (doodad groups) share one level control per level; the game's per-group level and
   its source in LevelData aren't read ([scene states](game-data/scene-states.md#doodad-groups))
+- graded doodads (breakable crates) follow one development level control per map, not per domain; a
+  level that fixes its own domain level (a branch of the game's lookup) isn't read
+  ([scene states](game-data/scene-states.md#graded-doodads)). rows another kind claims (a rest look)
+  keep their template's model
 - interactive facilities are gathered from levels whose map is the packed scene, so a scene streamed
   by levels of other maps (`base01_lv001`, streamed by `base01_lv003` and `indie_dg014`) probably
   loses their facilities; select levels by `defaultState.exportedSceneConfigPath` instead. for the

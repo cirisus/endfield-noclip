@@ -8,6 +8,7 @@ import type { DraftControl, Visibility } from '../state/scene-control.ts';
 import { AnimatorStarts } from './animator-starts.ts';
 import { TelescopicBridges } from './bridges.ts';
 import { CraneTowers } from './cranes.ts';
+import { DoodadGrades } from './doodad-grades.ts';
 import { DoodadGroups } from './doodad-groups.ts';
 import { type InteractiveDoor, InteractiveDoors } from './doors.ts';
 import { ElectricFences } from './electric-fences.ts';
@@ -53,9 +54,9 @@ export interface InteractiveStandIn {
 
 /**
  * places the models of the interactives that referenced LevelData places. each row is drawn by the first kind
- * that claims it, else as its plain model (with any doodad forms) or its facility forms; each kind's class
- * says what it draws and under which control, and docs/extraction/prefabs-and-interactives.md#interactives
- * lists the steps
+ * that claims it, else as its plain model or graded doodad forms (with any doodad-group forms) or its
+ * facility forms; each kind's class says what it draws and under which control, and
+ * docs/extraction/prefabs-and-interactives.md#interactives lists the steps
  *
  * @param context install readers and the bundle resolver
  * @param options.scene owning map
@@ -136,8 +137,8 @@ export const loadInteractiveFacilities = async (
 	// a row is drawn by the first of these that claims it, else as its plain model or facility forms
 	const kinds: InteractiveKind[] = [bridges, doors, restLooks, animatorStarts, regionWalls, cranes];
 	const readers: TemplateReader[] = [platforms, jumpPads, fences, ...kinds];
+	const traits = new TemplateTraitsReader(sources, templates.traits);
 	{
-		const traits = new TemplateTraitsReader(sources, templates.traits);
 		for (const [key, template] of authored) {
 			if (template.model === null) {
 				// oxlint-disable-next-line no-await-in-loop -- one view state file and a clip per form
@@ -159,6 +160,8 @@ export const loadInteractiveFacilities = async (
 		}
 	}
 	await cranes.hang(placed, authored, rows);
+	const grades = new DoodadGrades(sources, prefabs);
+	await grades.read(scene, placed, authored, traits);
 
 	const switches = new RowSwitches(scripted);
 	const standIns: InteractiveStandIn[] = [];
@@ -211,14 +214,16 @@ export const loadInteractiveFacilities = async (
 			continue;
 		}
 		if (template.name === null) {
-			placer.place(template.forms[0], { alternatives: [[]] }, null);
+			if (!grades.place(placer)) {
+				placer.place(template.forms[0], { alternatives: [[]] }, null);
+			}
 			doodads.place(placer);
 		} else {
 			facilities.place(placer);
 		}
 	}
 	await effects.place(models);
-	progressions.push(...doodads.progressions());
+	progressions.push(...doodads.progressions(), ...grades.progressions());
 
 	return {
 		models,

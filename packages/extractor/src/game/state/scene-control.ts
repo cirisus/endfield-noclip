@@ -101,6 +101,7 @@ const CATEGORY_OF_KIND: Readonly<Record<string, string>> = {
 	factoryRegion: 'progression',
 	facility: 'progression',
 	doodadGroups: 'progression',
+	doodadGrade: 'progression',
 	activation: 'progression',
 	controlNexus: 'dijiang',
 	cabin: 'dijiang',

@@ -30,11 +30,12 @@ naming the script, which addresses them by slot. they exist while the script run
 rows sit in hundreds of scripts: racing courses' coins and moving platforms, open-world butterflies,
 bubble chests, mission beacons and puzzle pieces.
 
-a placement's model is its variant's, else the template's. a variant whose model override is enabled
-but empty has no model of its own, rather than the template's. templates without a model (triggers,
-logic) have nothing to draw. a model that is a doodad-group shell draws nothing itself; one form per
-group level attaches to it instead ([doodad groups](scene-states.md#doodad-groups)). templates carry
-no display name, only their id.
+a placement's model is its variant's, else the template's, unless a
+[graded doodad](scene-states.md#graded-doodads) swaps it for a form. a variant whose model override
+is enabled but empty has no model of its own, rather than the template's. templates without a model
+(triggers, logic) have nothing to draw. a model that is a doodad-group shell draws nothing itself;
+one form per group level attaches to it instead ([doodad groups](scene-states.md#doodad-groups)).
+templates carry no display name, only their id.
 
 some templates have no data file of their own (the weapon-wall racks, some doors), and some name no
 model.

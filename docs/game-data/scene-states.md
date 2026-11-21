@@ -21,6 +21,7 @@ in [interactives.md](interactives.md).
 | progression                | resource-group `logicState` bitmask under a settlement / POI / factory-region controller                |
 | facility visual form       | interactive template model-upgrade list                                                                 |
 | doodad group level         | doodad-shell postmodel's form list                                                                      |
+| graded doodad form         | placement's `doodad_form_list`, `upgrade_need_level`; doodad table                                      |
 | Dijiang cabin slot         | `ExtraSceneSlot` entity; cabin scenes named by `SpaceshipCabinData.json`                                |
 | growth chamber level       | `SpaceshipGrowCabinLvTable` planting fields; planting-box shutters                                      |
 | door                       | interactive model view states                                                                           |
@@ -453,6 +454,27 @@ four), so it says nothing about the shown level. form postmodels carry the same 
 form empty, so they aren't shells.
 
 the game sets each group's level at runtime from progression that isn't recovered.
+
+## graded doodads
+
+breakable crates (`int_doodad_grade` and its variants) and supply boxes are graded doodads: their
+template's model is only the starting look. the grade component swaps it for one of four forms when
+the entity starts and whenever its source level changes:
+
+- the placement's `doodad_id` names a `DoodadGeneralTable` row, whose `upgradeSource` says which
+  level the form follows: 0 none (the template's model stays), 1 world level, 2 the development
+  level of the level's domain, 3 inn level.
+- `upgrade_need_level` lists five levels; entries 1 to 4 are what forms 1 to 4 need, and entry 0
+  isn't read. the form is the last one whose need the level meets; below entry 1 the game indexes
+  form 0, which fails, leaving the template's model.
+- `doodad_form_list` lists the four forms' ModelTable ids. both lists are entity properties, so a
+  placement can override the template's: map02's crates need `0,1,6,9,15` in most levels and
+  `0,1,9,15,24` in Si's Painting.
+
+Wuling's crates follow the domain development level: form 1 (`int_doodad_artificial_1`) is a
+cardboard box, 2 a taped plank crate, 3 and 4 a framed crate (the same mesh and material). the
+supply boxes follow inn level, but their four forms are one model. the domain level is held by the
+player's save and sent by the server.
 
 ## script groups
 

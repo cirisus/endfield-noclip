@@ -30,6 +30,7 @@ the package side of [the selectors](../game-data/scene-states.md#the-selectors-a
 | interactive created later  | `created:<level id>`, not created / created        | not created                                                       |
 | event photo spots          | `activity:snapshot`, one per scene                 | off                                                               |
 | doodad group level         | `doodadGroups:<level id>`                          | the highest level its shells name                                 |
+| graded doodad form         | `domainLevel:<map>` (or `worldLevel`, `innLevel`)  | the highest level a crate needs                                   |
 | Dijiang cabin slot         | `cabin:<entity id>`, empty / built                 | empty                                                             |
 | growth chamber level       | `cabinLevel:<entity id>`, the table's levels       | level 1                                                           |
 | Dijiang region wall        | `controlNexus:<level id>`                          | level 1                                                           |
@@ -293,6 +294,15 @@ identity slots is reported and keeps only its own renderers. every level with do
 `doodadGroups:<level id>` progression ("Resource nodes") over the group levels its shells name,
 defaulting to the highest. each form is placed at the interactive's transform and shown under
 `1 << level`.
+
+## graded doodads
+
+[graded doodads](../game-data/scene-states.md#graded-doodads) are implemented in
+[doodad-grades.ts](../../packages/extractor/src/game/interactives/doodad-grades.ts), for rows drawn
+as their plain model. a row whose upgrade source is set and whose four forms aren't one model gets
+one placement per distinct model, under the levels of its source's `<source>:<map>` progression that
+show it; the progression's levels are every need the scene's rows name. the game reads the domain
+from each level; the packer keys the control by map instead, as each open-world map is one domain.
 
 ## script groups
 

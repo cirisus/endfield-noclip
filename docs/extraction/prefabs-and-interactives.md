@@ -132,10 +132,11 @@ code: [level-interactives.ts](../../packages/formats/src/endfield/level-interact
 `loadInteractiveFacilities` runs fixed steps: it reads the placed rows, reads and decodes each
 placed template file once for its models (`template-models.ts`) and its traits
 (`template-traits.ts`), reads doodad shells, then hands each single-model template's traits to every
-kind's `prepare`, in first-placement order. after the region walls' unlock table and the crane
-towers' poses, each row is drawn by the first kind whose `place` claims it (bridges, doors, rest
-looks (lifts among them), animator starts, region walls, crane towers), else as its plain model with
-any doodad forms, else as facility forms. every model goes through the row's `InteractiveRow`
+kind's `prepare`, in first-placement order. after the region walls' unlock table, the crane towers'
+poses and the graded doodads' forms, each row is drawn by the first kind whose `place` claims it
+(bridges, doors, rest looks (lifts among them), animator starts, region walls, crane towers), else
+as its plain model or [graded doodad forms](scene-controls.md#graded-doodads) (with any doodad-group
+forms), else as facility forms. every model goes through the row's `InteractiveRow`
 (`interactive-row.ts`), which adds its switches, blight core, model scale, ride, crane hang and
 lock; resting effects are placed last. a new kind of interactive is one module implementing
 `InteractiveKind`, a trait it's detected by, and a place in that list. the order is the order
