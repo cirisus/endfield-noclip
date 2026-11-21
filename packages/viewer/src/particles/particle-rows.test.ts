@@ -5,10 +5,11 @@ import {
 	ParticleAlignment,
 	ParticleRenderMode,
 	type ParticleSystemInfo,
+	SheetUvChannels,
 } from '@endfield-noclip/package-format/particles';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
-import { ROW_WORDS, RowBillboard, RowWord } from '../content/instance-rows.ts';
+import { ROW_WORDS, RowBillboard, RowWord, rowSheet } from '../content/instance-rows.ts';
 
 import {
 	type EmitterBlock,
@@ -18,7 +19,7 @@ import {
 	screenLimited,
 	turnedByBillboard,
 } from './particle-rows.ts';
-import { between, constant, line, system } from './test-systems.ts';
+import { between, constant, line, system, trailed } from './test-systems.ts';
 
 describe('ParticleField', () => {
 	/** @returns the row the field writes for one particle of a system on an identity emitter at the origin */
@@ -48,6 +49,45 @@ describe('ParticleField', () => {
 		return [row[3], row[7], row[11]];
 	};
 	const eye: Vec3 = [0, 0, -10];
+
+	it('draws a trail as quads from each point to the next, facing the camera across them', () => {
+		let rows = new Float32Array(0);
+		let rowCount = 0;
+		const store: ParticleRowStore = {
+			allocateRows: (count) => ({ start: 0, count }),
+			freeRows: () => {},
+			writeRows: (_start, words, n) => {
+				rows = new Float32Array(words.buffer.slice(0, n * ROW_WORDS * 4));
+				rowCount = n;
+			},
+		};
+		const rowsF32 = new Float32Array(ROW_WORDS);
+		rowsF32.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
+		const block = { rowsF32, origin: [0, 0, 0], blockSlot: 0 } satisfies EmitterBlock;
+		const field = new ParticleField({ systems: [trailed()] }, store);
+		const view: ParticleView = {
+			time: 1,
+			eye: [-10, 0, 0.75],
+			widthPerDepth: 2,
+			right: [0, 0, -1],
+			up: [0, 1, 0],
+			forward: [1, 0, 0],
+		};
+		// the system starts as it's first drawn; a second later the trail runs from 1 m back to 0.5 m
+		field.rows(block, 0, 0, 0, { ...view, time: 0 });
+		const segments = field.rows(block, 0, 0, 1, view).length;
+		assert.equal(segments, rowCount);
+		assert.equal(segments, 8);
+		const words = new Uint32Array(rows.buffer);
+		const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-5, `${a} ≠ ${b}`);
+		// the head's segment: its x runs back along the trail, its y across it, square to the line of sight
+		near(rows[2 * 4], -0.0625);
+		near(rows[3 + 2 * 4], 1 - 0.03125);
+		near(Math.abs(rows[1 + 1 * 4]), 0.1 - 0.05 / 16);
+		near(rows[1], 0);
+		assert.equal(words[RowWord.sheet], rowSheet([8, 1], 0, SheetUvChannels.Uv0));
+		assert.equal(words[7 * ROW_WORDS + RowWord.sheet], rowSheet([8, 1], 7, SheetUvChannels.Uv0));
+	});
 
 	it('lays a stretched particle back from its head, its width set by where the camera is, not how it turns', () => {
 		// Suiming's drifting fog (`smoke` in p_fxmap_map02_lv007_windice01): legacy stretched quads

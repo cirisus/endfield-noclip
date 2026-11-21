@@ -106,6 +106,7 @@ const fields = (
 	ringBuffer: null,
 	textureSheet: null,
 	customData: null,
+	trail: null,
 	...overrides,
 });
 
@@ -171,3 +172,30 @@ export const run = (info: ParticleSystemInfo, time: number, seed = 7) => {
 		tile: out[i * PARTICLE_FLOATS + 10],
 	}));
 };
+
+/**
+ * one particle leaving the origin up +z at 1 m/s for 2 s, drawing only a trail half its lifetime long that
+ * narrows from 0.1 m at its head to 0.05 m at its tail, at half the particle's opacity
+ */
+export const trailed = (): ParticleSystemInfo =>
+	system({
+		renderMode: ParticleRenderMode.None,
+		looping: false,
+		startLifetime: constant(2),
+		startSpeed: constant(1),
+		gravityModifier: constant(0),
+		startSize: [constant(1), constant(1), constant(1)],
+		rate: constant(0),
+		bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+		shape: null,
+		trail: {
+			ratio: 1,
+			lifetime: constant(0.25),
+			sizeAffectsLifetime: false,
+			width: { ...line(1, 0.5), scalar: 0.1 },
+			sizeAffectsWidth: false,
+			inheritParticleColor: true,
+			colorOverLifetime: { mode: GradientMode.Color, color: [1, 1, 1, 0.5] },
+			colorOverTrail: { mode: GradientMode.Color, color: [1, 1, 1, 1] },
+		},
+	});

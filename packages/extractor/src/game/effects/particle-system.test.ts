@@ -375,7 +375,7 @@ test('systems the viewer cannot play say why', () => {
 		const read = readParticleSystem(s, r);
 		return read !== null && 'reason' in read ? read.reason : null;
 	};
-	assert.equal(reason(system(), renderer({ m_RenderMode: 5 })), 'render mode 5');
+	assert.equal(reason(system(), renderer({ m_RenderMode: 6 })), 'render mode 6');
 	// modules the viewer doesn't evaluate are ignored
 	assert.equal(reason(system({ NoiseModule: { enabled: true } })), null);
 	assert.equal(reason(system({ ringBufferMode: 3 })), 'ring buffer mode 3');
@@ -427,6 +427,135 @@ test('systems the viewer cannot play say why', () => {
 	);
 	// one a script starts shows nothing until then, so it's neither played nor unsupported
 	assert.equal(readParticleSystem(system({ playOnAwake: false }), renderer()), null);
+});
+
+/** the purification device's swirling trails (`trail` in `int_purification_device_postmodel`) */
+const purificationTrail = (overrides: Record<string, unknown> = {}) => ({
+	enabled: true,
+	mode: 0,
+	ratio: 1,
+	lifetime: between(0.35, 0.5),
+	minVertexDistance: 0.01,
+	textureMode: 0,
+	worldSpace: false,
+	dieWithParticles: true,
+	sizeAffectsWidth: false,
+	sizeAffectsLifetime: false,
+	inheritParticleColor: true,
+	colorOverLifetime: {
+		minMaxState: 3,
+		minColor: white,
+		maxColor: white,
+		minGradient: gradient(
+			[
+				[0, [1, 1, 1]],
+				[1, [1, 1, 1]],
+			],
+			[
+				[0, 0],
+				[0.387, 0.784],
+				[1, 0.024],
+			],
+		),
+		maxGradient: gradient(
+			[
+				[0, [1, 1, 1]],
+				[1, [1, 1, 1]],
+			],
+			[
+				[0, 0],
+				[0.196, 1],
+				[1, 0.024],
+			],
+		),
+	},
+	widthOverTrail: {
+		...curve([
+			[0, 1],
+			[1, 0.347],
+		]),
+		minMaxState: 2,
+		scalar: 0.05,
+		minCurve: curve([
+			[0, 0.743],
+			[1, 0.465],
+		]).maxCurve,
+	},
+	colorOverTrail: { minMaxState: 0, minColor: white, maxColor: white },
+	...overrides,
+});
+
+test('a system drawing only trails reads them, and its particles draw nothing of their own', () => {
+	const read = readParticleSystem(
+		system({ TrailModule: purificationTrail() }),
+		renderer({ m_RenderMode: ParticleRenderMode.None }),
+	);
+	assert.ok(read !== null && 'info' in read);
+	assert.equal(read.info.renderMode, ParticleRenderMode.None);
+	assert.equal(read.info.screenSize, null);
+	assert.deepEqual(read.meshes, []);
+	// the packer sets the trail on the entry that draws it
+	assert.equal(read.info.trail, null);
+	const trail = read.trail;
+	assert.ok(trail !== null);
+	assert.deepEqual(trail.lifetime, { mode: CurveMode.TwoConstants, scalar: 0.5, min: 0.35 });
+	assert.equal(trail.width.mode, CurveMode.TwoCurves);
+	assert.equal(trail.width.scalar, 0.05);
+	assert.equal(trail.inheritParticleColor, true);
+	assert.equal(trail.colorOverLifetime.mode, GradientMode.TwoGradients);
+	assert.deepEqual(trail.colorOverTrail, { mode: GradientMode.Color, color: [1, 1, 1, 1] });
+	// a drawn system's trails come alongside its particles
+	const both = readParticleSystem(system({ TrailModule: purificationTrail() }), renderer());
+	assert.ok(both !== null && 'info' in both && both.trail !== null);
+});
+
+test('trails the viewer cannot draw stand in without particles, and are left off with them', () => {
+	const none = renderer({ m_RenderMode: ParticleRenderMode.None });
+	const reason = (trail: Record<string, unknown>, overrides: Record<string, unknown> = {}) => {
+		const read = readParticleSystem(system({ TrailModule: trail, ...overrides }), none);
+		return read !== null && 'reason' in read ? read.reason : null;
+	};
+	// the water pouring off Qingbo's wheels joins its particles into ribbons
+	assert.equal(reason(purificationTrail({ mode: 1 })), 'ribbon trails');
+	assert.equal(reason(purificationTrail({ textureMode: 1 })), 'trail texture mode 1');
+	assert.equal(reason(purificationTrail({ dieWithParticles: false })), 'trails outliving their particles');
+	assert.equal(reason(purificationTrail({ lifetime: curve([[0, 1]]) })), 'trail lifetime curve');
+	assert.equal(reason(purificationTrail(), { ringBufferMode: 1 }), 'trails with a ring buffer');
+	const limit = {
+		enabled: true,
+		dampen: 0.015,
+		separateAxis: false,
+		magnitude: constant(1),
+		drag: constant(0),
+		multiplyDragByParticleSize: false,
+		multiplyDragByParticleVelocity: false,
+	};
+	assert.equal(
+		reason(purificationTrail(), { ClampVelocityModule: limit }),
+		'trails with forces or a speed limit',
+	);
+	const ribbons = readParticleSystem(system({ TrailModule: purificationTrail({ mode: 1 }) }), renderer());
+	assert.ok(ribbons !== null && 'info' in ribbons);
+	assert.equal(ribbons.trail, null);
+	// without trails, what such a system drives is what's missing (the storehouse sparks' `light`)
+	const drives = (modules: Record<string, unknown>) => {
+		const read = readParticleSystem(system({ TrailModule: { enabled: false }, ...modules }), none);
+		return read !== null && 'reason' in read ? read.reason : null;
+	};
+	assert.equal(drives({}), 'no render mode or trails');
+	assert.equal(
+		drives({ LightsModule: { enabled: true }, SubModule: { enabled: true } }),
+		'no render mode: lights and sub-emitters only',
+	);
+});
+
+test('a trail reaches as far as its particles and as wide as its widest point', () => {
+	const read = readParticleSystem(system({ TrailModule: purificationTrail() }), renderer());
+	assert.ok(read !== null && 'info' in read && read.trail !== null);
+	const particles = particleReach(read.info, 1).extents[0];
+	const trails = particleReach({ ...read.info, trail: read.trail }, 1).extents[0];
+	// the particles reach 5 m of size; the trail is 0.05 m wide at most
+	assert.ok(Math.abs(particles - trails - (5 - 0.05)) < 1e-9);
 });
 
 test('the accelerate mushroom plays its velocity-aligned arrows, spin curves and donut', () => {

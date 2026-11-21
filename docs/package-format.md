@@ -820,7 +820,15 @@ scale moves the particles in every mode and sizes them unless the mode is Shape.
   doesn't shift by custom data); VFXDecal folds its `*CustomData` constants' shift into the offset
 
 a renderer with several meshes (`m_Mesh` … `m_Mesh3`) becomes one emitter per mesh, its entry naming
-which.
+which. a system with [trails](game-data/particles.md#trails) a viewer can draw becomes one more
+emitter at the same place, drawing the unit quad with the renderer's second material, whose entry
+carries `trail` (`null` on the others): the ratio, the lifetime multiplier (a constant or two), the
+width along the trail, the two colour gradients and the size and colour flags. its bounds take the
+trail's widest point for the particle's size. trails in ribbon mode, other texture modes, ones that
+outlive their particles, and those of ring-buffered, force-field or speed-limited systems (whose
+particles can't be read at an earlier age alone) aren't packed: a system that draws its particles
+plays without them, and one with no render mode stands in, as does one with neither trails nor a
+render mode, its reason naming the lights or sub-emitters it drives.
 
 **a [stand-in](#stand-ins)**, for any other system, including those that don't play on awake (a
 script starts them): its `m_Mesh` in mesh mode, else the unit quad as a `BillboardFacing` chain,

@@ -48,6 +48,22 @@ export const ParticleFloat = {
 /** the most particles one emitter shows */
 export const MAX_PARTICLES = 1024;
 
+/** points along each trail ({@link ParticleSimulation.trailPoints}), head and tail included */
+export const TRAIL_POINTS = 9;
+
+/** floats per trail point: position in the emitter's frame, width (m), colour (linear rgb, alpha) */
+export const TRAIL_POINT_FLOATS = 8;
+
+/** where each value starts in a trail point's {@link TRAIL_POINT_FLOATS} */
+export const TrailFloat = {
+	position: 0,
+	width: 3,
+	color: 4,
+} as const;
+
+/** floats per particle {@link ParticleSimulation.evaluate} keeps for its trail: its {@link Placing} */
+const WRITTEN_FLOATS = 5;
+
 /**
  * @param lived a ring-buffered particle's age over its lifetime, which can pass 1
  * @param loopRange the span of the lifetime it replays once it reaches the span's end, or `null` to hold it
@@ -213,6 +229,8 @@ const placed = {
 	/** the start colour, then the colour over lifetime, each read before the next is written */
 	color: [0, 0, 0, 0] as [number, number, number, number],
 };
+/** a trail's colour before it's read along the trail (`trailPoints`) */
+const trailColor: [number, number, number, number] = [0, 0, 0, 0];
 /** `#freePath`'s velocity module terms */
 const free = { linear: vec3(), linearNow: vec3(), outward: vec3(), turn: vec3(), around: vec3() };
 /** `#steppedPath`'s per-particle inputs and the per-step terms of its extra velocity and forces */
@@ -310,6 +328,10 @@ export class ParticleSimulation {
 	#worldToLocal: (direction: Vec3) => Vec3 = (direction) => direction;
 	/** where a moving emitter was at an emission, for the current {@link evaluate}; `null` when it holds still */
 	#emittedFrom: ((born: number) => Readonly<Float64Array>) | null = null;
+	/** the {@link Placing} of each particle the current {@link evaluate} wrote, for {@link trailPoints} */
+	#written = new Float64Array(0);
+	/** one particle's floats, which {@link trailPoints} places it at its trail's earlier ages into */
+	readonly #earlier = new Float32Array(PARTICLE_FLOATS);
 	/** the particle being placed's random value for a channel */
 	readonly #randomOf = (channel: number): number => random(this.#seed, placing.id, channel);
 
@@ -421,6 +443,9 @@ export class ParticleSimulation {
 		const emissions = this.#capped ? this.#admit(time) : this.#emitted(time - this.#lookback, time);
 		this.#steppedNow.clear();
 		const capacity = Math.floor(out.length / PARTICLE_FLOATS);
+		if (this.info.trail !== null && this.#written.length < capacity * WRITTEN_FLOATS) {
+			this.#written = new Float64Array(capacity * WRITTEN_FLOATS);
+		}
 		const { maxParticles, ringBuffer } = this.info;
 		let count = 0;
 		let alive = 0;
@@ -473,6 +498,14 @@ export class ParticleSimulation {
 				placing.age = age;
 				placing.moved = moved;
 				this.#place(placing, out, count * PARTICLE_FLOATS);
+				if (this.info.trail !== null) {
+					const w = count * WRITTEN_FLOATS;
+					this.#written[w] = id;
+					this.#written[w + 1] = born;
+					this.#written[w + 2] = life;
+					this.#written[w + 3] = age;
+					this.#written[w + 4] = moved;
+				}
 				count++;
 			}
 		}
@@ -695,7 +728,8 @@ export class ParticleSimulation {
 	/** whether a particle picked this entry's mesh */
 	#drawsMesh(id: number): boolean {
 		const weights = this.info.meshWeights;
-		if (weights.length <= 1) {
+		// trails follow every particle, whichever mesh it draws
+		if (weights.length <= 1 || this.info.trail !== null) {
 			return true;
 		}
 		let pick = random(this.#seed, id, Channel.Mesh) * this.#meshTotal;
@@ -1063,6 +1097,86 @@ export class ParticleSimulation {
 	}
 
 	/** writes one live particle at `out[at]` */
+	/**
+	 * the points of a particle's trail, from its head at the particle to its tail, where the particle was a
+	 * trail's lifetime before (or at its birth). along the trail, its width and colour are read at the point's
+	 * place in the points, 0 at the head and 1 at the tail
+	 *
+	 * @param index the particle, in the order the last {@link evaluate} wrote them
+	 * @param particles what that {@link evaluate} wrote
+	 * @param out {@link TRAIL_POINTS} × {@link TRAIL_POINT_FLOATS} floats
+	 * @returns how many points were written: {@link TRAIL_POINTS}, or 0 for a particle without a trail or
+	 *   before its trail has any length
+	 */
+	trailPoints(index: number, particles: Float32Array, out: Float32Array): number {
+		const trail = this.info.trail;
+		if (trail === null) {
+			return 0;
+		}
+		const seed = this.#seed;
+		const w = this.#written;
+		const at = index * WRITTEN_FLOATS;
+		const id = w[at];
+		const life = w[at + 2];
+		const age = w[at + 3];
+		if (life <= 0 || age <= 0 || random(seed, id, Channel.TrailRatio) >= trail.ratio) {
+			return 0;
+		}
+		const base = index * PARTICLE_FLOATS;
+		const size = particles[base + ParticleFloat.size];
+		let lifetime = evaluateMinMax(trail.lifetime, 0, random(seed, id, Channel.TrailLifetime)) * life;
+		if (trail.sizeAffectsLifetime) {
+			lifetime *= size;
+		}
+		const span = Math.min(age, lifetime);
+		if (!(span > 0)) {
+			return 0;
+		}
+		// the whole trail's colour, then the particle's when it inherits it
+		const tint = evaluateMinMaxGradientInto(
+			placed.color,
+			trail.colorOverLifetime,
+			livedAt(age, life),
+			random(seed, id, Channel.TrailColor),
+		);
+		const color = trailColor;
+		for (let c = 0; c < 4; c++) {
+			const own = c < 3 ? srgbToLinear(tint[c]) : tint[3];
+			color[c] = trail.inheritParticleColor ? own * particles[base + ParticleFloat.color + c] : own;
+		}
+		const widthRandom = random(seed, id, Channel.TrailWidth);
+		const alongRandom = random(seed, id, Channel.TrailColorOverTrail);
+		const earlier = this.#earlier;
+		placing.id = id;
+		placing.born = w[at + 1];
+		placing.life = life;
+		for (let k = 0; k < TRAIL_POINTS; k++) {
+			const along = k / (TRAIL_POINTS - 1);
+			const o = k * TRAIL_POINT_FLOATS;
+			let from = particles;
+			let fromAt = base;
+			if (k > 0) {
+				// where the particle was then; only paths read at any age have trails (the packer checks)
+				placing.age = age - along * span;
+				placing.moved = w[at + 4] - along * span;
+				this.#place(placing, earlier, 0);
+				from = earlier;
+				fromAt = 0;
+			}
+			for (let axis = 0; axis < 3; axis++) {
+				out[o + TrailFloat.position + axis] = from[fromAt + ParticleFloat.position + axis];
+			}
+			out[o + TrailFloat.width] =
+				evaluateMinMax(trail.width, along, widthRandom) * (trail.sizeAffectsWidth ? size : 1);
+			const shade = evaluateMinMaxGradientInto(placed.color, trail.colorOverTrail, along, alongRandom);
+			for (let c = 0; c < 3; c++) {
+				out[o + TrailFloat.color + c] = color[c] * srgbToLinear(shade[c]);
+			}
+			out[o + TrailFloat.color + 3] = color[3] * shade[3];
+		}
+		return TRAIL_POINTS;
+	}
+
 	#place(particle: Readonly<Placing>, out: Float32Array, at: number): void {
 		const info = this.info;
 		const seed = this.#seed;

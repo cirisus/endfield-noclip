@@ -132,6 +132,8 @@ export const ParticleRenderMode = {
 	Vertical: 3,
 	/** the system's meshes ({@link ParticleSystemInfo.meshWeights}) */
 	Mesh: 4,
+	/** nothing: the particles show only through their {@link ParticleSystemInfo.trail} */
+	None: 5,
 } as const;
 
 export type ParticleRenderMode = (typeof ParticleRenderMode)[keyof typeof ParticleRenderMode];
@@ -322,7 +324,7 @@ export interface ParticleSystemInfo {
 	/**
 	 * the smallest and largest a quad may be on screen, as fractions of the viewport's width at its depth: its
 	 * larger side is held between them, scaling both (a stretched quad's length keeps its own). `null` for
-	 * {@link ParticleRenderMode.Mesh}
+	 * {@link ParticleRenderMode.Mesh} and {@link ParticleRenderMode.None}
 	 */
 	screenSize: { min: number; max: number } | null;
 	/**
@@ -398,6 +400,37 @@ export interface ParticleSystemInfo {
 	 * renderer passes none
 	 */
 	customData: [ParticleCustom, ParticleCustom, ParticleCustom, ParticleCustom] | null;
+	/**
+	 * set on the entry whose draw is the particles' trails rather than the particles: a renderer whose system
+	 * has trails is a second entry, drawn with the renderer's trail material, alongside the particles' own
+	 * (none for {@link ParticleRenderMode.None}). `null` on every other entry
+	 */
+	trail: ParticleTrailInfo | null;
+}
+
+/**
+ * the ribbon each particle leaves behind (Unity's `TrailModule` in its `Particles` mode): through where the
+ * particle was over the trail's lifetime, up to its current place. the trail is a camera-facing strip; along
+ * it, 0 is the particle's end (the head) and 1 the oldest point (the tail), and the texture is stretched once
+ * over that length. it dies with its particle
+ */
+export interface ParticleTrailInfo {
+	/** the chance a particle has a trail, 0–1 */
+	ratio: number;
+	/** how long each point of the trail lasts, as a multiple of its particle's lifetime; a constant or two */
+	lifetime: MinMaxCurveInfo;
+	/** whether the particle's x size multiplies {@link lifetime} */
+	sizeAffectsLifetime: boolean;
+	/** m, read along the trail */
+	width: MinMaxCurveInfo;
+	/** whether the particle's x size multiplies {@link width} */
+	sizeAffectsWidth: boolean;
+	/** whether the particle's colour multiplies the trail's */
+	inheritParticleColor: boolean;
+	/** the colour of the whole trail, read at its particle's age over its lifetime */
+	colorOverLifetime: MinMaxGradientInfo;
+	/** a multiplier of it, read along the trail */
+	colorOverTrail: MinMaxGradientInfo;
 }
 
 /**

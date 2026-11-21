@@ -296,12 +296,17 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 		return;
 	}
 	const read = await readPlayedSystem(walk, system, rendererData);
+	const drawsParticles = numberField(rendererData, 'm_RenderMode') !== ParticleRenderMode.None;
+	// the trails draw with the renderer's second material
+	const trailMaterials = arrayField(renderer.data, 'm_Materials').slice(1, 2);
 	// a system a script starts is still there to see, so it gets a stand-in too
 	let reason = state.standIn;
 	if (reason === null && read === null) {
 		reason = `doesn't play on awake`;
 	} else if (reason === null && read !== null && 'reason' in read) {
 		reason = read.reason;
+	} else if (reason === null && !drawsParticles && trailMaterials.length === 0) {
+		reason = 'no trail material';
 	}
 	if (reason !== null) {
 		// a stand-in shows where the system would play: its first mesh, or a quad facing the camera
@@ -333,10 +338,14 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 	}
 	const emitter = particleEmitterMatrix(parent, local, scalingMode);
 	// one emitter per mesh, each drawing the particles that picked it; quads have none of their own
-	const meshes =
-		read.meshes.length === 0
-			? [walk.particleQuad]
-			: await Promise.all(read.meshes.map((pointer) => walk.resolver.resolve(renderer.ref, pointer)));
+	let meshes: (ObjectRef | null)[] = [];
+	if (drawsParticles) {
+		meshes =
+			read.meshes.length === 0
+				? [walk.particleQuad]
+				: await Promise.all(read.meshes.map((pointer) => walk.resolver.resolve(renderer.ref, pointer)));
+	}
+	const candidates: RendererCandidate[] = [];
 	for (const [i, mesh] of meshes.entries()) {
 		if (mesh === null) {
 			continue;
@@ -347,16 +356,36 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 			const bounds = aabbField(await walk.resolver.read(mesh), 'm_LocalAABB');
 			pivot = meshParticlePivot(pivot, particleMeshSize(bounds));
 		}
-		const candidate = candidateOf(node, state, {
-			...renderer,
-			matrix: emitter,
-			mesh,
-			particles: { ...read.info, pivot, mesh: i },
-			unsupported: null,
-			ownSize: false,
-			billboard: null,
-			decal: null,
-		});
+		candidates.push(
+			candidateOf(node, state, {
+				...renderer,
+				matrix: emitter,
+				mesh,
+				particles: { ...read.info, pivot, mesh: i },
+				unsupported: null,
+				ownSize: false,
+				billboard: null,
+				decal: null,
+			}),
+		);
+	}
+	if (read.trail !== null && trailMaterials.length > 0 && walk.particleQuad !== null) {
+		// every particle's trail, whichever mesh it picked, as one strip of quads
+		candidates.push(
+			candidateOf(node, state, {
+				ref: renderer.ref,
+				data: { ...renderer.data, m_Materials: trailMaterials },
+				matrix: emitter,
+				mesh: walk.particleQuad,
+				particles: { ...read.info, pivot: [0, 0, 0], trail: read.trail },
+				unsupported: null,
+				ownSize: false,
+				billboard: null,
+				decal: null,
+			}),
+		);
+	}
+	for (const candidate of candidates) {
 		walk.candidates.push(candidate);
 		// a custom simulation space's Transform is taken to hold still, as the world does
 		if (numberField(system.data, 'moveWithTransform') !== SimulationSpace.Local) {

@@ -8,8 +8,15 @@ import {
 	ParticleShapeKind,
 } from '@endfield-noclip/package-format/particles';
 
-import { PARTICLE_FLOATS, ParticleSimulation, ringBufferAge } from './simulation.ts';
-import { DOWN, constant, line, placement, run, same, sheet, system } from './test-systems.ts';
+import {
+	PARTICLE_FLOATS,
+	ParticleSimulation,
+	ringBufferAge,
+	TRAIL_POINT_FLOATS,
+	TRAIL_POINTS,
+	TrailFloat,
+} from './simulation.ts';
+import { DOWN, constant, line, placement, run, same, sheet, system, trailed } from './test-systems.ts';
 
 describe('ringBufferAge', () => {
 	it('holds a particle at its end, or replays its loop range', () => {
@@ -427,5 +434,42 @@ describe('ring buffers', () => {
 		assert.equal(run({ ...smoke, ringBuffer: { loop: false, loopRange: [0, 1] } }, 100.5).length, 1);
 		// with a cap of 0 every particle is swapped out as it's emitted, so it lives once and never loops
 		assert.equal(run({ ...smoke, maxParticles: 0 }, 100.5).length, 4);
+	});
+
+	it('lays a trail through where its particle was, back over the trail lifetime or to its birth', () => {
+		const points = (info = trailed(), time = 1) => {
+			const simulation = new ParticleSimulation(info, 7);
+			const particles = new Float32Array(PARTICLE_FLOATS);
+			assert.equal(simulation.evaluate(time, DOWN, same, particles), 1);
+			const out = new Float32Array(TRAIL_POINTS * TRAIL_POINT_FLOATS);
+			const count = simulation.trailPoints(0, particles, out);
+			return Array.from({ length: count }, (_, k) => {
+				const at = k * TRAIL_POINT_FLOATS;
+				return {
+					z: out[at + TrailFloat.position + 2],
+					width: out[at + TrailFloat.width],
+					alpha: out[at + TrailFloat.color + 3],
+				};
+			});
+		};
+		const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-5, `${a} ≠ ${b}`);
+		// half of its 2 s lifetime: from the particle at 1 m back to 0.5 m, narrowing as it goes
+		const trail = points();
+		assert.equal(trail.length, TRAIL_POINTS);
+		near(trail[0].z, 1);
+		near(trail[TRAIL_POINTS - 1].z, 0.5);
+		near(trail[0].width, 0.1);
+		near(trail[TRAIL_POINTS - 1].width, 0.05);
+		near(trail[0].alpha, 0.5);
+		// a young particle's trail reaches back only to its birth
+		const young = points(trailed(), 0.2);
+		near(young[TRAIL_POINTS - 1].z, 0);
+		near(young[TRAIL_POINTS - 1].width, 0.05);
+		// and a particle the ratio leaves out has none
+		const none = trailed();
+		assert.equal(
+			points({ ...none, trail: none.trail === null ? null : { ...none.trail, ratio: 0 } }).length,
+			0,
+		);
 	});
 });

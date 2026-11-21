@@ -410,16 +410,23 @@ packs or renders correctly.
   [viewer](viewer/particles.md#particles)):
   - frozen mesh particles lose their start colour and their drift and spin over lifetime (a held
     particle goes on moving in game), and take the midpoint of random start values
-  - played systems ignore the noise, collision, trigger, sub-emitter, light, trail and by-speed
-    modules, use the viewer's own random values and move only while frames render (so the fish
-    school circles without its noise's wobble); all copies of one flipbook step in phase
-  - stand-ins at the emitter: systems that don't play on awake; a start delay or drag curve; a
-    per-axis speed limit; speed-modifier curves alongside drag without a speed limit; force fields
-    other than spheres or with a vector field; shapes other than sphere, hemisphere, cone, box,
-    circle, donut and mesh (under 20 map02 systems, single-sided edges and box edges); mesh shapes
-    with a shape texture, edge placement in Loop or PingPong, or quads, points or lines mixed with
-    triangles; sprite-mode sheets, sheet time modes other than lifetime or frames per second, sheets
-    over 64 tiles a side
+  - played systems ignore the noise, collision, trigger, sub-emitter, light and by-speed modules,
+    use the viewer's own random values and move only while frames render (so the fish school circles
+    without its noise's wobble); all copies of one flipbook step in phase
+  - [trails](game-data/particles.md#trails) follow Unity's documentation, unchecked against the
+    engine or an in-game shot (the purification devices' swirls, dung01_wrdg001 ~2, 355, 208): nine
+    points per trail rather than one per `minVertexDistance`, and `worldSpace` isn't read, so a
+    moving emitter carries its trails. drawn particles play without ribbon-mode trails, trails in
+    other texture modes or outliving their particles, and trails of ring-buffered, force-field or
+    speed-limited systems
+  - stand-ins at the emitter: systems that don't play on awake; systems with no render mode whose
+    trails aren't drawn (the map02 water ribbons) or that only drive lights and sub-emitters (the
+    storehouse sparks); a start delay or drag curve; a per-axis speed limit; speed-modifier curves
+    alongside drag without a speed limit; force fields other than spheres or with a vector field;
+    shapes other than sphere, hemisphere, cone, box, circle, donut and mesh (under 20 map02 systems,
+    single-sided edges and box edges); mesh shapes with a shape texture, edge placement in Loop or
+    PingPong, or quads, points or lines mixed with triangles; sprite-mode sheets, sheet time modes
+    other than lifetime or frames per second, sheets over 64 tiles a side
   - approximations: a rate between two constants or curves emits at their mean, and a rate curve
     emits by its exact integral rather than the game's per-frame sum (the waterwheels' pouring water
     is unchecked against an in-game shot); without a limit or force fields, drag slows only the

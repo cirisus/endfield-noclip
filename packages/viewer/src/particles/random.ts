@@ -64,6 +64,11 @@ export const Channel = {
 	CustomY: 49,
 	CustomZ: 50,
 	CustomW: 51,
+	TrailRatio: 52,
+	TrailLifetime: 53,
+	TrailWidth: 54,
+	TrailColor: 55,
+	TrailColorOverTrail: 56,
 } as const;
 
 /**

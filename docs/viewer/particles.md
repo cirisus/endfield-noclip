@@ -41,7 +41,7 @@ systems the packer froze into a single particle ([package format](../package-for
 aren't emitters: they arrive as plain mesh instances. systems it can't make playable at all arrive
 as stand-ins ([package format](../package-format.md#stand-ins)): one mesh or camera-facing quad at
 the emitter in the [unsupported](materials.md#unsupported-materials) checker, shown with "missing
-content". modules not listed below (noise, collision, triggers, sub-emitters, trails, lights and the
+content". modules not listed below (noise, collision, triggers, sub-emitters, lights and the
 by-speed modules) are ignored, so systems that enable them play without their effect rather than not
 at all.
 
@@ -164,6 +164,22 @@ system and its index, so any moment can be evaluated on its own:
   leaves UVs alone.
 - colour is the start colour (read at the emission's place in its loop) times the colour over
   lifetime, blended in the authored colour space, then made linear into the row's colour word.
+
+### trails
+
+an entry with a `trail` ([package format](../package-format.md#particles)) draws its particles'
+trails rather than the particles: it shares the particles' salt (`ParticleField`), so it evaluates
+the same particles as the renderer's other entries, every one whatever mesh it picked. for each
+particle the ratio lets through, `ParticleSimulation.trailPoints` places it again at nine ages
+evenly spread from its own back over the trail's span (the trail lifetime, or its age while that's
+shorter), reading the width and the colour over the trail at each point's place among them (0 at the
+head) and the colour over lifetime at the particle's age. the emitter keeps eight rows per particle
+(`#writeTrails`): each segment is the quad stretched from one point to the next along its x, as wide
+as the mean of its ends across the segment and the line of sight from the camera's position, its -z
+facing the camera, and coloured by its ends' mean. its sheet word is tile j of an 8×1 sheet, so the
+texture runs once along the trail from the head. the game places points every `minVertexDistance`
+instead, so a bent trail is smoother there and its colour and width change smoothly; here segments
+meet at their ends but not their edges.
 
 ### moving emitters
 

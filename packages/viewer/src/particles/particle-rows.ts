@@ -1,6 +1,7 @@
 import {
 	ParticleAlignment,
 	ParticleRenderMode,
+	SheetUvChannels,
 	type ParticleSystemInfo,
 	type ParticlesTable,
 } from '@endfield-noclip/package-format/particles';
@@ -22,7 +23,15 @@ import { normalizeOrZ, normalizeOrZInto } from '../math/vec3.ts';
 
 import { emitterFrameInto, multiplyRowsInto } from './emitter-motion.ts';
 import { hash2, hashText } from './random.ts';
-import { MAX_PARTICLES, PARTICLE_FLOATS, ParticleFloat, ParticleSimulation } from './simulation.ts';
+import {
+	MAX_PARTICLES,
+	PARTICLE_FLOATS,
+	ParticleFloat,
+	ParticleSimulation,
+	TRAIL_POINT_FLOATS,
+	TRAIL_POINTS,
+	TrailFloat,
+} from './simulation.ts';
 import { velocityBasisInto } from './vector-math.ts';
 
 /** the camera inputs particle rows depend on */
@@ -172,6 +181,11 @@ const FLAT: readonly Vec3[] = [
 	[0, -1, 0],
 ];
 const NO_ROWS: readonly number[] = [];
+/** a trail segment's ends, then its centre and line of sight, and its axes (`ParticleField#writeTrails`) */
+const trailScratch: [Vec3, Vec3, Vec3, Vec3, Vec3] = [vec3(), vec3(), vec3(), vec3(), vec3()];
+
+/** rows per particle's trail */
+const TRAIL_SEGMENTS = TRAIL_POINTS - 1;
 
 /**
  * frames an emitter may go undrawn before it's forgotten, as the mesh selector drops unused buckets: long
@@ -457,7 +471,10 @@ export interface ParticleRowStore {
  */
 export class ParticleField {
 	readonly #systems: readonly ParticleSystemInfo[];
-	/** each system's seed salt, the same for entries differing only in their mesh */
+	/**
+	 * each system's seed salt, the same for a renderer's entries, which differ only in their mesh (and its
+	 * pivot) or in drawing the trails, so they draw the same particles
+	 */
 	readonly #salts: number[];
 	readonly #store: ParticleRowStore;
 	readonly #emitters = new Map<EmitterBlock, Map<number, Emitter>>();
@@ -478,6 +495,8 @@ export class ParticleField {
 	readonly #particle: ParticleInput = { size: vec3(), velocity: vec3(), length: 0 };
 	readonly #color = new Float32Array(4);
 	readonly #custom = new Float32Array(4);
+	/** one particle's trail points (`#writeTrails`) */
+	readonly #trail = new Float32Array(TRAIL_POINTS * TRAIL_POINT_FLOATS);
 	/** the frame {@link #prune} last ran */
 	#prunedAt = 0;
 
@@ -503,7 +522,9 @@ export class ParticleField {
 	 */
 	constructor(table: ParticlesTable, store: ParticleRowStore) {
 		this.#systems = table.systems;
-		this.#salts = table.systems.map((system) => hashText(JSON.stringify({ ...system, mesh: 0 })));
+		this.#salts = table.systems.map((system) =>
+			hashText(JSON.stringify({ ...system, mesh: 0, pivot: null, trail: null })),
+		);
 		this.#store = store;
 	}
 
@@ -545,7 +566,11 @@ export class ParticleField {
 				0,
 			);
 			const simulation = new ParticleSimulation(info, seed);
-			const rows = this.#store.allocateRows(Math.max(Math.min(simulation.liveBound, MAX_PARTICLES), 1));
+			// a trail is a row per segment
+			const perParticle = info.trail === null ? 1 : TRAIL_SEGMENTS;
+			const rows = this.#store.allocateRows(
+				Math.max(Math.min(simulation.liveBound * perParticle, MAX_PARTICLES), perParticle),
+			);
 			if (rows === null) {
 				return NO_ROWS;
 			}
@@ -570,7 +595,11 @@ export class ParticleField {
 		}
 		if (emitter.frame !== frame) {
 			emitter.frame = frame;
-			this.#write(block, row, emitter, view);
+			if (emitter.simulation.info.trail === null) {
+				this.#write(block, row, emitter, view);
+			} else {
+				this.#writeTrails(block, row, emitter, view);
+			}
 		}
 		return emitter.live;
 	}
@@ -625,7 +654,18 @@ export class ParticleField {
 		}
 	}
 
-	#write(block: EmitterBlock, row: number, emitter: Emitter, view: ParticleView): void {
+	/**
+	 * reads the emitter's frame into {@link #m} and evaluates its particles into {@link #particles}
+	 *
+	 * @returns how many it wrote, at most `capacity`
+	 */
+	#evaluate(
+		block: EmitterBlock,
+		row: number,
+		emitter: Emitter,
+		view: ParticleView,
+		capacity: number,
+	): number {
 		const simulation = emitter.simulation;
 		const info = simulation.info;
 		this.#readFrame(block.rowsF32, row * ROW_WORDS);
@@ -656,14 +696,20 @@ export class ParticleField {
 		for (let r = 0; r < 3; r++) {
 			down[r] = local[r];
 		}
-		const particles = this.#particles;
-		const count = simulation.evaluate(
+		return simulation.evaluate(
 			time,
 			down,
 			this.#toLocal,
-			particles.subarray(0, Math.min(emitter.rows.count, MAX_PARTICLES) * PARTICLE_FLOATS),
+			this.#particles.subarray(0, Math.min(capacity, MAX_PARTICLES) * PARTICLE_FLOATS),
 			emittedFrom,
 		);
+	}
+
+	#write(block: EmitterBlock, row: number, emitter: Emitter, view: ParticleView): void {
+		const info = emitter.simulation.info;
+		const count = this.#evaluate(block, row, emitter, view, emitter.rows.count);
+		const m = this.#m;
+		const particles = this.#particles;
 		const context = rowContext(info, view, block, m, this.#columns, this.#scales);
 		const { sizing, billboard, pivoted, shape } = context;
 		const turnedBy = pivoted ? billboardBasis(billboard, view) : null;
@@ -760,6 +806,89 @@ export class ParticleField {
 		}
 		if (count > 0) {
 			this.#store.writeRows(emitter.rows.start, words, count);
+		}
+	}
+	/**
+	 * writes each particle's trail as a row per segment: the quad stretched from one point to the next along
+	 * its x, with its UVs' x remapped to the segment's share of the trail, and turned about the segment to face
+	 * the camera as far as it can
+	 */
+	#writeTrails(block: EmitterBlock, row: number, emitter: Emitter, view: ParticleView): void {
+		const simulation = emitter.simulation;
+		const count = this.#evaluate(block, row, emitter, view, Math.floor(emitter.rows.count / TRAIL_SEGMENTS));
+		const m = this.#m;
+		const origin = block.origin;
+		const infoWord = RowKind.Detail;
+		const slot = block.blockSlot;
+		const out = this.#rowsF32;
+		const words = this.#rows;
+		const points = this.#trail;
+		const [head, tail, along, across, face] = trailScratch;
+		const color = this.#color;
+		emitter.live.length = 0;
+		let written = 0;
+		for (let i = 0; i < count; i++) {
+			if (simulation.trailPoints(i, this.#particles, points) === 0) {
+				continue;
+			}
+			for (let j = 0; j < TRAIL_SEGMENTS; j++) {
+				const a = j * TRAIL_POINT_FLOATS;
+				const b = a + TRAIL_POINT_FLOATS;
+				toWorldInto(head, m, points[a], points[a + 1], points[a + 2]);
+				toWorldInto(tail, m, points[b], points[b + 1], points[b + 2]);
+				for (let r = 0; r < 3; r++) {
+					along[r] = tail[r] - head[r];
+					// the segment's centre, relative to the block's origin
+					head[r] = (head[r] + tail[r]) * 0.5 + m[r * 4 + 3];
+					tail[r] = origin[r] + head[r] - view.eye[r];
+				}
+				const length = Math.hypot(along[0], along[1], along[2]);
+				if (!(length > 1e-9)) {
+					continue;
+				}
+				// across the segment and the line of sight, and the face between them, its -z towards the camera
+				normalizeOrZInto(
+					across,
+					along[1] * tail[2] - along[2] * tail[1],
+					along[2] * tail[0] - along[0] * tail[2],
+					along[0] * tail[1] - along[1] * tail[0],
+				);
+				normalizeOrZInto(
+					face,
+					along[1] * across[2] - along[2] * across[1],
+					along[2] * across[0] - along[0] * across[2],
+					along[0] * across[1] - along[1] * across[0],
+				);
+				if (face[0] * tail[0] + face[1] * tail[1] + face[2] * tail[2] < 0) {
+					for (let r = 0; r < 3; r++) {
+						face[r] = -face[r];
+					}
+				}
+				const width = (points[a + TrailFloat.width] + points[b + TrailFloat.width]) * 0.5;
+				const o = written * ROW_WORDS;
+				for (let r = 0; r < 3; r++) {
+					out[o + r * 4] = along[r];
+					out[o + r * 4 + 1] = across[r] * width;
+					out[o + r * 4 + 2] = face[r] * width;
+					out[o + r * 4 + 3] = head[r];
+					out[o + 12 + r] = head[r];
+					out[o + RowWord.extent + r] = Math.max(length, Math.abs(width));
+				}
+				words[o + RowWord.block] = slot;
+				words[o + RowWord.info] = infoWord;
+				words[o + RowWord.sheet] = rowSheet([TRAIL_SEGMENTS, 1], j, SheetUvChannels.Uv0);
+				for (let k = 0; k < 4; k++) {
+					color[k] = (points[a + TrailFloat.color + k] + points[b + TrailFloat.color + k]) * 0.5;
+				}
+				words[o + RowWord.color] = packRowColor(color);
+				words[o + RowWord.custom] = 0;
+				words[o + RowWord.custom + 1] = 0;
+				emitter.live.push(emitter.rows.start + written);
+				written++;
+			}
+		}
+		if (written > 0) {
+			this.#store.writeRows(emitter.rows.start, words, written);
 		}
 	}
 }

@@ -47,6 +47,7 @@ import {
 	type ParticleSheetRows,
 	type ParticleSystemInfo,
 	type ParticleTextureSheetInfo,
+	type ParticleTrailInfo,
 	type ParticleVelocityInfo,
 	SheetUvChannels,
 } from '@endfield-noclip/package-format/particles';
@@ -128,6 +129,11 @@ export type ParticleSystemRead =
 			 * {@link particleShapeMesh} and set as the system's shape; `null` for other shapes
 			 */
 			shapeMesh: { shape: PendingMeshShape; mesh: PPtr } | null;
+			/**
+			 * the particles' trails, for the caller to draw as a second entry with the renderer's trail material;
+			 * `null` without, or when the viewer can't draw them (the particles then play without)
+			 */
+			trail: ParticleTrailInfo | null;
 	  }
 	| { reason: string };
 
@@ -646,6 +652,74 @@ const readRingBuffer = (system: TypeTreeObject): ParticleRingBufferInfo | null |
 	}
 };
 
+// #region trails
+
+/** `TrailModule.mode` values */
+const TrailMode = { Particles: 0, Ribbon: 1 } as const;
+
+/** `TrailModule.textureMode` of Unity's `Stretch`, the texture once over the trail's length */
+const TRAIL_TEXTURE_STRETCH = 0;
+
+/**
+ * @returns the system's trails, `null` when it has none, or why the viewer can't draw them. trail points are
+ *   the particle's own earlier places, so its path must be one that can be read at any age
+ */
+const readTrail = (
+	system: TypeTreeObject,
+	stepped: boolean,
+	ringBuffer: ParticleRingBufferInfo | null,
+): ParticleTrailInfo | null | string => {
+	if (!enabled(system, 'TrailModule')) {
+		return null;
+	}
+	const module = objectField(system, 'TrailModule');
+	const mode = numberField(module, 'mode');
+	if (mode !== TrailMode.Particles) {
+		return mode === TrailMode.Ribbon ? 'ribbon trails' : `trail mode ${mode}`;
+	}
+	const textureMode = numberField(module, 'textureMode');
+	if (textureMode !== TRAIL_TEXTURE_STRETCH) {
+		return `trail texture mode ${textureMode}`;
+	}
+	if (!booleanField(module, 'dieWithParticles')) {
+		return 'trails outliving their particles';
+	}
+	if (stepped) {
+		return 'trails with forces or a speed limit';
+	}
+	if (ringBuffer !== null) {
+		return 'trails with a ring buffer';
+	}
+	const lifetime = readMinMaxCurve(objectField(module, 'lifetime'));
+	if (!isConstantCurve(lifetime)) {
+		return 'trail lifetime curve';
+	}
+	return {
+		ratio: numberField(module, 'ratio'),
+		lifetime,
+		sizeAffectsLifetime: booleanField(module, 'sizeAffectsLifetime'),
+		width: readMinMaxCurve(objectField(module, 'widthOverTrail')),
+		sizeAffectsWidth: booleanField(module, 'sizeAffectsWidth'),
+		inheritParticleColor: booleanField(module, 'inheritParticleColor'),
+		colorOverLifetime: readMinMaxGradient(objectField(module, 'colorOverLifetime')),
+		colorOverTrail: readMinMaxGradient(objectField(module, 'colorOverTrail')),
+	};
+};
+
+/**
+ * @returns why a system that draws no particles of its own shows nothing the viewer plays: what it drives
+ *   instead, which the viewer doesn't evaluate
+ */
+const undrawnReason = (system: TypeTreeObject): string => {
+	const drives = [
+		enabled(system, 'LightsModule') ? 'lights' : null,
+		enabled(system, 'SubModule') ? 'sub-emitters' : null,
+	].filter((part) => part !== null);
+	return drives.length === 0 ? 'no render mode or trails' : `no render mode: ${drives.join(' and ')} only`;
+};
+
+// #endregion
+
 // #region custom data
 
 /** `CustomDataModule` modes */
@@ -754,16 +828,17 @@ export const readCustomData = (
 // #endregion
 
 /**
- * reads a particle system that plays on its own once loaded. modules the viewer doesn't evaluate (forces,
- * noise, collision, sub-emitters, trails, the by-speed modules, …) are ignored, so such systems play without
- * them.
+ * reads a particle system that plays on its own once loaded. modules the viewer doesn't evaluate (noise,
+ * collision, sub-emitters, lights, the by-speed modules, …) are ignored, so such systems play without them,
+ * as do particles whose trails it can't draw.
  *
  * @param system the emitter's `ParticleSystem`
  * @param renderer its `ParticleSystemRenderer`
- * @returns the system and the meshes its particles draw, or why the viewer can't play it: a render mode, a
- *   module, shape, texture sheet or ring buffer mode it doesn't evaluate, a speed modifier curve alongside
- *   drag without a speed limit, a per-axis speed limit, a drag curve, or no mesh. `null` for a system that
- *   doesn't play on awake, which shows nothing until a script starts it
+ * @returns the system, the meshes its particles draw and their trails, or why the viewer can't play it: a
+ *   render mode, a module, shape, texture sheet or ring buffer mode it doesn't evaluate, a speed modifier
+ *   curve alongside drag without a speed limit, a per-axis speed limit, a drag curve, no mesh, or no render
+ *   mode with trails it can't draw or none at all. `null` for a system that doesn't play on awake, which
+ *   shows nothing until a script starts it
  */
 export const readParticleSystem = (
 	system: TypeTreeObject,
@@ -776,6 +851,12 @@ export const readParticleSystem = (
 		case ParticleRenderMode.Horizontal:
 		case ParticleRenderMode.Vertical:
 		case ParticleRenderMode.Mesh: {
+			break;
+		}
+		case ParticleRenderMode.None: {
+			if (!enabled(system, 'TrailModule')) {
+				return { reason: undrawnReason(system) };
+			}
 			break;
 		}
 		default: {
@@ -894,6 +975,11 @@ export const readParticleSystem = (
 		}
 	}
 
+	const trail = readTrail(system, forces !== null || clamp?.kind === 'limit', ringBuffer);
+	if (renderMode === ParticleRenderMode.None && typeof trail === 'string') {
+		return { reason: trail };
+	}
+
 	const curve = (parent: TypeTreeObject, name: string) => readMinMaxCurve(objectField(parent, name));
 	const { startSize, startRotation } = readStartPose(initial);
 
@@ -948,7 +1034,7 @@ export const readParticleSystem = (
 						}
 					: null,
 			screenSize:
-				renderMode === ParticleRenderMode.Mesh
+				renderMode === ParticleRenderMode.Mesh || renderMode === ParticleRenderMode.None
 					? null
 					: {
 							min: numberField(renderer, 'm_MinParticleSize'),
@@ -992,10 +1078,12 @@ export const readParticleSystem = (
 			ringBuffer,
 			textureSheet,
 			customData: readCustomData(system, renderer),
+			trail: null,
 		},
 		meshes,
 		forces,
 		shapeMesh,
+		trail: typeof trail === 'string' ? null : trail,
 	};
 };
 
@@ -1188,6 +1276,11 @@ export const particleReach = (info: ParticleSystemInfo, meshRadius: number): Aab
 		const fastest = speed * speedScale + GRAVITY * curveReach(motion.gravityModifier) * life;
 		size =
 			size * Math.max(1, Math.abs(info.stretch.lengthScale)) + Math.abs(info.stretch.velocityScale) * fastest;
+	}
+	if (info.trail !== null) {
+		// the trails lie along the particles' paths, as wide as their widest point
+		const particleSize = Math.max(...info.startSize.map(curveReach));
+		size = curveReach(info.trail.width) * (info.trail.sizeAffectsWidth ? particleSize : 1);
 	}
 	// orbits keep a particle's distance from their centre, which lies `offset` from the emitter
 	let half = 2 * offset + shape + speed * speedScale * life + gravity + size;

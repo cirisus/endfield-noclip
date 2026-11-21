@@ -7,8 +7,10 @@ billboards are in [assets.md](assets.md#prefabs).
 
 ## particle systems
 
-a `ParticleSystemRenderer`'s `m_RenderMode` is 4 for meshes, otherwise a quad: billboard 0,
-stretched 1, horizontal 2, vertical 3.
+a `ParticleSystemRenderer`'s `m_RenderMode` is 4 for meshes, 5 for none, otherwise a quad: billboard
+0, stretched 1, horizontal 2, vertical 3. a renderer with no render mode draws only its particles'
+trails, or nothing: the storehouse sparks' `light` systems (`p_fxmap_uninteractive_storehous_01` and
+`_var1`, `p_fxmap_map_spark_02`) only drive sub-emitters and lights.
 
 ### emission and lifetime
 
@@ -209,6 +211,30 @@ particle by the whole velocity times the speed modifier.
   Custom1XYZW four), the same on all four corners of a quad: with streams [0, 1, 3, 4, 5, 34] the
   first set is UV and UV2 (equal without a texture sheet) and the second is the custom data, which
   effect materials read ([particle custom data](effects.md#particle-custom-data)).
+
+### trails
+
+`TrailModule` in its Particles mode (`mode` 0) draws a strip behind each particle, with the
+renderer's second material (`m_Materials[1]`). as Unity documents it (the engine's trail code isn't
+read):
+
+- `ratio` is the chance a particle has one, and each point of it lasts `lifetime` times the
+  particle's lifetime (times its size with `sizeAffectsLifetime`); with `dieWithParticles` the trail
+  goes with its particle.
+- `widthOverTrail` is its width in metres along it, from the particle (0) to its oldest point (1),
+  times the particle's size with `sizeAffectsWidth`; `colorOverTrail` tints it along the same
+  length, `colorOverLifetime` tints all of it by the particle's age over its lifetime, and
+  `inheritParticleColor` multiplies in the particle's colour.
+- texture mode 0 (Stretch) maps the texture once over the trail's length.
+
+ribbon mode (`mode` 1) joins the particles to each other instead: the water poured by Qingbo's big
+wheel, fake waterfall and water pipes (`Particle System` and `(1)` in `int_big_wheel_postmodel`,
+`int_fake_waterfall_postmodel` and `int_waterpipe_postmodel`) draws only such ribbons.
+
+the purification devices of Valley's Aberrants (`trail` in `int_purification_device_postmodel`,
+dung01_wrdg001 ~2, 355, 208) draw only trails: particles leaving a 0.25 m sphere at 0.05–0.1 m/s,
+swept round the device's z by orbital velocity, each trailing 0.35–0.5 of its 2–3 s life behind it,
+0.05 m wide at its head narrowing to about a third, the colour of its particle.
 
 ### examples
 
