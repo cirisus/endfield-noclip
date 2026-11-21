@@ -231,11 +231,12 @@ the [mist](../game-data/effects.md#mist) cards and boxes draw by their own entry
 rather than the game's normal map, and the cards' own fog (`_USE_FOG`) isn't drawn. a card without a
 noise texture binds white (`MistCardSurface.noise` `null`), and its Fresnel term is
 `MistCardSurface.fresnel`. boxes draw their back faces without a depth test, like the decals, and
-take the thickness from the nearer of the surface behind and the back face; only additive boxes are
-drawn, without their depth prepass or vertex colour. a box's 3D noise is the look's `volumeTexture`,
-streamed whole and bound beside the slots (a zeroed placeholder leaves boxes without it unchanged);
-the box waits for it like an effect's other textures. additive cards and boxes add their light
-unfogged; premultiplied cards blend over and fog themselves ([blending](#blending)).
+take the thickness from the nearer of the surface behind, the water's depth and the back face; only
+additive boxes are drawn, without their depth prepass or vertex colour. a box's 3D noise is the
+look's `volumeTexture`, streamed whole and bound beside the slots (a zeroed placeholder leaves boxes
+without it unchanged); the box waits for it like an effect's other textures. additive cards and
+boxes add their light unfogged; premultiplied cards blend over and fog themselves
+([blending](#blending)).
 
 ## light beams
 

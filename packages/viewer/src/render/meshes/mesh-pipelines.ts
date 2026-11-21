@@ -106,6 +106,7 @@ const createEffectLayout = (device: GPUDevice): GPUBindGroupLayout => {
 			{ binding: 18, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
 			{ binding: 19, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
 			{ binding: 20, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+			{ binding: 21, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
 		],
 	});
 };

@@ -40,6 +40,8 @@
 // a copy of the composited scene, which refraction samples (`fs_refract`); a white placeholder in other passes
 @group(3) @binding(19) var fx_background: texture_2d<f32>;
 @group(3) @binding(20) var fx_background_samp: sampler;
+// the nearest water surface's depth (reversed-Z), 0 where there's none
+@group(3) @binding(21) var fx_water_depth: texture_depth_2d;
 
 // rows of the look (`EffectRow` in effect-look.ts, in vec4s)
 const FX_TINT = 0u;
@@ -2090,7 +2092,13 @@ fn fs_mist_volume(in: EffectOut) -> EffectAccumulated {
 	let id = in.look;
 	let px = vec2i(in.position.xy);
 	let face = dot(in.rel, frame.view_forward.xyz);
-	let depth = min(fx_scene_depth(px), face);
+	// the game's boxes read the scene's depth with the water in it, so fog over water ends at its surface
+	var scene = fx_scene_depth(px);
+	let water = textureLoad(fx_water_depth, px, 0);
+	if (water > 0.0) {
+		scene = min(scene, frame.local_lights.w / water);
+	}
+	let depth = min(scene, face);
 	let rel = in.rel * (depth / face);
 	let p = vec4f(rel, 1.0);
 	let object_p = vec3f(dot(in.to_object0, p), dot(in.to_object1, p), dot(in.to_object2, p));

@@ -652,9 +652,11 @@ the drifting mist banks are effects too: `HGRP/FogSimple` cards (several hundred
   (`T_fog_smoothradial_grad_01_M`, a half-radial glow brightest along v = 0) lights its top edge,
   glows at `_BaseColor` ≈ (16, 20, 30). from the ledge below it reads as a soft shaft through the
   gap; from above the cave's rocks its straight, nearly opaque top edge shows as a white wall.
-- **boxes.** from the nearer of the surface behind and the box's far side, the fog's thickness is
-  the distance along the view ray through the unit cube towards the camera (stopping at the camera
-  inside it), and alpha is
+- **boxes.** from the nearer of the surface behind (water surfaces included: the deferred path binds
+  the water pass's copy of the depth with the water drawn in as `_FakeVolumeFogDepthTexture`, so fog
+  over a pool ends at its surface rather than its bed) and the box's far side, the fog's thickness
+  is the distance along the view ray through the unit cube towards the camera (stopping at the
+  camera inside it), and alpha is
   `_FogColor.a · _TintColorAlpha · (1 − 2^(−thickness · _FogExponent)) · _FogDensity`, faded within
   `_CubEdgeFade` of the box's axis line, above `_HeightOffset` by `_HeightFalloff`, between
   `_VerticalFalloffMin/Max`, close to boxes the camera can't walk into (`_NearFadeDistance`), out to

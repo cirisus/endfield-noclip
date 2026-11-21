@@ -7,6 +7,8 @@ import type { TextureBinding, TextureStore } from '../textures/texture-store.ts'
 /** the main pass's outputs that scene effects read, as `SceneTextures` holds them */
 export interface EffectInputs {
 	depth: GPUTextureView;
+	/** the nearest water surface's depth (reversed-Z), 0 where there's none, which mist boxes stop at */
+	waterDepth: GPUTextureView;
 	reflectionSurface: GPUTextureView;
 	/** the diffuse ambient and material occlusion, from which relit decals recover the surface's colour */
 	ambient: GPUTextureView;
@@ -99,6 +101,7 @@ export class MaterialBindings {
 		// the frames' inputs count up from 0
 		this.mainPassStandIns = {
 			depth: standIn('depth32float'),
+			waterDepth: standIn('depth32float'),
 			reflectionSurface: standIn('rg32uint'),
 			ambient: this.#white,
 			version: -1,
@@ -209,6 +212,7 @@ export class MaterialBindings {
 					{ binding: 18, resource: volume?.sampler ?? this.#defaultSampler },
 					{ binding: 19, resource: inputs.background ?? this.#white },
 					{ binding: 20, resource: this.#clampSampler },
+					{ binding: 21, resource: inputs.waterDepth },
 				],
 			}),
 		);
