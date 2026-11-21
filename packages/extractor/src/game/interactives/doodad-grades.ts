@@ -46,6 +46,30 @@ export const gradeForm = (need: readonly number[], level: number): number | null
 };
 
 /**
+ * @param need the placement's `upgrade_need_level`
+ * @param levels the control's levels, each below 32
+ * @param base the template's model, shown below the first need
+ * @param forms forms 1 to 4
+ * @returns each distinct model shown at some level, with the mask of the levels showing it, in level order
+ */
+export const gradeMasks = <Form extends { model: string }>(
+	need: readonly number[],
+	levels: Iterable<number>,
+	base: Form,
+	forms: readonly Form[],
+): { form: Form; mask: number }[] => {
+	const shown = new Map<string, { form: Form; mask: number }>();
+	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+	for (const level of [...levels].sort((a, b) => a - b)) {
+		const index = gradeForm(need, level);
+		const form = index === null ? base : forms[index - 1];
+		const entry = shown.getOrInsertComputed(form.model, () => ({ form, mask: 0 }));
+		entry.mask = (entry.mask | (1 << level)) >>> 0;
+	}
+	return [...shown.values()];
+};
+
+/**
  * @param vfs the game's VFS
  * @returns by doodad id, the `DoodadUpgradeSource` its form follows (0: none)
  * @throws {FormatError} if the table is missing or a row lacks its upgrade source
@@ -180,16 +204,8 @@ export class DoodadGrades {
 			return false;
 		}
 		const { control, need, base, forms } = graded;
-		/** by model (the template's below the first need), its form and the mask of the levels showing it */
-		const shown = new Map<string, { form: InteractiveForm; mask: number }>();
-		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		for (const level of [...this.#controls.get(control)!.levels].sort((a, b) => a - b)) {
-			const index = gradeForm(need, level);
-			const form = index === null ? base : forms[index - 1];
-			const entry = shown.getOrInsertComputed(form.model, () => ({ form, mask: 0 }));
-			entry.mask = (entry.mask | (1 << level)) >>> 0;
-		}
-		for (const { form, mask } of shown.values()) {
+		const levels = this.#controls.get(control)!.levels;
+		for (const { form, mask } of gradeMasks(need, levels, base, forms)) {
 			placed.place(form, { alternatives: [[{ control, mask }]] }, null);
 		}
 		return true;
