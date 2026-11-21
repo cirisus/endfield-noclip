@@ -273,8 +273,9 @@ checker: most of such a material is right, and hundreds of them would checker wh
 [gaps view](#gaps) marks them instead.
 
 only materials the game draws nothing visible with aren't drawn: `HGRP/WaterProxy`, whose passes all
-feed the water pipeline ([water](../game-data/water.md#waterproxy-and-waterdecal)), and lit decals
-that write nothing the viewer draws.
+feed the water pipeline ([water](../game-data/water.md#waterproxy-and-waterdecal)), lit decals that
+write nothing the viewer draws, and VFXBaseV2 materials shown only during the
+[ink-wash screen effect](../game-data/effects.md#vfxbasev2), which the viewer doesn't draw.
 
 ## gaps
 

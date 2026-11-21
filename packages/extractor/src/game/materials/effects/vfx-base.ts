@@ -7,6 +7,7 @@ import type {
 	EffectVertexOffsetMask,
 	StackLayer,
 	StencilMaskSurface,
+	UndrawnSurface,
 	UnsupportedSurface,
 } from '@endfield-noclip/package-format/surfaces';
 
@@ -258,12 +259,21 @@ const multipliesBehind = (reader: MaterialReader): boolean =>
  * that only writes the stencil, a portal's mask
  *
  * @param reader the material's properties
- * @returns its surface, or `unsupported`
+ * @returns its surface, `undrawn` for one shown only during the ink-wash screen effect, or `unsupported`
  */
 export const describeVfxBase = (
 	reader: MaterialReader,
-): EffectStackSurface | StencilMaskSurface | UnsupportedSurface => {
+): EffectStackSurface | StencilMaskSurface | UndrawnSurface | UnsupportedSurface => {
 	const { float, colorOrVector: color, has, material } = reader;
+	// coverage and colour scale by `mix(1, ink wash, _OnlyShowAfterInkWash)`, and the ink wash is 0 outside
+	// its screen effect (docs/game-data/effects.md#vfxbasev2)
+	const inkWashOnly = float('_OnlyShowAfterInkWash', 0);
+	if (inkWashOnly !== 0) {
+		if (inkWashOnly !== 1 || material.blend === 'opaque') {
+			return unsupported(`_OnlyShowAfterInkWash ${inkWashOnly} with ${material.blend} blending`);
+		}
+		return { kind: 'undrawn', reason: 'shown only during the ink-wash screen effect' };
+	}
 	const stencil = stencilOf(reader);
 	if (isUnsupported(stencil)) {
 		return stencil;

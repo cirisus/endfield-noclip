@@ -619,6 +619,20 @@ describe('VFXBaseV2', () => {
 		assert.deepEqual(kinds, ['unsupported', 'unsupported', 'unsupported', 'unsupported', 'unsupported']);
 	});
 
+	it('draws nothing when shown only during the ink-wash screen effect', () => {
+		// Si's Painting's grid quad (`M_fxint_s_micro_008_decal_2501`)
+		const inkWash = { _OnlyShowAfterInkWash: 1, _SyncDisturbWithInkWash: 1, _RenderTransparentAfterDOF: 1 };
+		assert.equal(stackOf({ floats: inkWash }).kind, 'undrawn');
+		assert.equal(stackOf({ floats: { ...inkWash, _BlendMode: 1 } }).kind, 'undrawn');
+		assert.deepEqual(
+			[
+				stackOf({ floats: { _OnlyShowAfterInkWash: 0.5 } }).kind,
+				stackOf({ blend: 'opaque', zWrite: true, floats: inkWash }).kind,
+			],
+			['unsupported', 'unsupported'],
+		);
+	});
+
 	it('draws water blending as without it, keeping a height within the world for the viewer to mark below', () => {
 		const below = (height: number) =>
 			ofKind(stackOf({ keywords: ['_USE_WATER_BLEND'], floats: { _WaterHeight: height } }), 'effectStack')
