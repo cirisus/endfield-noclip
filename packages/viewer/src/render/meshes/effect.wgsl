@@ -2010,9 +2010,9 @@ const MIST_VOLUME_NOISE = 18u;
 const MIST_VOLUME_NOISE_FLOW = 19u;
 const MIST_VOLUME_NOISE_MIX = 20u;
 
-// a mist layer over the scene at camera-relative `rel`: additive ones add, premultiplied ones blend like other
+// a mist card over the scene at camera-relative `rel`: additive ones add, premultiplied ones blend like other
 // layers
-fn mist_accumulate(id: u32, premultiplied: vec3f, alpha: f32, rel: vec3f, position: vec2f) -> EffectAccumulated {
+fn mist_card_accumulate(id: u32, premultiplied: vec3f, alpha: f32, rel: vec3f, position: vec2f) -> EffectAccumulated {
 	if (fx_row(id, MIST_INDIRECT).w != 0.0) {
 		return fx_additive(premultiplied);
 	}
@@ -2079,7 +2079,7 @@ fn fs_mist_card(in: EffectOut) -> EffectAccumulated {
 	alpha = saturate(
 		alpha * mist_fade(fade.xy, depth) * mist_fade(fade.zw, depth) * saturate(below * top.x + top.y) * soft * card.x,
 	);
-	return mist_accumulate(id, max(color, vec3f(0.0)) * alpha, alpha, in.rel, in.position.xy);
+	return mist_card_accumulate(id, max(color, vec3f(0.0)) * alpha, alpha, in.rel, in.position.xy);
 }
 
 // `HGRP/Effect/VFXFakeVolumeFog` boxes (docs/game-data/effects.md#mist), drawn by their back faces without a
@@ -2133,7 +2133,8 @@ fn fs_mist_volume(in: EffectOut) -> EffectAccumulated {
 		alpha *= smoothstep(min(fade.w, 0.99), 1.0, saturate(to_point / fade.z));
 	}
 	let color = base.rgb * mix(1.0, frame.ambient.y, fx_row(id, MIST_MISC).x);
-	return mist_accumulate(id, color * alpha, alpha, rel, in.position.xy);
+	// only additive boxes are packed
+	return fx_additive(color * alpha);
 }
 
 // an effect object's object → world basis (columns are its scaled axes), from its world → object rows
