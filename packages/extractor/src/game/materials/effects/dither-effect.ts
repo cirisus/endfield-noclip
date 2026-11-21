@@ -7,6 +7,7 @@ import type { Rgb } from '@endfield-noclip/package-format/values';
 
 import { pastUvSets, undrawnKeywords } from '../describe-steps.ts';
 import { isUnsupported, linearRgb, type MaterialReader, unsupported } from '../material-values.ts';
+import { isLitDither, NO_LIGHTING_SHADER } from '../surfaces/dithered.ts';
 
 import { effectTexture, matrixRotationOf, speedOf, UNSET_WHITE } from './effect-steps.ts';
 import {
@@ -37,25 +38,36 @@ const DITHER_EFFECT_KEYWORDS = new Set([
 const DITHER_EFFECT_EXTRA_KEYWORDS = new Set(['_USE_VERTOFFSET', '_USE_MAIN2', '_INK_DISTORT']);
 
 /**
- * @returns whether a VFXDitherAlpha material is one of its effect variants (a distortion, dissolve, mask or
- *   polar or screen UVs), drawn as a texture stack rather than a dithered surface. a lit material whose only
- *   such keyword is the mask stays a dithered surface, which keeps its lighting and tests the mask
+ * keywords of VFXDitherAlphaNoLighting's effect variants that are drawn: those whose passes match
+ * VFXDitherAlpha's. the others (a dissolve, polar or screen UVs, `_USE_MAIN2`, `_INK_COLOR_DISTORT`) are
+ * unread
+ */
+const NO_LIGHTING_EFFECT_KEYWORDS = new Set(['_USE_DISTURB', '_USE_MASK', '_USE_VERTOFFSET']);
+
+/**
+ * @param reader the material's properties
+ * @returns whether a VFXDitherAlpha or VFXDitherAlphaNoLighting material is one of the effect variants (a
+ *   distortion, dissolve, mask or polar or screen UVs), drawn as a texture stack rather than a dithered
+ *   surface. a lit material whose only such keyword is the mask stays a dithered surface, which keeps its
+ *   lighting and tests the mask
  */
 export const isDitherEffect = (reader: MaterialReader): boolean => {
-	if (reader.shader.name !== 'HGRP/Effect/VFXDitherAlpha') {
+	if (reader.shader.name !== 'HGRP/Effect/VFXDitherAlpha' && reader.shader.name !== NO_LIGHTING_SHADER) {
 		return false;
 	}
 	const effects = reader.material.keywords.filter((keyword) => DITHER_EFFECT_KEYWORDS.has(keyword));
-	if (effects.length === 1 && effects[0] === '_USE_MASK' && reader.float('_UseLighting', 0) !== 0) {
+	if (effects.length === 1 && effects[0] === '_USE_MASK' && isLitDither(reader)) {
 		return false;
 	}
 	return effects.length > 0;
 };
 
 /**
- * an unlit `HGRP/Effect/VFXDitherAlpha` effect variant, optionally with a vertex offset, as a texture stack.
- * the game writes such a surface to the G-buffer where its alpha beats a per-pixel noise; the viewer blends
- * it over by that alpha instead, which its temporal antialiasing would average the dither to anyway
+ * an unlit `HGRP/Effect/VFXDitherAlpha` or `…NoLighting` effect variant, optionally with a vertex offset, as
+ * a texture stack. the game draws such a surface where its alpha beats a per-pixel noise; the viewer blends
+ * it over by that alpha instead, which its temporal antialiasing would average the dither to anyway. the
+ * NoLighting variant's colour pass also multiplies the colour by the alpha before the mask and the power,
+ * which the stack leaves out
  *
  * @param reader the material's properties
  * @returns its surface, or `unsupported`
@@ -63,10 +75,13 @@ export const isDitherEffect = (reader: MaterialReader): boolean => {
 export const describeDitherEffect = (reader: MaterialReader): EffectStackSurface | UnsupportedSurface => {
 	const { float, colorOrVector: color, has } = reader;
 	const keywords = undrawnKeywords(reader, {
-		has: (keyword) =>
-			DITHER_EFFECT_KEYWORDS.has(keyword) ||
-			DITHER_EFFECT_EXTRA_KEYWORDS.has(keyword) ||
-			APPEAR_KEYWORDS.has(keyword),
+		has:
+			reader.shader.name === NO_LIGHTING_SHADER
+				? (keyword) => NO_LIGHTING_EFFECT_KEYWORDS.has(keyword)
+				: (keyword) =>
+						DITHER_EFFECT_KEYWORDS.has(keyword) ||
+						DITHER_EFFECT_EXTRA_KEYWORDS.has(keyword) ||
+						APPEAR_KEYWORDS.has(keyword),
 	});
 	if (keywords !== null) {
 		return keywords;
@@ -76,7 +91,7 @@ export const describeDitherEffect = (reader: MaterialReader): EffectStackSurface
 	if (isUnsupported(appear)) {
 		return appear;
 	}
-	if (float('_UseLighting', 0) !== 0) {
+	if (isLitDither(reader)) {
 		return unsupported('a lit effect variant');
 	}
 	if (float('_DitherAlphaMode', 0) !== 0) {
@@ -177,7 +192,7 @@ export const describeDitherEffect = (reader: MaterialReader): EffectStackSurface
 		disturb: shared.disturb,
 		disturbBias: float('_Bi_Disturb', 0),
 		distorted: has('_USE_DISTURB'),
-		disturbNormal: false,
+		disturbNormal: float('_DisturbTex1Normal', 0) !== 0,
 		particleDisturb: false,
 		weight: { disturb: 0, dissolve: 0, used: false },
 		dissolve: has('_USE_DISSOLVE') ? shared.dissolve : null,

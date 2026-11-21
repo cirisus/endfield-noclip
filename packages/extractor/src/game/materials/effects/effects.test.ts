@@ -1157,6 +1157,47 @@ describe('VFXDitherAlpha effect variants', () => {
 			reason: 'keywords _USE_VERTOFFSET',
 		});
 	});
+
+	it('draw the NoLighting variant’s distortion, mask and vertex offset, the distortion read as a normal', () => {
+		// the ink sheet over Si's Painting's cave (`M_fxmap_map02_lv010_inkpattern_crack_cave_01_fj_01_d`)
+		const entry = shader('HGRP/Effect/VFXDitherAlphaNoLighting', 'vfxDitherAlpha', {
+			textures: { _MainTex: 'white', _DisturbTex1: 'white', _MaskTex: 'white', _OffsetTex: 'white' },
+		});
+		const sheet = (keywords: string[], floats: Record<string, number> = {}) =>
+			describeMaterial(
+				material({
+					blend: 'alphaTest',
+					blendFactors: null,
+					keywords,
+					slots: { _DisturbTex1: slot(1, [1, 0.1]), _MaskTex: slot(2), _OffsetTex: slot(3) },
+					floats: {
+						_InParticle: 0,
+						_DisturbTex1Normal: 1,
+						_DisturbUIntensity1: 0.05,
+						_OffsetIntensity: -0.1,
+						// a saved value the NoLighting shader doesn't declare
+						_UseLighting: 1,
+						...floats,
+					},
+					colors: { _TintColor: [0, 0, 0, 1] },
+				}),
+				entry,
+			);
+		const ink = ofKind(sheet(['_USE_DISTURB', '_USE_MASK', '_USE_VERTOFFSET']), 'effectStack');
+		assert.deepEqual(
+			[ink.variant, ink.disturbNormal, ink.masked, ink.maskAlphaOnly, ink.offset?.intensity],
+			['dither', true, true, true, -0.1],
+		);
+		assert.equal(
+			ofKind(sheet(['_USE_DISTURB'], { _DisturbTex1Normal: 0 }), 'effectStack').disturbNormal,
+			false,
+		);
+		// keywords whose NoLighting passes haven't been read stay unsupported
+		assert.deepEqual(sheet(['_USE_DISSOLVE', '_USE_DISTURB']), {
+			kind: 'unsupported',
+			reason: 'keywords _USE_DISSOLVE',
+		});
+	});
 });
 
 describe('VFXAdvance', () => {

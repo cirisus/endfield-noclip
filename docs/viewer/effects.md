@@ -176,20 +176,24 @@ packs the scattered colour times its amount in `DitherRow.subsurface` and zeroes
 lights light them as a default surface.
 
 unlit VFXDitherAlpha materials with a distortion, a dissolve, a mask or polar or screen UVs draw
-through VFXBaseV2's texture stack (`describeDitherEffect`, `stackLook`), fogged, blended by the
-alpha the game dithers with rather than dithered, which the temporal antialiasing would average to
-the same coverage. that alpha is raised to `_DitherAlphaExp` as the game's is, which thins the Very
-Large Rift's red sky ring (`wenli_01_red` in `p_fxmap_dung02_dg005_boss_semicircle_sky_02`,
-exponent 3) to streaks. unlike the game's, they don't write depth, so they don't hide effects behind
-them. their mask scales only the alpha (`maskAlphaOnly`, `EffectRow.maskAlphaOnly`), by its red
-(`_UseMaskTexAsAlpha`, the default) or else its alpha, as the game's depth pass tests it and its
-colour pass never samples it; lit variants, other dither modes and object-relative screen UVs stay
-unsupported; `_INK_DISTORT` is drawn as without it, as VFXAdvance's ink keywords are. their vertex
-offset fills the same rows as VFXBaseV2's, leaving out VFXBaseV2's vertex-alpha weight and camera
-pull. a vertex offset alone doesn't bring a material onto the stack, and those stay unsupported.
-`_USE_MAIN2` that takes its second texture as alpha and multiplies multiplies the tint by
-`_MainTex2Color`, as the game's colour pass does without sampling the texture; other second-texture
-modes stay unsupported. Wuling City's red-tide walls (`M_fxmap_chichao_06_05`) are such.
+through VFXBaseV2's texture stack (`describeDitherEffect`, `stackLook`), as do
+VFXDitherAlphaNoLighting ones with a distortion, a mask and a vertex offset (the passes read so
+far), fogged, blended by the alpha the game dithers with rather than dithered, which the temporal
+antialiasing would average to the same coverage. the NoLighting variant's colour leaves out its
+extra factor of the unmasked alpha, and its fog is the G-buffer surface's, unchecked against the
+game's (its passes apply none themselves). that alpha is raised to `_DitherAlphaExp` as the game's
+is, which thins the Very Large Rift's red sky ring (`wenli_01_red` in
+`p_fxmap_dung02_dg005_boss_semicircle_sky_02`, exponent 3) to streaks. unlike the game's, they don't
+write depth, so they don't hide effects behind them. their mask scales only the alpha
+(`maskAlphaOnly`, `EffectRow.maskAlphaOnly`), by its red (`_UseMaskTexAsAlpha`, the default) or else
+its alpha, as the game's depth pass tests it and its colour pass never samples it; lit variants,
+other dither modes and object-relative screen UVs stay unsupported; `_INK_DISTORT` is drawn as
+without it, as VFXAdvance's ink keywords are. their vertex offset fills the same rows as
+VFXBaseV2's, leaving out VFXBaseV2's vertex-alpha weight and camera pull. a vertex offset alone
+doesn't bring a material onto the stack, and those stay unsupported. `_USE_MAIN2` that takes its
+second texture as alpha and multiplies multiplies the tint by `_MainTex2Color`, as the game's colour
+pass does without sampling the texture; other second-texture modes stay unsupported. Wuling City's
+red-tide walls (`M_fxmap_chichao_06_05`) are such.
 
 ## waterfalls
 

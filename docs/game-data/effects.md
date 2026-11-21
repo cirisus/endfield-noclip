@@ -407,7 +407,14 @@ forward pass then draws only where that depth survived (ZTest Equal, blend One Z
 `_TintColor · _TintColorIntensity` times `_MainTex` (the tint alone with `_UseMainTexAsAlpha`) and
 times the alpha before the dither's power. Si's Painting's ink plane
 (`M_fxmap_map02_lv010_inkpattern_huge_01_fj_03_d02`, in `p_fxmap_map02_lv010_inkpattern_huge_01`) is
-one: its shape comes from a mask texture's red alone.
+one: its shape comes from a mask texture's red alone. its effect variants (below) test the same
+alpha as VFXDitherAlpha's in the depth pass, mask included, and their colour pass computes the same
+colour, times that alpha without the mask and before the power; neither pass applies fog. the ink
+sheet hanging down the cliff over Si's Painting's cave
+(`M_fxmap_map02_lv010_inkpattern_crack_cave_01_fj_01_d` in
+`p_fxmap_map02_lv010_inkpattern_crack_cave_01`, near unity 1100, 356, 1246, under the level script
+group 37900000011) is one, with a distortion read as a normal, a mask and a vertex offset, and a
+black tint, so the extra factor leaves it black.
 
 its depth pass keeps a pixel where the alpha beats an interleaved gradient noise of the pixel
 position times `_DitherTilling`, so a fraction of the pixels equal to the alpha survives. the alpha
@@ -423,10 +430,11 @@ Plateau's sky vortex (`blackspot`), a quad whose texture's alpha is a soft round
 
 `_USE_DISTURB`, `_USE_DISSOLVE`, `_USE_POLARUV` and `_USE_SCREENUV` bring in VFXBaseV2's texture
 stack: `_DisturbTex1` shifts the main and dissolve UVs (`_MainTexUseDisturb`,
-`_DissolveTexUseDisturb`, both 1 by default), each texture's UVs start from its `*UVWeights` of UV0,
-UV1, polar and screen UVs, and the dissolve multiplies the tested alpha and colours its edge as
-VFXBaseV2's does. the vertex alpha and the near camera fade also scale the tested alpha. the walls
-of the rift's ripples are such ([below](#the-very-large-rifts-ripples)).
+`_DissolveTexUseDisturb`, both 1 by default; read as a normal under `_DisturbTex1Normal`, as
+[VFXAdvance's](#vfxadvance) is), each texture's UVs start from its `*UVWeights` of UV0, UV1, polar
+and screen UVs, and the dissolve multiplies the tested alpha and colours its edge as VFXBaseV2's
+does. the vertex alpha and the near camera fade also scale the tested alpha. the walls of the rift's
+ripples are such ([below](#the-very-large-rifts-ripples)).
 
 `_USE_MASK` exists only in the depth pass: `_MaskTex` multiplies the tested alpha by its alpha, or
 its red under the default `_UseMaskTexAsAlpha`, and doesn't colour the surface. its UVs scroll,

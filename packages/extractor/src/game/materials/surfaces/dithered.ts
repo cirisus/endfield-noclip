@@ -11,7 +11,16 @@ import { isUnsupported, linearRgb, type MaterialReader, scaleRgb, unsupported } 
  */
 const DITHERED_KEYWORDS = new Set(['_NORMAL_MAP', '_USE_MAIN2', '_SUBSURFACE', '_USE_MASK']);
 
-const NO_LIGHTING_SHADER = 'HGRP/Effect/VFXDitherAlphaNoLighting';
+/** VFXDitherAlpha drawn unlit in a forward pass (`docs/game-data/effects.md#solid-effects`) */
+export const NO_LIGHTING_SHADER = 'HGRP/Effect/VFXDitherAlphaNoLighting';
+
+/**
+ * @param reader the material's properties
+ * @returns whether a VFXDitherAlpha-family material is lit. the NoLighting variant never is: it doesn't
+ *   declare `_UseLighting`, whose default would otherwise make it lit, though its materials may keep a value
+ */
+export const isLitDither = (reader: MaterialReader): boolean =>
+	reader.shader.name !== NO_LIGHTING_SHADER && reader.float('_UseLighting', 0) !== 0;
 
 /** a colour's hue, saturation and value, each 0–1, as Unity's `Color.RGBToHSV` gives them */
 const hsvOf = ([r, g, b]: Rgb): Rgb => {
@@ -108,9 +117,7 @@ export const describeDithered = (reader: MaterialReader): DitheredSurface | Unsu
 	if ((main !== undefined && main.uv !== 0) || (normal !== undefined && normal.uv !== 0)) {
 		return unsupported('a texture on a UV set other than 0');
 	}
-	// the NoLighting variant draws only in an unlit forward pass and doesn't declare `_UseLighting`, whose
-	// default would otherwise make it lit
-	const lit = reader.shader.name !== NO_LIGHTING_SHADER && float('_UseLighting', 1) !== 0;
+	const lit = isLitDither(reader);
 	// the depth pass's dithered alpha test, drawn for the main texture's alpha (or red, as the alpha alone) in
 	// the default dither mode
 	let dither: DitheredSurface['dither'] = null;

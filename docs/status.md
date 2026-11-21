@@ -350,9 +350,12 @@ packs or renders correctly.
     draws only where its second texture masks, as its colour times the tint, and on the plain
     variant without the dither (Wuling City's red-tide walls, unchecked in game). the NoLighting
     variant goes through the G-buffer path without its colour's extra factor of the alpha, so it's
-    fogged and its soft edges are brighter than the game's; its effect variants stay unsupported
-    (Si's Painting's ink sheet `…_inkpattern_huge_01_fj_12`, with `_INK_COLOR_DISTORT`). the Very
-    Large Rift's escaping trails are unchecked in game
+    fogged and its soft edges are brighter than the game's. its effect variants draw on the texture
+    stack, without the same factor (every map02 one has a black tint, which it leaves black), only
+    with a distortion, a mask and a vertex offset: those with `_INK_COLOR_DISTORT`, a dissolve,
+    polar or screen UVs or `_USE_MAIN2` stay unsupported (Si's Painting's ink sheet
+    `…_inkpattern_huge_01_fj_12`); the cave's ink sheet (`…_crack_cave_01_fj_01_d`) is unchecked
+    against an in-game shot. the Very Large Rift's escaping trails are unchecked in game
   - [VFXWaterDitherAlpha](game-data/effects.md#solid-effects) splashes draw as VFXDitherAlpha's
     plain variant, `_SUBSURFACE` ones with the game's
     [subsurface lighting](game-data/materials.md#subsurface) from the sun and the ambient light but
