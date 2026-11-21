@@ -293,11 +293,11 @@ packs or renders correctly.
   authored one, and whether an empty pool's surface still draws in game, aren't checked
 - waterfalls missing: Jingyu's pool falls (near unity −763, 209, −1190) and the small cascades
   beside it, and the cascade over the lip of Si's Painting's lily pool (near 980, 293, 972), show
-  white in game, but the steep river surface running down each lip draws as clear water, so only
-  rock shows there (and at Jingyu the VFXWater sheet sits inside the rocks in front of it). the
-  static [foam boxes](viewer/water.md#foam-boxes) around them are drawn, but foam shows only on
-  water the viewer draws; the lead is the steep segment's own mesh normals, which the viewer faces
-  up
+  white in game, but the steep river surface running down each lip draws as clear water, a faint
+  wash over the rock (and at Jingyu the VFXWater sheet sits inside the rocks in front of it). the
+  static [foam boxes](viewer/water.md#foam-boxes) around them are drawn, and at Si's Painting the
+  pool box's streaks land only faintly at the foot; the lead is the steep segment's own mesh
+  normals, which the viewer faces up
 - WaterDecal: the displacement pass (`_BLEND_DISPLACEMENT`) isn't drawn, `_BLEND_BASECOLOR2` boxes
   (11 map02 materials) stay unsupported, and prefab boxes' renderer values aren't packed
   ([foam boxes](viewer/water.md#foam-boxes))
