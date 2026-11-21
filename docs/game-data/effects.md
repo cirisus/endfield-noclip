@@ -762,8 +762,9 @@ it. what picks the band depends on what placed the effect:
   proxy's near grid is loaded, 1 while only its far grid is, 2 while neither is. a level with no
   band leaves the table as it was. settings below the root aren't driven. so indie_ccdg002's green
   light beam (`p_fxmap_map02_lv002_dragonball_lightbeam_01`, `cullDis` 150 m) shows from the battle
-  arena 225 m away: its near grid is unloaded there, its far grid loaded, and band 1 keeps the beam
-  on with two of its five layers off.
+  arena 225 m away: its near grid is the level-2 cell holding it (x 128–256), which loads only for x
+  ≥ 0, so across the arena's x < 0 half only its far grid is loaded, and band 1 keeps the beam on
+  with its `01` glow and `wenli` streaks off, leaving `01_ad`.
 
 the collectible marker (`int_collection_common_postmodel`, whose view states only switch it off once
 collected) is one: bands from 0, 30 and 60 m, culled at 80 m. within 30 m it shows everything: the
