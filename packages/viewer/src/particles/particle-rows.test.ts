@@ -83,8 +83,14 @@ describe('ParticleField', () => {
 		// the head's segment: its x runs back along the trail, its y across it, square to the line of sight
 		near(rows[2 * 4], -0.0625);
 		near(rows[3 + 2 * 4], 1 - 0.03125);
-		near(Math.abs(rows[1 + 1 * 4]), 0.1 - 0.05 / 16);
+		near(rows[1 + 1 * 4], 0.1 - 0.05 / 16);
 		near(rows[1], 0);
+		// right-handed, its +z away from the camera, as stretched quads'
+		const column = (c: number) => [rows[c], rows[4 + c], rows[8 + c]];
+		const [x, y, z] = [column(0), column(1), column(2)];
+		const crossed = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+		assert.ok(crossed[0] * z[0] + crossed[1] * z[1] + crossed[2] * z[2] > 0);
+		assert.ok(z[0] > 0);
 		assert.equal(words[RowWord.sheet], rowSheet([8, 1], 0, SheetUvChannels.Uv0));
 		assert.equal(words[7 * ROW_WORDS + RowWord.sheet], rowSheet([8, 1], 7, SheetUvChannels.Uv0));
 	});

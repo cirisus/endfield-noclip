@@ -846,12 +846,13 @@ export class ParticleField {
 				if (!(length > 1e-9)) {
 					continue;
 				}
-				// across the segment and the line of sight, and the face between them, its -z towards the camera
+				// across the line of sight and the segment, then the face, which then points away from the camera:
+				// a right-handed frame with the quad's -z towards the camera, as stretched quads have
 				normalizeOrZInto(
 					across,
-					along[1] * tail[2] - along[2] * tail[1],
-					along[2] * tail[0] - along[0] * tail[2],
-					along[0] * tail[1] - along[1] * tail[0],
+					tail[1] * along[2] - tail[2] * along[1],
+					tail[2] * along[0] - tail[0] * along[2],
+					tail[0] * along[1] - tail[1] * along[0],
 				);
 				normalizeOrZInto(
 					face,
@@ -859,11 +860,6 @@ export class ParticleField {
 					along[2] * across[0] - along[0] * across[2],
 					along[0] * across[1] - along[1] * across[0],
 				);
-				if (face[0] * tail[0] + face[1] * tail[1] + face[2] * tail[2] < 0) {
-					for (let r = 0; r < 3; r++) {
-						face[r] = -face[r];
-					}
-				}
 				const width = (points[a + TrailFloat.width] + points[b + TrailFloat.width]) * 0.5;
 				const o = written * ROW_WORDS;
 				for (let r = 0; r < 3; r++) {
