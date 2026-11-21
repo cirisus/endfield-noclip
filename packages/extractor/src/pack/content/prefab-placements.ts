@@ -26,7 +26,14 @@ import { type EffectLodSource, readPrefabRenderers, type PrefabRenderer } from '
 import type { WorldIndex } from '../../game/world/world-index.ts';
 
 import { onPivot } from './interactives.ts';
-import { chainDraw, FLT_MAX, type PackContent, type RowOwner } from './pack-content.ts';
+import {
+	chainDraw,
+	DECAL_CUBE_PATH,
+	decalPlacement,
+	FLT_MAX,
+	type PackContent,
+	type RowOwner,
+} from './pack-content.ts';
 
 // every prefab the scene places, whatever placed it (dynamic structures, facilities, cabins): its lights and
 // renderers, once per prefab and pose, then placed per placement. a prefab that can't be read stands in as a
@@ -52,7 +59,8 @@ export const placePrefabs = async (
 	const { scene } = content;
 	const { subset } = scene;
 	const { resolver } = roots;
-	const particleQuad = await findParticleQuad(world, resolver);
+	const particleQuad = await findMesh(world, resolver, RENDER_PIPELINE_QUAD_PATH);
+	const decalCube = await findMesh(world, resolver, DECAL_CUBE_PATH);
 	/** by prefab and pose: its renderers, or why they couldn't be read, and how reports name it */
 	const prefabs = new Map<string, Promise<{ label: string; read: PrefabRenderer[] | FormatError }>>();
 	const prefabLights = new Map<bigint, Promise<PrefabLight[]>>();
@@ -82,6 +90,7 @@ export const placePrefabs = async (
 			const read = await readPrefabRenderers(resolver, root, {
 				viewPose: pose,
 				particleQuad,
+				decalCube,
 				locked,
 				effectLod,
 			}).catch(formatErrorOnly);
@@ -214,6 +223,7 @@ const placeRenderer = (
 			entityId,
 			floatsOn,
 			ride,
+			...(renderer.decal === null ? {} : { decalPlacement: decalPlacement(renderer.decal) }),
 		},
 		{ ...owner, name: renderer.name },
 	);
@@ -222,7 +232,14 @@ const placeRenderer = (
 /** @returns a prefab renderer's draws: one per material and LOD span */
 const rendererDraws = (content: PackContent, renderer: PrefabRenderer): ChainDraw[] => {
 	let geometry: number;
-	if (renderer.motion !== null) {
+	if (renderer.decal !== null) {
+		// shared with the world's rect decals, which intern the cube by its path
+		const cube = content.decalCube();
+		if (cube === null) {
+			return [];
+		}
+		geometry = cube;
+	} else if (renderer.motion !== null) {
 		geometry = content.geometries.internAnimatedObject(renderer.mesh, renderer.motion);
 	} else if (renderer.pose !== null) {
 		geometry = content.geometries.internPosedObject(renderer.mesh, renderer.pose);
@@ -307,14 +324,21 @@ const distanceOrigin = (matrix: Float32Array, origin: readonly number[]): [numbe
 	];
 };
 
-/** @returns the quad billboard particles draw, or `null` if the install doesn't have it where expected */
-const findParticleQuad = async (world: WorldIndex, resolver: AssetResolver): Promise<ObjectRef | null> => {
-	const [hash] = await world.hashesOf(RENDER_PIPELINE_QUAD_PATH);
+/**
+ * @returns the mesh at a path (the quad billboard particles draw, the decal cube), or `null` if the install
+ *   doesn't have it where expected
+ */
+const findMesh = async (
+	world: WorldIndex,
+	resolver: AssetResolver,
+	path: string,
+): Promise<ObjectRef | null> => {
+	const [hash] = await world.hashesOf(path);
 	if (hash === undefined) {
 		return null;
 	}
 	try {
-		return await resolver.findUnique({ hash, path: RENDER_PIPELINE_QUAD_PATH }, UnityClass.Mesh);
+		return await resolver.findUnique({ hash, path }, UnityClass.Mesh);
 	} catch {
 		return null;
 	}

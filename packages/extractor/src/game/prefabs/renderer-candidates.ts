@@ -34,11 +34,12 @@ import {
 } from '../effects/particle-system.ts';
 import { isSplineMoverType, splineMoverRenderers } from '../effects/spline-movers.ts';
 
+import { DECAL_PROJECTOR_CLASS, readDecalProjector } from './decal-projector.ts';
 import { parentFrame, type PlacedPrefabNode, type PrefabComponent } from './prefab-walk.ts';
 import type { NodeStep, RendererCandidate, RendererNode, RendererWalk } from './renderer-walk.ts';
 
 // what a drawn GameObject of the renderer walk draws, in the order its renderers are kept: LODGroup heights
-// first, then skinned meshes, mesh renderers, the particle system and spline movers
+// first, then skinned meshes, mesh renderers, decal projectors, the particle system and spline movers
 
 /** Unity's class id of LODGroup */
 const LOD_GROUP = 205;
@@ -125,6 +126,7 @@ const collectSkinnedRenderers: NodeStep = async (walk, node, state) => {
 					unsupported: state.standIn,
 					ownSize: false,
 					billboard: null,
+					decal: null,
 				}),
 			);
 		}
@@ -156,6 +158,37 @@ const collectMeshRenderers: NodeStep = async (walk, node, state) => {
 				unsupported: state.standIn,
 				ownSize: false,
 				billboard: state.billboard,
+				decal: null,
+			}),
+		);
+	}
+};
+
+/**
+ * enabled `HGDecalProjector`s: the decal cube in the GameObject's box, with the projector's placement. the
+ * box stays where the prefab saved it, even under a Transform a looping clip moves
+ */
+const collectDecalProjectors: NodeStep = async (walk, node, state) => {
+	if (walk.decalCube === null) {
+		return;
+	}
+	for (const projector of node.ofClass(DECAL_PROJECTOR_CLASS)) {
+		const data = await enabledData(projector);
+		if (data === null) {
+			continue;
+		}
+		const { decal, unsupported } = readDecalProjector(data);
+		walk.candidates.push(
+			candidateOf(node, state, {
+				ref: projector.ref,
+				data,
+				matrix: node.matrix,
+				mesh: walk.decalCube,
+				particles: null,
+				unsupported: state.standIn ?? unsupported,
+				ownSize: false,
+				billboard: null,
+				decal,
 			}),
 		);
 	}
@@ -257,6 +290,7 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 				unsupported: null,
 				ownSize,
 				billboard: null,
+				decal: null,
 			}),
 		);
 		return;
@@ -288,6 +322,7 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 					unsupported: reason,
 					ownSize,
 					billboard: quad ? { flag: ChainFlags.BillboardFacing, offset: [0, 0, 0, 1], frame: placed } : null,
+					decal: null,
 				}),
 			);
 		}
@@ -320,6 +355,7 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 			unsupported: null,
 			ownSize: false,
 			billboard: null,
+			decal: null,
 		});
 		walk.candidates.push(candidate);
 		// a custom simulation space's Transform is taken to hold still, as the world does
@@ -356,6 +392,7 @@ const collectSplineMovers: NodeStep = async (walk, node, state) => {
 				name: node.name,
 				ownSize: false,
 				billboard: null,
+				decal: null,
 				posedMaterials: [],
 				playedMaterials: [],
 				distances: state.distances,
@@ -370,6 +407,7 @@ export const CANDIDATE_SOURCES: readonly NodeStep[] = [
 	collectLodSizes,
 	collectSkinnedRenderers,
 	collectMeshRenderers,
+	collectDecalProjectors,
 	collectParticles,
 	collectSplineMovers,
 ];

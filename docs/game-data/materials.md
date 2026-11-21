@@ -374,6 +374,16 @@ iridescent oil-slick pattern) colour the ground and rocks of Sword Vault Dale bu
 trees on them. the compare is read from the pass's shared stencil state; its per-face states say
 always.
 
+prefabs carry the same decals as `HGDecalProjector` components (1,213 in the install, on cutscene,
+dialogue and interactive prefabs and the Qingbo waterwheels): the GameObject's transform is the box
+(world rect decals' boxes are thin along y too), and the fields are the placement's, `m_UvTilling`
+and `m_UvOffset` the UV scale and offset, `m_BaseColor` and `m_BaseColorIntensity` the colour and
+intensity, `m_SectorAngle` the angle; a world carving decal stores the same values as Si's
+Painting's carved puzzle grid (`P_rdecal_com_marking_carving+1_003_01`), offset (1, 1) included.
+1,196 have `m_ShapeType` 0, the others 1 to 3; none has an `m_CustomMesh`. what the other shapes
+draw, and whether `m_LODScreenSizeMin` (0.02 on the puzzle grid) and `m_SortOrderOffset` (0 to 3)
+cull and order them, isn't read.
+
 - UV: `(local.xz + 0.5) · scale + offset`, for `_BaseColorMap` and `_SampleTex1` (the PBR map:
   normal RG, roughness B; with `_SampleTex1UVSet` it takes its own `_ST` of the box's UVs instead)
 - albedo: the placement's colour as stored (not gamma-decoded) × its intensity × the base map's RGB;

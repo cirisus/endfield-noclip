@@ -1,5 +1,6 @@
 /* oxlint-disable no-await-in-loop -- reads a GameObject's components in authored order */
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import type { RectDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { ClipMaterialValue, ClipMotion } from '@endfield-noclip/formats/unity/animation-clip';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
@@ -64,6 +65,8 @@ export interface RendererCandidate {
 	unsupported: string | null;
 	ownSize: boolean;
 	billboard: PrefabBillboard | null;
+	/** a decal projector's placement, `null` for a renderer; a projector draws {@link RendererWalk.decalCube} */
+	decal: RectDecal | null;
 	/** material values the pose's clips set on the renderer */
 	posedMaterials: readonly ClipMaterialValue[];
 	/** the pose's looping clips that keep changing the renderer's material values */
@@ -107,6 +110,8 @@ export interface RendererWalk {
 	pose: PrefabPose | null;
 	/** the unit quad billboard particle systems draw, or `null` to skip them */
 	particleQuad: ObjectRef | null;
+	/** the unit box rect decals draw, or `null` to skip decal projectors */
+	decalCube: ObjectRef | null;
 	/** whether the placement starts locked ({@link readUnlockConfig}) */
 	locked: boolean;
 	/** what picks the effect LOD tables' bands */
@@ -169,7 +174,7 @@ export interface RendererWalk {
  */
 export const createRendererWalk = (
 	resolver: AssetResolver,
-	options: Pick<RendererWalk, 'pose' | 'particleQuad' | 'locked' | 'effectLod'>,
+	options: Pick<RendererWalk, 'pose' | 'particleQuad' | 'decalCube' | 'locked' | 'effectLod'>,
 ): RendererWalk => ({
 	resolver,
 	...options,

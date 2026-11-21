@@ -1,3 +1,4 @@
+import type { RectDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 /* oxlint-disable no-await-in-loop -- resolves renderers in walk order with bounded bundle residency */
 import type {
 	ClipMaterialValue,
@@ -13,6 +14,7 @@ import {
 	asPPtr,
 	numberField,
 	optionalNumberField,
+	pptrField,
 	type Aabb,
 } from '@endfield-noclip/formats/unity/values';
 import type { SkinAnimation } from '@endfield-noclip/package-format/geometry';
@@ -84,6 +86,11 @@ export interface PrefabRenderer {
 	 * to the camera. skinned meshes and particle systems don't take it
 	 */
 	billboard: PrefabBillboard | null;
+	/**
+	 * an `HGDecalProjector`'s placement, `null` for a renderer. a projector draws the decal cube (its
+	 * {@link mesh}) in its box ({@link matrix}) with its one material
+	 */
+	decal: RectDecal | null;
 	/**
 	 * per material slot, the saved values the pose's clips or an emission override replace on this renderer,
 	 * `null` where they replace none
@@ -210,6 +217,7 @@ const IDENTITY = trsMatrix([0, 0, 0], [0, 0, 0, 1], [1, 1, 1]);
  *   prefab's own Animators play ({@link animatorDefaultPose}); the root's own Transform keeps the caller's
  *   placement
  * @param options.particleQuad the unit quad billboard particle systems draw, or `null` to skip them
+ * @param options.decalCube the unit box rect decals draw, or `null` to skip decal projectors
  * @param options.locked whether the placement starts locked by a mini-game or submit lock, which switches a
  *   root `UnlockEffectConfigMono`'s locked model on and its unlocked model off
  * @param options.effectLod what picks the effect LOD tables' bands: `camera`, every table by the camera's
@@ -226,14 +234,15 @@ export const readPrefabRenderers = async (
 	options: {
 		viewPose: PrefabPose | null;
 		particleQuad: ObjectRef | null;
+		decalCube: ObjectRef | null;
 		locked: boolean;
 		effectLod: EffectLodSource;
 	},
 ): Promise<PrefabRenderer[]> => {
-	const { viewPose, particleQuad, locked, effectLod } = options;
+	const { viewPose, particleQuad, decalCube, locked, effectLod } = options;
 	// view states drive their model's Animators; only a prefab without them plays its controllers' defaults
 	const pose = viewPose ?? (await animatorDefaultPose(resolver, root));
-	const walk = createRendererWalk(resolver, { pose, particleQuad, locked, effectLod });
+	const walk = createRendererWalk(resolver, { pose, particleQuad, decalCube, locked, effectLod });
 	await walkPrefab(resolver, root, rendererVisitor(walk), ABOVE_ROOT);
 	moveFollowers(walk);
 	await resolveForces(walk);
@@ -264,9 +273,13 @@ const assembleRenderer = async (
 	const { resolver } = walk;
 	const key = objectKey(candidate.ref);
 	const materials: (ObjectRef | null)[] = [];
-	for (const pointer of arrayField(candidate.data, 'm_Materials')) {
-		// preserve renderer slot order
-		materials.push(await resolver.resolve(candidate.ref, asPPtr(pointer)));
+	if (candidate.decal !== null) {
+		materials.push(await resolver.resolve(candidate.ref, pptrField(candidate.data, 'm_Material')));
+	} else {
+		for (const pointer of arrayField(candidate.data, 'm_Materials')) {
+			// preserve renderer slot order
+			materials.push(await resolver.resolve(candidate.ref, asPPtr(pointer)));
+		}
 	}
 	// mesh headers are cached by the resolver
 	const mesh = await resolver.read(candidate.mesh);
@@ -297,7 +310,12 @@ const assembleRenderer = async (
 	let motion: RendererMotion | null = null;
 	let unsupported = candidate.unsupported;
 	const rigidTransform = walk.rendererTransforms.get(key);
-	if (frames !== null && rigidTransform !== undefined && candidate.billboard === null) {
+	if (
+		frames !== null &&
+		rigidTransform !== undefined &&
+		candidate.billboard === null &&
+		candidate.decal === null
+	) {
 		// a mesh renderer under a Transform the clip moves follows it as a one-bone skin in its mesh space
 		const moving = skinMotion(frames, { bones: [rigidTransform], binds: [IDENTITY] }, bounds);
 		if (moving !== null) {
@@ -355,7 +373,7 @@ const assembleRenderer = async (
 		sizes: walk.lodSizes.get(key)?.map(({ lod, min, max }) => ({ lod, min, max })) ?? null,
 		submeshes: arrayField(mesh, 'm_SubMeshes').length,
 		// Unity's ShadowCastingMode: 3 ShadowsOnly, 4 ShadowsOnlyTwoSided
-		shadowOnly: numberField(candidate.data, 'm_CastShadows') >= 3,
+		shadowOnly: candidate.decal === null && numberField(candidate.data, 'm_CastShadows') >= 3,
 		sorting: {
 			layer: optionalNumberField(candidate.data, 'm_SortingLayer') ?? 0,
 			order: optionalNumberField(candidate.data, 'm_SortingOrder') ?? 0,
@@ -365,5 +383,6 @@ const assembleRenderer = async (
 		// a renderer the clip moves takes the identity matrix
 		ownSize: candidate.ownSize && motion === null,
 		billboard: candidate.billboard,
+		decal: candidate.decal,
 	};
 };

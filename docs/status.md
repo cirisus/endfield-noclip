@@ -238,10 +238,10 @@ packs or renders correctly.
   Lit's default factors rather than each material's `_PorosityFactor*` and `_DisableVerticalFlow`,
   wet twice where they overlap, aren't gated by the global that gates the game's wetness mask, and
   are unchecked against an in-game shot; whether the game's screen-space reflections see their
-  roughness is unchecked (the viewer's do); prefabs' `HGDecalProjector`s (about 20 on each of the
-  Qingbo waterwheels' prefabs, and the carved grid `P_rdecal_com_marking_carving+1_003_01` under
-  Si's Painting's `int_drawing_puzzle_01_postmodel`) aren't read, and their drop isn't reported in
-  `debug/`
+  roughness is unchecked (the viewer's do). prefabs' `HGDecalProjector`s
+  ([decals](game-data/materials.md#decals)) of shapes other than the box show as unsupported, ignore
+  `m_LODScreenSizeMin` and `m_SortOrderOffset`, and stay where the prefab saved them under a
+  Transform a looping clip moves
 - terrain close up ([terrain](viewer/terrain.md#close-up-layers)): smooth triplanar replaces the
   game's random plane choice; the cliff projection, cone-map parallax and the `A` page's subsurface
   curvature aren't drawn; the fade distances are the viewer's own and the blend's GPU cost is

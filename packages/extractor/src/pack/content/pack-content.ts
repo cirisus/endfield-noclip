@@ -36,7 +36,7 @@ export const FLT_MAX = 3.4028234663852886e38;
  * the unit box the game's VFXDecal prefabs draw; rect decals have no mesh of their own (the game draws a
  * box), so they take this one
  */
-const DECAL_CUBE_PATH =
+export const DECAL_CUBE_PATH =
 	'assets/beyond/arts/effects/commonassets/arts/s_model/s_fx_particle_decal_cube.fbx##decalmesh';
 
 /** the synthetic stand-in cube's bounds */
@@ -189,14 +189,26 @@ export class PackContent {
 	 * @returns its draw, or `null` without a decal cube in the install
 	 */
 	decalDraw(material: bigint): ChainDraw | null {
-		if (this.#decalCube === undefined) {
+		const geometry = this.decalCube();
+		if (geometry === null) {
 			return null;
 		}
 		return chainDraw({
-			geometry: this.geometries.intern(this.#decalCube, this.scene.pathOf),
+			geometry,
 			material: this.materials.intern(material, this.scene.pathOf),
 			minSquared: 0,
 		});
+	}
+
+	/**
+	 * @returns the decal cube's geometry id, which rect decals and prefabs' decal projectors share, or `null`
+	 *   without a decal cube in the install
+	 */
+	decalCube(): number | null {
+		if (this.#decalCube === undefined) {
+			return null;
+		}
+		return this.geometries.intern(this.#decalCube, this.scene.pathOf);
 	}
 
 	// #endregion

@@ -34,8 +34,12 @@ accepts it (those acting on other GameObjects, the subtree or the pose: `VFXAdju
 `EffectSetting`s, Animators), then once it's placed runs the steps that need its matrix (followers,
 force fields, distance origins, billboards) and, when it draws, the candidate sources
 ([renderer-candidates.ts](../../packages/extractor/src/game/prefabs/renderer-candidates.ts)):
-LODGroups, skinned and mesh renderers, the particle system and spline movers, in the order their
-renderers are kept. a new component kind is one reader, one step or one source. what depends on the
+LODGroups, skinned and mesh renderers, decal projectors, the particle system and spline movers, in
+the order their renderers are kept. a decal projector
+([decal-projector.ts](../../packages/extractor/src/game/prefabs/decal-projector.ts)) draws as a rect
+decal does: the decal cube, shared with the world's rect decals, in its GameObject's box, its row
+carrying the projector's placement; it skips the clip, skin and billboard paths, so it stays where
+the prefab saved it. a new component kind is one reader, one step or one source. what depends on the
 whole hierarchy being placed, followers and force fields, settles after the walk
 ([renderer-passes.ts](../../packages/extractor/src/game/prefabs/renderer-passes.ts)); skinned poses
 and looping-clip frames are in
