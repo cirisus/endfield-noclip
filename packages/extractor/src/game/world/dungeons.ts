@@ -122,13 +122,8 @@ export const loadDungeonUses = async (context: Pick<Context, 'vfs' | 'world'>): 
 	});
 };
 
-const readTable = async (vfs: Context['vfs'], name: string) => {
-	const file = await vfs.find(VfsGroup.Table, name);
-	if (file === undefined) {
-		throw new FormatError(`missing ${name}`);
-	}
-	return parseSparkTable(await vfs.readVerified(file));
-};
+const readTable = async (vfs: Context['vfs'], name: string) =>
+	parseSparkTable(await vfs.read(VfsGroup.Table, name));
 
 const nonEmpty = (value: SparkValue | undefined): string | null =>
 	typeof value === 'string' && value !== '' ? value : null;

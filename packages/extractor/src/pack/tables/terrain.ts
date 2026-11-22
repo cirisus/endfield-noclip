@@ -290,6 +290,9 @@ const pageOptions = (kind: BlobKind, zstdLevel: number): PutOptions => ({
 	stepMemo: true,
 });
 
+const readTexture = async (file: VfsFile) => readTerrainTexture(await file.readVerified());
+const readPage = async (file: VfsFile): Promise<Uint8Array> => readTerrainBc3Page(await readTexture(file));
+
 /** reads, encodes and compresses the terrain into the store's directory, without committing anything */
 const convertTerrain = async (
 	context: Pick<Context, 'vfs' | 'resolver'>,
@@ -301,8 +304,6 @@ const convertTerrain = async (
 ): Promise<StepMemo<TerrainMemo>> => {
 	const { surface, terrain } = input;
 	const memo: StepMemo<TerrainMemo> = { blobs: [], value: { tiles: [], splat: null, layerProblem: null } };
-	const readTexture = async (file: VfsFile) => readTerrainTexture(await context.vfs.readVerified(file));
-	const readPage = async (file: VfsFile): Promise<Uint8Array> => readTerrainBc3Page(await readTexture(file));
 
 	const layers = await convertLayers(context, store, input, layerFiles, splatIndex);
 	if (typeof layers === 'string') {
@@ -434,7 +435,7 @@ const convertLayers = async (
 	let levels = 0;
 	/** @returns the texture's levels from the first packed one, concatenated */
 	const levelsOf = async (file: VfsFile, role: 'D' | 'N'): Promise<Uint8Array | string> => {
-		const texture = readTerrainTexture(await context.vfs.readVerified(file));
+		const texture = readTerrainTexture(await file.readVerified());
 		checkTerrainLayerTexture(texture, role);
 		const kept = texture.mips.slice(TERRAIN_LAYER_SKIP);
 		if (kept.length === 0) {

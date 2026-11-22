@@ -67,11 +67,11 @@ export const readViewStates = async (
 	{ model, source }: ModelViews,
 ): Promise<ViewStates | null> => {
 	const path = `Data/Json/Interactive/ModelViewStateControllerData/${source}.json`;
-	const file = await context.vfs.find(VfsGroup.JsonData, path);
-	if (file === undefined) {
+	const bytes = await context.vfs.tryRead(VfsGroup.JsonData, path);
+	if (bytes === undefined) {
 		return null;
 	}
-	const data = (await context.memoryPack()).decode(await context.vfs.readVerified(file), ROOT);
+	const data = (await context.memoryPack()).decode(bytes, ROOT);
 	if (!isMemoryPackObject(data)) {
 		throw new FormatError(`${path} isn't a view state controller`);
 	}

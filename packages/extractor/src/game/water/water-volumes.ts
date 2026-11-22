@@ -95,14 +95,10 @@ export const readWaterVolumes = async (
 				throw new FormatError(`missing LevelData path ${hash}`);
 			}
 			// oxlint-disable-next-line no-await-in-loop -- one level file at a time bounds memory
-			const file = await vfs.find(VfsGroup.JsonData, path);
-			if (!file) {
-				throw new FormatError(`missing LevelData ${path}`);
-			}
+			const bytes = await vfs.read(VfsGroup.JsonData, path);
 			let data: MemoryPackValue;
 			try {
-				// oxlint-disable-next-line no-await-in-loop -- as above
-				data = reader.decode(await vfs.readVerified(file), ROOT);
+				data = reader.decode(bytes, ROOT);
 			} catch (error) {
 				if (!(error instanceof FormatError)) {
 					throw error;

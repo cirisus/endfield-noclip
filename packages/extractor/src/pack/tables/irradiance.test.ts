@@ -39,9 +39,13 @@ const vfsWithLengths = (lengths: Map<string, number>) => {
 		const name = path.slice(path.lastIndexOf('/') + 1);
 		const length = name === 'index.bytes' ? indexBytes().length : lengths.get(name);
 		// only the length is consumed; any unexpected payload read below fails the test.
-		return length === undefined ? undefined : ({ entry: { length } } as VfsFile);
+		return length === undefined
+			? undefined
+			: ({
+					entry: { length },
+					readVerified: async () => indexBytes(),
+				} as unknown as VfsFile);
 	};
-	vfs.readVerified = async () => indexBytes();
 	return vfs;
 };
 

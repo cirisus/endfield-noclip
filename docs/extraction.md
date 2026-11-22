@@ -145,9 +145,10 @@ caching, and cross-file lookups:
 | SerializedFile | `formats/src/unity/serialized-file.ts`, `type-tree.ts`                        | `extractor/src/game/assets/assets.ts` |
 | tables & data  | `formats/src/hg/string-pool.ts`, `spark-buffer.ts`, `endfield/memory-pack.ts` | `extractor/src/game/`                 |
 
-- **VFS (`hg/vfs.ts`)**: `VfsGroup` holds group hashes; `readVerified` checks each logical file's
-  decrypted MD5, while `readUnverified` skips MD5 for large or high-volume files whose own framing
-  already validates them (StringPathHash tables, LZ4-framed chunk payloads).
+- **VFS (`hg/vfs.ts`)**: `VfsGroup` holds group hashes; `VfsFile` implements `ByteSource` for
+  random-access reads and `readVerified()` for MD5-checked whole-file reads. `Vfs.read` and
+  `Vfs.tryRead` verify MD5 by default; pass `{ verify: false }` for large or high-volume files whose
+  own framing already validates them (StringPathHash tables, LZ4-framed chunk payloads).
   `Persistent/index_main.json` and `CompressData.bin` are unused.
 - **bundles (`hg/bundles.ts`)**: `UnityBundle` reads headers/directories and decodes only blocks
   overlapping a requested byte range. descrambling is ported from AnimeStudio. `loadBundleManifest`

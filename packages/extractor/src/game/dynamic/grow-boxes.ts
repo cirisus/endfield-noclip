@@ -21,12 +21,8 @@ const SHUTTER_FIELD = 'nonTransparentPlate';
  * @throws {FormatError} if the table is missing or an entry isn't a level with its fields
  */
 export const readPlantingFieldLevels = async (vfs: Context['vfs']): Promise<Map<number, number>> => {
-	const file = await vfs.find(VfsGroup.Table, GROW_CABIN_LEVELS);
-	if (file === undefined) {
-		throw new FormatError(`missing ${GROW_CABIN_LEVELS}`);
-	}
 	const levels = new Map<number, number>();
-	for (const [, entry] of parseSparkTable(await vfs.readVerified(file)).entries) {
+	for (const [, entry] of parseSparkTable(await vfs.read(VfsGroup.Table, GROW_CABIN_LEVELS)).entries) {
 		const fields = isSparkBean(entry) ? entry.unlockPlantingField : undefined;
 		if (!isSparkBean(entry) || typeof entry.level !== 'number' || !Array.isArray(fields)) {
 			throw new FormatError(`${GROW_CABIN_LEVELS} has an invalid entry`);

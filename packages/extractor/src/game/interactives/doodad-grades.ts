@@ -75,12 +75,8 @@ export const gradeMasks = <Form extends { model: string }>(
  * @throws {FormatError} if the table is missing or a row lacks its upgrade source
  */
 const readUpgradeSources = async (vfs: FacilitySources['context']['vfs']): Promise<Map<string, number>> => {
-	const file = await vfs.find(VfsGroup.Table, DOODAD_TABLE);
-	if (file === undefined) {
-		throw new FormatError(`missing ${DOODAD_TABLE}`);
-	}
 	const sources = new Map<string, number>();
-	for (const [id, entry] of parseSparkTable(await vfs.readVerified(file)).entries) {
+	for (const [id, entry] of parseSparkTable(await vfs.read(VfsGroup.Table, DOODAD_TABLE)).entries) {
 		const source = isSparkBean(entry) ? entry.upgradeSource : undefined;
 		if (typeof id !== 'string' || typeof source !== 'number') {
 			throw new FormatError(`${DOODAD_TABLE} has an invalid entry`);

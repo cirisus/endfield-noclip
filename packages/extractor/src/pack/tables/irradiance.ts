@@ -63,7 +63,6 @@ interface IrradianceMemo {
  * @throws {Error} if a payload is shorter than its index says, or a cell's level or key is unsupported
  */
 const convertCells = async (
-	vfs: Context['vfs'],
 	store: BlobStore,
 	selected: readonly {
 		name: string;
@@ -80,7 +79,7 @@ const convertCells = async (
 	const { report } = memo.value;
 	for (const { name, stateGroup, payload: payloadFile, records } of selected) {
 		// oxlint-disable-next-line no-await-in-loop -- one payload (tens of MB) in memory at a time
-		const payload = await vfs.readVerified(payloadFile);
+		const payload = await payloadFile.readVerified();
 		for (const record of records) {
 			const { level } = irradianceCellOrigin(record.key);
 			if (record.offset + record.storedLength > payload.length) {
@@ -166,11 +165,7 @@ export const packIrradianceRegions = async (
 				return undefined;
 			}
 			return (async () => {
-				const file = await vfs.find(IRRADIANCE_GROUP, path);
-				if (file === undefined) {
-					throw new Error(`irradiance region ${name} is missing`);
-				}
-				const region = parseIrradianceRegion(await vfs.readVerified(file));
+				const region = parseIrradianceRegion(await vfs.read(IRRADIANCE_GROUP, path));
 				return { name: name.slice(0, -'.bytes'.length), roomType: Number(match[2]), region };
 			})();
 		}),
@@ -245,7 +240,7 @@ export const packIrradiance = async (
 	if (indexFile === undefined) {
 		return null;
 	}
-	const index = parseIrradianceIndex(await vfs.readVerified(indexFile));
+	const index = parseIrradianceIndex(await indexFile.readVerified());
 	// validate the complete index before subset filtering, including skipped payloads.
 	const payloads = await Promise.all(
 		index.files.map(async (name, file) => {
@@ -296,7 +291,7 @@ export const packIrradiance = async (
 				});
 	let memo = key === null ? undefined : await cache?.recallStep<IrradianceMemo>(key);
 	if (memo === undefined) {
-		memo = await convertCells(vfs, store, selected);
+		memo = await convertCells(store, selected);
 		if (key !== null) {
 			await cache?.rememberStep(key, memo);
 		}

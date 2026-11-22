@@ -65,15 +65,15 @@ export class RegionWalls implements InteractiveKind {
 	async readNexus(placed: readonly PlacedInteractive[]): Promise<DraftControl | null> {
 		const { vfs } = this.#sources.context;
 		const walls = placed.filter(({ row }) => this.#walls.has(row.template));
-		const file = walls.length > 0 ? await vfs.find(VfsGroup.Table, AREA_UNLOCK_TABLE) : undefined;
-		if (walls.length > 0 && file === undefined) {
+		const bytes = walls.length > 0 ? await vfs.tryRead(VfsGroup.Table, AREA_UNLOCK_TABLE) : undefined;
+		if (walls.length > 0 && bytes === undefined) {
 			this.#sources.report(AREA_UNLOCK_TABLE, 'missing; region walls stay shown');
 		}
-		if (file === undefined) {
+		if (bytes === undefined) {
 			return null;
 		}
 		const unlockOf = new Map<string, number>();
-		for (const [area, unlock] of parseSparkTable(await vfs.readVerified(file)).entries) {
+		for (const [area, unlock] of parseSparkTable(bytes).entries) {
 			if (typeof area !== 'string' || typeof unlock !== 'number' || unlock < 1 || unlock > 31) {
 				throw new FormatError(`${AREA_UNLOCK_TABLE} has an invalid entry for ${String(area)}`);
 			}

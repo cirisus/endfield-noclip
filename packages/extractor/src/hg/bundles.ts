@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { brotliDecompress, brotliDecompressSync } from 'node:zlib';
 
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
-import { type BundleNode, type ByteSource, UnityBundle } from '@endfield-noclip/formats/hg/bundle';
+import { type BundleNode, UnityBundle } from '@endfield-noclip/formats/hg/bundle';
 import { deriveBundlePad } from '@endfield-noclip/formats/hg/bundle-cipher';
 import { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
 import {
@@ -126,7 +126,7 @@ export const loadBundleManifest = async (
 		}
 	}
 	// ~150 MB decompressed; the async form keeps the event loop free for the reads setup runs alongside
-	const decompressed = await brotliDecompressAsync(await vfs.readVerified(file));
+	const decompressed = await brotliDecompressAsync(await file.readVerified());
 	const bytes = new Uint8Array(new SharedArrayBuffer(decompressed.length));
 	bytes.set(decompressed);
 	const manifest = new BundleManifest(bytes, MANIFEST_OPTIONS);
@@ -174,14 +174,6 @@ const bundlePad = (keys: Keys): Uint8Array => {
 	return pads.getOrInsertComputed(keys.bundle, deriveBundlePad);
 };
 
-/** @returns a range-reading {@link ByteSource} over a logical file */
-const vfsSource = (vfs: Vfs, file: VfsFile): ByteSource => {
-	return {
-		size: file.entry.length,
-		read: (start, end) => vfs.read(file, start, end),
-	};
-};
-
 /**
  * locates a bundle's logical file
  *
@@ -211,7 +203,7 @@ export const findBundleFile = async (vfs: Vfs, name: string): Promise<VfsFile> =
  */
 export const openBundle = async (context: { vfs: Vfs; keys: Keys }, name: string): Promise<UnityBundle> => {
 	const file = await findBundleFile(context.vfs, name);
-	return UnityBundle.open(vfsSource(context.vfs, file), bundlePad(context.keys));
+	return UnityBundle.open(file, bundlePad(context.keys));
 };
 
 /** SerializedFiles up to this size are read whole; larger ones read objects on demand */

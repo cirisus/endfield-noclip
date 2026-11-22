@@ -123,7 +123,7 @@ export class WorldIndex {
 	/** @returns the main StringPathHash table (≈170 MB, loaded once) */
 	pathHash(): Promise<StringPathHashTable> {
 		this.#pathHash ??= this.vfs
-			.readUnverified(VfsGroup.ExtendData, STRING_PATH_HASH)
+			.read(VfsGroup.ExtendData, STRING_PATH_HASH, { verify: false })
 			.then((b) => new StringPathHashTable(b));
 		return this.#pathHash;
 	}
@@ -131,7 +131,7 @@ export class WorldIndex {
 	/** @returns the initial-package StringPathHash table */
 	initPathHash(): Promise<StringPathHashTable> {
 		this.#initPathHash ??= this.vfs
-			.readUnverified(VfsGroup.InitialExtendData, INIT_STRING_PATH_HASH)
+			.read(VfsGroup.InitialExtendData, INIT_STRING_PATH_HASH, { verify: false })
 			.then((b) => new StringPathHashTable(b));
 		return this.#initPathHash;
 	}
@@ -245,8 +245,8 @@ export class WorldIndex {
 	 */
 	mapConfig(mapId: string): Promise<MapConfig | undefined> {
 		return this.#mapConfigs.getOrInsertComputed(mapId, async () => {
-			const file = await this.vfs.find(VfsGroup.JsonData, `Data/Json/MapConfig/${mapId}.json`);
-			return file && parseMapConfig(new TextDecoder().decode(await this.vfs.readVerified(file)));
+			const data = await this.vfs.tryRead(VfsGroup.JsonData, `Data/Json/MapConfig/${mapId}.json`);
+			return data && parseMapConfig(new TextDecoder().decode(data));
 		});
 	}
 
@@ -333,8 +333,8 @@ export class WorldIndex {
 	 * @returns the file parsed, or `undefined` if the install has no such file
 	 */
 	async json(name: string): Promise<unknown> {
-		const file = await this.vfs.find(VfsGroup.JsonData, name);
-		return file && (JSON.parse(new TextDecoder().decode(await this.vfs.readVerified(file))) as unknown);
+		const data = await this.vfs.tryRead(VfsGroup.JsonData, name);
+		return data && (JSON.parse(new TextDecoder().decode(data)) as unknown);
 	}
 
 	/**
@@ -344,8 +344,8 @@ export class WorldIndex {
 	 */
 	mission(id: string): Promise<MissionRuntime | undefined> {
 		return this.#missions.getOrInsertComputed(id, async () => {
-			const file = await this.vfs.find(VfsGroup.JsonData, `Data/Json/MissionRuntimeAsset/${id}.json`);
-			return file && parseMissionRuntime(new TextDecoder().decode(await this.vfs.readVerified(file)));
+			const data = await this.vfs.tryRead(VfsGroup.JsonData, `Data/Json/MissionRuntimeAsset/${id}.json`);
+			return data && parseMissionRuntime(new TextDecoder().decode(data));
 		});
 	}
 
@@ -503,7 +503,7 @@ export class WorldIndex {
 	 * @throws {Error} if the VFS doesn't have it
 	 */
 	async readInitPayload(file: ChunkFile): Promise<Uint8Array> {
-		return unpackHgPayload(await this.vfs.readUnverified(VfsGroup.Streaming, file.name));
+		return unpackHgPayload(await this.vfs.read(VfsGroup.Streaming, file.name, { verify: false }));
 	}
 
 	/**
@@ -511,11 +511,12 @@ export class WorldIndex {
 	 * @returns its StreamingChunkData sibling's FlatBuffer, unpacked, or `null` if the VFS doesn't have one
 	 */
 	async readStreamingPayload(file: ChunkFile): Promise<Uint8Array | null> {
-		const entry = await this.vfs.find(
+		const data = await this.vfs.tryRead(
 			VfsGroup.Streaming,
 			file.name.replace('/InitChunkData_', '/StreamingChunkData_'),
+			{ verify: false },
 		);
-		return entry === undefined ? null : unpackHgPayload(await this.vfs.read(entry));
+		return data === undefined ? null : unpackHgPayload(data);
 	}
 
 	/**
@@ -661,11 +662,11 @@ export class WorldIndex {
 	 */
 	streamAreas(scene: string): Promise<StreamAreaTable | undefined> {
 		return this.#streamAreas.getOrInsertComputed(scene, async () => {
-			const file = await this.vfs.find(
+			const data = await this.vfs.tryRead(
 				VfsGroup.DynamicStreaming,
 				`${DYNAMIC_SCENE_ROOT}${scene}/FBStreamArea.bytes`,
 			);
-			return file && parseStreamAreas(await this.vfs.readVerified(file));
+			return data && parseStreamAreas(data);
 		});
 	}
 
@@ -687,7 +688,7 @@ export class WorldIndex {
 	}
 
 	#read(group: string, name: string): Promise<Uint8Array> {
-		return this.vfs.readFile(group, name);
+		return this.vfs.read(group, name);
 	}
 }
 

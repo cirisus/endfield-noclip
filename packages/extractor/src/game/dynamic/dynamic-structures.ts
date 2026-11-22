@@ -417,11 +417,11 @@ class DynamicFiles {
 	}
 
 	#read(name: string): Promise<Uint8Array> {
-		return this.#vfs.readFile(VfsGroup.DynamicStreaming, `${this.#prefix}${name}`);
+		return this.#vfs.read(VfsGroup.DynamicStreaming, `${this.#prefix}${name}`);
 	}
 
 	#readPayload(name: string): Promise<Uint8Array> {
-		return this.#vfs.readUnverified(VfsGroup.DynamicStreaming, `${this.#prefix}${name}`);
+		return this.#vfs.read(VfsGroup.DynamicStreaming, `${this.#prefix}${name}`, { verify: false });
 	}
 
 	/**

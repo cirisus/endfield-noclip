@@ -66,7 +66,7 @@ export const indexTerrain = async (vfs: Vfs): Promise<Map<string, TerrainSceneIn
 			case 'tile': {
 				const key = { level: path.level, x: path.x, z: path.z };
 				const id = `${key.level}/${key.x}/${key.z}`;
-				const file = { group, entry };
+				const file = group.file(entry);
 				if (path.channel === 'H') {
 					scene.tiles.set(id, { key, file, channels: {} });
 					scene.leafLevel = Math.max(scene.leafLevel, key.level);
@@ -77,7 +77,7 @@ export const indexTerrain = async (vfs: Vfs): Promise<Map<string, TerrainSceneIn
 				break;
 			}
 			case 'layer': {
-				scene.layers[path.role].set(path.index, { group, entry });
+				scene.layers[path.role].set(path.index, group.file(entry));
 				break;
 			}
 		}

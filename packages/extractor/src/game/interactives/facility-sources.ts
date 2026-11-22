@@ -102,7 +102,7 @@ export class FacilitySources {
 		const strings = await context.world.stringPool();
 		const table: unknown = JSON.parse(
 			new TextDecoder().decode(
-				await context.vfs.readFile(VfsGroup.JsonData, 'Data/Json/GameplayConfig/ModelTable.json'),
+				await context.vfs.read(VfsGroup.JsonData, 'Data/Json/GameplayConfig/ModelTable.json'),
 			),
 		);
 		return new FacilitySources(context, memoryPack, strings, new ModelTable(table));
@@ -113,7 +113,7 @@ export class FacilitySources {
 	 * @returns its bytes
 	 */
 	read(name: string): Promise<Uint8Array> {
-		return this.context.vfs.readFile(VfsGroup.JsonData, name);
+		return this.context.vfs.read(VfsGroup.JsonData, name);
 	}
 
 	/**

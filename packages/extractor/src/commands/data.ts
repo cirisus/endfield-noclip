@@ -236,7 +236,7 @@ const readTable = async (
 	if (matchedPath === undefined) {
 		throw new Error(`table ${name} not found; see \`data tables\``);
 	}
-	const table = parseSparkTable(await context.vfs.readFile(VfsGroup.Table, matchedPath));
+	const table = parseSparkTable(await context.vfs.read(VfsGroup.Table, matchedPath));
 	const matched: { key: string | number | bigint; value: unknown }[] = [];
 	for (const [key, value] of table.entries) {
 		const keyText = String(key);
@@ -300,7 +300,7 @@ const readScripts = async (
 	for (const name of files) {
 		const scriptId = name.slice(prefix.length, -'.json'.length);
 		// oxlint-disable-next-line no-await-in-loop -- stops at --limit
-		const decoded = mp.decode(await context.vfs.readFile(VfsGroup.JsonData, name), SCRIPT_ROOT);
+		const decoded = mp.decode(await context.vfs.read(VfsGroup.JsonData, name), SCRIPT_ROOT);
 		if (options.filter !== undefined && !options.filter.test(JSON.stringify(decoded, jsonReplacer))) {
 			continue;
 		}
@@ -366,7 +366,7 @@ const readInteractives = async (
 	const skipped: string[] = [];
 	for (const name of files) {
 		// oxlint-disable-next-line no-await-in-loop -- stops at --limit
-		const bytes = await context.vfs.readFile(VfsGroup.JsonData, name);
+		const bytes = await context.vfs.read(VfsGroup.JsonData, name);
 		let rows;
 		try {
 			rows = readLevelInteractives(bytes, resolveString);

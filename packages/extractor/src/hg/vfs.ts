@@ -3,6 +3,7 @@ import { open, readdir, readFile, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import type { ByteSource } from '@endfield-noclip/formats/hg/bundle';
 import {
 	type ChaCha20Cipher,
 	decryptVfsFileSliceInPlace,
@@ -55,10 +56,63 @@ export const vfsLayerDirs = (gameData: string): string[] => [
  */
 export const vfsCatalogPath = (layerDir: string, hash: string): string => join(layerDir, hash, `${hash}.blc`);
 
-/** a logical file located in a mounted group */
-export interface VfsFile {
-	group: MountedGroup;
-	entry: VfsFileEntry;
+/** a logical file located in a mounted group; implements {@link ByteSource} for random-access readers */
+export class VfsFile implements ByteSource {
+	readonly group: MountedGroup;
+	readonly entry: VfsFileEntry;
+	readonly #readRange: (
+		group: MountedGroup,
+		entry: VfsFileEntry,
+		start: number,
+		end: number,
+	) => Promise<Uint8Array>;
+
+	/**
+	 * @param group mounted group containing this file
+	 * @param entry catalog entry
+	 * @param readRange internal range reader bound to the owning {@link Vfs}
+	 * @internal
+	 */
+	constructor(
+		group: MountedGroup,
+		entry: VfsFileEntry,
+		readRange: (group: MountedGroup, entry: VfsFileEntry, start: number, end: number) => Promise<Uint8Array>,
+	) {
+		this.group = group;
+		this.entry = entry;
+		this.#readRange = readRange;
+	}
+
+	/** logical length in bytes */
+	get size(): number {
+		return this.entry.length;
+	}
+
+	/**
+	 * reads a byte range of the file, decrypting it if needed
+	 *
+	 * @param start inclusive offset within the logical file (defaults to 0)
+	 * @param end exclusive end (defaults to the file length)
+	 * @returns the requested bytes
+	 */
+	read(start = 0, end = this.entry.length): Promise<Uint8Array> {
+		return this.#readRange(this.group, this.entry, start, end);
+	}
+
+	/**
+	 * reads the whole file and checks it against the catalog's md5
+	 *
+	 * @returns the verified bytes
+	 * @throws {Error} on md5 mismatch, which usually means the install changed under us
+	 */
+	async readVerified(): Promise<Uint8Array> {
+		const data = await this.read();
+		const md5 = createHash('md5').update(data).digest('hex').toUpperCase();
+		if (md5 !== this.entry.dataMd5) {
+			throw new Error(`md5 mismatch for ${this.entry.name}: ${md5} != ${this.entry.dataMd5}`);
+		}
+		return data;
+	}
 }
 
 /** a group catalog plus where its chunks live on disk */
@@ -66,6 +120,8 @@ export interface MountedGroup {
 	catalog: VfsCatalog;
 	/** layers to search for chunks, highest priority first */
 	dirs: string[];
+	/** wraps a catalog entry from this group in a readable {@link VfsFile} */
+	file(entry: VfsFileEntry): VfsFile;
 }
 
 /** chunk files kept open at once; least recently used ones are closed once idle */
@@ -126,23 +182,87 @@ export class Vfs {
 	/**
 	 * @param hash group hash
 	 * @param name logical path
-	 * @returns the file, or `undefined` if the group doesn't contain it
+	 * @returns the file handle, or `undefined` if the group doesn't contain it
 	 */
 	async find(hash: string, name: string): Promise<VfsFile | undefined> {
 		const group = await this.group(hash);
 		const entry = group.catalog.get(name);
-		return entry && { group, entry };
+		return entry && group.file(entry);
 	}
 
 	/**
-	 * reads a byte range of a logical file, decrypting it if needed
+	 * reads a logical file, returning `undefined` if the group doesn't contain it
 	 *
-	 * @param file file to read
-	 * @param start offset within the logical file
-	 * @param end exclusive end; defaults to the file length
+	 * @param hash group hash
+	 * @param name logical file name
+	 * @param options.verify check the file's MD5 against the catalog (default `true`); pass `false` for large
+	 *   or high-volume files whose own framing already validates their bytes
+	 * @returns the file's bytes, or `undefined` if absent
 	 */
-	async read(file: VfsFile, start = 0, end = file.entry.length): Promise<Uint8Array> {
-		const { entry, group } = file;
+	async tryRead(hash: string, name: string, options?: { verify?: boolean }): Promise<Uint8Array | undefined> {
+		const file = await this.find(hash, name);
+		if (file === undefined) {
+			return undefined;
+		}
+		return options?.verify === false ? file.read() : file.readVerified();
+	}
+
+	/**
+	 * reads a logical file, throwing if absent
+	 *
+	 * @param hash group hash
+	 * @param name logical file name
+	 * @param options.verify check the file's MD5 against the catalog (default `true`); pass `false` for large
+	 *   or high-volume files whose own framing already validates their bytes
+	 * @returns the file's bytes
+	 * @throws {FormatError} if the group has no such file
+	 */
+	async read(hash: string, name: string, options?: { verify?: boolean }): Promise<Uint8Array> {
+		const data = await this.tryRead(hash, name, options);
+		if (data === undefined) {
+			throw new FormatError(`missing ${name}`);
+		}
+		return data;
+	}
+
+	/** closes cached chunk handles */
+	async close(): Promise<void> {
+		const chunks = [...this.#handles.values()];
+		this.#handles.clear();
+		await Promise.allSettled(chunks.map(async (chunk) => (await chunk.handle).close()));
+	}
+
+	async #mount(hash: string): Promise<MountedGroup> {
+		const dirs = vfsLayerDirs(this.gameData).map((layer) => join(layer, hash));
+		let blc: Uint8Array | undefined;
+		for (const layer of vfsLayerDirs(this.gameData)) {
+			// oxlint-disable-next-line no-await-in-loop -- the first layer holding a catalog wins
+			blc = await ignoreMissing(readFile(vfsCatalogPath(layer, hash)), undefined);
+			if (blc !== undefined) {
+				break;
+			}
+		}
+		if (blc === undefined) {
+			throw new Error(`vfs group ${hash} has no catalog`);
+		}
+
+		const catalog = parseVfsCatalog(blc, this.#key, VFS_CIPHER_OPTIONS);
+		const readRange = (group: MountedGroup, entry: VfsFileEntry, start: number, end: number) =>
+			this.#readRange(group, entry, start, end);
+		const group: MountedGroup = {
+			catalog,
+			dirs,
+			file: (entry) => new VfsFile(group, entry, readRange),
+		};
+		return group;
+	}
+
+	async #readRange(
+		group: MountedGroup,
+		entry: VfsFileEntry,
+		start: number,
+		end: number,
+	): Promise<Uint8Array> {
 		if (start < 0 || end > entry.length || start > end) {
 			throw new RangeError(`range ${start}..${end} outside ${entry.name} (${entry.length} bytes)`);
 		}
@@ -175,76 +295,6 @@ export class Vfs {
 			VFS_CIPHER_OPTIONS,
 		);
 		return buffer.subarray(start - alignedStart);
-	}
-
-	/**
-	 * reads a whole logical file and checks it against the catalog's md5
-	 *
-	 * @throws {Error} on md5 mismatch, which usually means the install changed under us
-	 */
-	async readVerified(file: VfsFile): Promise<Uint8Array> {
-		const data = await this.read(file);
-		const md5 = createHash('md5').update(data).digest('hex').toUpperCase();
-		if (md5 !== file.entry.dataMd5) {
-			throw new Error(`md5 mismatch for ${file.entry.name}: ${md5} != ${file.entry.dataMd5}`);
-		}
-		return data;
-	}
-
-	/**
-	 * @param hash group hash
-	 * @param name logical file name
-	 * @returns the file's bytes, MD5-checked
-	 * @throws {FormatError} if the group has no such file
-	 */
-	async readFile(hash: string, name: string): Promise<Uint8Array> {
-		const file = await this.find(hash, name);
-		if (file === undefined) {
-			throw new FormatError(`missing ${name}`);
-		}
-		return this.readVerified(file);
-	}
-
-	/**
-	 * like {@link readFile}, without checking the file's MD5; use for large or high-volume files whose own
-	 * framing (headers, LZ4 sizes) already validates their bytes
-	 *
-	 * @param hash group hash
-	 * @param name logical file name
-	 * @returns the file's bytes
-	 * @throws {FormatError} if the group has no such file
-	 */
-	async readUnverified(hash: string, name: string): Promise<Uint8Array> {
-		const file = await this.find(hash, name);
-		if (file === undefined) {
-			throw new FormatError(`missing ${name}`);
-		}
-		return this.read(file);
-	}
-
-	/** closes cached chunk handles */
-	async close(): Promise<void> {
-		const chunks = [...this.#handles.values()];
-		this.#handles.clear();
-		await Promise.allSettled(chunks.map(async (chunk) => (await chunk.handle).close()));
-	}
-
-	async #mount(hash: string): Promise<MountedGroup> {
-		const dirs = vfsLayerDirs(this.gameData).map((layer) => join(layer, hash));
-		let blc: Uint8Array | undefined;
-		for (const layer of vfsLayerDirs(this.gameData)) {
-			// oxlint-disable-next-line no-await-in-loop -- the first layer holding a catalog wins
-			blc = await ignoreMissing(readFile(vfsCatalogPath(layer, hash)), undefined);
-			if (blc !== undefined) {
-				break;
-			}
-		}
-		if (blc === undefined) {
-			throw new Error(`vfs group ${hash} has no catalog`);
-		}
-
-		const catalog = parseVfsCatalog(blc, this.#key, VFS_CIPHER_OPTIONS);
-		return { catalog, dirs };
 	}
 
 	#acquire(group: MountedGroup, md5: string): ChunkHandle {

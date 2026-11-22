@@ -58,11 +58,7 @@ export const run = async (args: string[]): Promise<void> => {
 				if (group === undefined || name === undefined || values.output === undefined) {
 					throw new Error('vfs cat needs <group> <name> -o <file>');
 				}
-				const file = await vfs.find(group, name);
-				if (file === undefined) {
-					throw new Error(`${name} not found in ${group}`);
-				}
-				const data = await vfs.readVerified(file);
+				const data = await vfs.read(group, name);
 				await save(values.output, data);
 				console.log(`wrote ${data.length} bytes to ${values.output}`);
 				break;

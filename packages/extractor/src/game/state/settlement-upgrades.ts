@@ -27,12 +27,9 @@ export interface SettlementUpgrade {
  * @throws {FormatError} if the table is missing or an outpost's levels aren't a level map
  */
 export const readSettlementUpgrades = async (vfs: Context['vfs']): Promise<SettlementUpgrade[]> => {
-	const file = await vfs.find(VfsGroup.Table, SETTLEMENT_TABLE);
-	if (file === undefined) {
-		throw new FormatError(`missing ${SETTLEMENT_TABLE}`);
-	}
 	const upgrades: SettlementUpgrade[] = [];
-	for (const [settlementId, entry] of parseSparkTable(await vfs.readVerified(file)).entries) {
+	for (const [settlementId, entry] of parseSparkTable(await vfs.read(VfsGroup.Table, SETTLEMENT_TABLE))
+		.entries) {
 		const levels: SparkValue | undefined = isSparkBean(entry) ? entry.settlementLevelMap : undefined;
 		if (typeof settlementId !== 'string' || !isSparkBean(levels)) {
 			throw new FormatError(`${SETTLEMENT_TABLE} has an invalid entry`);

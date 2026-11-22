@@ -88,12 +88,10 @@ const dictionaryEntries = (dictionary: TypeTreeObject): [number, TypeTreeValue][
  * @returns by factory item id, its `FacItemSubType` (a liquid's is its water type), from FactoryItemTable
  */
 export const readFactoryItemSubTypes = async (world: WorldIndex): Promise<Map<string, number>> => {
-	const file = await world.vfs.find(VfsGroup.Table, 'Data/TableCfg/FactoryItemTable.bytes');
-	if (file === undefined) {
-		throw new Error('FactoryItemTable not found');
-	}
 	const types = new Map<string, number>();
-	for (const [key, value] of parseSparkTable(await world.vfs.readVerified(file)).entries) {
+	for (const [key, value] of parseSparkTable(
+		await world.vfs.read(VfsGroup.Table, 'Data/TableCfg/FactoryItemTable.bytes'),
+	).entries) {
 		if (typeof key === 'string' && isSparkBean(value) && typeof value.subType === 'number') {
 			types.set(key, value.subType);
 		}
