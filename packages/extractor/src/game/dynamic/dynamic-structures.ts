@@ -20,7 +20,6 @@ import {
 } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
 import {
-	assetProperty,
 	parseStreamingChunk,
 	DECAL_MATERIAL_KEY,
 } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
@@ -470,20 +469,12 @@ class DynamicFiles {
 			const initPayload = unpackHgPayload(init);
 			const streamingPayload = unpackHgPayload(streaming);
 			const chunk = parseDynamicChunk(initPayload, streamingPayload);
-			const chunkLights = new Map(readChunkLights(initPayload, chunk).map((light) => [light.id, light]));
+			const chunkLights = new Map(readChunkLights(chunk).map((light) => [light.id, light]));
 			// the streaming payload binds rect decals' materials as StreamingChunkData does
-			let decalMaterials: Map<number, bigint> | null = null;
+			let streamingChunk: ReturnType<typeof parseStreamingChunk> | null = null;
 			const decalMaterial = (id: number): bigint | null => {
-				decalMaterials ??= new Map(
-					mapDefined(
-						parseStreamingChunk(streamingPayload).records,
-						(record): [number, bigint] | undefined => {
-							const material = assetProperty(record, DECAL_MATERIAL_KEY);
-							return material === undefined ? undefined : [record.id, material];
-						},
-					),
-				);
-				return decalMaterials.get(id) ?? null;
+				streamingChunk ??= parseStreamingChunk(streamingPayload);
+				return streamingChunk.assetProperty(id, DECAL_MATERIAL_KEY) ?? null;
 			};
 			const selected: { group: (typeof chunk.groups)[number]; visibility: Visibility; grid: number }[] = [];
 			for (const [index, { visibility, grid }] of indices) {

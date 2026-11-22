@@ -833,8 +833,7 @@ const lightCandidates = async (
 			(cellFilter === undefined || cellFilter(file)),
 	);
 	const perFile = await mapPool(files, 16, async (file) => {
-		const init = await world.readInitPayload(file);
-		return { file, lights: readChunkLights(init, parseInitChunk(init)) };
+		return { file, lights: readChunkLights(parseInitChunk(await world.readInitPayload(file))) };
 	});
 	const seen = new Map<number, { light: ChunkLight; file: (typeof files)[number] }>();
 	for (const { file, lights } of perFile) {

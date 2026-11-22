@@ -2,7 +2,7 @@ import { FormatError } from '../binary/binary-reader.ts';
 
 import { groupColumn, type InitChunk } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
-import { type ChunkRows, readChunkRows, readPropertyTable } from './mono-objects.ts';
+import { forEachProperty, readPropertyValue, ValueCode } from './mono-objects.ts';
 
 // local lights among the InitChunkData component-group entities (tag-2 rows, `init-chunk-data.ts`). their
 // group columns 42 and 63 are zero-filled in the file; the values sit in the entity's own root row, whose slot 3
@@ -107,12 +107,11 @@ const SETTINGS_SIZE = 448;
  * reads the local lights of a chunk. lights that span cells appear in each cell's chunk under the same id;
  * callers dedupe across files.
  *
- * @param data the InitChunkData FlatBuffer (after `unpackHgPayload`) that `chunk` was parsed from
- * @param chunk the parsed chunk
+ * @param chunk the parsed InitChunkData
  * @returns the lights in row order
  * @throws {FormatError} if a light's row has no property table or its blobs don't have the known sizes
  */
-export const readChunkLights = (data: Uint8Array | ChunkRows, chunk: InitChunk): ChunkLight[] => {
+export const readChunkLights = (chunk: InitChunk): ChunkLight[] => {
 	const lightIds = new Set<number>();
 	for (const group of chunk.groups) {
 		if (LIGHT_COLUMNS.every((id) => groupColumn(group, id) !== undefined)) {
@@ -129,7 +128,7 @@ export const readChunkLights = (data: Uint8Array | ChunkRows, chunk: InitChunk):
 		names.set(object.id, object.name);
 	}
 
-	const { fb, rows } = readChunkRows(data);
+	const { fb, rows } = chunk.rows;
 	const lights: ChunkLight[] = [];
 	for (const row of rows) {
 		if (!lightIds.has(row.id)) {
@@ -141,17 +140,21 @@ export const readChunkLights = (data: Uint8Array | ChunkRows, chunk: InitChunk):
 		}
 		let core: DataView | undefined;
 		let settings: DataView | undefined;
-		for (const [key, value] of readPropertyTable(fb, fb.deref(at))) {
+		forEachProperty(fb, fb.deref(at), (key, code, valueAt) => {
+			if (code !== ValueCode.Blob || (key !== CORE_KEY && key !== SETTINGS_KEY)) {
+				return;
+			}
+			const value = readPropertyValue(fb, code, valueAt);
 			if (value.type !== 'blob') {
-				continue;
+				return;
 			}
 			const view = new DataView(value.value.buffer, value.value.byteOffset, value.value.byteLength);
 			if (key === CORE_KEY) {
 				core = view;
-			} else if (key === SETTINGS_KEY) {
+			} else {
 				settings = view;
 			}
-		}
+		});
 		if (core?.byteLength !== CORE_SIZE || settings?.byteLength !== SETTINGS_SIZE) {
 			throw new FormatError(
 				`light ${row.id} blobs are ${core?.byteLength ?? 'absent'}/${settings?.byteLength ?? 'absent'} bytes, expected ${CORE_SIZE}/${SETTINGS_SIZE}`,

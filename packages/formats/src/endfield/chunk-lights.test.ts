@@ -111,8 +111,7 @@ const buildChunk = (options: { coreSize?: number } = {}): Uint8Array => {
 };
 
 test('readChunkLights decodes the light entities from their rows', () => {
-	const data = buildChunk();
-	const lights = readChunkLights(data, parseInitChunk(data));
+	const lights = readChunkLights(parseInitChunk(buildChunk()));
 	assert.equal(lights.length, 1);
 	const [light] = lights;
 	assert.equal(light.levelTag, 3);
@@ -133,6 +132,5 @@ test('readChunkLights decodes the light entities from their rows', () => {
 });
 
 test('readChunkLights rejects blobs of another size', () => {
-	const data = buildChunk({ coreSize: 240 });
-	assert.throws(() => readChunkLights(data, parseInitChunk(data)), FormatError);
+	assert.throws(() => readChunkLights(parseInitChunk(buildChunk({ coreSize: 240 }))), FormatError);
 });

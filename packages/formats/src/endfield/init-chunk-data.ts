@@ -1,8 +1,10 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 import { FlatBuffer } from '../binary/flatbuffer.ts';
 import type { Aabb } from '../unity/values.ts';
 
 import { levelTagOf } from './level-partition.ts';
+import type { ChunkRow, ChunkRows } from './mono-objects.ts';
 
 // static scenery placements (docs/game-data/world.md#static-scenery-initchunkdata-and-streamingchunkdata).
 // framing ported from An1X3R/Endfield-map-extractor (MIT, `extractor_core/{instances,flatbuffer}.py`,
@@ -83,6 +85,8 @@ export interface InitChunk {
 	origin: { x: number; z: number } | null;
 	objects: ChunkObject[];
 	groups: ComponentGroup[];
+	/** the underlying 8-slot root and union rows, shared with light, foliage, and MonoBehaviour readers */
+	rows: ChunkRows;
 }
 
 /** a draw call of a static renderer */
@@ -299,6 +303,43 @@ export const parseDynamicChunk = (init: Uint8Array, streaming: Uint8Array): Init
 	return parseChunk(new FlatBuffer(init), new FlatBuffer(streaming));
 };
 
+/**
+ * parses an 8-byte-per-column ECS descriptor table (`u16 id, u16 stride, u32 reserved`) and checks that its
+ * column-major layout fills `blobLength` exactly
+ *
+ * @param descriptors raw descriptor bytes (8 bytes per column)
+ * @param count entity count
+ * @param blobLength byte length of the paired column-major blob
+ * @param label context name for error messages
+ * @param options.checkReserved require the reserved u32 of every descriptor to be 0 (default `false`)
+ * @returns column descriptors with computed byte offsets
+ * @throws {FormatError} on reserved-bit or blob-size mismatch
+ */
+export const parseComponentColumns = (
+	descriptors: Uint8Array,
+	count: number,
+	blobLength: number,
+	label: string,
+	options?: { checkReserved?: boolean },
+): ComponentColumn[] => {
+	const view = new ByteView(descriptors, label);
+	const columns: ComponentColumn[] = [];
+	const checkReserved = options?.checkReserved ?? false;
+	let cursor = 0;
+	for (let o = 0; o + 8 <= descriptors.length; o += 8) {
+		if (checkReserved && view.u32(o + 4) !== 0) {
+			throw new FormatError(`${label} descriptor ${o / 8} has non-zero reserved bits`);
+		}
+		const stride = view.u16(o + 2);
+		columns.push({ id: view.u16(o), stride, offset: cursor });
+		cursor += stride * count;
+	}
+	if (blobLength !== cursor) {
+		throw new FormatError(`${label} blob is ${blobLength} bytes, descriptors need ${cursor}`);
+	}
+	return columns;
+};
+
 const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 	const root = fb.root();
 	const idsRoot = idsFb.root();
@@ -328,6 +369,7 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 	}
 
 	const objects: ChunkObject[] = [];
+	const chunkRows: ChunkRow[] = [];
 	{
 		const ids = fb.vector(root, 3);
 		const kinds = fb.vector(root, 4);
@@ -336,15 +378,18 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 			throw new FormatError('init chunk object vectors differ in length');
 		}
 		for (let i = 0; i < ids.length; i++) {
-			const row = fb.tableAt(rows.start, i);
+			const id = fb.u32(ids.start + i * 4);
+			const tag = fb.u8(kinds.start + i);
+			const table = fb.tableAt(rows.start, i);
 			// left out of the row when it's the default, 0
-			const layerAt = fb.field(row, 1);
+			const layerAt = fb.field(table, 1);
 			objects.push({
-				id: fb.u32(ids.start + i * 4),
-				kind: fb.u8(kinds.start + i),
-				name: fb.stringField(row, 0),
+				id,
+				kind: tag,
+				name: fb.stringField(table, 0),
 				layer: layerAt === undefined ? StreamingLayer.Default : fb.u8(layerAt),
 			});
+			chunkRows.push({ id, tag, table });
 		}
 	}
 
@@ -380,35 +425,25 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 				}
 			}
 
-			const columns: ComponentColumn[] = [];
-			let cursor = 0;
-			{
-				const descriptors = fb.vector(group, 3);
-				for (let i = 0; i < descriptors.length; i++) {
-					const at = descriptors.start + i * 8;
-					if (fb.u32(at + 4) !== 0) {
-						throw new FormatError(`group ${g} descriptor ${i} has non-zero reserved bits`);
-					}
-					const stride = fb.u16(at + 2);
-					columns.push({ id: fb.u16(at), stride, offset: cursor });
-					cursor += stride * count;
-				}
-			}
-
+			const descriptors = fb.vector(group, 3);
 			const blobAt = fb.field(group, 4);
 			if (blobAt === undefined) {
 				throw new FormatError(`group ${g} has no component blob`);
 			}
 			const blob = fb.byteVector(fb.deref(blobAt), 0);
-			if (blob.length !== cursor) {
-				throw new FormatError(`group ${g} blob is ${blob.length} bytes, descriptors need ${cursor}`);
-			}
+			const columns = parseComponentColumns(
+				fb.subarray(descriptors.start, descriptors.length * 8),
+				count,
+				blob.length,
+				`group ${g}`,
+				{ checkReserved: true },
+			);
 
 			groups.push({ ids, bounds, columns, blob });
 		}
 	}
 
-	return { version, origin, objects, groups };
+	return { version, origin, objects, groups, rows: { fb, version, rows: chunkRows } };
 };
 
 /**

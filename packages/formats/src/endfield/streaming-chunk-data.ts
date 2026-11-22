@@ -1,12 +1,20 @@
 import { FormatError } from '../binary/binary-reader.ts';
 
 import { ChunkObjectKind } from './init-chunk-data.ts';
-import { type ChunkRows, readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
+import {
+	type ChunkRow,
+	type ChunkRows,
+	forEachProperty,
+	readChunkRows,
+	readPropertyValue,
+	type MonoValue,
+	ValueCode,
+} from './mono-objects.ts';
 
 // resource bindings of streamed objects (`StreamingChunkData_*`, sibling of `InitChunkData_*`; layout in
 // docs/game-data/world.md#streamingchunkdata). row readings follow Variante/endfield_research_kit (MIT,
 // `memory/game_data/world_chunk_union_vectors.md`). kind-1 objects are read with their Init row by
-// `readMonoObjects`; this flat view is for keys outside its component addressing (kind-2 properties, bits ≥ 32).
+// `readMonoObjects`; this lazy view is for keys outside its component addressing (kind-2 properties, bits ≥ 32).
 
 // #region types
 
@@ -23,23 +31,6 @@ export interface StreamingProperty {
 	value: MonoValue;
 }
 
-/** a streamed object's bindings */
-export interface StreamingRecord {
-	/** the object id, shared with InitChunkData */
-	id: number;
-	/** union tag, as InitChunkData's object kind */
-	kind: number;
-	properties: StreamingProperty[];
-}
-
-/** a parsed StreamingChunkData FlatBuffer */
-export interface StreamingChunk {
-	version: number;
-	records: StreamingRecord[];
-}
-
-// #endregion
-
 /**
  * an entity's place in the HLOD tree (the game's `HLODInfo`): a cluster hides once every child is loaded, and
  * a child hides while its parent is loaded and a sibling isn't (docs/game-data/world.md#lod-and-hlod)
@@ -52,6 +43,8 @@ export interface HlodLink {
 	/** the entity's index among its parent's children, or -1 without a parent */
 	index: number;
 }
+
+// #endregion
 
 /**
  * the property key of a decal entity's material: a rect decal's (InitChunkData component 27) or a WaterDecal
@@ -66,80 +59,153 @@ export const WATER_DECAL_MESH_KEY = 0xff000000;
 const HLOD_LINK_KEY = 0xff000000;
 
 /**
- * parses a decoded StreamingChunkData FlatBuffer
- *
- * @param data the file after `unpackHgPayload` (`hg/payload.ts`)
- * @returns every object's property bindings, in file order
- * @throws {FormatError} on any framing mismatch
+ * lazy view over a StreamingChunkData FlatBuffer. rows are indexed by object id on demand and property tables
+ * are scanned without allocating values for untouched keys.
  */
-export const parseStreamingChunk = (data: Uint8Array | ChunkRows): StreamingChunk => {
-	const { fb, version, rows } = readChunkRows(data);
-	const records = rows.map(({ id, tag, table }): StreamingRecord => {
-		const properties: StreamingProperty[] = [];
-		const add = (component: number, at: number) => {
-			for (const [key, value] of readPropertyTable(fb, at)) {
-				properties.push({ key, component, value });
+export class StreamingChunk {
+	readonly version: number;
+	/** underlying parsed root and union rows, shareable with `readFoliageGrids` and `readMonoObjects` */
+	readonly raw: ChunkRows;
+	/** union rows in file order */
+	readonly rows: readonly ChunkRow[];
+	#byId: Map<number, ChunkRow> | undefined;
+
+	/**
+	 * @param data the file after `unpackHgPayload` (`hg/payload.ts`), or already-parsed {@link ChunkRows}
+	 * @throws {FormatError} on any root framing mismatch
+	 */
+	constructor(data: Uint8Array | ChunkRows) {
+		const raw = readChunkRows(data);
+		this.version = raw.version;
+		this.raw = raw;
+		this.rows = raw.rows;
+	}
+
+	/**
+	 * @param id object id
+	 * @returns whether this chunk has a row for `id`
+	 */
+	has(id: number): boolean {
+		return this.#rowOf(id) !== undefined;
+	}
+
+	/**
+	 * @param target object id or row from {@link rows}
+	 * @param key property key
+	 * @returns the asset key bound under `key`, or `undefined` if absent
+	 * @throws {FormatError} if the key is bound more than once
+	 */
+	assetProperty(target: number | ChunkRow, key: number): bigint | undefined {
+		const row = typeof target === 'number' ? this.#rowOf(target) : target;
+		if (row === undefined) {
+			return undefined;
+		}
+		const { fb } = this.raw;
+		let found: bigint | undefined;
+		this.#forEachRowProperty(row, (_component, candidate, code, at) => {
+			if (candidate === key && code === ValueCode.Asset) {
+				if (found !== undefined) {
+					throw new FormatError(`object ${row.id} binds property 0x${key.toString(16)} twice`);
+				}
+				found = fb.u64(at);
 			}
-		};
-		switch (tag) {
+		});
+		return found;
+	}
+
+	/**
+	 * @param target object id or row from {@link rows}
+	 * @returns the entity's HLOD link, or `null` for an object outside every HLOD tree (no link, or a zeroed
+	 *   one)
+	 * @throws {FormatError} if the link's id isn't the object's
+	 */
+	hlodLink(target: number | ChunkRow): HlodLink | null {
+		const row = typeof target === 'number' ? this.#rowOf(target) : target;
+		if (row === undefined) {
+			return null;
+		}
+		const { fb } = this.raw;
+		let result: HlodLink | null = null;
+		this.#forEachRowProperty(row, (_component, candidate, code, at) => {
+			if (result !== null || candidate !== HLOD_LINK_KEY || code !== ValueCode.Int4) {
+				return;
+			}
+			const id = fb.i32(at);
+			if (id === 0) {
+				return;
+			}
+			// the link's own id is the entity id, which is how children name their parent
+			if (id >>> 0 !== row.id) {
+				throw new FormatError(`object ${row.id} has an HLOD link of id ${id >>> 0}`);
+			}
+			const parent = fb.i32(at + 4);
+			result = {
+				parent: parent === 0 ? null : parent >>> 0,
+				childCount: fb.i32(at + 8),
+				index: fb.i32(at + 12),
+			};
+		});
+		return result;
+	}
+
+	/**
+	 * decodes every property of one row in stored order
+	 *
+	 * @param target object id or row from {@link rows}
+	 * @returns the row's decoded properties, or `[]` if absent
+	 */
+	properties(target: number | ChunkRow): StreamingProperty[] {
+		const row = typeof target === 'number' ? this.#rowOf(target) : target;
+		if (row === undefined) {
+			return [];
+		}
+		const { fb } = this.raw;
+		const out: StreamingProperty[] = [];
+		this.#forEachRowProperty(row, (component, key, code, at) => {
+			out.push({ key, component, value: readPropertyValue(fb, code, at) });
+		});
+		return out;
+	}
+
+	#rowOf(id: number): ChunkRow | undefined {
+		if (this.#byId === undefined) {
+			this.#byId = new Map();
+			for (const row of this.rows) {
+				this.#byId.set(row.id, row);
+			}
+		}
+		return this.#byId.get(id);
+	}
+
+	#forEachRowProperty(
+		row: ChunkRow,
+		visit: (component: number, key: number, code: number, valueAt: number) => void,
+	): void {
+		const { fb } = this.raw;
+		switch (row.tag) {
 			case ChunkObjectKind.Mono: {
-				const components = fb.vector(table, 4);
+				const components = fb.vector(row.table, 4);
 				for (let c = 0; c < components.length; c++) {
-					add(c, fb.tableAt(components.start, c));
+					forEachProperty(fb, fb.tableAt(components.start, c), (key, code, at) => visit(c, key, code, at));
 				}
 				break;
 			}
 			default: {
-				const at = fb.field(table, 3);
+				const at = fb.field(row.table, 3);
 				if (at !== undefined) {
-					add(0, fb.deref(at));
+					forEachProperty(fb, fb.deref(at), (key, code, valueAt) => visit(0, key, code, valueAt));
 				}
 				break;
 			}
 		}
-		return { id, kind: tag, properties };
-	});
-	return { version, records };
-};
+	}
+}
 
 /**
- * @param record a streamed object
- * @returns the entity's HLOD link, or `null` for an object outside every HLOD tree (no link, or a zeroed one)
- * @throws {FormatError} if the link's id isn't the object's
+ * opens a lazy view over a decoded StreamingChunkData FlatBuffer
+ *
+ * @param data the file after `unpackHgPayload` (`hg/payload.ts`), or already-parsed {@link ChunkRows}
+ * @returns the chunk view
+ * @throws {FormatError} on any root framing mismatch
  */
-export const hlodLink = (record: StreamingRecord): HlodLink | null => {
-	for (const { key, value } of record.properties) {
-		if (key !== HLOD_LINK_KEY || value.type !== 'int4') {
-			continue;
-		}
-		const [id, parent, childCount, index] = value.value;
-		if (id === 0) {
-			return null;
-		}
-		// the link's own id is the entity id, which is how children name their parent
-		if (id >>> 0 !== record.id) {
-			throw new FormatError(`object ${record.id} has an HLOD link of id ${id >>> 0}`);
-		}
-		return { parent: parent === 0 ? null : parent >>> 0, childCount, index };
-	}
-	return null;
-};
-
-/**
- * @param record a streamed object
- * @param key property key
- * @returns the asset key bound under `key`, or `undefined` if the object has no such asset property
- * @throws {FormatError} if the key is bound more than once
- */
-export const assetProperty = (record: StreamingRecord, key: number): bigint | undefined => {
-	let found: bigint | undefined;
-	for (const { key: candidate, value } of record.properties) {
-		if (candidate === key && value.type === 'asset') {
-			if (found !== undefined) {
-				throw new FormatError(`object ${record.id} binds property 0x${key.toString(16)} twice`);
-			}
-			found = value.hash;
-		}
-	}
-	return found;
-};
+export const parseStreamingChunk = (data: Uint8Array | ChunkRows): StreamingChunk => new StreamingChunk(data);

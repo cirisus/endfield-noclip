@@ -208,14 +208,19 @@ export const readChunkRows = (data: Uint8Array | ChunkRows): ChunkRows => {
 };
 
 /**
- * reads a keyed property table: `3 [u32 key] 4 [u8 value type] 5 [uoffset → value]`
+ * walks a keyed property table (`3 [u32 key] 4 [u8 value type] 5 [uoffset → value]`) without allocating
+ * {@link MonoValue} wrappers for entries the caller doesn't need
  *
  * @param fb the chunk's reader
- * @param table position of the table
- * @returns the keys and values in stored order (keys can repeat)
+ * @param table position of the property table
+ * @param visit invoked once per entry in stored order with `(key, valueCode, valueAt)`
  * @throws {FormatError} if the three vectors differ in length
  */
-export const readPropertyTable = (fb: FlatBuffer, table: number): [key: number, value: MonoValue][] => {
+export const forEachProperty = (
+	fb: FlatBuffer,
+	table: number,
+	visit: (key: number, code: number, valueAt: number) => void,
+): void => {
 	const keys = fb.vector(table, 3);
 	const codes = fb.vector(table, 4);
 	const values = fb.vector(table, 5);
@@ -224,28 +229,36 @@ export const readPropertyTable = (fb: FlatBuffer, table: number): [key: number, 
 			`property table has ${keys.length} keys, ${codes.length} types, ${values.length} values`,
 		);
 	}
-	return Array.from({ length: keys.length }, (_, v) => [
-		fb.u32(keys.start + v * 4),
-		readValue(fb, fb.u8(codes.start + v), fb.deref(values.start + v * 4)),
-	]);
-};
-
-const readComponents = (fb: FlatBuffer, row: number): MonoComponent[] => {
-	const list = fb.vector(row, 4);
-	const components: MonoComponent[] = [];
-	for (let c = 0; c < list.length; c++) {
-		const table = fb.tableAt(list.start, c);
-		const typeAt = fb.field(table, 0);
-		components.push({
-			type: typeAt === undefined ? 0 : fb.u32(typeAt),
-			fields: new Map(readPropertyTable(fb, table)),
-		});
+	for (let v = 0; v < keys.length; v++) {
+		visit(fb.u32(keys.start + v * 4), fb.u8(codes.start + v), fb.deref(values.start + v * 4));
 	}
-	return components;
 };
 
-const readValue = (fb: FlatBuffer, code: number, at: number): MonoValue => {
-	const floats = (count: number): number[] => Array.from({ length: count }, (_, i) => fb.f32(at + i * 4));
+/**
+ * reads a keyed property table: `3 [u32 key] 4 [u8 value type] 5 [uoffset → value]`
+ *
+ * @param fb the chunk's reader
+ * @param table position of the table
+ * @returns the keys and values in stored order (keys can repeat)
+ * @throws {FormatError} if the three vectors differ in length
+ */
+export const readPropertyTable = (fb: FlatBuffer, table: number): [key: number, value: MonoValue][] => {
+	const entries: [key: number, value: MonoValue][] = [];
+	forEachProperty(fb, table, (key, code, at) => {
+		entries.push([key, readPropertyValue(fb, code, at)]);
+	});
+	return entries;
+};
+
+/**
+ * decodes one value from a keyed property table
+ *
+ * @param fb the chunk's reader
+ * @param code a {@link ValueCode} value
+ * @param at dereferenced position of the value
+ * @returns the decoded value
+ */
+export const readPropertyValue = (fb: FlatBuffer, code: number, at: number): MonoValue => {
 	switch (code) {
 		case ValueCode.Bool: {
 			return { type: 'bool', value: fb.u8(at) !== 0 };
@@ -263,19 +276,20 @@ const readValue = (fb: FlatBuffer, code: number, at: number): MonoValue => {
 			return { type: 'uint64', value: fb.u64(at) };
 		}
 		case ValueCode.Vector3: {
-			const [x, y, z] = floats(3);
-			return { type: 'vector3', value: [x, y, z] };
+			return { type: 'vector3', value: [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8)] };
 		}
 		case ValueCode.Vector4: {
-			const [x, y, z, w] = floats(4);
-			return { type: 'vector4', value: [x, y, z, w] };
+			return { type: 'vector4', value: [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8), fb.f32(at + 12)] };
 		}
 		case ValueCode.Int4: {
 			return { type: 'int4', value: [fb.i32(at), fb.i32(at + 4), fb.i32(at + 8), fb.i32(at + 12)] };
 		}
 		case ValueCode.Bounds: {
-			const v = floats(6);
-			return { type: 'bounds', center: [v[0], v[1], v[2]], extents: [v[3], v[4], v[5]] };
+			return {
+				type: 'bounds',
+				center: [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8)],
+				extents: [fb.f32(at + 12), fb.f32(at + 16), fb.f32(at + 20)],
+			};
 		}
 		case ValueCode.Asset: {
 			return { type: 'asset', hash: fb.u64(at), kind: fb.u32(at + 8) };
@@ -301,4 +315,18 @@ const readValue = (fb: FlatBuffer, code: number, at: number): MonoValue => {
 			return { type: 'unknown', code };
 		}
 	}
+};
+
+const readComponents = (fb: FlatBuffer, row: number): MonoComponent[] => {
+	const list = fb.vector(row, 4);
+	const components: MonoComponent[] = [];
+	for (let c = 0; c < list.length; c++) {
+		const table = fb.tableAt(list.start, c);
+		const typeAt = fb.field(table, 0);
+		components.push({
+			type: typeAt === undefined ? 0 : fb.u32(typeAt),
+			fields: new Map(readPropertyTable(fb, table)),
+		});
+	}
+	return components;
 };

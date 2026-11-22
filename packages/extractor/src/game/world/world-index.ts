@@ -22,15 +22,13 @@ import {
 } from '@endfield-noclip/formats/endfield/level-partition';
 import { parseMapConfig, type MapConfig } from '@endfield-noclip/formats/endfield/map-config';
 import { parseMissionRuntime, type MissionRuntime } from '@endfield-noclip/formats/endfield/mission-runtime';
-import { type ChunkRows, readChunkRows } from '@endfield-noclip/formats/endfield/mono-objects';
 import { parseStreamAreas, type StreamAreaTable } from '@endfield-noclip/formats/endfield/stream-area';
 import {
-	assetProperty,
-	hlodLink,
 	parseStreamingChunk,
 	DECAL_MATERIAL_KEY,
 	WATER_DECAL_MESH_KEY,
 	type HlodLink,
+	type StreamingChunk,
 } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
 import type { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
 import { unpackHgPayload } from '@endfield-noclip/formats/hg/payload';
@@ -448,49 +446,56 @@ export class WorldIndex {
 		waterDecalMeshes: Map<number, bigint>;
 		hlodClusters: Map<number, HlodLink>;
 	}> {
-		const data = await this.readInitPayload(file);
-		const chunk = parseInitChunk(data);
-		const initRows = readChunkRows(data);
-		const lights = readChunkLights(initRows, chunk);
+		const chunk = parseInitChunk(await this.readInitPayload(file));
+		const lights = readChunkLights(chunk);
 		const entities = indexEntities(chunk, file, partition);
-		const foliaged = hasFoliageGrids(initRows);
-		const decals = entities.some((entity) => entity.decal !== null || entity.waterDecal !== null);
+		const foliaged = hasFoliageGrids(chunk.rows);
+		const decalIds: number[] = [];
+		const waterDecalIds: number[] = [];
 		// clusters load on the HLOD layers; the links of their children, in the cell files, aren't read
-		const hlodLayers = new Set(
-			entities.filter((entity) => isHlodLayer(entity.layer)).map((entity) => entity.id),
-		);
-		let streamRows: ChunkRows | null = null;
-		if (foliaged || decals || hlodLayers.size > 0) {
-			const streaming = await this.readStreamingPayload(file);
-			if (streaming === null) {
+		const hlodIds: number[] = [];
+		for (const entity of entities) {
+			if (entity.decal !== null || entity.waterDecal !== null) {
+				decalIds.push(entity.id);
+			}
+			if (entity.waterDecal !== null) {
+				waterDecalIds.push(entity.id);
+			}
+			if (isHlodLayer(entity.layer)) {
+				hlodIds.push(entity.id);
+			}
+		}
+		let streaming: StreamingChunk | null = null;
+		if (foliaged || decalIds.length > 0 || hlodIds.length > 0) {
+			const data = await this.readStreamingPayload(file);
+			if (data === null) {
 				throw new Error(
 					`${file.name} has foliage grids, decals or HLOD-layer entities but no StreamingChunkData`,
 				);
 			}
-			streamRows = readChunkRows(streaming);
+			streaming = parseStreamingChunk(data);
 		}
-		const foliage = foliaged && streamRows !== null ? readFoliageGrids(initRows, streamRows) : [];
+		const foliage = foliaged && streaming !== null ? readFoliageGrids(chunk.rows, streaming.raw) : [];
 		const decalMaterials = new Map<number, bigint>();
 		const waterDecalMeshes = new Map<number, bigint>();
-		const waterDecals = new Set(
-			entities.filter((entity) => entity.waterDecal !== null).map((entity) => entity.id),
-		);
 		const hlodClusters = new Map<number, HlodLink>();
-		if ((decals || hlodLayers.size > 0) && streamRows !== null) {
-			for (const record of parseStreamingChunk(streamRows).records) {
-				const material = assetProperty(record, DECAL_MATERIAL_KEY);
+		if (streaming !== null) {
+			for (const id of decalIds) {
+				const material = streaming.assetProperty(id, DECAL_MATERIAL_KEY);
 				if (material !== undefined) {
-					decalMaterials.set(record.id, material);
+					decalMaterials.set(id, material);
 				}
-				const mesh = waterDecals.has(record.id) ? assetProperty(record, WATER_DECAL_MESH_KEY) : undefined;
+			}
+			for (const id of waterDecalIds) {
+				const mesh = streaming.assetProperty(id, WATER_DECAL_MESH_KEY);
 				if (mesh !== undefined) {
-					waterDecalMeshes.set(record.id, mesh);
+					waterDecalMeshes.set(id, mesh);
 				}
-				if (hlodLayers.has(record.id)) {
-					const link = hlodLink(record);
-					if (link !== null && link.childCount > 0) {
-						hlodClusters.set(record.id, link);
-					}
+			}
+			for (const id of hlodIds) {
+				const link = streaming.hlodLink(id);
+				if (link !== null && link.childCount > 0) {
+					hlodClusters.set(id, link);
 				}
 			}
 		}
@@ -535,15 +540,17 @@ export class WorldIndex {
 		const chunk = parseInitChunk(await this.readInitPayload(file));
 		const entities = indexEntities(chunk, file, partition);
 		const decalMaterials = new Map<number, bigint>();
-		if (entities.some((entity) => entity.decal !== null)) {
-			const streaming = await this.readStreamingPayload(file);
-			if (streaming === null) {
+		const decalIds = entities.filter((entity) => entity.decal !== null).map((entity) => entity.id);
+		if (decalIds.length > 0) {
+			const data = await this.readStreamingPayload(file);
+			if (data === null) {
 				throw new Error(`${file.name} has decals but no StreamingChunkData`);
 			}
-			for (const record of parseStreamingChunk(streaming).records) {
-				const material = assetProperty(record, DECAL_MATERIAL_KEY);
+			const streaming = parseStreamingChunk(data);
+			for (const id of decalIds) {
+				const material = streaming.assetProperty(id, DECAL_MATERIAL_KEY);
 				if (material !== undefined) {
-					decalMaterials.set(record.id, material);
+					decalMaterials.set(id, material);
 				}
 			}
 		}

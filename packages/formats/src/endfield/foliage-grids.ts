@@ -3,7 +3,13 @@ import { unique } from '@mary-ext/array-fns';
 import { FormatError } from '../binary/binary-reader.ts';
 import type { Aabb } from '../unity/values.ts';
 
-import { ChunkObjectKind, Component, type RendererDraw, type StaticRenderer } from './init-chunk-data.ts';
+import {
+	ChunkObjectKind,
+	Component,
+	parseComponentColumns,
+	type RendererDraw,
+	type StaticRenderer,
+} from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
 import { type ChunkRows, readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
 
@@ -198,34 +204,23 @@ const readArchetypes = (
 		const count = intProperty(props, (ENTITY_COUNT_KEY | a) >>> 0, id);
 		const descriptors = blobProperty(props, (DESCRIPTORS_KEY | a) >>> 0, id);
 		const blob = blobProperty(props, (BLOB_KEY | a) >>> 0, id);
-		const dd = new DataView(descriptors.buffer, descriptors.byteOffset, descriptors.byteLength);
 		const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
-		const columns = new Map<number, { stride: number; offset: number }>();
-		let cursor = 0;
-		for (let o = 0; o + 8 <= descriptors.length; o += 8) {
-			const stride = dd.getUint16(o + 2, true);
-			columns.set(dd.getUint16(o, true), { stride, offset: cursor });
-			cursor += stride * count;
-		}
-		if (cursor !== blob.length) {
-			throw new FormatError(
-				`grid ${id} archetype ${a} blob is ${blob.length} bytes, descriptors need ${cursor}`,
-			);
-		}
+		const parsed = parseComponentColumns(descriptors, count, blob.length, `grid ${id} archetype ${a}`);
+		const columns = new Map(parsed.map((column) => [column.id, column]));
 
 		const boundsColumns = Array.from({ length: 6 }, (_, c) => columns.get(Component.BoundsCenterX + c));
 		let drawColumn: { id: number; stride: number; offset: number } | undefined;
 		let instanceColumn: { id: number; stride: number; offset: number } | undefined;
 		for (const [column, layout] of columns) {
 			if (column >= Component.DrawInfoFirst && column <= Component.DrawInfoLast) {
-				drawColumn = { id: column, ...layout };
+				drawColumn = layout;
 			}
 			const isInstances =
 				type === FoliageGridType.Grass
 					? column >= GRASS_CLUSTER_FIRST && column <= GRASS_CLUSTER_LAST
 					: column === TREE_INSTANCE;
 			if (isInstances) {
-				instanceColumn = { id: column, ...layout };
+				instanceColumn = layout;
 			}
 		}
 		if (boundsColumns.some((column) => column?.stride !== 4) || drawColumn === undefined) {

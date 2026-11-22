@@ -16,7 +16,7 @@ import {
 
 import { groupBounds, groupColumn, groupNames, type InitChunk } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
-import { assetProperty, type StreamingChunk } from './streaming-chunk-data.ts';
+import type { StreamingChunk } from './streaming-chunk-data.ts';
 
 // open-world water (docs/game-data/water.md): joins InitChunkData component 30 placements, StreamingChunkData
 // mesh/config bindings (`WaterProperty`), and kind-1 `Global_Water_Config` objects.
@@ -91,7 +91,6 @@ export interface WaterGlobalBinding {
  * @throws {FormatError} if a surface column is malformed or a surface lacks its mesh or config binding
  */
 export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): WaterSurface[] => {
-	const records = new Map(streaming.records.map((record) => [record.id, record]));
 	const names = new Map(init.objects.map((object) => [object.id, object.name]));
 	const surfaces: WaterSurface[] = [];
 	for (const group of init.groups) {
@@ -123,19 +122,26 @@ export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): W
 			];
 
 			const renderTypeMask = view.getUint32(at, true);
-			const matrix = new Float32Array(Array.from({ length: 16 }, (_, k) => f32(8 + k * 4)));
+			const matrix = new Float32Array(16);
+			for (let k = 0; k < 16; k++) {
+				matrix[k] = f32(8 + k * 4);
+			}
 			const param0 = vec4(72);
 			const param1 = vec4(88);
-			if (renderTypeMask === 0 || ![...matrix, ...param0, ...param1].every(Number.isFinite)) {
+			if (
+				renderTypeMask === 0 ||
+				!matrix.every(Number.isFinite) ||
+				!param0.every(Number.isFinite) ||
+				!param1.every(Number.isFinite)
+			) {
 				throw new FormatError(`water surface ${id} has an empty render mask or non-finite values`);
 			}
 
-			const record = records.get(id);
-			if (record === undefined) {
+			if (!streaming.has(id)) {
 				throw new FormatError(`water surface ${id} has no streaming record`);
 			}
-			const meshHash = assetProperty(record, WaterProperty.SurfaceMesh);
-			const configHash = assetProperty(record, WaterProperty.SurfaceConfig);
+			const meshHash = streaming.assetProperty(id, WaterProperty.SurfaceMesh);
+			const configHash = streaming.assetProperty(id, WaterProperty.SurfaceConfig);
 			if (meshHash === undefined || configHash === undefined) {
 				throw new FormatError(`water surface ${id} lacks its mesh or config binding`);
 			}
@@ -169,13 +175,13 @@ export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): W
 export const readWaterGlobalBindings = (init: InitChunk, streaming: StreamingChunk): WaterGlobalBinding[] => {
 	const names = new Map(init.objects.map((object) => [object.id, object.name]));
 	const bindings: WaterGlobalBinding[] = [];
-	for (const record of streaming.records) {
-		const configHash = assetProperty(record, WaterProperty.GlobalConfig);
+	for (const row of streaming.rows) {
+		const configHash = streaming.assetProperty(row, WaterProperty.GlobalConfig);
 		if (configHash !== undefined) {
 			bindings.push({
-				id: record.id,
-				levelTag: levelTagOf(record.id),
-				name: names.get(record.id) ?? '',
+				id: row.id,
+				levelTag: levelTagOf(row.id),
+				name: names.get(row.id) ?? '',
 				configHash,
 			});
 		}

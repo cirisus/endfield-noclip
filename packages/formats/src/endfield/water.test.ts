@@ -181,10 +181,10 @@ test('parseStreamingChunk reads kind-2 and kind-1 property tables', () => {
 	const chunk = parseStreamingChunk(buildStreaming());
 	assert.equal(chunk.version, 49);
 	assert.deepEqual(
-		chunk.records.map((record) => [
-			record.id,
-			record.kind,
-			record.properties.map((p) => [p.key, p.component, p.value.type === 'asset' ? p.value.hash : null]),
+		chunk.rows.map((row) => [
+			row.id,
+			row.tag,
+			chunk.properties(row).map((p) => [p.key, p.component, p.value.type === 'asset' ? p.value.hash : null]),
 		]),
 		[
 			[
