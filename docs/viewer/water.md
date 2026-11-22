@@ -16,11 +16,12 @@ under 1 MiB packed); resident ones inside the frustum are drawn, up to 4096.
 
 ## surface meshes
 
-the vertex stage reads the dequantized `unorm16x4` positions and, for surfaces whose `meshNormals`
-is set and whose mesh has them, its octahedral normals; other surfaces face straight up. the packer
-sets `meshNormals` on proxy-only surfaces only, standing in for the game's upward-facing grid
-([how surfaces are drawn](../game-data/water.md#how-surfaces-are-drawn)); this also hides the
-polygon meshes' downward-facing triangles. transforms are made eye-relative on the CPU.
+the vertex stage reads the dequantized `unorm16x4` positions and, for placed surfaces whose mesh has
+them, its octahedral normals, which both the game's grid and its mesh pass shade around
+([how surfaces are drawn](../game-data/water.md#how-surfaces-are-drawn)); volume surfaces face
+straight up. both passes drop back faces, as the game culls them, by the winding the surface's
+transform leaves, which hides the polygon meshes' downward-wound twin triangles from above and every
+surface from below. transforms are made eye-relative on the CPU.
 
 ## `Global_Water_Config`
 
@@ -51,9 +52,8 @@ where the game writes a G-buffer and lights it full-screen after the opaque scen
 
 it differs from the game in that:
 
-- LOD surfaces face up at every distance, where the game shades them around their mesh normals
-  beyond its grid's reach; the grid's wave displacement isn't drawn
-- back faces are drawn, where the game culls them
+- LOD surfaces are drawn as their meshes, where the game redraws them near the camera as a grid
+  resampled from a top-down view, and the grid's wave displacement isn't drawn
 - the sun highlight isn't aimed at the nearest point of the sun's disc and has no multiple
   scattering, and the direct light is divided by π like the viewer's other sun terms
   ([sun](lighting.md#sun))

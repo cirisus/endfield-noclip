@@ -267,13 +267,13 @@ packs or renders correctly.
 
 - water ([viewer](viewer/water.md#shading)): sector flow tiles and the rain map are packed but
   unread (flow and foam come from the global map); the LOD grid's wave displacement, rain and
-  character ripples and ground wetness around water aren't drawn. LOD surfaces face up at every
-  distance, where the game shades them around their mesh normals beyond its grid's reach
-  ([how surfaces are drawn](game-data/water.md#how-surfaces-are-drawn)), and back faces are drawn,
-  where the game culls them. `FlowmapOption` 1's coverage mask isn't applied, the sun highlight
-  isn't aimed at the nearest point of the sun's disc and has no multiple scattering, configs sharing
-  a `materialIndex` keep their own looks where the game gives both the last loaded's, and effects
-  below the surface show over it, unchecked against the game
+  character ripples and ground wetness around water aren't drawn; LOD surfaces are drawn as their
+  meshes rather than the game's grid resampled from above
+  ([how surfaces are drawn](game-data/water.md#how-surfaces-are-drawn)). `FlowmapOption` 1's
+  coverage mask isn't applied, the sun highlight isn't aimed at the nearest point of the sun's disc
+  and has no multiple scattering, configs sharing a `materialIndex` keep their own looks where the
+  game gives both the last loaded's, and effects below the surface show over it, unchecked against
+  the game
 - [foam boxes](viewer/water.md#foam-boxes) (`HGRP/WaterDecal`) ignore their per-placement
   `HGWaterDecalRenderer` values (neutral on every map02 prefab), their displacement and the
   distortion texture's mip bias (an unnamed material value); which depth the game tests them against
@@ -296,13 +296,10 @@ packs or renders correctly.
   [pumped pools](game-data/water.md#depletable-pools) offer only empty, authored and full, not the
   fills between that a pump can stop at; whether the server's starting amount always equals the
   authored one, and whether an empty pool's surface still draws in game, aren't checked
-- waterfalls missing: Jingyu's pool falls (near unity −763, 209, −1190) and the small cascades
-  beside it, and the cascade over the lip of Si's Painting's lily pool (near 980, 293, 972), show
-  white in game, but the steep river surface running down each lip draws as clear water, a faint
-  wash over the rock (and at Jingyu the VFXWater sheet sits inside the rocks in front of it). the
-  static [foam boxes](viewer/water.md#foam-boxes) around them are drawn, and at Si's Painting the
-  pool box's streaks land only faintly at the foot; the lead is the steep segment's own mesh
-  normals, which the viewer faces up
+- waterfalls: Jingyu's pool falls (near unity −763, 209, −1190) and the cascade over the lip of Si's
+  Painting's lily pool (near 980, 293, 972) now draw as foamed water down the rock, but read
+  grey-teal where the game shows them white; unchecked against an in-game shot from the same pose.
+  at Jingyu the VFXWater sheet still sits inside the rocks in front of the falls
 - WaterDecal: the displacement pass (`_BLEND_DISPLACEMENT`) isn't drawn, `_BLEND_BASECOLOR2` boxes
   (11 map02 materials) stay unsupported, and prefab boxes' renderer values aren't packed
   ([foam boxes](viewer/water.md#foam-boxes))

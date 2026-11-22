@@ -22,6 +22,7 @@ import {
 	WATER_DEPTH_FORMAT,
 	WATER_FOAM_FORMAT,
 } from '../frame/render-targets.ts';
+import { FRONT_FACE } from '../meshes/pipeline-variants.ts';
 import { NORMAL_STREAM, POSITION_STREAM } from '../meshes/vertex-bindings.ts';
 import { postCommonSource } from '../post/shader-source.ts';
 import screenSpaceWgsl from '../shaders/common/screen-space.wgsl?raw';
@@ -199,8 +200,12 @@ export class WaterRenderer {
 			// meshes without normals bind their positions as them, which the shader ignores
 			buffers: [POSITION_STREAM, NORMAL_STREAM],
 		};
-		// seen from below too
-		const primitive: GPUPrimitiveState = { topology: 'triangle-list', cullMode: 'none' };
+		// the shader drops back faces, by the winding the transform leaves
+		const primitive: GPUPrimitiveState = {
+			topology: 'triangle-list',
+			frontFace: FRONT_FACE,
+			cullMode: 'none',
+		};
 		void pipelines.prepare(SHADE_KEY, () => ({
 			layout,
 			vertex,
@@ -320,7 +325,9 @@ export class WaterRenderer {
 			data.set(resident.positionOffset, at + 12);
 			words[at + 15] = surface.config;
 			data.set(resident.positionScale, at + 16);
-			data[at + 19] = surface.meshNormals && (resident.streamFlags & GeometryFlags.HasNormals) !== 0 ? 1 : 0;
+			// volumes are flat polygons facing up
+			data[at + 19] =
+				surface.kind === 'placed' && (resident.streamFlags & GeometryFlags.HasNormals) !== 0 ? 1 : 0;
 			this.#draws.push({ geometry: resident, slot });
 			slot++;
 		}

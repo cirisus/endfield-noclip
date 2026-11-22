@@ -38,12 +38,15 @@ surfaces have no materials of their own: the render pipeline draws them all with
 
 every camera-visible surface is drawn into the water G-buffer as its own mesh, shaded around the
 mesh's normals. a **LOD** surface is also drawn top-down into the height layer `param1.y` names, and
-what that view sees near the camera is redrawn as a camera-centred grid displaced by the waves,
-whose normals point up. the grid draws first and writes 3 into the stencil; the mesh pass draws only
-where the stencil isn't 3. so near the camera an LOD surface shows the grid, and beyond the grid's
-reach (its exact extent isn't recovered, see [`Global_Water_Config`](#global_water_config)) its own
-mesh. both passes cull back faces, test depth LessEqual and write it, so only the nearest front face
-at a pixel is shaded. this is read off the passes' render states, not checked in game.
+what that view sees near the camera is redrawn as a camera-centred grid displaced by the waves. the
+top-down pass writes the mesh's world normal (oct-encoded, `_WaterPrepassNormalTexture`), and the
+grid reads it back at each vertex, bending it by the wave displacement where there is any, so the
+grid too is shaded around the mesh's normals: a steep segment running down a falls stays steep
+either way. the grid draws first and writes 3 into the stencil; the mesh pass draws only where the
+stencil isn't 3. so near the camera an LOD surface shows the grid, and beyond the grid's reach (its
+exact extent isn't recovered, see [`Global_Water_Config`](#global_water_config)) its own mesh. both
+passes cull back faces, test depth LessEqual and write it, so only the nearest front face at a pixel
+is shaded. this is read off the passes' render states, not checked in game.
 
 the level tag is `id >>> 27` as for every entity; tag 0 is shared content shown with every level.
 

@@ -636,8 +636,7 @@ WaterTable
   global     WaterGlobal | null   null without water, or when the package holds no surface
   configs    WaterConfigEntry[]   { name, values } deduplicated by asset key
   surfaces   WaterSurfaceEntry[]  { kind: 'placed' | 'volume', entityId, group, geometry,
-                                    transform, bounds, config, meshNormals,
-                                    volume (kind 'volume') }
+                                    transform, bounds, config, volume (kind 'volume') }
   volumes    WaterVolumeEntry[]   { entityId, base, heightMax, initial, fillSpeed,
                                     levels: { fraction, speed }[], control, parent }
 WaterGlobal  { mapSize, sectorSize, center, flowmapPrecision,
@@ -664,12 +663,8 @@ packing rules:
   with position and normal only.
 - **transform**: the column-major matrix becomes rows3x4 like instance transforms, but absolute (no
   block origin).
-- **mesh normals**: `meshNormals` is set on placed surfaces whose render type mask lacks the LOD bit
-  ([placements](game-data/water.md#placements-initchunkdata-component-30)). LOD and volume surfaces
-  are drawn facing straight up, a choice of ours: the game shades LOD surfaces with their mesh
-  normals beyond its wave grid's reach
-  ([how surfaces are drawn](game-data/water.md#how-surfaces-are-drawn)). the raw mask and `param1`
-  (nothing reads them) stay in `debug/water.json`'s rows.
+- **render type**: the raw render type mask and `param1` aren't packed (nothing reads them); they
+  stay in `debug/water.json`'s rows.
 - **visibility groups**: each surface's `group` indexes `StatesInfo.groups`, the owning level and
   the scene states of the files holding it (`gateWater` in
   [water.ts](../packages/extractor/src/pack/tables/water.ts)), shared with instances, lights and

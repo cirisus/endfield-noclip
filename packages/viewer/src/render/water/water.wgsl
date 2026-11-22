@@ -12,7 +12,7 @@ struct WaterSurface {
 	t2: vec4f,
 	// position dequantization: offset, w = config index (u32 bits)
 	offset: vec4f,
-	// w = 1 when the mesh has normals
+	// w = 1 to shade around the mesh's normals (a placed surface whose mesh has them), else straight up
 	scale: vec4f,
 }
 
@@ -90,6 +90,8 @@ struct VertexOut {
 	@location(0) rel: vec3f,
 	@location(1) normal: vec3f,
 	@location(2) @interpolate(flat) config: u32,
+	// 1 where the transform mirrors the mesh, which turns its front faces back
+	@location(3) @interpolate(flat) mirrored: u32,
 }
 
 @vertex
@@ -111,13 +113,23 @@ fn vs_water(@location(0) position: vec4f, @location(1) normal: vec2f, @builtin(i
 	}
 	out.normal = n;
 	out.config = bitcast<u32>(s.offset.w);
+	out.mirrored = select(0u, 1u, dot(cross(s.t0.xyz, s.t1.xyz), s.t2.xyz) < 0.0);
 	return out;
+}
+
+// the game culls the surfaces' back faces in every pass, which hides the polygon meshes' downward twins from
+// above and every surface from below
+fn back_face(in: VertexOut, front: bool) -> bool {
+	return front == (in.mirrored != 0u);
 }
 
 // the nearest water surface's depth, for the composite and the foam boxes: the surfaces' fragments, less those
 // behind the scene as `fs_water` drops them
 @fragment
-fn fs_water_depth(in: VertexOut) {
+fn fs_water_depth(in: VertexOut, @builtin(front_facing) front: bool) {
+	if (back_face(in, front)) {
+		discard;
+	}
 	let size = vec2f(textureDimensions(background));
 	let depth = textureLoad(depth_texture, vec2i(in.position.xy), 0);
 	if (depth > 0.0 && length(view_ray(in.position.xy / size) * view_depth(depth)) < length(in.rel) - 0.02) {
@@ -155,7 +167,10 @@ fn column_inscatter(extinction: vec3f, depth: f32) -> vec3f {
 }
 
 @fragment
-fn fs_water(in: VertexOut) -> @location(0) vec4f {
+fn fs_water(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+	if (back_face(in, front)) {
+		discard;
+	}
 	let c = configs[in.config];
 	let px = vec2i(in.position.xy);
 	let size = vec2f(textureDimensions(background));

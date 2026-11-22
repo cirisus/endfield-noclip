@@ -182,7 +182,10 @@ export interface WaterConfig {
 /** one water surface: a placed surface or a water volume's */
 export type WaterSurfaceEntry = WaterPlacedSurface | WaterVolumeSurface;
 
-/** a surface the scene places (InitChunkData component 30), with its own mesh */
+/**
+ * a surface the scene places (InitChunkData component 30), with its own mesh, shaded around the mesh's
+ * normals where it has them, as the game shades both its LOD grid and its meshes
+ */
 export interface WaterPlacedSurface extends WaterSurfaceBase {
 	kind: 'placed';
 }
@@ -204,8 +207,8 @@ export interface WaterSurfaceBase {
 	/** index into `StatesInfo.groups`: the owning level and the scene states that load the surface */
 	group: number;
 	/**
-	 * geometry-table id. only positions are needed (the shading works in world x, z), and some meshes have no
-	 * UVs; no tangents are generated
+	 * geometry-table id. the shading works in world x, z, so only positions and normals are read; some meshes
+	 * have no UVs, and no tangents are generated
 	 */
 	geometry: number;
 	/** object-to-world, rows3x4 as in {@link InstanceBlock.transforms} but absolute */
@@ -214,9 +217,4 @@ export interface WaterSurfaceBase {
 	bounds: Bounds;
 	/** index into {@link WaterTable.configs} */
 	config: number;
-	/**
-	 * whether the surface is shaded around its mesh normals (when the mesh has them) rather than straight up.
-	 * the game shades its LOD surfaces through an upward-facing grid, so only proxy-only surfaces keep theirs
-	 */
-	meshNormals: boolean;
 }

@@ -776,14 +776,9 @@ const volumeSurface = (
 		transform: [1, 0, 0, 0, 0, 1, 0, y, 0, 0, 1, 0],
 		bounds: { min: [Math.min(...xs), y, Math.min(...zs)], max: [Math.max(...xs), y, Math.max(...zs)] },
 		config,
-		// the flat polygon faces straight up, with or without its normals
-		meshNormals: false,
 		volume: index,
 	};
 };
-
-/** `HGWaterRenderType.LOD`: the game redraws the surface as an upward-facing, wave-displaced grid */
-const RENDER_TYPE_LOD = 2;
 
 const surfaceEntry = (surface: SourcedWaterSurface, geometry: number, config: number): WaterPlacedSurface => {
 	const m = surface.matrix;
@@ -797,7 +792,5 @@ const surfaceEntry = (surface: SourcedWaterSurface, geometry: number, config: nu
 		transform: [m[0], m[4], m[8], m[12], m[1], m[5], m[9], m[13], m[2], m[6], m[10], m[14]],
 		bounds: aabbBounds(surface.bounds),
 		config,
-		// LOD surfaces' mesh normals never show in game (and point down on some polygon meshes)
-		meshNormals: (surface.renderTypeMask & RENDER_TYPE_LOD) === 0,
 	};
 };
