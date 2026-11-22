@@ -29,7 +29,7 @@ test('every command provides help without an install or config', async () => {
 				}),
 		);
 		await assert.rejects(exec(process.execPath, [cli, '../context'], { cwd }), /unknown command/);
-		await assert.rejects(exec(process.execPath, [cli, 'world', '--', '--help'], { cwd }));
+		await assert.rejects(exec(process.execPath, [cli, 'scene', '--', '--help'], { cwd }));
 	} finally {
 		await rm(cwd, { recursive: true, force: true });
 	}

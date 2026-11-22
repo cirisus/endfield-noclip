@@ -3,7 +3,7 @@ import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import type { Alternatives } from './state/game-state.ts';
 import type { Requirement } from './state/scene-control.ts';
 
-// what `world find` lists and how it describes it; the placements themselves come from the packer's own
+// what `scene find` lists and how it describes it; the placements themselves come from the packer's own
 // sources (`pack/survey.ts`)
 
 // #region kinds
@@ -11,9 +11,19 @@ import type { Requirement } from './state/scene-control.ts';
 /**
  * where a placement comes from: `static` chunk entities, `dynamic` ECS entities in dynamic structures,
  * `model` and `effect` prefab rows of DynamicStreaming resources, `facility` interactives from LevelData,
- * `cabin` rows of built Dijiang cabins
+ * `cabin` rows of built Dijiang cabins, `light` chunk local lights, `water` surfaces and gameplay volumes,
+ * `env` environment volumes
  */
-export type PlacementKind = 'static' | 'dynamic' | 'model' | 'effect' | 'facility' | 'cabin';
+export type PlacementKind =
+	| 'static'
+	| 'dynamic'
+	| 'model'
+	| 'effect'
+	| 'facility'
+	| 'cabin'
+	| 'light'
+	| 'water'
+	| 'env';
 
 /** every {@link PlacementKind}, in listing order */
 export const PLACEMENT_KINDS: readonly PlacementKind[] = [
@@ -23,6 +33,9 @@ export const PLACEMENT_KINDS: readonly PlacementKind[] = [
 	'effect',
 	'facility',
 	'cabin',
+	'light',
+	'water',
+	'env',
 ];
 
 /**
