@@ -4,7 +4,9 @@ import { FlatBuffer } from '../binary/flatbuffer.ts';
 import type { Aabb } from '../unity/values.ts';
 
 import { levelTagOf } from './level-partition.ts';
-import type { ChunkRow, ChunkRows } from './mono-objects.ts';
+import { readChunkRows, type ChunkRows } from './mono-objects.ts';
+
+export { ChunkObjectKind, INIT_CHUNK_VERSIONS } from './mono-objects.ts';
 
 // static scenery placements (docs/game-data/world.md#static-scenery-initchunkdata-and-streamingchunkdata).
 // framing ported from An1X3R/Endfield-map-extractor (MIT, `extractor_core/{instances,flatbuffer}.py`,
@@ -13,13 +15,10 @@ import type { ChunkRow, ChunkRows } from './mono-objects.ts';
 
 // #region types
 
-/** root versions this reader has been checked against (47: endfield_research_kit's corpus, 49: current client) */
-export const INIT_CHUNK_VERSIONS: readonly number[] = [47, 49];
-
 /** a root object row */
 export interface ChunkObject {
 	id: number;
-	/** union tag of the row: a {@link ChunkObjectKind} value, or another the game has */
+	/** union tag of the row: a `ChunkObjectKind` value, or another the game has */
 	kind: number;
 	name: string;
 	/** a {@link StreamingLayer} value: the layer whose grid and radius load the object */
@@ -42,22 +41,6 @@ export const StreamingLayer = {
 	Lighting: 8,
 	Audio: 9,
 	RendererWithCollider: 10,
-} as const;
-
-/** {@link ChunkObject.kind} values with a decoder; what each holds is by name census */
-export const ChunkObjectKind = {
-	/**
-	 * GameObjects rebuilt as MonoBehaviours (reflection probes, `Env_*`, volumes, wind, terrain root), see
-	 * `mono-objects.ts`
-	 */
-	Mono: 1,
-	/** component-group entities (renderers, colliders, decals, lights; the game's `ECSEntityType`) */
-	Entity: 2,
-	/**
-	 * proxy entities (audio, grass and tree grids, surface-type data; the game's `ProxyEntityType`); the grids
-	 * are read by `foliage-grids.ts`
-	 */
-	Proxy: 3,
 } as const;
 
 /** one component column inside a group's blob */
@@ -286,10 +269,7 @@ export const DrawFlags = {
  * @returns the chunk's objects and component groups
  * @throws {FormatError} on any framing mismatch
  */
-export const parseInitChunk = (data: Uint8Array): InitChunk => {
-	const fb = new FlatBuffer(data);
-	return parseChunk(fb, fb);
-};
+export const parseInitChunk = (data: Uint8Array): InitChunk => parseChunk(data, null);
 
 /**
  * reads dynamic ECS renderer columns with the ids from their paired streaming payload
@@ -299,9 +279,8 @@ export const parseInitChunk = (data: Uint8Array): InitChunk => {
  * @returns the paired chunk, with groups in ECS index order
  * @throws {FormatError} if either root or the paired group counts are invalid
  */
-export const parseDynamicChunk = (init: Uint8Array, streaming: Uint8Array): InitChunk => {
-	return parseChunk(new FlatBuffer(init), new FlatBuffer(streaming));
-};
+export const parseDynamicChunk = (init: Uint8Array, streaming: Uint8Array): InitChunk =>
+	parseChunk(init, streaming);
 
 /**
  * parses an 8-byte-per-column ECS descriptor table (`u16 id, u16 stride, u32 reserved`) and checks that its
@@ -340,20 +319,14 @@ export const parseComponentColumns = (
 	return columns;
 };
 
-const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
+const parseChunk = (init: Uint8Array, idsData: Uint8Array | null): InitChunk => {
+	const rows = readChunkRows(init);
+	const { fb, version } = rows;
 	const root = fb.root();
-	const idsRoot = idsFb.root();
-	if (idsFb.fieldCount(idsRoot) !== 8) {
+	const idsFb = idsData === null ? fb : new FlatBuffer(idsData);
+	const idsRoot = idsData === null ? root : idsFb.root();
+	if (idsData !== null && idsFb.fieldCount(idsRoot) !== 8) {
 		throw new FormatError('chunk ids root must have 8 fields');
-	}
-	if (fb.fieldCount(root) !== 8) {
-		throw new FormatError(`init chunk root has ${fb.fieldCount(root)} fields, expected 8`);
-	}
-
-	const versionAt = fb.field(root, 0);
-	const version = versionAt === undefined ? 0 : fb.u32(versionAt);
-	if (!INIT_CHUNK_VERSIONS.includes(version)) {
-		throw new FormatError(`unsupported init chunk version ${version}`);
 	}
 
 	let origin: InitChunk['origin'] = null;
@@ -368,30 +341,13 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 		}
 	}
 
-	const objects: ChunkObject[] = [];
-	const chunkRows: ChunkRow[] = [];
-	{
-		const ids = fb.vector(root, 3);
-		const kinds = fb.vector(root, 4);
-		const rows = fb.vector(root, 5);
-		if (ids.length !== kinds.length || ids.length !== rows.length) {
-			throw new FormatError('init chunk object vectors differ in length');
-		}
-		for (let i = 0; i < ids.length; i++) {
-			const id = fb.u32(ids.start + i * 4);
-			const tag = fb.u8(kinds.start + i);
-			const table = fb.tableAt(rows.start, i);
-			// left out of the row when it's the default, 0
-			const layerAt = fb.field(table, 1);
-			objects.push({
-				id,
-				kind: tag,
-				name: fb.stringField(table, 0),
-				layer: layerAt === undefined ? StreamingLayer.Default : fb.u8(layerAt),
-			});
-			chunkRows.push({ id, tag, table });
-		}
-	}
+	const objects: ChunkObject[] = rows.rows.map(({ id, tag, table }) => ({
+		id,
+		kind: tag,
+		name: fb.stringField(table, 0),
+		// left out of the row when it's the default, 0
+		layer: fb.u8Field(table, 1),
+	}));
 
 	const groups: ComponentGroup[] = [];
 	{
@@ -404,8 +360,7 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 			const group = fb.tableAt(tables.start, g);
 			const idVector = idsFb.vector(idsFb.tableAt(idWrappers.start, g), 0);
 
-			const countAt = fb.field(group, 1);
-			const count = countAt === undefined ? 0 : fb.u32(countAt);
+			const count = fb.u32Field(group, 1);
 			if (count !== idVector.length) {
 				throw new FormatError(`group ${g} counts ${count} entities but lists ${idVector.length} ids`);
 			}
@@ -418,19 +373,20 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 			{
 				const at = fb.field(group, 2);
 				if (at !== undefined) {
-					const v = Array.from({ length: 6 }, (_, i) => fb.f32(at + i * 4));
-					if (v.some((value) => value !== 0)) {
-						bounds = { center: [v[0], v[1], v[2]], extents: [v[3], v[4], v[5]] };
+					const center = fb.vec3(at);
+					const extents = fb.vec3(at + 12);
+					if (center.some((value) => value !== 0) || extents.some((value) => value !== 0)) {
+						bounds = { center, extents };
 					}
 				}
 			}
 
 			const descriptors = fb.vector(group, 3);
-			const blobAt = fb.field(group, 4);
-			if (blobAt === undefined) {
+			const blobTable = fb.tableField(group, 4);
+			if (blobTable === undefined) {
 				throw new FormatError(`group ${g} has no component blob`);
 			}
-			const blob = fb.byteVector(fb.deref(blobAt), 0);
+			const blob = fb.byteVector(blobTable, 0);
 			const columns = parseComponentColumns(
 				fb.subarray(descriptors.start, descriptors.length * 8),
 				count,
@@ -443,8 +399,15 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 		}
 	}
 
-	return { version, origin, objects, groups, rows: { fb, version, rows: chunkRows } };
+	return { version, origin, objects, groups, rows };
 };
+
+/**
+ * @param chunk parsed chunk
+ * @returns object names by id from the chunk's root rows
+ */
+export const chunkObjectNames = (chunk: InitChunk): Map<number, string> =>
+	new Map(chunk.objects.map((object) => [object.id, object.name]));
 
 /**
  * decodes every group entity of a chunk. entities that span cells appear in each cell's chunk under the same
@@ -480,7 +443,7 @@ export const readChunkEntitiesByGroup = (
 	for (const group of groups) {
 		const entities: ChunkEntity[] = [];
 		const ids = group.columns.map((column) => column.id);
-		const blobView = new DataView(group.blob.buffer, group.blob.byteOffset, group.blob.byteLength);
+		const blobView = new ByteView(group.blob, 'component group');
 		const column = (id: number): ComponentColumn | undefined => groupColumn(group, id);
 
 		const boundsOf = groupBounds(group);
@@ -574,7 +537,7 @@ export const readChunkEntitiesByGroup = (
 				lodDistanceFrom:
 					distanceLod && lodInfoColumn !== undefined ? readLodCentre(blobView, lodInfoColumn, i) : null,
 				rotator,
-				clothHash: clothColumn === undefined ? null : blobView.getUint32(clothColumn.offset + i * 4, true),
+				clothHash: clothColumn === undefined ? null : blobView.u32(clothColumn.offset + i * 4),
 				components: ids,
 			});
 		}
@@ -585,18 +548,17 @@ export const readChunkEntitiesByGroup = (
 
 const ROTATOR_SIZE = 92;
 
-const readRotator = (view: DataView, column: ComponentColumn, index: number, entityId: number): Rotator => {
+const readRotator = (view: ByteView, column: ComponentColumn, index: number, entityId: number): Rotator => {
 	if (column.stride !== ROTATOR_SIZE) {
 		throw new FormatError(`entity ${entityId} has a ${column.stride}-byte rotator`);
 	}
 	const at = column.offset + index * column.stride;
-	const f = (k: number): number => view.getFloat32(at + k * 4, true);
-	const axis: Rotator['axis'] = [f(1), f(2), f(3)];
-	const speed = f(0);
+	const speed = view.f32(at);
+	const axis = view.vec3(at + 4);
 	if (!(speed >= 0) || Math.abs(Math.hypot(...axis) - 1) > 1e-3) {
 		throw new FormatError(`entity ${entityId} has a rotator of speed ${speed} about [${axis.join(', ')}]`);
 	}
-	return { speed, axis, pivot: [f(4), f(5), f(6)] };
+	return { speed, axis, pivot: view.vec3(at + 16) };
 };
 
 const LOCAL_SPIN_SIZE = 16;
@@ -607,7 +569,7 @@ const LOCAL_SPIN_SIZE = 16;
  * every entity with the component has
  */
 const readLocalSpin = (
-	view: DataView,
+	view: ByteView,
 	column: ComponentColumn,
 	{ index, entityId, matrix }: { index: number; entityId: number; matrix: Float32Array },
 ): Rotator => {
@@ -615,9 +577,8 @@ const readLocalSpin = (
 		throw new FormatError(`entity ${entityId} has a ${column.stride}-byte local spin`);
 	}
 	const at = column.offset + index * column.stride;
-	const f = (k: number): number => view.getFloat32(at + k * 4, true);
-	const speed = f(0);
-	const local = [f(1), f(2), f(3)];
+	const speed = view.f32(at);
+	const local = view.vec3(at + 4);
 	if (!(speed >= 0) || Math.abs(Math.hypot(...local) - 1) > 1e-3) {
 		throw new FormatError(
 			`entity ${entityId} has a local spin of speed ${speed} about [${local.join(', ')}]`,
@@ -645,25 +606,22 @@ const RECT_DECAL_SIZE = 160;
 const LOD_INFO_SIZE = 20;
 
 /** component 6's LOD centre */
-const readLodCentre = (view: DataView, column: ComponentColumn, index: number): [number, number, number] => {
-	const at = column.offset + index * column.stride;
-	return [view.getFloat32(at, true), view.getFloat32(at + 4, true), view.getFloat32(at + 8, true)];
-};
+const readLodCentre = (view: ByteView, column: ComponentColumn, index: number): [number, number, number] =>
+	view.vec3(column.offset + index * column.stride);
 
 const WATER_DECAL_SIZE = 172;
 const WATER_DECAL_MATRIX = 12;
 const WATER_DECAL_ANIM = 108;
 
 /** component 31's first two `animParam` vectors; the stride is checked per group */
-const readWaterDecal = (view: DataView, column: ComponentColumn, index: number): WaterDecal => {
+const readWaterDecal = (view: ByteView, column: ComponentColumn, index: number): WaterDecal => {
 	const at = column.offset + index * column.stride + WATER_DECAL_ANIM;
-	const f = (k: number): number => view.getFloat32(at + k * 4, true);
-	return { params: [f(0), f(1), f(2), f(3)], displacementTint: [f(4), f(5), f(6), f(7)] };
+	return { params: view.vec4(at), displacementTint: view.vec4(at + 16) };
 };
 
 /** component 27 after the matrix and its inverse: UV scale, UV offset, RGBA8 colour, intensity, angle, flags */
 const readRectDecal = (
-	view: DataView,
+	view: ByteView,
 	column: ComponentColumn,
 	index: number,
 	entityId: number,
@@ -672,16 +630,15 @@ const readRectDecal = (
 		throw new FormatError(`entity ${entityId} has a ${column.stride}-byte rect decal`);
 	}
 	const at = column.offset + index * column.stride + 128;
-	const f = (k: number): number => view.getFloat32(at + k * 4, true);
-	const rgba = view.getUint32(at + 16, true);
+	const rgba = view.u32(at + 16);
 	const byte = (shift: number): number => ((rgba >>> shift) & 0xff) / 255;
 	return {
-		uvScale: [f(0), f(1)],
-		uvOffset: [f(2), f(3)],
+		uvScale: [view.f32(at), view.f32(at + 4)],
+		uvOffset: [view.f32(at + 8), view.f32(at + 12)],
 		color: [byte(0), byte(8), byte(16), byte(24)],
-		intensity: f(5),
-		sectorAngle: f(6),
-		flags: view.getUint32(at + 28, true),
+		intensity: view.f32(at + 20),
+		sectorAngle: view.f32(at + 24),
+		flags: view.u32(at + 28),
 	};
 };
 
@@ -707,9 +664,9 @@ export const groupBounds = (group: ComponentGroup): ((index: number) => Aabb) | 
 		}
 		columns.push(column);
 	}
-	const view = new DataView(group.blob.buffer, group.blob.byteOffset, group.blob.byteLength);
+	const view = new ByteView(group.blob, 'component group');
 	return (index) => {
-		const v = columns.map((column) => view.getFloat32(column.offset + index * 4, true));
+		const v = columns.map((column) => view.f32(column.offset + index * 4));
 		return { center: [v[0], v[1], v[2]], extents: [v[3], v[4], v[5]] };
 	};
 };
@@ -746,7 +703,7 @@ interface DrawColumns {
 	entityId: number;
 }
 
-const decodeDraws = (view: DataView, columns: DrawColumns): RendererDraw[] => {
+const decodeDraws = (view: ByteView, columns: DrawColumns): RendererDraw[] => {
 	const { refs, infos, index, entityId } = columns;
 	const capacity = 1 << (refs.id - Component.DrawRefFirst);
 	if (refs.stride !== 8 + 40 * capacity || infos.stride !== 4 + 32 * capacity) {
@@ -754,8 +711,8 @@ const decodeDraws = (view: DataView, columns: DrawColumns): RendererDraw[] => {
 	}
 	const refAt = refs.offset + index * refs.stride;
 	const infoAt = infos.offset + index * infos.stride;
-	const count = Number(view.getBigUint64(refAt, true));
-	if (count > capacity || view.getUint32(infoAt, true) !== count) {
+	const count = Number(view.u64(refAt));
+	if (count > capacity || view.u32(infoAt) !== count) {
 		throw new FormatError(`entity ${entityId} draw counts disagree`);
 	}
 	const out: RendererDraw[] = [];
@@ -764,12 +721,12 @@ const decodeDraws = (view: DataView, columns: DrawColumns): RendererDraw[] => {
 		const info = infoAt + 4 + d * 24;
 		const lod = infoAt + 4 + capacity * 24 + d * 8;
 		out.push({
-			materialHash: view.getBigUint64(ref, true),
-			meshHash: view.getBigUint64(ref + 8, true),
-			submesh: view.getUint8(info + 2),
-			flags: view.getUint32(info + 16, true),
-			lodMaxSquared: view.getFloat32(lod, true),
-			lodMinSquared: view.getFloat32(lod + 4, true),
+			materialHash: view.u64(ref),
+			meshHash: view.u64(ref + 8),
+			submesh: view.u8(info + 2),
+			flags: view.u32(info + 16),
+			lodMaxSquared: view.f32(lod),
+			lodMinSquared: view.f32(lod + 4),
 			lod: 0,
 		});
 	}

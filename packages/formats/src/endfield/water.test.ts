@@ -15,8 +15,11 @@ import {
 	readWaterSurfaceConfig,
 	readWaterSurfaces,
 	WATER_SURFACE_COMPONENT,
-	WaterProperty,
 } from './water.ts';
+
+const SURFACE_MESH_KEY = 0xff000000;
+const SURFACE_CONFIG_KEY = 0xff010000;
+const GLOBAL_CONFIG_KEY = 0x20000000;
 
 // #region synthetic chunks
 
@@ -155,8 +158,8 @@ const buildStreaming = (options: { surfaceProperties?: [number, bigint][] } = {}
 		w,
 		surfaceTable,
 		options.surfaceProperties ?? [
-			[WaterProperty.SurfaceMesh, MESH],
-			[WaterProperty.SurfaceConfig, CONFIG],
+			[SURFACE_MESH_KEY, MESH],
+			[SURFACE_CONFIG_KEY, CONFIG],
 		],
 	);
 
@@ -171,7 +174,7 @@ const buildStreaming = (options: { surfaceProperties?: [number, bigint][] } = {}
 	writeProperties(w, transform, []);
 	const config = w.table([4, 4, 0, 4, 4, 4]);
 	w.link(components.start + 4, config.at);
-	writeProperties(w, config, [[WaterProperty.GlobalConfig, GLOBAL_CONFIG]]);
+	writeProperties(w, config, [[GLOBAL_CONFIG_KEY, GLOBAL_CONFIG]]);
 	return w.finish();
 };
 
@@ -191,11 +194,11 @@ test('parseStreamingChunk reads kind-2 and kind-1 property tables', () => {
 				SURFACE_ID,
 				2,
 				[
-					[WaterProperty.SurfaceMesh, 0, MESH],
-					[WaterProperty.SurfaceConfig, 0, CONFIG],
+					[SURFACE_MESH_KEY, 0, MESH],
+					[SURFACE_CONFIG_KEY, 0, CONFIG],
 				],
 			],
-			[GLOBAL_ID, 1, [[WaterProperty.GlobalConfig, 1, GLOBAL_CONFIG]]],
+			[GLOBAL_ID, 1, [[GLOBAL_CONFIG_KEY, 1, GLOBAL_CONFIG]]],
 		],
 	);
 });
@@ -225,16 +228,14 @@ test('readWaterSurfaces joins the placement column to its bindings', () => {
 test('readWaterSurfaces rejects a wrong stride or a missing binding', () => {
 	const streaming = parseStreamingChunk(buildStreaming());
 	assert.throws(() => readWaterSurfaces(parseInitChunk(buildInit({ stride: 96 })), streaming), FormatError);
-	const unbound = parseStreamingChunk(
-		buildStreaming({ surfaceProperties: [[WaterProperty.SurfaceMesh, MESH]] }),
-	);
+	const unbound = parseStreamingChunk(buildStreaming({ surfaceProperties: [[SURFACE_MESH_KEY, MESH]] }));
 	assert.throws(() => readWaterSurfaces(parseInitChunk(buildInit()), unbound), FormatError);
 	const twice = parseStreamingChunk(
 		buildStreaming({
 			surfaceProperties: [
-				[WaterProperty.SurfaceMesh, MESH],
-				[WaterProperty.SurfaceMesh, MESH],
-				[WaterProperty.SurfaceConfig, CONFIG],
+				[SURFACE_MESH_KEY, MESH],
+				[SURFACE_MESH_KEY, MESH],
+				[SURFACE_CONFIG_KEY, CONFIG],
 			],
 		}),
 	);

@@ -1,6 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 
-import { groupColumn, type InitChunk } from './init-chunk-data.ts';
+import { chunkObjectNames, groupColumn, type InitChunk } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
 import { forEachProperty, readPropertyValue, ValueCode } from './mono-objects.ts';
 
@@ -123,10 +124,7 @@ export const readChunkLights = (chunk: InitChunk): ChunkLight[] => {
 	if (lightIds.size === 0) {
 		return [];
 	}
-	const names = new Map<number, string>();
-	for (const object of chunk.objects) {
-		names.set(object.id, object.name);
-	}
+	const names = chunkObjectNames(chunk);
 
 	const { fb, rows } = chunk.rows;
 	const lights: ChunkLight[] = [];
@@ -134,13 +132,13 @@ export const readChunkLights = (chunk: InitChunk): ChunkLight[] => {
 		if (!lightIds.has(row.id)) {
 			continue;
 		}
-		const at = fb.field(row.table, 3);
-		if (at === undefined) {
+		const table = fb.tableField(row.table, 3);
+		if (table === undefined) {
 			throw new FormatError(`light ${row.id} has no property table`);
 		}
-		let core: DataView | undefined;
-		let settings: DataView | undefined;
-		forEachProperty(fb, fb.deref(at), (key, code, valueAt) => {
+		let core: ByteView | undefined;
+		let settings: ByteView | undefined;
+		forEachProperty(fb, table, (key, code, valueAt) => {
 			if (code !== ValueCode.Blob || (key !== CORE_KEY && key !== SETTINGS_KEY)) {
 				return;
 			}
@@ -148,16 +146,15 @@ export const readChunkLights = (chunk: InitChunk): ChunkLight[] => {
 			if (value.type !== 'blob') {
 				return;
 			}
-			const view = new DataView(value.value.buffer, value.value.byteOffset, value.value.byteLength);
 			if (key === CORE_KEY) {
-				core = view;
+				core = new ByteView(value.value, 'light core');
 			} else {
-				settings = view;
+				settings = new ByteView(value.value, 'light settings');
 			}
 		});
-		if (core?.byteLength !== CORE_SIZE || settings?.byteLength !== SETTINGS_SIZE) {
+		if (core?.length !== CORE_SIZE || settings?.length !== SETTINGS_SIZE) {
 			throw new FormatError(
-				`light ${row.id} blobs are ${core?.byteLength ?? 'absent'}/${settings?.byteLength ?? 'absent'} bytes, expected ${CORE_SIZE}/${SETTINGS_SIZE}`,
+				`light ${row.id} blobs are ${core?.length ?? 'absent'}/${settings?.length ?? 'absent'} bytes, expected ${CORE_SIZE}/${SETTINGS_SIZE}`,
 			);
 		}
 		lights.push(decodeLight(row.id, names.get(row.id) ?? '', core, settings));
@@ -165,14 +162,10 @@ export const readChunkLights = (chunk: InitChunk): ChunkLight[] => {
 	return lights;
 };
 
-const decodeLight = (id: number, name: string, core: DataView, settings: DataView): ChunkLight => {
-	const f = (at: number) => core.getFloat32(at, true);
-	const vec3 = (at: number): [number, number, number] => [f(at), f(at + 4), f(at + 8)];
-	const s = (at: number) => settings.getFloat32(at, true);
-	const sVec3 = (at: number): [number, number, number] => [s(at), s(at + 4), s(at + 8)];
-	const flag = (at: number) => settings.getUint8(at) !== 0;
-	const type = core.getUint32(88, true);
-	if (settings.getUint32(12, true) !== type) {
+const decodeLight = (id: number, name: string, core: ByteView, settings: ByteView): ChunkLight => {
+	const flag = (at: number) => settings.u8(at) !== 0;
+	const type = core.u32(88);
+	if (settings.u32(12) !== type) {
 		throw new FormatError(`light ${id}: its two blocks disagree on the type`);
 	}
 	return {
@@ -180,35 +173,40 @@ const decodeLight = (id: number, name: string, core: DataView, settings: DataVie
 		levelTag: levelTagOf(id),
 		name,
 		type,
-		position: vec3(28),
-		direction: vec3(44),
-		color: vec3(60),
-		intensity: f(16),
-		range: f(76),
-		spotAngle: s(36),
-		innerSpotAngle: s(40),
-		bakeType: settings.getUint32(80, true),
-		specularIntensity: s(20),
+		position: core.vec3(28),
+		direction: core.vec3(44),
+		color: core.vec3(60),
+		intensity: core.f32(16),
+		range: core.f32(76),
+		spotAngle: settings.f32(36),
+		innerSpotAngle: settings.f32(40),
+		bakeType: settings.u32(80),
+		specularIntensity: settings.f32(20),
 		shadowOnly: flag(91),
 		characterOnly: flag(436),
-		tubeLength: Math.max(s(144), 0),
-		softSourceRadius: s(148),
-		falloffExponent: s(444),
-		volumetricScatteringIntensity: s(440),
-		priority: settings.getInt32(140, true),
-		distanceFade: flag(94) ? { falloff: s(156), culling: s(152) } : null,
+		tubeLength: Math.max(settings.f32(144), 0),
+		softSourceRadius: settings.f32(148),
+		falloffExponent: settings.f32(444),
+		volumetricScatteringIntensity: settings.f32(440),
+		priority: settings.i32(140),
+		distanceFade: flag(94) ? { falloff: settings.f32(156), culling: settings.f32(152) } : null,
 		cullingBox: flag(92)
-			? { offset: sVec3(100), halfExtents: sVec3(112), rotation: sVec3(124), falloffThreshold: s(136) }
+			? {
+					offset: settings.vec3(100),
+					halfExtents: settings.vec3(112),
+					rotation: settings.vec3(124),
+					falloffThreshold: settings.f32(136),
+				}
 			: null,
-		shadows: settings.getUint32(160, true),
-		shadowStrength: s(172),
-		shadowNormalBias: s(180),
-		shadowNearPlane: s(184),
-		shadowFarPlane: s(256),
-		shadowCullDistance: s(260),
-		shadowFadeRatio: s(264),
-		shadowGuardAngle: s(268),
-		shadowCasterFaces: settings.getInt32(272, true),
-		shadowCasterProperties: settings.getInt32(276, true),
+		shadows: settings.u32(160),
+		shadowStrength: settings.f32(172),
+		shadowNormalBias: settings.f32(180),
+		shadowNearPlane: settings.f32(184),
+		shadowFarPlane: settings.f32(256),
+		shadowCullDistance: settings.f32(260),
+		shadowFadeRatio: settings.f32(264),
+		shadowGuardAngle: settings.f32(268),
+		shadowCasterFaces: settings.i32(272),
+		shadowCasterProperties: settings.i32(276),
 	};
 };

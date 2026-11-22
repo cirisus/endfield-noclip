@@ -1,4 +1,5 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 
 import {
 	monoComponent,
@@ -28,14 +29,6 @@ export const EnvironmentVolumeType = {
 	Cylinder: 4,
 } as const;
 
-/** `HGEnvironmentVolumeBase.blendMode` values (the game's `EnvBlendMode`) */
-export const EnvironmentBlendMode = {
-	None: 0,
-	Distance: 1,
-	Time: 2,
-	Manual: 3,
-} as const;
-
 /** a GameObject transform, as authored (local to the scene root, which is the world) */
 export interface ObjectTransform {
 	position: [x: number, y: number, z: number];
@@ -63,7 +56,7 @@ export interface EnvironmentVolume {
 	transform: ObjectTransform | null;
 	/** an {@link EnvironmentVolumeType} value, or another the game has */
 	volumeType: number;
-	/** an {@link EnvironmentBlendMode} value */
+	/** `HGEnvironmentVolumeBase.blendMode` (`EnvBlendMode`: 0 none, 1 distance, 2 time, 3 manual) */
 	blendMode: number;
 	priority: number;
 	blendDistance: number;
@@ -193,30 +186,29 @@ export const polygonArea = (polygon: readonly (readonly [number, number])[]): nu
  * @throws {FormatError} if the blob's own length or point count doesn't fit it
  */
 export const parsePolyLineShape = (blob: Uint8Array): PolyLineShape => {
-	const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
-	if (blob.length < 40 || view.getUint32(0, true) !== blob.length) {
+	const view = new ByteView(blob, 'polyline shape');
+	if (blob.length < 40 || view.u32(0) !== blob.length) {
 		throw new FormatError(
-			`polyline shape of ${blob.length} bytes declares ${blob.length >= 4 ? view.getUint32(0, true) : '?'}`,
+			`polyline shape of ${blob.length} bytes declares ${blob.length >= 4 ? view.u32(0) : '?'}`,
 		);
 	}
-	const f = (at: number) => view.getFloat32(at, true);
-	const position: [number, number, number] = [f(4), f(8), f(12)];
-	const rotation: [number, number, number] = [f(16), f(20), f(24)];
-	const count = view.getUint32(28, true);
+	const position = view.vec3(4);
+	const rotation = view.vec3(16);
+	const count = view.u32(28);
 	if (32 + count * 8 + 8 > blob.length) {
 		throw new FormatError(`polyline shape of ${blob.length} bytes can't hold ${count} points`);
 	}
 	const rotate = yawRotation(rotation[1]);
 	const points = Array.from({ length: count }, (_, i): [number, number] => {
-		const [x, z] = rotate(f(32 + i * 8), f(36 + i * 8));
+		const [x, z] = rotate(view.f32(32 + i * 8), view.f32(36 + i * 8));
 		return [position[0] + x, position[2] + z];
 	});
 	return {
 		position,
 		rotation,
 		points,
-		height: f(blob.length - 8),
-		baseHeightOffset: f(blob.length - 4),
+		height: view.f32(blob.length - 8),
+		baseHeightOffset: view.f32(blob.length - 4),
 	};
 };
 

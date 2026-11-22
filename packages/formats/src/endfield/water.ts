@@ -1,4 +1,5 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 import { toPlainObject } from '../unity/plain-object.ts';
 import type { TypeTreeNode } from '../unity/serialized-file.ts';
 import type { TypeTreeObject } from '../unity/type-tree.ts';
@@ -14,7 +15,7 @@ import {
 	type PPtr,
 } from '../unity/values.ts';
 
-import { groupBounds, groupColumn, groupNames, type InitChunk } from './init-chunk-data.ts';
+import { chunkObjectNames, groupBounds, groupColumn, groupNames, type InitChunk } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
 import type { StreamingChunk } from './streaming-chunk-data.ts';
 
@@ -32,7 +33,7 @@ const WATER_SURFACE_STRIDE = 104;
  * StreamingChunkData property keys of water bindings. the 0xff keys are only meaningful on water surface
  * entities: other entity archetypes reuse them (rect decals bind their material under 0xff010000)
  */
-export const WaterProperty = {
+const WaterProperty = {
 	/** surface mesh: `<container>.fbx##<subasset>` or a `PolygonMeshes/*.asset` Mesh */
 	SurfaceMesh: 0xff000000,
 	/** surface `WaterConfig` MonoBehaviour asset */
@@ -91,7 +92,7 @@ export interface WaterGlobalBinding {
  * @throws {FormatError} if a surface column is malformed or a surface lacks its mesh or config binding
  */
 export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): WaterSurface[] => {
-	const names = new Map(init.objects.map((object) => [object.id, object.name]));
+	const names = chunkObjectNames(init);
 	const surfaces: WaterSurface[] = [];
 	for (const group of init.groups) {
 		const water = groupColumn(group, WATER_SURFACE_COMPONENT);
@@ -108,26 +109,19 @@ export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): W
 			throw new FormatError('a water surface group has no bounds columns');
 		}
 		const nameOf = groupNames(group, names);
-		const view = new DataView(group.blob.buffer, group.blob.byteOffset, group.blob.byteLength);
+		const view = new ByteView(group.blob, 'water surface');
 
 		for (let i = 0; i < group.ids.length; i++) {
 			const id = group.ids[i];
 			const at = water.offset + i * water.stride;
-			const f32 = (offset: number): number => view.getFloat32(at + offset, true);
-			const vec4 = (offset: number): [number, number, number, number] => [
-				f32(offset),
-				f32(offset + 4),
-				f32(offset + 8),
-				f32(offset + 12),
-			];
 
-			const renderTypeMask = view.getUint32(at, true);
+			const renderTypeMask = view.u32(at);
 			const matrix = new Float32Array(16);
 			for (let k = 0; k < 16; k++) {
-				matrix[k] = f32(8 + k * 4);
+				matrix[k] = view.f32(at + 8 + k * 4);
 			}
-			const param0 = vec4(72);
-			const param1 = vec4(88);
+			const param0 = view.vec4(at + 72);
+			const param1 = view.vec4(at + 88);
 			if (
 				renderTypeMask === 0 ||
 				!matrix.every(Number.isFinite) ||
@@ -151,7 +145,7 @@ export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): W
 				levelTag: levelTagOf(id),
 				name: nameOf(i),
 				renderTypeMask,
-				runtimeMeshId: view.getInt32(at + 4, true),
+				runtimeMeshId: view.i32(at + 4),
 				matrix,
 				bounds: boundsOf(i),
 				param0,
@@ -173,7 +167,7 @@ export const readWaterSurfaces = (init: InitChunk, streaming: StreamingChunk): W
  * @throws {FormatError} if an object binds the config twice
  */
 export const readWaterGlobalBindings = (init: InitChunk, streaming: StreamingChunk): WaterGlobalBinding[] => {
-	const names = new Map(init.objects.map((object) => [object.id, object.name]));
+	const names = chunkObjectNames(init);
 	const bindings: WaterGlobalBinding[] = [];
 	for (const row of streaming.rows) {
 		const configHash = streaming.assetProperty(row, WaterProperty.GlobalConfig);

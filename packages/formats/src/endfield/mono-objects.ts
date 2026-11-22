@@ -1,13 +1,30 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { FlatBuffer } from '../binary/flatbuffer.ts';
 
-import { ChunkObjectKind, INIT_CHUNK_VERSIONS } from './init-chunk-data.ts';
-
 // tag-1 members of the InitChunkData / StreamingChunkData root union vector (GameObjects rebuilt as
 // MonoBehaviours: environment/post volumes, probes, lights, wind motors, water, terrain root). Init carries
 // inline values and Streaming carries asset references, merged per component (docs/game-data/world.md#streamingchunkdata).
 
 // #region types
+
+/** root versions this reader has been checked against (47: endfield_research_kit's corpus, 49: current client) */
+export const INIT_CHUNK_VERSIONS: readonly number[] = [47, 49];
+
+/** root object union tags with a decoder; what each holds is by name census */
+export const ChunkObjectKind = {
+	/**
+	 * GameObjects rebuilt as MonoBehaviours (reflection probes, `Env_*`, volumes, wind, terrain root), see
+	 * `mono-objects.ts`
+	 */
+	Mono: 1,
+	/** component-group entities (renderers, colliders, decals, lights; the game's `ECSEntityType`) */
+	Entity: 2,
+	/**
+	 * proxy entities (audio, grass and tree grids, surface-type data; the game's `ProxyEntityType`); the grids
+	 * are read by `foliage-grids.ts`
+	 */
+	Proxy: 3,
+} as const;
 
 /** `StreamingComponentType` bits (IL2CPP metadata enum) of the components decoded here */
 export const MonoComponentType = {
@@ -143,13 +160,7 @@ export const readMonoObjects = (
  */
 export const hasMonoComponents = (init: Uint8Array | ChunkRows, mask: bigint): boolean => {
 	const { fb, rows } = readChunkRows(init);
-	return rows.some((row) => {
-		if (row.tag !== ChunkObjectKind.Mono) {
-			return false;
-		}
-		const at = fb.field(row.table, 3);
-		return at !== undefined && (fb.u64(at) & mask) !== 0n;
-	});
+	return rows.some((row) => row.tag === ChunkObjectKind.Mono && (fb.u64Field(row.table, 3) & mask) !== 0n);
 };
 
 /**
@@ -188,8 +199,7 @@ export const readChunkRows = (data: Uint8Array | ChunkRows): ChunkRows => {
 	if (fb.fieldCount(root) !== 8) {
 		throw new FormatError(`chunk root has ${fb.fieldCount(root)} fields, expected 8`);
 	}
-	const versionAt = fb.field(root, 0);
-	const version = versionAt === undefined ? 0 : fb.u32(versionAt);
+	const version = fb.u32Field(root, 0);
 	if (!INIT_CHUNK_VERSIONS.includes(version)) {
 		throw new FormatError(`unsupported chunk version ${version}`);
 	}
@@ -276,10 +286,10 @@ export const readPropertyValue = (fb: FlatBuffer, code: number, at: number): Mon
 			return { type: 'uint64', value: fb.u64(at) };
 		}
 		case ValueCode.Vector3: {
-			return { type: 'vector3', value: [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8)] };
+			return { type: 'vector3', value: fb.vec3(at) };
 		}
 		case ValueCode.Vector4: {
-			return { type: 'vector4', value: [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8), fb.f32(at + 12)] };
+			return { type: 'vector4', value: fb.vec4(at) };
 		}
 		case ValueCode.Int4: {
 			return { type: 'int4', value: [fb.i32(at), fb.i32(at + 4), fb.i32(at + 8), fb.i32(at + 12)] };
@@ -287,8 +297,8 @@ export const readPropertyValue = (fb: FlatBuffer, code: number, at: number): Mon
 		case ValueCode.Bounds: {
 			return {
 				type: 'bounds',
-				center: [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8)],
-				extents: [fb.f32(at + 12), fb.f32(at + 16), fb.f32(at + 20)],
+				center: fb.vec3(at),
+				extents: fb.vec3(at + 12),
 			};
 		}
 		case ValueCode.Asset: {
@@ -322,9 +332,8 @@ const readComponents = (fb: FlatBuffer, row: number): MonoComponent[] => {
 	const components: MonoComponent[] = [];
 	for (let c = 0; c < list.length; c++) {
 		const table = fb.tableAt(list.start, c);
-		const typeAt = fb.field(table, 0);
 		components.push({
-			type: typeAt === undefined ? 0 : fb.u32(typeAt),
+			type: fb.u32Field(table, 0),
 			fields: new Map(readPropertyTable(fb, table)),
 		});
 	}

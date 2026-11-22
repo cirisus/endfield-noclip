@@ -1,7 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 
-import { ChunkObjectKind } from './init-chunk-data.ts';
 import {
+	ChunkObjectKind,
 	type ChunkRow,
 	type ChunkRows,
 	forEachProperty,
@@ -191,9 +191,9 @@ export class StreamingChunk {
 				break;
 			}
 			default: {
-				const at = fb.field(row.table, 3);
-				if (at !== undefined) {
-					forEachProperty(fb, fb.deref(at), (key, code, valueAt) => visit(0, key, code, valueAt));
+				const table = fb.tableField(row.table, 3);
+				if (table !== undefined) {
+					forEachProperty(fb, table, (key, code, valueAt) => visit(0, key, code, valueAt));
 				}
 				break;
 			}
