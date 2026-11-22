@@ -1,4 +1,5 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 import { decodeLz4Block } from '../binary/lz4.ts';
 
 // USPC v1 string pools (`Data/Json/StringPool/StringPool<n>.byte`, JsonData group). pooled JsonData payloads
@@ -17,50 +18,92 @@ export const StringId = {
 	Empty: -1,
 } as const;
 
+/** one decoded string-pool block whose entries are UTF-8-decoded on demand */
+export class StringPoolBlock {
+	readonly #view: ByteView;
+	readonly #dataStart: number;
+	/** number of strings in this block */
+	readonly length: number;
+
+	/**
+	 * @param view decompressed block body (`u32 count ‖ count × u32 offset ‖ entries`)
+	 * @param length number of strings in the block
+	 */
+	constructor(view: ByteView, length: number) {
+		this.#view = view;
+		this.length = length;
+		this.#dataStart = 4 + length * 4;
+	}
+
+	/**
+	 * @param index 0-based index within the block
+	 * @returns the string, or `undefined` if `index` is out of range
+	 */
+	get(index: number): string | undefined {
+		if (index < 0 || index >= this.length) {
+			return undefined;
+		}
+		const at = this.#dataStart + this.#view.u32(4 + index * 4);
+		const size = this.#view.u32(at);
+		return this.#view.utf8(at + 4, size);
+	}
+}
+
 /**
- * decodes one pool block file
+ * decodes and validates one pool block file; strings are decoded lazily via {@link StringPoolBlock.get}
  *
  * @param bytes the `.byte` file
  * @param options.first whether this is `StringPool0.byte`, which carries a leading block count
- * @returns the block's strings in id order
+ * @returns the validated block
  * @throws {FormatError} on framing errors
  */
-export const parseStringPoolBlock = (bytes: Uint8Array, options: { first: boolean }): string[] => {
+export const parseStringPoolBlock = (bytes: Uint8Array, options: { first: boolean }): StringPoolBlock => {
+	if (options.first && bytes.length < 4) {
+		throw new FormatError('string pool block is too short');
+	}
 	const body = options.first ? bytes.subarray(4) : bytes;
 	if (body.length < 24) {
 		throw new FormatError('string pool block is too short');
 	}
-	const head = new DataView(body.buffer, body.byteOffset, 24);
-	const [magic, version, flags, count, rawSize, packedSize] = [0, 4, 8, 12, 16, 20].map((at) =>
-		head.getUint32(at, true),
-	);
+	const head = new ByteView(body, 'string pool header');
+	const magic = head.u32(0);
+	const version = head.u32(4);
+	const flags = head.u32(8);
+	const count = head.u32(12);
+	const rawSize = head.u32(16);
+	const packedSize = head.u32(20);
 	if (magic !== MAGIC || version !== 1 || (flags !== 0 && flags !== 1) || body.length !== packedSize + 24) {
 		throw new FormatError('unsupported string pool header');
 	}
 	const raw = flags === 1 ? decodeLz4Block(body.subarray(24), rawSize) : body.subarray(24);
-	const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-	if (raw.length !== rawSize || view.getUint32(0, true) !== count) {
+	const view = new ByteView(raw, 'string pool');
+	if (raw.length !== rawSize || raw.length < 4 || view.u32(0) !== count) {
 		throw new FormatError('string pool count or size mismatch');
 	}
 
-	const strings: string[] = [];
-	let cursor = 4 + count * 4;
+	const dataStart = 4 + count * 4;
+	if (dataStart > raw.length) {
+		throw new FormatError('string pool offset table overruns its block');
+	}
+	let cursor = dataStart;
 	for (let i = 0; i < count; i++) {
-		if (4 + count * 4 + view.getUint32(4 + i * 4, true) !== cursor) {
+		if (dataStart + view.u32(4 + i * 4) !== cursor) {
 			throw new FormatError(`string pool entry ${i} is out of sequence`);
 		}
-		const size = view.getUint32(cursor, true);
+		if (cursor + 4 > raw.length) {
+			throw new FormatError(`string pool entry ${i} overruns its block`);
+		}
+		const size = view.u32(cursor);
 		cursor += 4;
 		if (cursor + size > raw.length) {
 			throw new FormatError(`string pool entry ${i} overruns its block`);
 		}
-		strings.push(utf8.decode(raw.subarray(cursor, cursor + size)));
 		cursor += size;
 	}
 	if (cursor !== raw.length) {
 		throw new FormatError('string pool block has trailing bytes');
 	}
-	return strings;
+	return new StringPoolBlock(view, count);
 };
 
 /**
@@ -68,10 +111,10 @@ export const parseStringPoolBlock = (bytes: Uint8Array, options: { first: boolea
  * blockSize⌋`.
  */
 export class StringPool {
-	readonly #blocks: string[][];
+	readonly #blocks: readonly (StringPoolBlock | readonly string[])[];
 
 	/** @param blocks decoded blocks in file-number order */
-	constructor(blocks: string[][]) {
+	constructor(blocks: readonly (StringPoolBlock | readonly string[])[]) {
 		if (blocks.length === 0) {
 			throw new FormatError('string pool needs at least one block');
 		}
@@ -91,12 +134,17 @@ export class StringPool {
 			return '';
 		}
 		const size = this.#blocks[0].length;
-		const value = id >= 0 ? this.#blocks[Math.floor(id / size)]?.[id % size] : undefined;
+		let value: string | undefined;
+		if (id >= 0 && size > 0) {
+			const block = this.#blocks[Math.floor(id / size)];
+			if (block !== undefined) {
+				const index = id % size;
+				value = block instanceof StringPoolBlock ? block.get(index) : block[index];
+			}
+		}
 		if (value === undefined) {
 			throw new FormatError(`string id ${id} is not in the pool`);
 		}
 		return value;
 	}
 }
-
-const utf8 = new TextDecoder('utf-8');

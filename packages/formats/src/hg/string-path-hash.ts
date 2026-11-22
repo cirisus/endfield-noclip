@@ -83,23 +83,10 @@ export class StringPathHashTable {
 		const view = this.#view;
 		const dv = view.view;
 		const stringsOffset = this.#stringsOffset;
-		const fileLen = view.length;
-		for (let s = 0; s < this.count; s++) {
-			const slotAt = SLOTS_START + s * 8;
-			const offset = dv.getUint32(slotAt, true);
-			const count = dv.getUint32(slotAt + 4, true);
-			if (count === 0) {
-				continue;
-			}
-			if (offset + count * BUCKET_SIZE > fileLen) {
-				throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
-			}
-			for (let i = 0; i < count; i++) {
-				const bucket = offset + i * BUCKET_SIZE;
-				const path = view.lengthPrefixedUtf16(stringsOffset + dv.getUint32(bucket + 12, true));
-				if (predicate === undefined || predicate(path)) {
-					yield [dv.getBigUint64(bucket + 4, true), path];
-				}
+		for (const bucket of this.#buckets()) {
+			const path = view.lengthPrefixedUtf16(stringsOffset + dv.getUint32(bucket + 12, true));
+			if (predicate === undefined || predicate(path)) {
+				yield [dv.getBigUint64(bucket + 4, true), path];
 			}
 		}
 	}
@@ -178,10 +165,9 @@ export class StringPathHashTable {
 		return hashes;
 	}
 
-	/** visits every bucket in slot order, passing its offset, its string's offset, and its string's byte length */
-	#forEachBucket(visit: (bucket: number, stringAt: number, byteLength: number) => void): void {
+	/** yields every bucket offset in slot order after checking each non-empty slot's bounds */
+	*#buckets(): Generator<number> {
 		const dv = this.#view.view;
-		const stringsOffset = this.#stringsOffset;
 		const fileLen = this.#view.length;
 		for (let s = 0; s < this.count; s++) {
 			const slotAt = SLOTS_START + s * 8;
@@ -194,13 +180,22 @@ export class StringPathHashTable {
 				throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
 			}
 			for (let i = 0; i < count; i++) {
-				const bucket = offset + i * BUCKET_SIZE;
-				const at = stringsOffset + dv.getUint32(bucket + 12, true);
-				if (at + 4 > fileLen) {
-					throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
-				}
-				visit(bucket, at, dv.getUint32(at, true));
+				yield offset + i * BUCKET_SIZE;
 			}
+		}
+	}
+
+	/** visits every bucket in slot order, passing its offset, its string's offset, and its string's byte length */
+	#forEachBucket(visit: (bucket: number, stringAt: number, byteLength: number) => void): void {
+		const dv = this.#view.view;
+		const stringsOffset = this.#stringsOffset;
+		const fileLen = this.#view.length;
+		for (const bucket of this.#buckets()) {
+			const at = stringsOffset + dv.getUint32(bucket + 12, true);
+			if (at + 4 > fileLen) {
+				throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+			}
+			visit(bucket, at, dv.getUint32(at, true));
 		}
 	}
 

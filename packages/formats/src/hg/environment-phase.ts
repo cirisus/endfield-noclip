@@ -1,5 +1,3 @@
-import { mapDefined } from '@mary-ext/array-fns';
-
 import { FormatError } from '../binary/binary-reader.ts';
 import {
 	type PlainKinds,
@@ -95,6 +93,29 @@ export const readEnvironmentPhase = (
 	};
 	const { value, pptrs } = toPlainObject(nodes, object, options);
 	const kinds = plainKinds(nodes, options);
+	const pptrsBySection = new Map<
+		string,
+		{ textures: PlainResult['pptrs']; materials: PlainResult['pptrs']; flares: PlainResult['pptrs'] }
+	>();
+	for (const { path, type, pptr } of pptrs) {
+		const root = path[0];
+		if (typeof root !== 'string') {
+			continue;
+		}
+		let bucket = pptrsBySection.get(root);
+		if (bucket === undefined) {
+			bucket = { textures: [], materials: [], flares: [] };
+			pptrsBySection.set(root, bucket);
+		}
+		const entry = { path: path.slice(1), type, pptr };
+		if (TEXTURE_PPTR.test(type)) {
+			bucket.textures.push(entry);
+		} else if (MATERIAL_PPTR.test(type)) {
+			bucket.materials.push(entry);
+		} else if (FLARE_PPTR.test(type)) {
+			bucket.flares.push(entry);
+		}
+	}
 	const section = (name: EnvironmentSectionName): EnvironmentSection => {
 		const raw = object[name];
 		const converted = value[name];
@@ -107,17 +128,15 @@ export const readEnvironmentPhase = (
 		) {
 			throw new FormatError(`environment phase has no ${name}`);
 		}
-		const own = mapDefined(pptrs, ({ path, type, pptr }) =>
-			path[0] === name ? { path: path.slice(1), type, pptr } : undefined,
-		);
+		const refs = pptrsBySection.get(name);
 		const sectionKinds = kinds[name];
 		return {
 			active: raw.m_active === undefined ? true : raw.m_active !== 0 && raw.m_active !== false,
 			value: converted,
 			kinds: typeof sectionKinds === 'object' ? sectionKinds : {},
-			textures: own.filter(({ type }) => TEXTURE_PPTR.test(type)),
-			materials: own.filter(({ type }) => MATERIAL_PPTR.test(type)),
-			flares: own.filter(({ type }) => FLARE_PPTR.test(type)),
+			textures: refs?.textures ?? [],
+			materials: refs?.materials ?? [],
+			flares: refs?.flares ?? [],
 		};
 	};
 	return { name: stringField(object, 'm_Name'), sections: mapSections(section) };
@@ -129,21 +148,11 @@ export const readEnvironmentPhase = (
  */
 export const mapSections = <T>(
 	fn: (name: EnvironmentSectionName) => T,
-): Record<EnvironmentSectionName, T> => ({
-	lightConfig: fn('lightConfig'),
-	skyConfig: fn('skyConfig'),
-	atmosphereConfig: fn('atmosphereConfig'),
-	fogConfig: fn('fogConfig'),
-	heightFogConfig: fn('heightFogConfig'),
-	volumetricFogConfig: fn('volumetricFogConfig'),
-	cloudConfig: fn('cloudConfig'),
-	windConfig: fn('windConfig'),
-	lightShaftConfig: fn('lightShaftConfig'),
-	colorGradingConfig: fn('colorGradingConfig'),
-	autoExposureConfig: fn('autoExposureConfig'),
-	shadowConfig: fn('shadowConfig'),
-	celestialConfig: fn('celestialConfig'),
-	starConfig: fn('starConfig'),
-	rainConfig: fn('rainConfig'),
-	lensFlareConfig: fn('lensFlareConfig'),
-});
+): Record<EnvironmentSectionName, T> => {
+	const result: Partial<Record<EnvironmentSectionName, T>> = {};
+	for (const name of ENVIRONMENT_SECTIONS) {
+		result[name] = fn(name);
+	}
+	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- every section was just filled in
+	return result as Record<EnvironmentSectionName, T>;
+};

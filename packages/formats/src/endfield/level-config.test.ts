@@ -105,11 +105,17 @@ test('parseStringPoolBlock reads stored and first blocks', () => {
 		out.set(raw, prefix + 24);
 		return out;
 	};
-	assert.deepEqual(parseStringPoolBlock(block(false), { first: false }), strings);
-	assert.deepEqual(parseStringPoolBlock(block(true), { first: true }), strings);
+	const readAll = (parsed: ReturnType<typeof parseStringPoolBlock>): (string | undefined)[] =>
+		Array.from({ length: parsed.length }, (_, i) => parsed.get(i));
+	const parsed = parseStringPoolBlock(block(false), { first: false });
+	assert.deepEqual(readAll(parsed), strings);
+	assert.deepEqual(readAll(parseStringPoolBlock(block(true), { first: true })), strings);
 	assert.throws(() => parseStringPoolBlock(block(true), { first: false }), FormatError);
 
-	const pool = new StringPool([strings, ['x']]);
+	const pool = new StringPool([parsed, ['x']]);
+	assert.equal(pool.get(0), 'a');
+	assert.equal(pool.get(1), 'héllo');
+	assert.equal(pool.get(2), '');
 	assert.equal(pool.get(3), 'x');
 	assert.throws(() => pool.get(4), FormatError);
 });

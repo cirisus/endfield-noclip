@@ -37,7 +37,7 @@ export const hashSlot = (
  * @returns the slot
  * @throws {FormatError} if the slot lies outside the file
  */
-export const slotAt = (view: ByteView, slotsStart: number, index: number): HashSlot => {
+const slotAt = (view: ByteView, slotsStart: number, index: number): HashSlot => {
 	const at = slotsStart + index * 8;
 	return { offset: view.u32(at), count: view.u32(at + 4) };
 };

@@ -180,7 +180,7 @@ const resolveFromBundle = async (
 			// oxlint-disable-next-line no-await-in-loop -- typically one SerializedFile per bundle
 			for (const assetBundle of await file.assetBundles()) {
 				for (const entry of assetBundle.container) {
-					const obj = file.file.objects.find((candidate) => candidate.pathId === entry.asset.pathId);
+					const obj = file.file.objectsByPathId.get(entry.asset.pathId);
 					if (obj !== undefined && obj.classId === UnityClass.GameObject) {
 						containerRoots.push({ bundleIndex, file, info: obj });
 					}
@@ -259,7 +259,7 @@ const inspectPrefab = async (
 	root: ObjectRef,
 	options: { effectLod: 'camera' | 'proxy'; json: boolean },
 ): Promise<void> => {
-	const bundleName = resolver.manifest.bundle(root.bundleIndex).name;
+	const bundleName = resolver.manifest.bundleName(root.bundleIndex);
 	const rootName = (await root.file.peekName(root.info)) ?? '?';
 
 	// 1. walk the full hierarchy (including inactive nodes) so nothing is hidden
@@ -340,7 +340,7 @@ const inspectPrefab = async (
 			return {
 				name: loaded.record.name,
 				object: objectKey(matRef),
-				bundle: resolver.manifest.bundle(matRef.bundleIndex).name,
+				bundle: resolver.manifest.bundleName(matRef.bundleIndex),
 				shader: loaded.shader.name,
 				queue: loaded.classification.renderQueue,
 				blend: loaded.classification.blend,
@@ -576,7 +576,7 @@ const materialJson = async (
 					slot,
 					{
 						object: objectKey(resolved.ref),
-						bundle: resolver.manifest.bundle(resolved.ref.bundleIndex).name,
+						bundle: resolver.manifest.bundleName(resolved.ref.bundleIndex),
 						name: texture.name,
 						format: texture.format.name,
 						size: [texture.width, texture.height],
@@ -598,7 +598,7 @@ const materialJson = async (
 	return {
 		name: record.name,
 		object: objectKey(ref),
-		bundle: resolver.manifest.bundle(ref.bundleIndex).name,
+		bundle: resolver.manifest.bundleName(ref.bundleIndex),
 		shader: material.shader.name,
 		classification: material.classification,
 		surface,
@@ -664,7 +664,7 @@ const encodeKtx2 = (texture: DecodedTexture, level: number | undefined): Uint8Ar
 
 const inspectWaterConfig = async (resolver: AssetResolver, ref: ObjectRef): Promise<void> => {
 	const value = await resolver.read(ref);
-	const header = { object: objectKey(ref), bundle: resolver.manifest.bundle(ref.bundleIndex).name };
+	const header = { object: objectKey(ref), bundle: resolver.manifest.bundleName(ref.bundleIndex) };
 	if (isWaterGlobalConfig(value)) {
 		const config = readWaterGlobalConfig(value);
 		console.log(
@@ -691,7 +691,7 @@ const globalWaterJson = async (
 			const t = await loadTexture(resolver, ref);
 			return {
 				object: objectKey(ref),
-				bundle: resolver.manifest.bundle(ref.bundleIndex).name,
+				bundle: resolver.manifest.bundleName(ref.bundleIndex),
 				name: t.name,
 				kind: t.kind,
 				size: [t.width, t.height],

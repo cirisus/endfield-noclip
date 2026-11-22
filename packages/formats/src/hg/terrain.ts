@@ -527,16 +527,7 @@ export const TERRAIN_PAGE_BORDER = 2;
  * @throws {FormatError} if the texture isn't a one-level 132² DXT5 page
  */
 export const readTerrainBc3Page = (texture: TerrainTexture): Uint8Array => {
-	if (
-		texture.format !== TerrainFormat.RGBA_DXT5_UNorm ||
-		texture.width !== TERRAIN_PAGE_SIZE ||
-		texture.height !== TERRAIN_PAGE_SIZE ||
-		texture.mips.length !== 1
-	) {
-		throw new FormatError(
-			`expected a one-level 132² DXT5 page, got ${texture.width}×${texture.height} format ${texture.format} with ${texture.mips.length} levels`,
-		);
-	}
+	checkPage(texture, TerrainFormat.RGBA_DXT5_UNorm, 'DXT5');
 	return texture.mips[0].data;
 };
 

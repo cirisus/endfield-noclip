@@ -149,14 +149,27 @@ export const parseIrradianceIndex = (data: Uint8Array): IrradianceIndex => {
 	const records: IrradianceRecord[] = [];
 	const ends = Array.from({ length: files.length }, () => 0);
 	for (let i = 0; i < count; i++) {
-		const w = Array.from({ length: RECORD_WORDS }, () => r.u32());
+		const key = r.u32();
+		r.u32();
+		const offset = r.u32();
+		const storedLength = r.u32();
+		const size = r.u32();
+		const part0 = r.u32();
+		const part1 = r.u32();
 		// word 7's high bits are unknown
-		const file = w[7] & 0xffff;
-		if (w[4] !== w[5] + w[6] || w[3] === 0 || w[3] > w[4] || file >= files.length || w[2] !== ends[file]) {
+		const file = r.u32() & 0xffff;
+		r.u32();
+		if (
+			size !== part0 + part1 ||
+			storedLength === 0 ||
+			storedLength > size ||
+			file >= files.length ||
+			offset !== ends[file]
+		) {
 			throw new FormatError(`irradiance index: record ${i} doesn't hold together`);
 		}
-		ends[file] = w[2] + w[3];
-		records.push({ key: rekey(w[0]), file, offset: w[2], storedLength: w[3], size: w[4] });
+		ends[file] = offset + storedLength;
+		records.push({ key: rekey(key), file, offset, storedLength, size });
 	}
 	if (ends.some((end) => end === 0)) {
 		throw new FormatError('irradiance index: payload without records');
