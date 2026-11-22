@@ -330,53 +330,56 @@ const readTypeTreeBlob = (r: BinaryReader, version: number): TypeTreeNode[] => {
 	const nodeSize = version >= 19 ? 32 : 24;
 	checkCount(nodeCount, r, nodeSize, 'TypeTree node');
 
-	const raw: { typeOffset: number; nameOffset: number; node: TypeTreeNode }[] = [];
+	const offsets = new Uint32Array(nodeCount * 2);
+	const nodes: TypeTreeNode[] = [];
 	for (let i = 0; i < nodeCount; i++) {
 		const nodeVersion = r.u16();
 		const level = r.u8();
 		const typeFlags = r.u8();
-		const typeOffset = r.u32();
-		const nameOffset = r.u32();
+		offsets[i * 2] = r.u32();
+		offsets[i * 2 + 1] = r.u32();
 		const byteSize = r.i32();
 		const index = r.i32();
 		const metaFlag = r.i32();
 		const refTypeHash = version >= 19 ? r.u64() : 0n;
-		raw.push({
-			typeOffset,
-			nameOffset,
-			node: {
-				type: '',
-				name: '',
-				level,
-				byteSize,
-				typeFlags,
-				metaFlag,
-				version: nodeVersion,
-				index,
-				refTypeHash,
-			},
+		nodes.push({
+			type: '',
+			name: '',
+			level,
+			byteSize,
+			typeFlags,
+			metaFlag,
+			version: nodeVersion,
+			index,
+			refTypeHash,
 		});
 	}
-	const strings = r.bytesView(stringBufferSize);
+	// latin-1 is 1:1 byte-to-code-unit, so one decode covers every local offset without per-string TextDecoder calls
+	const strings = latin1.decode(r.bytesView(stringBufferSize));
 	const local = new Map<number, string>();
 	const lookup = (offset: number): string => {
 		if (offset & 0x80000000) {
 			const common = offset & 0x7fffffff;
 			return COMMON_STRINGS.get(common) ?? `<common ${common}>`;
 		}
-		return local.getOrInsertComputed(offset, () => {
-			const end = strings.indexOf(0, offset);
-			if (end < 0) {
-				throw new FormatError(`TypeTree string at ${offset} is unterminated`);
-			}
-			return latin1.decode(strings.subarray(offset, end));
-		});
+		const cached = local.get(offset);
+		if (cached !== undefined) {
+			return cached;
+		}
+		const end = strings.indexOf('\0', offset);
+		if (end < 0) {
+			throw new FormatError(`TypeTree string at ${offset} is unterminated`);
+		}
+		const value = strings.slice(offset, end);
+		local.set(offset, value);
+		return value;
 	};
-	return raw.map(({ typeOffset, nameOffset, node }) => {
-		node.type = lookup(typeOffset);
-		node.name = lookup(nameOffset);
-		return node;
-	});
+	for (let i = 0; i < nodeCount; i++) {
+		const node = nodes[i];
+		node.type = lookup(offsets[i * 2]);
+		node.name = lookup(offsets[i * 2 + 1]);
+	}
+	return nodes;
 };
 
 const latin1 = new TextDecoder('latin1');
