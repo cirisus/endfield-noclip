@@ -120,7 +120,7 @@ const findPaths = async (world: WorldIndex, pattern: RegExp, limit: number, json
 	const rows: { hash: string; path: string; bundles: string[] }[] = [];
 	const seen = new Set<string>();
 	for (const table of [main, initial]) {
-		for (const [hash, path] of table.matchEntries((candidate) => pattern.test(candidate))) {
+		for (const [hash, path] of table.entries((candidate) => pattern.test(candidate))) {
 			const key = `${hash}:${path}`;
 			if (seen.has(key)) {
 				continue;

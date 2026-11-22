@@ -77,35 +77,7 @@ test('lookup reports collisions as ambiguous', () => {
 	assert.equal(table.lookup(7n), undefined);
 });
 
-test('entriesWithByteLength yields only paths of that length', () => {
-	const table = new StringPathHashTable(
-		build([
-			[1n, 'ab'],
-			[2n, 'abcd'],
-			[3n, 'cd'],
-		]),
-	);
-	assert.deepEqual(
-		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		[...table.entriesWithByteLength(4)].sort(([a], [b]) => Number(a - b)),
-		[
-			[1n, 'ab'],
-			[3n, 'cd'],
-		],
-	);
-	// second call builds the length index and must return the same results
-	assert.deepEqual(
-		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		[...table.entriesWithByteLength(4)].sort(([a], [b]) => Number(a - b)),
-		[
-			[1n, 'ab'],
-			[3n, 'cd'],
-		],
-	);
-	assert.deepEqual([...table.entriesWithByteLength(6)], []);
-});
-
-test('matchEntries yields only matching paths', () => {
+test('entries filters by predicate when given', () => {
 	const table = new StringPathHashTable(
 		build([
 			[1n, 'assets/water.mat'],
@@ -115,7 +87,7 @@ test('matchEntries yields only matching paths', () => {
 	);
 	assert.deepEqual(
 		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		[...table.matchEntries((path) => path.includes('water'))].sort(([a], [b]) => Number(a - b)),
+		[...table.entries((path) => path.includes('water'))].sort(([a], [b]) => Number(a - b)),
 		[
 			[1n, 'assets/water.mat'],
 			[3n, 'assets/waterfall.mat'],
