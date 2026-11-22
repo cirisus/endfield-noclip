@@ -188,14 +188,6 @@ export class BundleManifest {
 		return found;
 	}
 
-	/** yields every asset row in storage order */
-	*assets(): Generator<AssetInfo> {
-		const values = this.#assetDictionary + 8 + this.#assetCapacity * 8;
-		for (let i = 0; i < this.#assetCapacity; i++) {
-			yield this.#asset(values + i * ASSET_SIZE);
-		}
-	}
-
 	/**
 	 * @param asset an asset row from this manifest
 	 * @returns its path as stored (lowercase)

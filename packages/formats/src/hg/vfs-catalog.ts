@@ -1,6 +1,7 @@
 import { chacha20 } from '@noble/ciphers/chacha.js';
 
 import { BinaryReader, FormatError, toHex } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 
 // #region types
 
@@ -72,8 +73,7 @@ export class VfsCatalog {
 	readonly fileCount: number;
 	readonly chunksLength: number;
 
-	readonly #plain: Uint8Array;
-	readonly #view: DataView;
+	readonly #view: ByteView;
 	readonly #chunkMd5s: string[];
 	readonly #files: Map<string, number>;
 	readonly #entryChunk: Uint32Array;
@@ -102,8 +102,7 @@ export class VfsCatalog {
 		this.blockType = fields.blockType;
 		this.fileCount = fields.fileCount;
 		this.chunksLength = fields.chunksLength;
-		this.#plain = fields.plain;
-		this.#view = new DataView(fields.plain.buffer, fields.plain.byteOffset, fields.plain.byteLength);
+		this.#view = new ByteView(fields.plain, 'vfs catalog');
 		this.#chunkMd5s = fields.chunkMd5s;
 		this.#files = fields.files;
 		this.#entryChunk = fields.entryChunk;
@@ -148,12 +147,12 @@ export class VfsCatalog {
 		const at = this.#entryDataOffset[index];
 		const chunkIndex = this.#entryChunk[index];
 		const chunkMd5 =
-			chunkIndex === FOREIGN_CHUNK ? toHex(this.#plain.subarray(at, at + 16)) : this.#chunkMd5s[chunkIndex];
-		const dataMd5 = toHex(this.#plain.subarray(at + 16, at + 32));
-		const offset = i64NumberLe(this.#view, at + 32);
-		const length = i64NumberLe(this.#view, at + 40);
-		const blockType = this.#plain[at + 48];
-		const ivSeed = this.#plain[at + 49] !== 0 ? this.#view.getBigInt64(at + 50, true) : null;
+			chunkIndex === FOREIGN_CHUNK ? toHex(this.#view.subarray(at, 16)) : this.#chunkMd5s[chunkIndex];
+		const dataMd5 = toHex(this.#view.subarray(at + 16, 16));
+		const offset = this.#view.i64Number(at + 32);
+		const length = this.#view.i64Number(at + 40);
+		const blockType = this.#view.u8(at + 48);
+		const ivSeed = this.#view.u8(at + 49) !== 0 ? this.#view.i64(at + 50) : null;
 		return { name, chunkMd5, dataMd5, offset, length, blockType, ivSeed };
 	}
 }
@@ -312,10 +311,6 @@ export const decryptVfsFileSliceInPlace = (
 	view.setBigInt64(4, cipher.ivSeed, true);
 	const decrypt = options?.chacha20 ?? defaultChaCha20;
 	decrypt(cipher.key, nonce, 1 + cipher.position / 64, data, data);
-};
-
-const i64NumberLe = (view: DataView, at: number): number => {
-	return view.getInt32(at + 4, true) * 0x1_0000_0000 + view.getUint32(at, true);
 };
 
 const bytesEqual16 = (bytes: Uint8Array, a: number, b: number): boolean => {

@@ -63,7 +63,7 @@ export interface IrradianceIndex {
 /** world metres per cell-key unit */
 export const IRRADIANCE_CELL_SIZE = 32;
 /** the key value of world 0 on each axis */
-export const IRRADIANCE_KEY_ORIGIN = 128;
+const IRRADIANCE_KEY_ORIGIN = 128;
 
 /**
  * @param key a cell key
@@ -194,7 +194,7 @@ export const decodeIrradianceCell = (stored: Uint8Array, record: IrradianceRecor
 // #region region bakes
 
 /** world metres between a region bake's probes, the finest level's spacing */
-export const IRRADIANCE_REGION_SPACING = 0.5;
+const IRRADIANCE_REGION_SPACING = 0.5;
 
 /** the first word of a region bake */
 const REGION_VERSION = 0x1000;

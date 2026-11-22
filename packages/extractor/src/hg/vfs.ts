@@ -14,12 +14,14 @@ import {
 
 import { ignoreMissing } from '../errors.ts';
 
+const chachaIv = new Uint8Array(16);
+const chachaIvView = new DataView(chachaIv.buffer);
+
 /** OpenSSL ChaCha20 (RFC 8439: 4-byte LE block counter ‖ 12-byte nonce) */
 const nativeChaCha20: ChaCha20Cipher = (key, nonce, counter, input, output) => {
-	const iv = new Uint8Array(16);
-	new DataView(iv.buffer).setUint32(0, counter, true);
-	iv.set(nonce, 4);
-	const decipher = createDecipheriv('chacha20', key, iv);
+	chachaIvView.setUint32(0, counter, true);
+	chachaIv.set(nonce, 4);
+	const decipher = createDecipheriv('chacha20', key, chachaIv);
 	output.set(decipher.update(input));
 };
 
@@ -225,11 +227,18 @@ export class Vfs {
 		return data;
 	}
 
-	/** closes cached chunk handles */
+	/** closes cached chunk handles; handles with reads in flight close once those finish */
 	async close(): Promise<void> {
 		const chunks = [...this.#handles.values()];
 		this.#handles.clear();
-		await Promise.allSettled(chunks.map(async (chunk) => (await chunk.handle).close()));
+		const idle: Promise<void>[] = [];
+		for (const chunk of chunks) {
+			chunk.evicted = true;
+			if (chunk.users === 0) {
+				idle.push(closeQuietly(chunk.handle));
+			}
+		}
+		await Promise.all(idle);
 	}
 
 	async #mount(hash: string): Promise<MountedGroup> {

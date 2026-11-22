@@ -44,7 +44,7 @@ export type TerrainFormat = (typeof TerrainFormat)[keyof typeof TerrainFormat];
 const TERRAIN_FORMATS: ReadonlySet<number> = new Set(Object.values(TerrainFormat));
 
 /** @returns whether `format` is one that occurs in terrain files */
-export const isTerrainFormat = (format: number): format is TerrainFormat => {
+const isTerrainFormat = (format: number): format is TerrainFormat => {
 	return TERRAIN_FORMATS.has(format);
 };
 
@@ -88,7 +88,7 @@ const TRET_HEADER_SIZE = 20;
  * @returns the clear `TRET` file; a view of `packed` when it was stored uncompressed
  * @throws {FormatError} if the envelope or the LZ4 stream is malformed
  */
-export const unpackTerrainFile = (packed: Uint8Array): Uint8Array => {
+const unpackTerrainFile = (packed: Uint8Array): Uint8Array => {
 	// a 1.4 GB clear size would be the only other reading of these bytes
 	if (
 		packed.length >= 4 &&
