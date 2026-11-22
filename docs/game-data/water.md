@@ -437,9 +437,12 @@ binds just before), reconstructs the world position there and moves it into the 
   water's passes set on its pixels ([how surfaces are drawn](#how-surfaces-are-drawn)). the box is
   culled by `_CullMode` and depth-tested by `_ZTest` (4, LessEqual, for most; 5, Greater, with front
   faces culled, for `M_fx_map02_lv001_waterfall_2105_05`; 8, Always, for the bamboo raft's wake
-  `M_fx_interactive_bambooraft_waterdecal_802`), and writes no depth. which depth it's tested
-  against isn't confirmed: the camera's depth buffer holds the scene without water, since the water
-  writes its depth into a copy (`depthWithWater`).
+  `M_fx_interactive_bambooraft_waterdecal_802`), and writes no depth. the depth it's tested against
+  is `depthWithWater`, the scene's depth with the water surfaces drawn into it, whose copy is also
+  the water depth it reads; the camera's own depth buffer holds the scene without water. on the
+  water pixels the stencil leaves it, that's the nearest surface's depth, so a box with front faces
+  culled and `_ZTest` 5 covers wherever the water lies in front of its back faces, however far the
+  bed drops below them.
 
 the placement's `HGWaterDecalRenderer` holds `tilling`, `speed`, `opacity`, `brightness`,
 `tintColor` (the values above), `displacement` (the WaterDecalDisplacement pass, which writes a

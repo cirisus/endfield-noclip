@@ -386,7 +386,8 @@ export const encodeFrame = (
 		post.copyComposite(encoder, scene);
 		const foam = sceneFrame !== null && meshes.has('waterFoam');
 		if (foam) {
-			// the foam boxes project onto the water's own depth
+			// the foam boxes project onto the water's own depth and are depth-tested against it, as the game tests
+			// them against its depth with the water in it
 			const pass = beginPass(
 				encoder,
 				{
@@ -399,7 +400,7 @@ export const encodeFrame = (
 							storeOp: 'store',
 						},
 					],
-					depthStencilAttachment: targets.readOnlyDepthAttachment(),
+					depthStencilAttachment: targets.readOnlyWaterDepthAttachment(),
 				},
 				sceneFrame,
 			);

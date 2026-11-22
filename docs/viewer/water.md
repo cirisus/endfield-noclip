@@ -124,9 +124,10 @@ the mesh renderer's effect family (`fs_water_foam` in
 frame has any:
 
 1. **water depth.** the nearest surface's depth, laid down before the composite (above).
-2. **foam.** the boxes draw into an `rgba8unorm` target cleared to (0, 0, 0, 1), with the main
-   pass's depth attached read-only for the game's `_ZTest` (`waterFoam`, `waterFoamBehind` and
-   `waterFoamThrough` looks, one phase each), each covered pixel projecting the box onto the water
+2. **foam.** the boxes draw into an `rgba8unorm` target cleared to (0, 0, 0, 1), with the water
+   depth attached read-only for the game's `_ZTest` (`waterFoam`, `waterFoamBehind` and
+   `waterFoamThrough` looks, one phase each), which stands in for the game's depth with the water in
+   it on the water pixels the boxes draw over, each covered pixel projecting the box onto the water
    depth. rgb takes the box's premultiplied foam plus what's there times one minus its alpha, and
    alpha the product of those factors. the material's mip bias scales the base colour map's and the
    mask's UV gradients, and the dissolve texture is read at its fixed level.

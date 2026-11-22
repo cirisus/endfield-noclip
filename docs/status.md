@@ -280,10 +280,9 @@ packs or renders correctly.
   the game
 - [foam boxes](viewer/water.md#foam-boxes) (`HGRP/WaterDecal`) ignore their per-placement
   `HGWaterDecalRenderer` values (neutral on every map02 prefab), their displacement and the
-  distortion texture's mip bias (an unnamed material value); which depth the game tests them against
-  is unconfirmed, their variants beyond `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`,
-  `_USE_DISSOLVE` and `_USE_WATER_EROSION`, those with a `_ZTest` other than 4, 5 or 8, and erosion
-  alongside a dissolve, a distortion or a mask texture, show as
+  distortion texture's mip bias (an unnamed material value); their variants beyond `_USE_DISTURB`,
+  `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE` and `_USE_WATER_EROSION`, those with a `_ZTest`
+  other than 4, 5 or 8, and erosion alongside a dissolve, a distortion or a mask texture, show as
   [unsupported](viewer/materials.md#unsupported-materials) (none of map02's), and the Wuling falls'
   foam and Wuling City's red tide ([erosion](game-data/water.md#water-erosion), its clamped samplers
   approximated) are unchecked against an in-game shot; map02's static boxes (InitChunkData component

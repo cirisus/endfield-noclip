@@ -138,6 +138,7 @@ export class RenderTargets {
 	#mainAttachments: PassAttachments | null = null;
 	#transparentDepth: GPURenderPassDepthStencilAttachment | null = null;
 	#readOnlyDepth: GPURenderPassDepthStencilAttachment | null = null;
+	#readOnlyWaterDepth: GPURenderPassDepthStencilAttachment | null = null;
 	#writableDepth: GPURenderPassDepthStencilAttachment | null = null;
 	#version = 0;
 
@@ -267,6 +268,7 @@ export class RenderTargets {
 		this.#mainAttachments = null;
 		this.#transparentDepth = null;
 		this.#readOnlyDepth = null;
+		this.#readOnlyWaterDepth = null;
 		this.#writableDepth = null;
 		this.#scene = {
 			radiance: this.#colors[0].createView(),
@@ -399,6 +401,18 @@ export class RenderTargets {
 		}
 		this.#readOnlyDepth = depth;
 		return depth;
+	}
+
+	/**
+	 * @returns the nearest water surface's depth ({@link SceneTextures.waterDepth}), attached for testing only;
+	 *   the same object until the next resize
+	 */
+	readOnlyWaterDepthAttachment(): Readonly<GPURenderPassDepthStencilAttachment> {
+		if (this.#waterDepth === null) {
+			throw new Error('render targets used before update()');
+		}
+		this.#readOnlyWaterDepth ??= { view: this.#waterDepth.createView(), depthReadOnly: true };
+		return this.#readOnlyWaterDepth;
 	}
 
 	/** @returns this frame's swapchain view */

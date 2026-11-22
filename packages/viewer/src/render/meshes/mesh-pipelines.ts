@@ -9,6 +9,7 @@ import {
 	type MainPassFormat,
 	REFLECTION_SURFACE_FORMAT,
 	TRANSPARENT_TARGETS,
+	WATER_DEPTH_FORMAT,
 	WATER_FOAM_FORMAT,
 } from '../frame/render-targets.ts';
 import { postCommonSource } from '../post/shader-source.ts';
@@ -236,14 +237,18 @@ export const prepareMeshPipelines = (
 	});
 	/**
 	 * describes a phase of the effect shader: its fragment entry point, targets and depth test, if any, which
-	 * writes depth only when `writesDepth` is set
+	 * writes depth only when `writesDepth` is set and tests the main pass's depth unless `depthFormat` names
+	 * another
 	 */
 	const describeEffect = (
 		phase: DrawPhase,
 		entryPoint: string,
 		targets: GPUColorTargetState[],
 		depthCompare: GPUCompareFunction | null,
-		{ writesDepth = false }: { writesDepth?: boolean } = {},
+		{
+			writesDepth = false,
+			depthFormat = format.depth,
+		}: { writesDepth?: boolean; depthFormat?: GPUTextureFormat } = {},
 	): void => {
 		describe(phase, (cullMode, uvFormat) => {
 			const descriptor: GPURenderPipelineDescriptor = {
@@ -253,7 +258,7 @@ export const prepareMeshPipelines = (
 				fragment: { module: effectModule, entryPoint, targets },
 			};
 			if (depthCompare !== null) {
-				descriptor.depthStencil = { format: format.depth, depthWriteEnabled: writesDepth, depthCompare };
+				descriptor.depthStencil = { format: depthFormat, depthWriteEnabled: writesDepth, depthCompare };
 			}
 			return descriptor;
 		});
@@ -316,8 +321,9 @@ export const prepareMeshPipelines = (
 	);
 	// WaterDecal boxes write the foam colour over the water's own: rgb adds the box's premultiplied colour to
 	// what's there times one minus its alpha, and alpha keeps the product of those factors, so the water pass
-	// can apply them over its own foam. the main pass's depth, attached read-only, tests them as the game's
-	// `_ZTest` does under reversed-Z
+	// can apply them over its own foam. the water's depth, attached read-only, tests them as the game's `_ZTest`
+	// does under reversed-Z: the game's buffer is the scene's depth with the water drawn into it, and the boxes
+	// draw only over water
 	const foam: GPUColorTargetState[] = [
 		{
 			format: WATER_FOAM_FORMAT,
@@ -327,9 +333,10 @@ export const prepareMeshPipelines = (
 			},
 		},
 	];
-	describeEffect(PHASES.waterFoam, 'fs_water_foam', foam, 'greater-equal');
-	describeEffect(PHASES.waterFoamBehind, 'fs_water_foam', foam, 'less');
-	describeEffect(PHASES.waterFoamThrough, 'fs_water_foam', foam, 'always');
+	const onWater = { depthFormat: WATER_DEPTH_FORMAT };
+	describeEffect(PHASES.waterFoam, 'fs_water_foam', foam, 'greater-equal', onWater);
+	describeEffect(PHASES.waterFoamBehind, 'fs_water_foam', foam, 'less', onWater);
+	describeEffect(PHASES.waterFoamThrough, 'fs_water_foam', foam, 'always', onWater);
 	// relit decals add the change in the surface's light to the radiance, leaving its alpha (the albedo's
 	// luminance) alone, and the change in its sky reflection to the reflection target; the last decal over a
 	// pixel writes the surface the screen-space reflections trace. they read the depth as a texture, so the
