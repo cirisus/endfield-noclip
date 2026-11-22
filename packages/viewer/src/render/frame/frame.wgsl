@@ -244,12 +244,21 @@ fn sun_visibility(rel: vec3f, normal: vec3f, px: vec2f) -> vec3f {
 // `sun_visibility` with the shadow taken from the coarse far layer alone, for materials the game shadows from its
 // cached map only
 fn sun_visibility_far(rel: vec3f, normal: vec3f) -> vec3f {
+	return far_visibility(rel, normal, cloud_shadow(rel));
+}
+
+// `sun_visibility_far` without the cloud shadow, which lit VFXBaseV2 effects don't sample
+fn sun_visibility_far_cloudless(rel: vec3f, normal: vec3f) -> vec3f {
+	return far_visibility(rel, normal, 1.0);
+}
+
+fn far_visibility(rel: vec3f, normal: vec3f, cloud: f32) -> vec3f {
 	if (frame.shadow_fade.w < 0.5) {
-		return vec3f(cloud_shadow(rel));
+		return vec3f(cloud);
 	}
 	var shadow = frame.shadow_look.z;
 	if (frame.shadow_look.y < 0.99) {
-		shadow = mix(far_shadow(rel, normal) * cloud_shadow(rel), frame.shadow_look.z, frame.shadow_look.y);
+		shadow = mix(far_shadow(rel, normal) * cloud, frame.shadow_look.z, frame.shadow_look.y);
 	}
 	return sun_look(shadow);
 }

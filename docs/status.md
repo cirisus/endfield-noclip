@@ -340,6 +340,7 @@ packs or renders correctly.
     (fragments below the authored height show the checker; the height a water surface would set
     isn't followed), VFXDecal's `_USE_IN_PARTICLE`, lighting and 3D-texture variants, its parallax
     beside a blend layer and stencil read masks other than 0 and 32, and local lights on lit effects
+    (whose irradiance is also sampled per pixel, not per renderer)
   - VFXBaseV2's breathing pulses every placement in step (per-draw time scale and offset untraced);
     Dijiang's clue board and the aisle-guide panels' edge colour are unchecked in game
   - VFXDitherAlpha's effect variants blend rather than dither and write no depth; lit ones, other
