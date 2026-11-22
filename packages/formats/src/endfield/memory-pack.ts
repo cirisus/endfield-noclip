@@ -204,7 +204,28 @@ const littleEndian = (reader: AttributeReader, size: number): number => {
 };
 
 /** @returns an identity key for a resolved type */
-const typeKey = (type: Il2CppTypeRef): string => JSON.stringify(type);
+const typeKey = (type: Il2CppTypeRef): string => {
+	switch (type.kind) {
+		case 'primitive': {
+			return `p:${type.name}`;
+		}
+		case 'definition': {
+			return `d:${type.definition}`;
+		}
+		case 'generic': {
+			return `g:${type.definition}<${type.args.map(typeKey).join(',')}>`;
+		}
+		case 'array': {
+			return `a:${type.rank}:${typeKey(type.element)}`;
+		}
+		case 'pointer': {
+			return `r:${typeKey(type.element)}`;
+		}
+		case 'parameter': {
+			return 't';
+		}
+	}
+};
 
 /**
  * reads one attribute's constructor arguments, skipping its named field and property arguments
@@ -321,6 +342,7 @@ export class MemoryPackReader {
 	readonly schema: MemoryPackSchema;
 	readonly #strings: (id: number) => string | null | undefined;
 	readonly #layouts = new Map<string, Layout | null>();
+	readonly #layoutRefs = new WeakMap<Il2CppTypeRef, Layout | null>();
 	#bytes: Uint8Array = new Uint8Array();
 	#view: DataView = new DataView(this.#bytes.buffer);
 	#at = 0;
@@ -566,13 +588,24 @@ export class MemoryPackReader {
 
 	/** @returns the unmanaged layout of a type, or `null` if it holds references or is unknown */
 	#layout(type: Il2CppTypeRef): Layout | null {
+		if (type.kind === 'primitive') {
+			const size = PRIMITIVE_SIZES.get(type.name);
+			return size === undefined ? null : { size, align: size };
+		}
+		const cached = this.#layoutRefs.get(type);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const key = typeKey(type);
 		if (this.#layouts.has(key)) {
-			return this.#layouts.get(key) ?? null;
+			const result = this.#layouts.get(key) ?? null;
+			this.#layoutRefs.set(type, result);
+			return result;
 		}
 		this.#layouts.set(key, null);
 		const result = this.#computeLayout(type);
 		this.#layouts.set(key, result);
+		this.#layoutRefs.set(type, result);
 		return result;
 	}
 

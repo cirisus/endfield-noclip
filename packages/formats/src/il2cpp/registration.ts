@@ -60,6 +60,7 @@ export class Il2CppRuntime {
 	readonly #typeCount: number;
 	readonly #fieldOffsets: number;
 	readonly #resolved = new Map<number, Il2CppTypeRef>();
+	readonly #definitionNames = new Map<number, string>();
 
 	/**
 	 * @param metadata the build's metadata
@@ -178,16 +179,24 @@ export class Il2CppRuntime {
 	 * @returns its name with enclosing types, without generic arity or arguments
 	 */
 	definitionName(index: number): string {
+		const cached = this.#definitionNames.get(index);
+		if (cached !== undefined) {
+			return cached;
+		}
 		const definition = this.metadata.typeDefinition(index);
 		const name = definition.name.replace(/`\d+$/, '');
+		let result: string;
 		if (definition.declaringTypeIndex === -1) {
-			return name;
+			result = name;
+		} else {
+			const outer = this.type(definition.declaringTypeIndex);
+			if (outer.kind !== 'definition' && outer.kind !== 'generic') {
+				throw new FormatError(`type ${name} is nested in a ${outer.kind}`);
+			}
+			result = `${this.definitionName(outer.definition)}.${name}`;
 		}
-		const outer = this.type(definition.declaringTypeIndex);
-		if (outer.kind !== 'definition' && outer.kind !== 'generic') {
-			throw new FormatError(`type ${name} is nested in a ${outer.kind}`);
-		}
-		return `${this.definitionName(outer.definition)}.${name}`;
+		this.#definitionNames.set(index, result);
+		return result;
 	}
 
 	#typeAt(va: bigint): Il2CppTypeRef {

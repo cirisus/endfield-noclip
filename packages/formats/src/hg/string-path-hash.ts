@@ -1,7 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { ByteView } from '../binary/byte-view.ts';
 
-import { hashSlot, type HashSlot, slotAt } from './hash-slots.ts';
+import { hashSlot } from './hash-slots.ts';
 
 // `Data/ExtendData/Main/StringPathHash.bin` (ExtendData group) and
 // `Data/ExtendData/Initial/InitStringPathHash.bin` (InitialExtendData group): stored hash table from 64-bit
@@ -14,6 +14,7 @@ const BUCKET_SIZE = 16;
 /** read-only view of a StringPathHash table; lookups decode only what they touch */
 export class StringPathHashTable {
 	readonly #view: ByteView;
+	readonly #dataView: DataView;
 	readonly #stringsOffset: number;
 	#byLength: Map<number, number[]> | undefined;
 	/** counts single-length scans so the full length index is only built when the table is queried repeatedly */
@@ -30,6 +31,7 @@ export class StringPathHashTable {
 			throw new FormatError('string path hash file is too short');
 		}
 		this.#view = new ByteView(bytes, 'string path hash');
+		this.#dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 		this.#stringsOffset = this.#view.u32(0);
 		this.count = this.#view.u32(4);
 		if (this.#stringsOffset !== 8 + 24 * this.count || this.#stringsOffset > bytes.length) {
@@ -48,9 +50,12 @@ export class StringPathHashTable {
 		if (slot === undefined) {
 			return found;
 		}
-		for (const bucket of this.#buckets(slot)) {
-			if (this.#view.u64(bucket + 4) === hash) {
-				const path = this.#string(this.#view.u32(bucket + 12));
+		const view = this.#view;
+		const stringsOffset = this.#stringsOffset;
+		for (let i = 0; i < slot.count; i++) {
+			const bucket = slot.offset + i * BUCKET_SIZE;
+			if (view.u64(bucket + 4) === hash) {
+				const path = view.lengthPrefixedUtf16(stringsOffset + view.u32(bucket + 12));
 				if (!found.includes(path)) {
 					found.push(path);
 				}
@@ -76,12 +81,25 @@ export class StringPathHashTable {
 	 */
 	*entries(): Generator<[hash: bigint, path: string]> {
 		const view = this.#view;
+		const dv = this.#dataView;
 		const stringsOffset = this.#stringsOffset;
+		const fileLen = view.length;
 		for (let s = 0; s < this.count; s++) {
-			const slot = slotAt(view, SLOTS_START, s);
-			for (let i = 0; i < slot.count; i++) {
-				const bucket = slot.offset + i * BUCKET_SIZE;
-				yield [view.u64(bucket + 4), view.lengthPrefixedUtf16(stringsOffset + view.u32(bucket + 12))];
+			const slotAt = SLOTS_START + s * 8;
+			const offset = dv.getUint32(slotAt, true);
+			const count = dv.getUint32(slotAt + 4, true);
+			if (count === 0) {
+				continue;
+			}
+			if (offset + count * BUCKET_SIZE > fileLen) {
+				throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+			}
+			for (let i = 0; i < count; i++) {
+				const bucket = offset + i * BUCKET_SIZE;
+				yield [
+					dv.getBigUint64(bucket + 4, true),
+					view.lengthPrefixedUtf16(stringsOffset + dv.getUint32(bucket + 12, true)),
+				];
 			}
 		}
 	}
@@ -95,14 +113,24 @@ export class StringPathHashTable {
 	 */
 	*matchEntries(predicate: (path: string) => boolean): Generator<[hash: bigint, path: string]> {
 		const view = this.#view;
+		const dv = this.#dataView;
 		const stringsOffset = this.#stringsOffset;
+		const fileLen = view.length;
 		for (let s = 0; s < this.count; s++) {
-			const slot = slotAt(view, SLOTS_START, s);
-			for (let i = 0; i < slot.count; i++) {
-				const bucket = slot.offset + i * BUCKET_SIZE;
-				const path = view.lengthPrefixedUtf16(stringsOffset + view.u32(bucket + 12));
+			const slotAt = SLOTS_START + s * 8;
+			const offset = dv.getUint32(slotAt, true);
+			const count = dv.getUint32(slotAt + 4, true);
+			if (count === 0) {
+				continue;
+			}
+			if (offset + count * BUCKET_SIZE > fileLen) {
+				throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+			}
+			for (let i = 0; i < count; i++) {
+				const bucket = offset + i * BUCKET_SIZE;
+				const path = view.lengthPrefixedUtf16(stringsOffset + dv.getUint32(bucket + 12, true));
 				if (predicate(path)) {
-					yield [view.u64(bucket + 4), path];
+					yield [dv.getBigUint64(bucket + 4, true), path];
 				}
 			}
 		}
@@ -117,25 +145,38 @@ export class StringPathHashTable {
 	 */
 	*entriesWithByteLength(byteLength: number): Generator<[hash: bigint, path: string]> {
 		const view = this.#view;
+		const dv = this.#dataView;
 		const stringsOffset = this.#stringsOffset;
+		const fileLen = view.length;
 		// a single lookup scans once without allocating a full length map; repeated lookups index the table
 		if (this.#byLength === undefined && this.#lengthScans === 0) {
 			this.#lengthScans++;
 			for (let s = 0; s < this.count; s++) {
-				const slot = slotAt(view, SLOTS_START, s);
-				for (let i = 0; i < slot.count; i++) {
-					const bucket = slot.offset + i * BUCKET_SIZE;
-					const at = stringsOffset + view.u32(bucket + 12);
-					if (view.u32(at) === byteLength) {
-						yield [view.u64(bucket + 4), view.lengthPrefixedUtf16(at)];
+				const slotAt = SLOTS_START + s * 8;
+				const offset = dv.getUint32(slotAt, true);
+				const count = dv.getUint32(slotAt + 4, true);
+				if (count === 0) {
+					continue;
+				}
+				if (offset + count * BUCKET_SIZE > fileLen) {
+					throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+				}
+				for (let i = 0; i < count; i++) {
+					const bucket = offset + i * BUCKET_SIZE;
+					const at = stringsOffset + dv.getUint32(bucket + 12, true);
+					if (at + 4 > fileLen) {
+						throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+					}
+					if (dv.getUint32(at, true) === byteLength) {
+						yield [dv.getBigUint64(bucket + 4, true), view.lengthPrefixedUtf16(at)];
 					}
 				}
 			}
 			return;
 		}
 		for (const bucket of this.#bucketsByLength().get(byteLength) ?? []) {
-			const at = stringsOffset + view.u32(bucket + 12);
-			yield [view.u64(bucket + 4), view.lengthPrefixedUtf16(at)];
+			const at = stringsOffset + dv.getUint32(bucket + 12, true);
+			yield [dv.getBigUint64(bucket + 4, true), view.lengthPrefixedUtf16(at)];
 		}
 	}
 
@@ -148,13 +189,26 @@ export class StringPathHashTable {
 	#bucketsByLength(): Map<number, number[]> {
 		if (this.#byLength === undefined) {
 			const byLength = new Map<number, number[]>();
-			const view = this.#view;
+			const dv = this.#dataView;
 			const stringsOffset = this.#stringsOffset;
+			const fileLen = this.#view.length;
 			for (let s = 0; s < this.count; s++) {
-				const slot = slotAt(view, SLOTS_START, s);
-				for (let i = 0; i < slot.count; i++) {
-					const bucket = slot.offset + i * BUCKET_SIZE;
-					const length = view.u32(stringsOffset + view.u32(bucket + 12));
+				const slotAt = SLOTS_START + s * 8;
+				const offset = dv.getUint32(slotAt, true);
+				const count = dv.getUint32(slotAt + 4, true);
+				if (count === 0) {
+					continue;
+				}
+				if (offset + count * BUCKET_SIZE > fileLen) {
+					throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+				}
+				for (let i = 0; i < count; i++) {
+					const bucket = offset + i * BUCKET_SIZE;
+					const at = stringsOffset + dv.getUint32(bucket + 12, true);
+					if (at + 4 > fileLen) {
+						throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+					}
+					const length = dv.getUint32(at, true);
 					let list = byLength.get(length);
 					if (list === undefined) {
 						list = [];
@@ -166,15 +220,5 @@ export class StringPathHashTable {
 			this.#byLength = byLength;
 		}
 		return this.#byLength;
-	}
-
-	*#buckets(slot: HashSlot): Generator<number> {
-		for (let i = 0; i < slot.count; i++) {
-			yield slot.offset + i * BUCKET_SIZE;
-		}
-	}
-
-	#string(relative: number): string {
-		return this.#view.lengthPrefixedUtf16(this.#stringsOffset + relative);
 	}
 }
