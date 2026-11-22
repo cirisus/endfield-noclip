@@ -125,7 +125,7 @@ export interface DecodedGeometry {
 export interface DecodedSkin {
 	/**
 	 * u32 words: the bind pose's `unorm16x4` positions, then its normals and tangents where present, then the
-	 * `unorm16x4` weights and `uint8x4` bones
+	 * `unorm16x4` weights and `uint8x4` (or, {@link wideBones}, `uint16x4`) bones
 	 */
 	source: ArrayBuffer;
 	/** where each part starts in {@link source}, in words; -1 for normals or tangents the mesh lacks */
@@ -133,6 +133,8 @@ export interface DecodedSkin {
 	tangentWord: number;
 	weightWord: number;
 	boneWord: number;
+	/** the bones are `uint16x4`, two words per vertex, rather than `uint8x4` */
+	wideBones: boolean;
 	/** the bind pose's position dequantization */
 	bindOffset: [x: number, y: number, z: number];
 	bindScale: [x: number, y: number, z: number];

@@ -49,7 +49,10 @@ export const VertexAttribute = {
 	 * {@link GeometryBlob.animation}
 	 */
 	BlendWeight: 12,
-	/** `uint8x4`: the bones those weights belong to, indexing the animation's bones */
+	/**
+	 * `uint8x4`, or `uint16x4` for an animation of more than 256 bones: the bones those weights belong to,
+	 * indexing the animation's bones
+	 */
 	BlendIndices: 13,
 } as const;
 
@@ -70,6 +73,7 @@ export const GeometryVertexFormat = {
 	Float32x2: 6,
 	Float32x4: 7,
 	Uint8x4: 8,
+	Uint16x4: 9,
 } as const;
 
 export type GeometryVertexFormat = (typeof GeometryVertexFormat)[keyof typeof GeometryVertexFormat];
@@ -85,6 +89,7 @@ export const GEOMETRY_VERTEX_FORMATS: Record<GeometryVertexFormat, { gpu: string
 	[GeometryVertexFormat.Float32x2]: { gpu: 'float32x2', size: 8 },
 	[GeometryVertexFormat.Float32x4]: { gpu: 'float32x4', size: 16 },
 	[GeometryVertexFormat.Uint8x4]: { gpu: 'uint8x4', size: 4 },
+	[GeometryVertexFormat.Uint16x4]: { gpu: 'uint16x4', size: 8 },
 };
 
 /** geometry blob flag bits */

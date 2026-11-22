@@ -319,7 +319,12 @@ const decodeSkin = (
 	bind: { positions: ArrayBuffer; normals: ArrayBuffer | null; tangents: ArrayBuffer | null },
 ): DecodedSkin => {
 	const weights = decodeAttribute(blob, VertexAttribute.BlendWeight, GeometryVertexFormat.Unorm16x4);
-	const bones = decodeAttribute(blob, VertexAttribute.BlendIndices, GeometryVertexFormat.Uint8x4);
+	const wideBones = findStream(blob, VertexAttribute.BlendIndices)?.format === GeometryVertexFormat.Uint16x4;
+	const bones = decodeAttribute(
+		blob,
+		VertexAttribute.BlendIndices,
+		wideBones ? GeometryVertexFormat.Uint16x4 : GeometryVertexFormat.Uint8x4,
+	);
 	if (weights === null || bones === null) {
 		throw new Error('animated geometry has no bone weights or indices');
 	}
@@ -342,6 +347,7 @@ const decodeSkin = (
 		tangentWord: words[2],
 		weightWord: words[3],
 		boneWord: words[4],
+		wideBones,
 		bindOffset: position.offset,
 		bindScale: position.scale,
 		boneCount: animation.boneCount,

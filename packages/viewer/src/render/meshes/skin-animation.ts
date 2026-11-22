@@ -108,6 +108,7 @@ export class SkinAnimator {
 			words[8] = Math.max(skin.tangentWord, 0);
 			words[9] = skin.weightWord;
 			words[10] = skin.boneWord;
+			words[11] = skin.wideBones ? 1 : 0;
 			floats.set(skin.bindOffset, 12);
 			floats.set(skin.bindScale, 16);
 			floats.set(target.positionOffset, 20);

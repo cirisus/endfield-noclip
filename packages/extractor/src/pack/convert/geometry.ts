@@ -274,7 +274,14 @@ export const convertMesh = (
 	if (motion !== undefined) {
 		const skin = skinStreams(mesh, order.map(vertexOf), motion.boneCount);
 		add(plain(VertexAttribute.BlendWeight, GeometryVertexFormat.Unorm16x4), bytesOf(skin.weights));
-		add(plain(VertexAttribute.BlendIndices, GeometryVertexFormat.Uint8x4), bytesOf(skin.bones));
+		const wide = skin.bones instanceof Uint16Array;
+		add(
+			plain(
+				VertexAttribute.BlendIndices,
+				wide ? GeometryVertexFormat.Uint16x4 : GeometryVertexFormat.Uint8x4,
+			),
+			bytesOf(skin.bones),
+		);
 		bounds = motionBounds(mesh, order.map(vertexOf), skin, motion);
 		animation = {
 			...motion,
@@ -476,8 +483,10 @@ const splitByTangent = (
 
 // #region skinning
 
-/** the most bones a vertex's `uint8x4` indices can name */
-const MAX_BONES = 256;
+/** the most bones `uint8x4` indices can name; more take `uint16x4` */
+const NARROW_BONES = 256;
+/** the most bones `uint16x4` indices can name */
+const MAX_BONES = 65_536;
 
 /**
  * @param mesh a mesh a renderer draws rigidly
@@ -508,7 +517,8 @@ export const rigidSkin = (mesh: DecodedMesh): DecodedMesh => ({
 /** per output vertex, four quantized weights summing to 65,535 and their bones */
 interface SkinStreams {
 	weights: Uint16Array;
-	bones: Uint8Array;
+	/** `Uint8Array` for up to {@link NARROW_BONES} bones, else `Uint16Array` */
+	bones: Uint8Array | Uint16Array;
 }
 
 /**
@@ -534,7 +544,8 @@ const skinStreams = (mesh: DecodedMesh, sources: readonly number[], boneCount: n
 	const n = weights.dimension;
 	const out: SkinStreams = {
 		weights: new Uint16Array(sources.length * 4),
-		bones: new Uint8Array(sources.length * 4),
+		bones:
+			boneCount > NARROW_BONES ? new Uint16Array(sources.length * 4) : new Uint8Array(sources.length * 4),
 	};
 	for (const [i, source] of sources.entries()) {
 		let sum = 0;

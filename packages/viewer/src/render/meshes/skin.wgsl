@@ -17,7 +17,8 @@ struct Skin {
 	tangent_in: u32,
 	weight_in: u32,
 	bone_in: u32,
-	_pad0: u32,
+	/** 1 when the bones are `uint16x4` (two words per vertex), 0 for `uint8x4` */
+	wide_bones: u32,
 	bind_offset: vec3f,
 	bind_scale: vec3f,
 	/** the drawn positions are quantized to `out_offset + [0, 1]³ / out_inv_scale` */
@@ -62,7 +63,15 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3u) {
 		unpack2x16unorm(source[skin.weight_in + v * 2u]),
 		unpack2x16unorm(source[skin.weight_in + v * 2u + 1u]),
 	);
-	let bones = source[skin.bone_in + v];
+	var bones: array<u32, 4>;
+	if (skin.wide_bones != 0u) {
+		let low = source[skin.bone_in + v * 2u];
+		let high = source[skin.bone_in + v * 2u + 1u];
+		bones = array<u32, 4>(low & 0xffffu, low >> 16u, high & 0xffffu, high >> 16u);
+	} else {
+		let packed = source[skin.bone_in + v];
+		bones = array<u32, 4>(packed & 0xffu, (packed >> 8u) & 0xffu, (packed >> 16u) & 0xffu, packed >> 24u);
+	}
 	var r0 = vec4f(0.0);
 	var r1 = vec4f(0.0);
 	var r2 = vec4f(0.0);
@@ -71,7 +80,7 @@ fn cs_skin(@builtin(global_invocation_id) id: vec3u) {
 		if (w == 0.0) {
 			continue;
 		}
-		let bone = (bones >> (k * 8u)) & 0xffu;
+		let bone = bones[k];
 		r0 += w * bone_row(bone, 0u);
 		r1 += w * bone_row(bone, 1u);
 		r2 += w * bone_row(bone, 2u);

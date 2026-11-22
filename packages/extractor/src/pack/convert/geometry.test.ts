@@ -406,6 +406,37 @@ describe('convertMesh', () => {
 		);
 	});
 
+	it('names more than 256 bones with uint16x4 indices', () => {
+		// every vertex its own bone, past the u8 range
+		const skin = {
+			bonesPerVertex: 1,
+			bindPoseCount: 300,
+			boneNameHashCount: 0,
+			hasBlendWeights: true,
+			hasBlendIndices: true,
+			weights: attribute(1, [1, 1, 1, 1, 1, 1]),
+			indices: attribute(1, [0, 1, 2, 297, 298, 299]),
+		};
+		const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+		const motion = {
+			boneCount: 300,
+			frameCount: 1,
+			frameRate: 30,
+			matrices: Float32Array.from(Array.from({ length: 300 }, () => identity).flat()),
+		};
+		const { blob } = convertMesh(testMesh({ skin }), null, { motion });
+		const { geometry, streams } = decodeAll(blob);
+		const bones = streams.get(VertexAttribute.BlendIndices)!;
+		assert.equal(bones.format, GeometryVertexFormat.Uint16x4);
+		const indices = new Uint16Array(geometry.vertexCount * 4);
+		MeshoptDecoder.decodeVertexBuffer(new Uint8Array(indices.buffer), geometry.vertexCount, 8, bones.data);
+		const named = new Set(Array.from({ length: geometry.vertexCount }, (_, v) => indices[v * 4]));
+		assert.deepEqual(
+			[...named].toSorted((a, b) => a - b),
+			[0, 1, 2, 297, 298, 299],
+		);
+	});
+
 	it('animates a rigid mesh as one bone every vertex follows, ignoring its own bone weights', () => {
 		// a waterwheel's rim turning a quarter turn about z between its two frames
 		const motion = {
