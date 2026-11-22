@@ -306,13 +306,17 @@ class ConvertJobs {
 		}
 		const key = await cache.stepKey(MATERIAL_LOAD_ENTRY, { asset });
 		const recalled = await cache.recallValue<MaterialMemo>(key);
-		if (recalled !== undefined && (await this.#sourcesCurrent(recalled.sources))) {
-			const shader = await this.#shaders.getOrInsertComputed(recalled.material.shaderObject.key, async () =>
-				cache.recallValue<ShaderSummary>(await this.#shaderKey(cache, recalled.material.shaderObject)),
+		const relocated =
+			recalled === undefined || !(await this.#sourcesCurrent(recalled.sources))
+				? undefined
+				: this.#relocated(recalled);
+		if (relocated !== undefined) {
+			const shader = await this.#shaders.getOrInsertComputed(relocated.shaderObject.key, async () =>
+				cache.recallValue<ShaderSummary>(await this.#shaderKey(cache, relocated.shaderObject)),
 			);
 			if (shader !== undefined) {
 				cache.hits.materials++;
-				return { ...recalled.material, shader };
+				return { ...relocated, shader };
 			}
 		}
 		const { result, bundles } = await recordBundleReads(() => locateMaterial(resolver, asset));
@@ -329,8 +333,56 @@ class ConvertJobs {
 			this.#shaders.set(result.shaderObject.key, Promise.resolve(shader));
 			await cache.rememberValue(await this.#shaderKey(cache, result.shaderObject), shader);
 		}
-		await cache.rememberValue(key, { sources, material } satisfies MaterialMemo);
+		const bundleName = ({ locator }: LocatedObject): string =>
+			resolver.manifest.bundleName(locator.bundleIndex);
+		await cache.rememberValue(key, {
+			sources,
+			material,
+			bundles: {
+				shader: bundleName(material.shaderObject),
+				textures: Object.fromEntries(
+					Object.entries(material.textures).map(([slot, { texture }]) => [
+						slot,
+						texture === null ? null : bundleName(texture),
+					]),
+				),
+			},
+		} satisfies MaterialMemo);
 		return result;
+	}
+
+	/**
+	 * @returns a recalled material whose shader and textures are located in this install's manifest by their
+	 *   bundles' names, or `undefined` when one of those bundles is gone
+	 */
+	#relocated({ material, bundles }: MaterialMemo): Omit<LocatedMaterial, 'shader'> | undefined {
+		const { manifest } = this.#input.resolver;
+		const relocate = (
+			object: LocatedObject,
+			bundle: string | null | undefined,
+		): LocatedObject | undefined => {
+			const bundleIndex = bundle == null ? undefined : manifest.findBundle(bundle);
+			return bundleIndex === undefined
+				? undefined
+				: { ...object, locator: { ...object.locator, bundleIndex } };
+		};
+		const shaderObject = relocate(material.shaderObject, bundles?.shader);
+		if (shaderObject === undefined) {
+			return undefined;
+		}
+		const textures: LocatedMaterial['textures'] = {};
+		for (const [slot, resolved] of Object.entries(material.textures)) {
+			if (resolved.texture === null) {
+				textures[slot] = resolved;
+				continue;
+			}
+			const texture = relocate(resolved.texture, bundles?.textures[slot]);
+			if (texture === undefined) {
+				return undefined;
+			}
+			textures[slot] = { ...resolved, texture };
+		}
+		return { ...material, shaderObject, textures };
 	}
 
 	/** @returns the cache key of a shader's summary, which its bundle's md5 keeps current */
@@ -389,6 +441,11 @@ const MATERIAL_LOAD_ENTRY = new URL('../../game/materials/material-load.ts', imp
 interface MaterialMemo {
 	sources: BundleSource[];
 	material: Omit<LocatedMaterial, 'shader'>;
+	/**
+	 * the names of the bundles holding its shader and textures, by slot: their locators' bundle indices are
+	 * manifest positions, which a game update shifts. absent in memos written before it was recorded
+	 */
+	bundles?: { shader: string; textures: Record<string, string | null> };
 }
 
 /** the materials loaded and converted, by material id */

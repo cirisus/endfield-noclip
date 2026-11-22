@@ -698,7 +698,9 @@ it), implemented in [pack/store/pack-cache.ts](../packages/extractor/src/pack/st
   keyed by the material and the import graph of
   [material-load.ts](../packages/extractor/src/game/materials/material-load.ts), and used while the
   bundles it read keep their MD5s, like a conversion. shader summaries, most of a load's size and
-  shared by thousands of materials, are stored once per shader object and bundle MD5. these memos
+  shared by thousands of materials, are stored once per shader object and bundle MD5. a load's
+  shader and textures are remembered with their bundles' names and located again on recall, since
+  the manifest positions locators hold shift when a game update adds or removes bundles. these memos
   are V8-serialized rather than JSON, since records hold bigints and non-finite numbers (warm,
   map02's materials phase drops from over ten seconds to a second or two).
 - `memo/` also holds whole steps whose output depends only on VFS files: terrain
