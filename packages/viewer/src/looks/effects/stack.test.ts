@@ -12,8 +12,16 @@ import { LOOK_FLOATS, LookFlags } from '../look.ts';
 import { materialLooks } from '../material-looks.ts';
 import { described } from '../test-materials.ts';
 
-import { EffectKind, EffectRole, EffectRow, ROLE_NONE, SLOT_NO_BASE, SlotSource } from './effect-look.ts';
-import { NO_WATER_BLEND, OFFSET_SLOT, VertexMotion } from './stack.ts';
+import {
+	DECAL_COVERS,
+	EffectKind,
+	EffectRole,
+	EffectRow,
+	ROLE_NONE,
+	SLOT_NO_BASE,
+	SlotSource,
+} from './effect-look.ts';
+import { OFFSET_SLOT, VertexMotion } from './stack.ts';
 
 const texture = (id: number, overrides: Partial<EffectTexture> = {}): EffectTexture => ({
 	texture: id,
@@ -222,7 +230,14 @@ test('a stack decal is a box drawn by its back faces with its fades; a multiplyi
 			described(
 				stack({
 					variant: 'decal',
-					decalFade: { edge: [0.1, 0.2], width: 0.3, height: 2, heightOffset: 0.5, angle: 5 },
+					decalFade: {
+						edge: [0.1, 0.2],
+						width: 0.3,
+						height: 2,
+						heightOffset: 0.5,
+						angle: 5,
+						covers: 'unmarked',
+					},
 					weight: { disturb: 0.5, dissolve: 0.5, used: true },
 				}),
 			),
@@ -237,7 +252,7 @@ test('a stack decal is a box drawn by its back faces with its fades; a multiplyi
 	);
 	assert.deepEqual(
 		[...decal.params.subarray(EffectRow.decal, EffectRow.decal + 4)],
-		[0.5, 5, Math.fround(NO_WATER_BLEND), 1],
+		[0.5, 5, DECAL_COVERS.unmarked, 1],
 	);
 	assert.deepEqual([...decal.params.subarray(EffectRow.weight + 1, EffectRow.weight + 4)], [0.5, 0.5, 1]);
 	assert.equal(multiply.queue, 'screenMultiply');

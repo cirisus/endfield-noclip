@@ -178,7 +178,9 @@ the game keeps lit decals off surfaces by a stencil bit. the viewer carries it i
 packed surface instead (bit 31, `SURFACE_NO_LIT_DECALS` in frame.wgsl), so it works without a
 stencil buffer: looks whose shader writes `_StencilRef` and whose value has bit 32 set it
 (`keepsLitDecalsOff` in [lit-look.ts](../../packages/viewer/src/looks/lit-look.ts)), and laid-over
-and relit decals skip those pixels. VFXDecal boxes ignore it.
+and relit decals skip those pixels. VFXDecal boxes test it by their stencil reference
+(`decalFade.covers`): those whose read mask is 32 skip or cover only those pixels, and other read
+masks stay unsupported.
 
 decals that write no albedo can't be laid over the surface, because the main pass has already lit
 it. a pass between the main and the transparent pass (`fs_decal_relight`) adds the change in the

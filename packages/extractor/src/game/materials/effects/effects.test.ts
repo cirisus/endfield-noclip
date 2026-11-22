@@ -370,6 +370,20 @@ describe('VFXDecal', () => {
 		assert.equal(ofKind(glow(1), 'effectStack').blendMode, 'add');
 		assert.equal(glow(0).kind, 'unsupported');
 	});
+
+	it('covers the surfaces its stencil test lets through, by the bit surfaces keeping decals off write', () => {
+		// Si's Painting's water decals (`M_fxmap_map02_lv010_waterdecal_02`): reference 0 under mask 32
+		const covers = (floats: Record<string, number>) => {
+			const surface = describeMaterial(material({ slots: { _MainTex: slot(1) }, floats }), decal);
+			return surface.kind === 'effectStack' ? surface.decalFade?.covers : surface.kind;
+		};
+		assert.equal(covers({ _StencilRef: 0, _StencilReadMask: 32 }), 'unmarked');
+		// the shader's defaults are the same
+		assert.equal(covers({}), 'unmarked');
+		assert.equal(covers({ _StencilRef: 32, _StencilReadMask: 32 }), 'marked');
+		assert.equal(covers({ _StencilRef: 7, _StencilReadMask: 0 }), 'all');
+		assert.equal(covers({ _StencilReadMask: 255 }), 'unsupported');
+	});
 });
 
 describe('lit decals', () => {

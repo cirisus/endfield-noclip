@@ -311,6 +311,13 @@ alpha its alpha times `_TintColorAlpha`, faded towards the box's x and z faces (
 (its alpha output isn't scaled by the mode): the ground glow under Marker Stone Interiors' flowing
 lights (`M_fxmap_dung02_rdg002_flowinglight_02_ground_fj_01`) is such.
 
+the pass tests the stencil for equality with `_StencilRef` under `_StencilReadMask` (the shader's
+defaults 0 and 32), whatever `_StencilComp` says, as the scenery's [decals](materials.md#decals) do,
+so it leaves foliage and other surfaces whose `_StencilRef` has bit 32 alone: Si's Painting's water
+decals (`M_fxmap_map02_lv010_waterdecal_02`, boxes 28 to 35 m across in its waterfall cave, near
+unity 1110, 378, 1155) take the defaults, so they cover the rock but not the trees inside them. so
+do the 29 VFXDecal materials with asset paths in the packed scenes.
+
 `_USE_PARALLAX` sinks the decal into the surface. the view direction, taken in the box's frame (x
 and z across, y up), steps the main texture's UVs by `−_ParallaxScale · v.xz / v.y / 30` per layer
 through `_DepthTex`'s red, a height that is 1 at the top: from 29/30 down, 30 layers and at most 31

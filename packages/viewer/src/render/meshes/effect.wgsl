@@ -1640,6 +1640,12 @@ fn fs_effect_decal(in: EffectOut) -> EffectAccumulated {
 		}
 		return fx_lit_decal(in, px, rel, rel_dx, rel_dy, object_p, uv, bases.dx[0], bases.dy[0]);
 	}
+	// VFXDecal's stencil test against the bit surfaces keeping decals off write (`DECAL_COVERS`): 1 skips
+	// them, 2 covers only them
+	let covers = fx_row(id, FX_DECAL).z;
+	if (covers > 0.5 && fx_keeps_lit_decals_off(px) != (covers > 1.5)) {
+		return fx_nothing();
+	}
 	let cracked = fx_row(id, FX_PARALLAX).y != 0.0;
 	var parallax = vec2f(0.0);
 	if (cracked) {

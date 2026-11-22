@@ -25,6 +25,9 @@ export const EffectRole = {
 	Main: 6,
 } as const;
 
+/** {@link EffectRow.decal}'s third float on decals by `decalFade.covers` */
+export const DECAL_COVERS = { all: 0, unmarked: 1, marked: 2 } as const;
+
 /** what `effect.wgsl` draws a look as, in {@link EffectRow.unfogged}'s second float */
 export const EffectKind = {
 	/** VFXBaseV2 and VFXDecal's texture stack */
@@ -89,9 +92,10 @@ export const EffectRow = {
 	 */
 	decalFade: 104,
 	/**
-	 * decals: height fade offset, angle falloff (0: no angle fade); the texture stack: 0, then the height
-	 * (world y) below which fragments show the unsupported checker (`waterBlendBelow`, `NO_WATER_BLEND`
-	 * without), and the power its alpha is raised to (1 but for VFXDitherAlpha's `_DitherAlphaExp`)
+	 * decals: height fade offset, angle falloff (0: no angle fade), the surfaces they cover
+	 * ({@link DECAL_COVERS}); the texture stack: 0, then the height (world y) below which fragments show the
+	 * unsupported checker (`waterBlendBelow`, `NO_WATER_BLEND` without), and the power its alpha is raised to
+	 * (1 but for VFXDitherAlpha's `_DitherAlphaExp`)
 	 */
 	decal: 108,
 	/**

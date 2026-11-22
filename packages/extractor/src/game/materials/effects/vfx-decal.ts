@@ -185,6 +185,16 @@ export const describeVfxDecal = (reader: MaterialReader): EffectStackSurface | U
 	if (additive && float('_BlendMode', 0) !== 1) {
 		return unsupported(`additive blending with _BlendMode ${float('_BlendMode', 0)}`);
 	}
+	// the pass tests the stencil for equality with `_StencilRef` under `_StencilReadMask`, whatever
+	// `_StencilComp` says; the viewer carries only bit 32, the one surfaces keeping decals off write
+	const readMask = float('_StencilReadMask', 32) & 0xff;
+	if (readMask !== 0 && readMask !== 32) {
+		return unsupported(`stencil read mask ${readMask}`);
+	}
+	let covers: 'all' | 'unmarked' | 'marked' = 'all';
+	if (readMask !== 0) {
+		covers = (float('_StencilRef', 0) & readMask) !== 0 ? 'marked' : 'unmarked';
+	}
 	const base = color('_DecalBaseColor') ?? [1, 1, 1, 1];
 	// a texture's UV switch picks polar or screen UVs only where they're computed; the box's otherwise
 	const sources = new Map<number, EffectUvSource>();
@@ -289,6 +299,7 @@ export const describeVfxDecal = (reader: MaterialReader): EffectStackSurface | U
 			height: Math.max(float('_HeightFade', 0), 1e-3),
 			heightOffset: float('_HeightFadeOffset', 0),
 			angle: has('_USE_NORMALBLEND') ? float('_AngleBlendFallOff', 1) : 0,
+			covers,
 		},
 		alphaPower: 1,
 		colorTimesAlpha: false,

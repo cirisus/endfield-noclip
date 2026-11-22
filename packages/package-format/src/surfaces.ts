@@ -985,13 +985,21 @@ export interface EffectStackSurface {
 	 * the edge; between, a blend of the two
 	 */
 	edge: { color: Color; alpha: number; mode: Weight; distance: number; offset: number } | null;
-	/** VFXDecal's fades: across x and z, their width, the height fade and its offset, the angle falloff */
+	/**
+	 * VFXDecal's fades (across x and z, their width, the height fade and its offset, the angle falloff) and
+	 * which surfaces it covers
+	 */
 	decalFade: {
 		edge: [x: number, z: number];
 		width: number;
 		height: number;
 		heightOffset: number;
 		angle: number;
+		/**
+		 * the surfaces the pass's stencil test lets it cover, by the bit (32) that surfaces keeping decals off
+		 * write, foliage among them: `unmarked` only those without it, `marked` only those with it
+		 */
+		covers: 'all' | 'unmarked' | 'marked';
 	} | null;
 	/** the power the alpha is raised to (VFXDitherAlpha's `_DitherAlphaExp`) */
 	alphaPower: number;

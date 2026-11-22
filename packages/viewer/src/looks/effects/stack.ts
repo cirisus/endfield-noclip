@@ -8,6 +8,7 @@ import type {
 } from '@endfield-noclip/package-format/surfaces';
 
 import {
+	DECAL_COVERS,
 	EffectKind,
 	type EffectLook,
 	EffectRole,
@@ -220,7 +221,11 @@ export const stackLook = (stack: EffectStackSurface): EffectLook => {
 		params[EffectRow.edgeAlpha] = edge.alpha;
 	}
 	params[EffectRow.particleDisturb] = stack.particleDisturb ? 1 : 0;
-	params[EffectRow.decal + 2] = stack.waterBlendBelow ?? NO_WATER_BLEND;
+	if (stack.decalFade === null) {
+		params[EffectRow.decal + 2] = stack.waterBlendBelow ?? NO_WATER_BLEND;
+	} else {
+		params[EffectRow.decal + 2] = DECAL_COVERS[stack.decalFade.covers];
+	}
 	params[EffectRow.decal + 3] = stack.alphaPower;
 	if (stack.offset !== null) {
 		setVertexOffset(look, stack.offset);
