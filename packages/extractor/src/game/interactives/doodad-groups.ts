@@ -1,3 +1,6 @@
+import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+
+import { mapPool } from '../../pool.ts';
 import type { DraftControl } from '../state/scene-control.ts';
 import { progressionControl } from '../state/scenery-variants.ts';
 
@@ -5,6 +8,9 @@ import { readDoodadShell, type DoodadShell } from './doodad-shell.ts';
 import type { FacilitySources, InteractiveForm, PrefabHashes } from './facility-sources.ts';
 import type { InteractiveRow } from './interactive-row.ts';
 import type { AuthoredTemplate } from './template-models.ts';
+
+/** unique prefab shells read concurrently */
+const SHELL_CONCURRENCY = 16;
 
 /**
  * doodad-group centres, which draw an empty shell: their visible model is one form per group level, each
@@ -35,22 +41,49 @@ export class DoodadGroups {
 	async read(authored: ReadonlyMap<string, AuthoredTemplate>): Promise<void> {
 		const sources = this.#sources;
 		const resolver = await sources.context.resolver();
+		const uniquePrefabs: string[] = [];
+		const seenPrefabs = new Set<string>();
+		for (const template of authored.values()) {
+			if (template.name !== null) {
+				continue;
+			}
+			const [{ prefab }] = template.forms;
+			if (!seenPrefabs.has(prefab)) {
+				seenPrefabs.add(prefab);
+				uniquePrefabs.push(prefab);
+			}
+		}
+		// read distinct prefabs concurrently, then report errors and record forms in authored order
+		const fetched = await mapPool(
+			uniquePrefabs,
+			SHELL_CONCURRENCY,
+			async (prefab): Promise<DoodadShell | FormatError | null> => {
+				try {
+					return await readDoodadShell(resolver, await this.#prefabs.root(prefab));
+				} catch (error) {
+					if (error instanceof FormatError) {
+						return error;
+					}
+					throw error;
+				}
+			},
+		);
 		const shells = new Map<string, DoodadShell | null>();
+		for (const [i, prefab] of uniquePrefabs.entries()) {
+			const result = fetched[i];
+			if (result instanceof FormatError) {
+				sources.report(prefab, result.message);
+				shells.set(prefab, null);
+			} else {
+				shells.set(prefab, result);
+			}
+		}
 		for (const [key, template] of authored) {
 			if (template.name !== null) {
 				continue;
 			}
 			const [{ prefab, scale }] = template.forms;
-			let shell = shells.get(prefab);
-			if (shell === undefined) {
-				// oxlint-disable-next-line no-await-in-loop -- one root per distinct prefab
-				shell = await sources.attempt(
-					prefab,
-					async () => readDoodadShell(resolver, await this.#prefabs.root(prefab)),
-					null,
-				);
-				shells.set(prefab, shell);
-			}
+			const shell = shells.get(prefab) ?? null;
 			if (shell === null) {
 				continue;
 			}

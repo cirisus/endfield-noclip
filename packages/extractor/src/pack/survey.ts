@@ -27,7 +27,11 @@ export interface ScenePlacementSurvey extends ScenePlacementSources {
  * @throws {Error} what the packer's setup and placement sources throw
  */
 export const surveyPlacements = async (context: Context, scene: string): Promise<ScenePlacementSurvey> => {
-	const index = await indexScene(context, { scene, level: null, bounds: null });
+	const index = await indexScene(
+		context,
+		{ scene, level: null, bounds: null },
+		{ terrain: false, hlod: false },
+	);
 	const content = await PackContent.create(context.world, index, () => {});
 	return { scene: index, content, ...(await collectPlacementSources(context, content)) };
 };

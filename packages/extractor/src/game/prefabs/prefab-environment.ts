@@ -24,12 +24,16 @@ import {
 import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 
 import { formatErrorOnly } from '../../errors.ts';
+import { mapPool } from '../../pool.ts';
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
 import type { SceneEnvironmentVolume } from '../environment.ts';
 import type { Visibility } from '../state/scene-control.ts';
 
 import type { PrefabRoots } from './prefab-root.ts';
 import { PRUNE, walkPrefab } from './prefab-walk.ts';
+
+/** unique prefab roots resolved in parallel while scanning for environment volumes */
+const PREFAB_CONCURRENCY = 16;
 
 // reads HGEnvironmentVolume components from gated prefabs; phases are PPtrs rather than path hashes.
 // source layout: docs/game-data/environment.md#prefab-volumes.
@@ -70,11 +74,23 @@ export const loadPlacedVolumes = async (
 	placements: readonly PlacedPrefab[],
 	defaults: Readonly<Record<string, number>>,
 ): Promise<{ volumes: SceneEnvironmentVolume[]; unsupported: { path: string; reason: string }[] }> => {
+	// prefetch unique prefab roots concurrently; most prefabs have no volume components at all
+	const uniqueHashes = [...new Set(placements.map(({ model }) => model.pathHash))];
+	await mapPool(uniqueHashes, PREFAB_CONCURRENCY, (hash) => roots.root(hash));
+	/** prefabs already confirmed to carry no environment volumes, so repeated placements skip the walk */
+	const emptyPrefabs = new Set<bigint>();
 	const volumes: SceneEnvironmentVolume[] = [];
 	const unsupported: { path: string; reason: string }[] = [];
 	for (const { model, levelTag, visibility } of placements) {
-		// oxlint-disable-next-line no-await-in-loop -- placement order
+		if (emptyPrefabs.has(model.pathHash)) {
+			continue;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- placement order; roots are already cached above
 		const { label, root } = await roots.root(model.pathHash);
+		if (!(root instanceof FormatError) && !fileMayHaveVolumes(root)) {
+			emptyPrefabs.add(model.pathHash);
+			continue;
+		}
 		// oxlint-disable-next-line no-await-in-loop -- as above
 		const found = await (root instanceof FormatError
 			? root
@@ -85,6 +101,10 @@ export const loadPlacedVolumes = async (
 				}).catch(formatErrorOnly));
 		if (found instanceof FormatError) {
 			unsupported.push({ path: label, reason: found.message });
+			continue;
+		}
+		if (found.length === 0) {
+			emptyPrefabs.add(model.pathHash);
 			continue;
 		}
 		const loadedByDefault = conditionVisible(visibility, defaults);
@@ -108,11 +128,48 @@ const xyz = (value: TypeTreeObject): [number, number, number] => [
 	numberField(value, 'z'),
 ];
 
-/** whether a MonoBehaviour's serialized fields are an `HGEnvironmentVolume`'s, without reading the object */
-const isVolumeType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return names.has('_volumeType') && names.has('_envPhase') && names.has('_polyLineShape');
+/** whether a SerializedFile type has the serialized fields of an `HGEnvironmentVolume` */
+const isVolumeTypeNodes = (nodes: readonly { level: number; name: string }[] | undefined): boolean => {
+	if (nodes === undefined) {
+		return false;
+	}
+	let hasType = false;
+	let hasPhase = false;
+	let hasShape = false;
+	for (const node of nodes) {
+		if (node.level !== 1) {
+			continue;
+		}
+		switch (node.name) {
+			case '_volumeType': {
+				hasType = true;
+				break;
+			}
+			case '_envPhase': {
+				hasPhase = true;
+				break;
+			}
+			case '_polyLineShape': {
+				hasShape = true;
+				break;
+			}
+			default: {
+				break;
+			}
+		}
+	}
+	return hasType && hasPhase && hasShape;
 };
+
+/** whether a MonoBehaviour's serialized fields are an `HGEnvironmentVolume`'s, without reading the object */
+const isVolumeType = (ref: ObjectRef): boolean => isVolumeTypeNodes(ref.info.type?.nodes);
+
+/**
+ * fast pre-check: a prefab whose SerializedFile declares no `HGEnvironmentVolume` type and references no
+ * external files cannot contain an environment volume
+ */
+const fileMayHaveVolumes = (root: ObjectRef): boolean =>
+	root.file.file.externals.length > 0 || root.file.file.types.some((type) => isVolumeTypeNodes(type.nodes));
 
 /**
  * reads the enabled environment volumes of a prefab's active GameObjects. box volumes take the GameObject's

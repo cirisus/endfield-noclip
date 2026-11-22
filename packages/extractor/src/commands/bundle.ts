@@ -262,6 +262,9 @@ const stream = async (context: Context, name: string, pathId: bigint, output: st
 
 // #region find
 
+/** bundles opened concurrently during `bundle find` */
+const FIND_CONCURRENCY = 16;
+
 const find = async (
 	context: Context,
 	options: {
@@ -277,29 +280,54 @@ const find = async (
 			? [VfsGroup.Bundle, VfsGroup.InitialBundle]
 			: [options.group === 'initial' ? VfsGroup.InitialBundle : VfsGroup.Bundle];
 	const catalogs = await Promise.all(groups.map((group) => context.vfs.group(group)));
-	const names = catalogs.flatMap((catalog) => Array.from(catalog.files.keys()));
+	const allNames = catalogs.flatMap((catalog) => Array.from(catalog.files.keys()));
+	const maxScan = Math.min(allNames.length, options.scan);
 	let scanned = 0;
 	let found = 0;
 	let failed = 0;
-	for (const name of names) {
-		if (scanned >= options.scan || found >= options.limit) {
-			break;
+	const pending = new Map<number, Promise<string[] | Error>>();
+	const start = (index: number): void => {
+		if (index >= maxScan) {
+			return;
 		}
-		scanned++;
-		try {
-			// oxlint-disable-next-line no-await-in-loop -- one bundle at a time, so the scan stops at its limits
-			const assets = await openAssetFiles(await openBundle(context, name));
-			// oxlint-disable-next-line no-await-in-loop -- one bundle at a time, so the scan stops at its limits
-			const matches = await Promise.all(assets.map((asset) => scanAsset(asset, options)));
-			for (const match of matches.flat()) {
-				if (found < options.limit) {
-					found++;
-					console.log(`${name}\t${match}`);
+		const name = allNames[index];
+		pending.set(
+			index,
+			(async () => {
+				const assets = await openAssetFiles(await openBundle(context, name));
+				const matches = await Promise.all(assets.map((asset) => scanAsset(asset, options)));
+				return matches.flat();
+			})().catch((error: unknown) => (error instanceof Error ? error : new Error(String(error)))),
+		);
+	};
+	for (let i = 0; i < Math.min(FIND_CONCURRENCY, maxScan); i++) {
+		start(i);
+	}
+	try {
+		for (let i = 0; i < maxScan && found < options.limit; i++) {
+			scanned++;
+			// oxlint-disable-next-line no-await-in-loop -- results print in catalog order, stopping at the limit
+			const result = await pending.get(i)!;
+			pending.delete(i);
+			const name = allNames[i];
+			if (result instanceof Error) {
+				failed++;
+				console.error(`${name}: ${errorText(result)}`);
+			} else {
+				for (const match of result) {
+					if (found < options.limit) {
+						found++;
+						console.log(`${name}\t${match}`);
+					}
 				}
 			}
-		} catch (error) {
-			failed++;
-			console.error(`${name}: ${errorText(error)}`);
+			if (found < options.limit) {
+				start(i + FIND_CONCURRENCY);
+			}
+		}
+	} finally {
+		for (const promise of pending.values()) {
+			void promise.catch(() => {});
 		}
 	}
 	console.error(`scanned ${scanned} bundles, ${found} matches, ${failed} failures`);

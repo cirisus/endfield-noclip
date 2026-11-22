@@ -83,15 +83,20 @@ export interface SceneIndex {
  *
  * @param context VFS, world index and asset resolver
  * @param selection what to pack
+ * @param options.terrain whether to index the scene's terrain and surface data (default `true`)
+ * @param options.hlod whether to fit the scene's HLOD grid from its Global chunks (default `true`)
  * @returns the scene's index
  * @throws {Error} if the level isn't the scene's, or the scene's terrain is incomplete or misaligned
  */
 export const indexScene = async (
 	context: Pick<Context, 'vfs' | 'world' | 'resolver'>,
 	selection: SceneSelection,
+	options?: { terrain?: boolean; hlod?: boolean },
 ): Promise<SceneIndex> => {
 	const { world } = context;
 	const { scene } = selection;
+	const includeTerrain = options?.terrain ?? true;
+	const includeHlod = options?.hlod ?? true;
 	const [
 		pathOf,
 		bundleManifest,
@@ -108,8 +113,8 @@ export const indexScene = async (
 		world.manifest(),
 		world.names(),
 		world.partition(scene),
-		indexTerrain(context.vfs),
-		loadTerrainSurfacesData(context, scene),
+		includeTerrain ? indexTerrain(context.vfs) : undefined,
+		includeTerrain ? loadTerrainSurfacesData(context, scene) : undefined,
 		world.chunkFiles(),
 		loadSceneStates(world, scene),
 		loadUpgradeLinks(context, scene),
@@ -117,7 +122,7 @@ export const indexScene = async (
 	]);
 	const game = new GameState({ links, variables });
 	game.note(mapDefined(sceneStates, ({ condition }) => condition ?? undefined));
-	const terrainScene = terrainIndex.get(scene);
+	const terrainScene = terrainIndex?.get(scene);
 	if (terrainScene !== undefined && surface === undefined) {
 		throw new Error(`${scene} has terrain tiles but no HGTerrainSurfacesData`);
 	}
@@ -134,11 +139,13 @@ export const indexScene = async (
 	const terrainGrid = treeGrid(surface);
 	// HLOD clusters sit in Global chunks only, which are small
 	const hlod = layoutHlodGrid(
-		await hlodSamples(
-			world,
-			files.filter((file) => file.cell === null),
-			partition,
-		),
+		includeHlod
+			? await hlodSamples(
+					world,
+					files.filter((file) => file.cell === null),
+					partition,
+				)
+			: [],
 		terrainGrid,
 	);
 	const grid: TreeInfo = { ...terrainGrid, hlodLevels: hlod.levels };

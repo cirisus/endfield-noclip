@@ -508,6 +508,37 @@ export class WorldIndex {
 	}
 
 	/**
+	 * reads one chunk file's entities and, when the chunk has rect decals, each decal's material key from its
+	 * StreamingChunkData sibling (skipping lights, foliage and HLOD)
+	 *
+	 * @param file chunk file
+	 * @param partition the scene's partition, or `undefined` for scenes without levels
+	 * @returns its entities and rect-decal material keys by entity id
+	 * @throws {Error} if the chunk has rect decals but no StreamingChunkData sibling
+	 */
+	async readChunkWithDecals(
+		file: ChunkFile,
+		partition: LevelPartition | undefined,
+	): Promise<{ entities: IndexedEntity[]; decalMaterials: Map<number, bigint> }> {
+		const chunk = parseInitChunk(await this.readInitPayload(file));
+		const entities = indexEntities(chunk, file, partition);
+		const decalMaterials = new Map<number, bigint>();
+		if (entities.some((entity) => entity.decal !== null)) {
+			const streaming = await this.readStreamingPayload(file);
+			if (streaming === null) {
+				throw new Error(`${file.name} has decals but no StreamingChunkData`);
+			}
+			for (const record of parseStreamingChunk(streaming).records) {
+				const material = assetProperty(record, DECAL_MATERIAL_KEY);
+				if (material !== undefined) {
+					decalMaterials.set(record.id, material);
+				}
+			}
+		}
+		return { entities, decalMaterials };
+	}
+
+	/**
 	 * streams every unique entity of a scene, deduplicated by id (first file wins, files in name order)
 	 *
 	 * @param scene streaming scene, e.g. `map02`
@@ -515,24 +546,42 @@ export class WorldIndex {
 	 */
 	async *sceneEntities(scene: string, filter?: (file: ChunkFile) => boolean): AsyncGenerator<IndexedEntity> {
 		const partition = await this.partition(scene);
+		const selected = (await this.chunkFiles()).filter(
+			(file) => file.scene === scene && (filter === undefined || filter(file)),
+		);
 		const seen = new Set<number>();
-		for (const file of await this.chunkFiles()) {
-			if (file.scene !== scene || (filter && !filter(file))) {
-				continue;
+		const pending = new Map<number, Promise<IndexedEntity[]>>();
+		const prefetch = (index: number): void => {
+			if (index < selected.length) {
+				pending.set(index, this.readChunk(selected[index], partition));
 			}
-			// oxlint-disable-next-line no-await-in-loop -- entities stream out a file at a time
-			for (const entity of await this.readChunk(file, partition)) {
-				if (!seen.has(entity.id)) {
-					seen.add(entity.id);
-					yield entity;
+		};
+		for (let i = 0; i < Math.min(READ_CONCURRENCY, selected.length); i++) {
+			prefetch(i);
+		}
+		try {
+			for (let i = 0; i < selected.length; i++) {
+				// oxlint-disable-next-line no-await-in-loop -- entities stream out in file order with read-ahead
+				const entities = await pending.get(i)!;
+				pending.delete(i);
+				prefetch(i + READ_CONCURRENCY);
+				for (const entity of entities) {
+					if (!seen.has(entity.id)) {
+						seen.add(entity.id);
+						yield entity;
+					}
 				}
+			}
+		} finally {
+			for (const promise of pending.values()) {
+				void promise.catch(() => {});
 			}
 		}
 	}
 
 	/**
-	 * {@link sceneEntities} with each rect decal's material. slower: materials live in the StreamingChunkData
-	 * siblings, read for every selected file with decals, foliage grids or HLOD-layer entities
+	 * {@link sceneEntities} with each rect decal's material. reads StreamingChunkData siblings only for selected
+	 * files that hold rect decals
 	 *
 	 * @param scene streaming scene, e.g. `map02`
 	 * @param filter optional chunk-file predicate
@@ -545,18 +594,38 @@ export class WorldIndex {
 		filter?: (file: ChunkFile) => boolean,
 	): AsyncGenerator<{ entity: IndexedEntity; decalMaterial: bigint | null }> {
 		const partition = await this.partition(scene);
+		const selected = (await this.chunkFiles()).filter(
+			(file) => file.scene === scene && (filter === undefined || filter(file)),
+		);
 		const seen = new Set<number>();
-		for (const file of await this.chunkFiles()) {
-			if (file.scene !== scene || (filter && !filter(file))) {
-				continue;
+		const pending = new Map<
+			number,
+			Promise<{ entities: IndexedEntity[]; decalMaterials: Map<number, bigint> }>
+		>();
+		const prefetch = (index: number): void => {
+			if (index < selected.length) {
+				pending.set(index, this.readChunkWithDecals(selected[index], partition));
 			}
-			// oxlint-disable-next-line no-await-in-loop -- entities stream out a file at a time
-			const { entities, decalMaterials } = await this.readChunkContent(file, partition);
-			for (const entity of entities) {
-				if (!seen.has(entity.id)) {
-					seen.add(entity.id);
-					yield { entity, decalMaterial: decalMaterials.get(entity.id) ?? null };
+		};
+		for (let i = 0; i < Math.min(READ_CONCURRENCY, selected.length); i++) {
+			prefetch(i);
+		}
+		try {
+			for (let i = 0; i < selected.length; i++) {
+				// oxlint-disable-next-line no-await-in-loop -- entities stream out in file order with read-ahead
+				const { entities, decalMaterials } = await pending.get(i)!;
+				pending.delete(i);
+				prefetch(i + READ_CONCURRENCY);
+				for (const entity of entities) {
+					if (!seen.has(entity.id)) {
+						seen.add(entity.id);
+						yield { entity, decalMaterial: decalMaterials.get(entity.id) ?? null };
+					}
 				}
+			}
+		} finally {
+			for (const promise of pending.values()) {
+				void promise.catch(() => {});
 			}
 		}
 	}

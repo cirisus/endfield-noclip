@@ -211,9 +211,9 @@ const findPaths = async (world: WorldIndex, pattern: RegExp, limit: number, json
 	const rows: { hash: string; path: string; bundles: string[] }[] = [];
 	const seen = new Set<string>();
 	for (const table of [main, initial]) {
-		for (const [hash, path] of table.entries()) {
+		for (const [hash, path] of table.matchEntries((candidate) => pattern.test(candidate))) {
 			const key = `${hash}:${path}`;
-			if (!pattern.test(path) || seen.has(key)) {
+			if (seen.has(key)) {
 				continue;
 			}
 			seen.add(key);
@@ -284,11 +284,21 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 		throw new Error(`unknown streaming scene ${scene}`);
 	}
 	const { kinds, limit } = options;
-	const partition = await world.partition(scene);
+	const placedKinds = kinds.has('static') ? kinds.size > 1 : kinds.size > 0;
+	// with `--near`, every source is scanned anyway, so start the placement survey alongside the static chunks
+	const surveyPromise =
+		placedKinds && (options.near !== undefined || !kinds.has('static'))
+			? surveyPlacements(context, scene).catch(errorText)
+			: null;
+	const [partition, names, standIns] = await Promise.all([
+		world.partition(scene),
+		assetNames(world),
+		loadStandIns(scene),
+	]);
 	const lookups: FindLookups = {
 		partition,
-		names: await assetNames(world),
-		standIns: await loadStandIns(scene),
+		names,
+		standIns,
 		levelOf: (tag) => (partition && levelOfTag(partition, tag)?.id) ?? (tag === 0 ? 'shared' : `tag ${tag}`),
 	};
 	const rows = new FoundRows(options);
@@ -301,8 +311,10 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 			}
 		}
 	}
-	const placedKinds = kinds.has('static') ? kinds.size > 1 : kinds.size > 0;
-	const survey = rows.full || !placedKinds ? null : await surveyPlacements(context, scene).catch(errorText);
+	const survey =
+		rows.full || !placedKinds
+			? null
+			: await (surveyPromise ?? surveyPlacements(context, scene).catch(errorText));
 	if (typeof survey === 'string') {
 		console.error(`${[...kinds].filter((kind) => kind !== 'static').join(', ')}: not searched: ${survey}`);
 	} else if (survey !== null) {
@@ -341,8 +353,8 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 interface FoundCandidate {
 	bounds: Aabb | null;
 	position: readonly number[] | null;
-	/** what `--name` matches */
-	labels: readonly string[];
+	/** what `--name` matches; evaluated only when `--name` is given and bounds/distance already pass */
+	labels: () => readonly string[];
 	/** builds the row, only for candidates kept */
 	row: (distance: number | null) => Omit<FoundRow, 'distance' | 'size'>;
 }
@@ -380,7 +392,7 @@ class FoundRows {
 		const place = this.#measure(candidate.bounds, candidate.position);
 		if (
 			place === undefined ||
-			(pattern !== undefined && !candidate.labels.some((label) => pattern.test(label)))
+			(pattern !== undefined && !candidate.labels().some((label) => pattern.test(label)))
 		) {
 			return;
 		}
@@ -462,7 +474,7 @@ async function* staticCandidates(
 		yield {
 			bounds: entity.bounds,
 			position,
-			labels: [entity.name, ...drawLabels(entity, names), ...(decal === null ? [] : [decal])],
+			labels: () => [entity.name, ...drawLabels(entity, names), ...(decal === null ? [] : [decal])],
 			row: (distance) => {
 				const visibility = describeAlternatives(sourceVisibility([entity.source])?.alternatives ?? [[]]);
 				const reasons = standIns.atEntity(entity.name, position);
@@ -506,7 +518,7 @@ function* surveyCandidates(
 			yield {
 				bounds: entity.bounds,
 				position,
-				labels: [entity.name, ...drawLabels(entity, names)],
+				labels: () => [entity.name, ...drawLabels(entity, names)],
 				row: (distance) => {
 					const visibility = describeAlternatives(gates.alternatives);
 					const reasons = standIns.atEntity(entity.name, position);
@@ -547,13 +559,18 @@ function* surveyCandidates(
 			continue;
 		}
 		const { pathHash, position, rotation, scale } = model.model;
-		// the manifest's asset path, as the packer names prefabs in its reports
-		const path = names.assetPathOf(pathHash) ?? names.pathOf(pathHash) ?? hashText(pathHash);
+		let resolvedPath: string | undefined;
+		const prefabPath = (): string => {
+			// the manifest's asset path, as the packer names prefabs in its reports
+			resolvedPath ??= names.assetPathOf(pathHash) ?? names.pathOf(pathHash) ?? hashText(pathHash);
+			return resolvedPath;
+		};
 		yield {
 			bounds: null,
 			position,
-			labels: [path, model.source],
+			labels: () => [prefabPath(), model.source],
 			row: (distance) => {
+				const path = prefabPath();
 				const visibility = describeAlternatives(model.visibility.alternatives);
 				const bundle = names.bundleOf(pathHash);
 				const reasons = standIns.ofPrefab(path);
@@ -591,7 +608,7 @@ function* surveyCandidates(
 			yield {
 				bounds: null,
 				position: standIn.position,
-				labels: [standIn.template, standIn.source],
+				labels: () => [standIn.template, standIn.source],
 				row: (distance) => ({
 					kind: 'facility',
 					name: standIn.template,
@@ -911,14 +928,21 @@ const showEnvironment = async (context: Context, target: string): Promise<void> 
 		levels = [found.level];
 	}
 	// the volumes placed prefabs carry join the chunk volumes, as in the package
-	const survey = await surveyPlacements(context, scene.mapId);
-	const [chunkVolumes, placed, pathOf, names, resolver] = await Promise.all([
+	const levelTags =
+		levels.length === scene.levels.length ? null : new Set([0, ...levels.map(({ tag }) => tag)]);
+	const [survey, chunkVolumes, pathOf, names, resolver] = await Promise.all([
+		surveyPlacements(context, scene.mapId),
 		loadSceneVolumes(world, scene.mapId),
-		surveyPlacedVolumes(context, survey),
 		world.pathLookup(),
 		world.names(),
 		context.resolver(),
 	]);
+	const placed = await surveyPlacedVolumes(
+		context,
+		levelTags === null
+			? survey
+			: { ...survey, placements: survey.placements.filter(({ levelTag }) => levelTags.has(levelTag)) },
+	);
 	const volumes = { ...chunkVolumes, environment: [...chunkVolumes.environment, ...placed] };
 	const fromPrefabs = new Set(placed.map(({ volume }) => volume));
 	const { sceneStates: states, game } = survey.scene;

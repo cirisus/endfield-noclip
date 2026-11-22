@@ -104,7 +104,7 @@ export const loadInteractiveFacilities = async (
 }> => {
 	// the order below is the order models, controls and diagnostics are emitted in, which downstream ids
 	// follow: keep it when adding a kind
-	const sources = await FacilitySources.open(context);
+	const [sources, prefabs] = await Promise.all([FacilitySources.open(context), PrefabHashes.open(context)]);
 	const interactives = await loadInteractiveTable(sources);
 	// placements first, so only the templates they use are read
 	const { placed, createdControls, levelDataPaths } = await collectPlacements(sources, {
@@ -115,7 +115,6 @@ export const loadInteractiveFacilities = async (
 	const rows = new Map(placed.map(({ row }) => [row.id, row]));
 	const templates = await resolveTemplateModels(sources, interactives, placed);
 	const { authored, modelless } = templates;
-	const prefabs = await PrefabHashes.open(context);
 	await prefabs.find(authored.values().flatMap((template) => template.forms.map((form) => form.prefab)));
 	const doodads = new DoodadGroups(sources, prefabs);
 	await doodads.read(authored);
