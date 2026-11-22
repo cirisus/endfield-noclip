@@ -419,7 +419,21 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
  * @returns one row per group entity, in file order
  * @throws {FormatError} if a renderer's draw columns disagree
  */
-export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
+export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] =>
+	readChunkEntitiesByGroup(chunk, chunk.groups).flat();
+
+/**
+ * decodes the entities of selected groups of a chunk, building the chunk's object name/layer index once
+ *
+ * @param chunk parsed chunk
+ * @param groups groups from `chunk.groups` to decode
+ * @returns one entity array per group, in input order
+ * @throws {FormatError} if a renderer's draw columns disagree
+ */
+export const readChunkEntitiesByGroup = (
+	chunk: InitChunk,
+	groups: readonly InitChunk['groups'][number][],
+): ChunkEntity[][] => {
 	const names = new Map<number, string>();
 	const layers = new Map<number, number>();
 	for (const object of chunk.objects) {
@@ -427,8 +441,9 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 		layers.set(object.id, object.layer);
 	}
 
-	const entities: ChunkEntity[] = [];
-	for (const group of chunk.groups) {
+	const perGroup: ChunkEntity[][] = [];
+	for (const group of groups) {
+		const entities: ChunkEntity[] = [];
 		const ids = group.columns.map((column) => column.id);
 		const blobView = new DataView(group.blob.buffer, group.blob.byteOffset, group.blob.byteLength);
 		const column = (id: number): ComponentColumn | undefined => groupColumn(group, id);
@@ -528,8 +543,9 @@ export const readChunkEntities = (chunk: InitChunk): ChunkEntity[] => {
 				components: ids,
 			});
 		}
+		perGroup.push(entities);
 	}
-	return entities;
+	return perGroup;
 };
 
 const ROTATOR_SIZE = 92;

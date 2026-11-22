@@ -18,7 +18,7 @@ import type {
 } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	parseDynamicChunk,
-	readChunkEntities,
+	readChunkEntitiesByGroup,
 	type ChunkEntity,
 } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
@@ -34,6 +34,7 @@ import { mapDefined } from '@mary-ext/array-fns';
 
 import type { Context } from '../../context.ts';
 import { type Vfs, VfsGroup } from '../../hg/vfs.ts';
+import { mapPool } from '../../pool.ts';
 import {
 	readViewStates,
 	settledPose,
@@ -295,28 +296,38 @@ const variableIs = (variable: DynamicVariable, value: number): GameCondition =>
  * @param blights entities whose variable a blight control holds, left out
  * @returns by entity, its variable, view states and the `state` values they tell apart
  */
+/** DynamicStreaming files and view-state controllers read concurrently */
+const READ_CONCURRENCY = 16;
+
 const drivenViewStates = async (
 	context: Pick<Context, 'vfs' | 'memoryPack'>,
 	owners: readonly DynamicResourceEntity[],
 	blights: ReadonlyMap<DynamicSceneEntity, unknown>,
 ): Promise<Map<DynamicSceneEntity, DrivenViewStates>> => {
-	const files = new Map<string, Promise<ViewStates | null>>();
-	const driven = new Map<DynamicSceneEntity, DrivenViewStates>();
+	const candidates: { entity: DynamicSceneEntity; model: string; variable: DynamicVariable }[] = [];
+	const uniqueModels = new Set<string>();
 	for (const { entity } of owners) {
 		const model = entity.viewState?.oldVersion === false ? entity.viewState.model : null;
 		const [variable] = entity.variables;
 		if (model === null || variable === undefined || blights.has(entity)) {
 			continue;
 		}
-		// oxlint-disable-next-line no-await-in-loop -- one read per controller file
-		const states = await files.getOrInsertComputed(model, () =>
-			readViewStates(context, { model, source: model }).catch((error: unknown) => {
-				if (!(error instanceof FormatError)) {
-					throw error;
-				}
-				return null;
-			}),
-		);
+		candidates.push({ entity, model, variable });
+		uniqueModels.add(model);
+	}
+	const modelList = [...uniqueModels];
+	const loaded = await mapPool(modelList, READ_CONCURRENCY, (model) =>
+		readViewStates(context, { model, source: model }).catch((error: unknown) => {
+			if (!(error instanceof FormatError)) {
+				throw error;
+			}
+			return null;
+		}),
+	);
+	const files = new Map(modelList.map((model, i) => [model, loaded[i]]));
+	const driven = new Map<DynamicSceneEntity, DrivenViewStates>();
+	for (const { entity, model, variable } of candidates) {
+		const states = files.get(model) ?? null;
 		const values = states === null ? [] : testedValues(states, 'state');
 		if (states !== null && values.length > 0) {
 			driven.set(entity, { variable, states, values });
@@ -402,6 +413,10 @@ class DynamicFiles {
 		return this.#vfs.readFile(VfsGroup.DynamicStreaming, `${this.#prefix}${name}`);
 	}
 
+	#readPayload(name: string): Promise<Uint8Array> {
+		return this.#vfs.readUnverified(VfsGroup.DynamicStreaming, `${this.#prefix}${name}`);
+	}
+
 	/**
 	 * @returns the resource grids by id and the resource owners, from the `fb_main` files in name order
 	 * @throws {FormatError} on a grid id two files share
@@ -411,11 +426,12 @@ class DynamicFiles {
 			.filter((name) => name.startsWith(`${this.#prefix}fb_main_`))
 			.map((name) => name.slice(this.#prefix.length))
 			.toSorted();
+		const perFile = await mapPool(names, READ_CONCURRENCY, async (name) =>
+			readDynamicResources(await this.#read(name)),
+		);
 		const grids = new Map<number, DynamicResourceGrid>();
 		const owners: DynamicResourceEntity[] = [];
-		for (const name of names) {
-			// oxlint-disable-next-line no-await-in-loop -- main files are small and released after decoding
-			const decoded = readDynamicResources(await this.#read(name));
+		for (const decoded of perFile) {
 			for (const grid of decoded.grids) {
 				if (grids.has(grid.id)) {
 					throw new FormatError(`duplicate dynamic grid ${grid.id}`);
@@ -442,13 +458,10 @@ class DynamicFiles {
 		entities: Map<number, DynamicEntity>;
 		lights: Map<number, { light: ChunkLight; visibility: Visibility }>;
 	}> {
-		const entities = new Map<number, DynamicEntity>();
-		const lights = new Map<number, { light: ChunkLight; visibility: Visibility }>();
-		for (const [key, indices] of groups) {
-			// oxlint-disable-next-line no-await-in-loop -- release each pair after its renderer groups are decoded
+		const perChunk = await mapPool([...groups], READ_CONCURRENCY, async ([key, indices]) => {
 			const [init, streaming] = await Promise.all([
-				this.#read(`fb_init_${key}.bytes`),
-				this.#read(`fb_streaming_${key}.bytes`),
+				this.#readPayload(`fb_init_${key}.bytes`),
+				this.#readPayload(`fb_streaming_${key}.bytes`),
 			]);
 			const initPayload = unpackHgPayload(init);
 			const streamingPayload = unpackHgPayload(streaming);
@@ -468,16 +481,43 @@ class DynamicFiles {
 				);
 				return decalMaterials.get(id) ?? null;
 			};
+			const selected: { group: (typeof chunk.groups)[number]; visibility: Visibility; grid: number }[] = [];
 			for (const [index, { visibility, grid }] of indices) {
 				const group = chunk.groups[index];
 				if (!group) {
 					throw new FormatError(`missing ECS group ${key}/${index}`);
 				}
+				selected.push({ group, visibility, grid });
+			}
+			const entitiesByGroup = readChunkEntitiesByGroup(
+				chunk,
+				selected.map((entry) => entry.group),
+			);
+			return selected.map(({ group, visibility, grid }, i) => {
+				const groupEntities = entitiesByGroup[i].map((entity) => ({
+					entity,
+					decalMaterial: entity.decal === null ? null : decalMaterial(entity.id),
+				}));
+				const groupLights: ChunkLight[] = [];
+				for (const id of group.ids) {
+					const light = chunkLights.get(id);
+					if (light !== undefined) {
+						groupLights.push(light);
+					}
+				}
+				return { entities: groupEntities, lights: groupLights, visibility, grid };
+			});
+		});
+
+		const entities = new Map<number, DynamicEntity>();
+		const lights = new Map<number, { light: ChunkLight; visibility: Visibility }>();
+		for (const decodedGroups of perChunk) {
+			for (const { entities: groupEntities, lights: groupLights, visibility, grid } of decodedGroups) {
 				counts.ecsGroups++;
-				for (const entity of readChunkEntities({ ...chunk, groups: [group] })) {
+				for (const { entity, decalMaterial } of groupEntities) {
 					const placed = entities.getOrInsertComputed(entity.id, () => ({
 						entity,
-						decalMaterial: entity.decal === null ? null : decalMaterial(entity.id),
+						decalMaterial,
 						visibility: { alternatives: [] },
 						grid,
 					}));
@@ -486,13 +526,10 @@ class DynamicFiles {
 						placed.grid = grid;
 					}
 				}
-				for (const id of group.ids) {
-					const light = chunkLights.get(id);
-					if (light !== undefined) {
-						lights
-							.getOrInsertComputed(id, () => ({ light, visibility: { alternatives: [] } }))
-							.visibility.alternatives.push(...visibility.alternatives);
-					}
+				for (const light of groupLights) {
+					lights
+						.getOrInsertComputed(light.id, () => ({ light, visibility: { alternatives: [] } }))
+						.visibility.alternatives.push(...visibility.alternatives);
 				}
 			}
 		}
