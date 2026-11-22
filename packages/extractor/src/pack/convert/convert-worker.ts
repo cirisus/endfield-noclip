@@ -64,8 +64,14 @@ const loadVatTexels = async ({ bundleIndex, file, pathId }: ObjectLocator): Prom
 const bakeRigidBody = async (
 	mesh: DecodedMesh,
 	bake: RigidBodyBake,
-): Promise<ReturnType<typeof rigidBodySkin>> =>
-	rigidBodySkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
+): Promise<ReturnType<typeof rigidBodySkin>> => {
+	// an animation that can't be read leaves the mesh still rather than failing it
+	try {
+		return rigidBodySkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
+	} catch (error) {
+		return { reason: `a rigid-body animation whose textures can't be read: ${errorText(error)}` };
+	}
+};
 
 const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
 	switch (job.kind) {

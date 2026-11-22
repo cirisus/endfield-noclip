@@ -42,7 +42,8 @@ export const vatTexels = (texture: DecodedTexture): VatTexels => {
 	let texels: Float32Array;
 	switch (texture.vkFormat) {
 		case VkFormat.R16G16B16A16_SFLOAT: {
-			texels = Float32Array.from(new Float16Array(level.buffer, level.byteOffset, count));
+			// copied, as a level's bytes may start at an odd offset
+			texels = Float32Array.from(new Float16Array(level.slice(0, count * 2).buffer));
 			break;
 		}
 		case VkFormat.R32G32B32A32_SFLOAT: {
