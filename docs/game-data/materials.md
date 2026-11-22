@@ -562,21 +562,25 @@ under `_Use_Custom_Anchor`), `x₀` its world X, `t` the wind clock, `I` and `F`
 
 both through truncated Taylor series for the sine and cosine. the offset from the vertex's position
 is scaled by `lerp(a · I · 0.5, 1, _Stability) · a`, `a` the vertex colour's alpha, and by the
-pass's `1 − _DisableAnimateVert`. the normal isn't turned. `_SIMPLE_VERTEXANIM_USE_GRAVITY` (the
-scepter) is a variant not described here. of the eight materials whose paths are known, none sets
-`_Use_Custom_Anchor`, every one swings (`I` 0.5 to 2.75), and the chimes turn about +Y by up to 4°
-at 18.8 radians per unit of the clock.
+pass's `1 − _DisableAnimateVert` (read where the sway's is, at `+16` of the per-pass constants; the
+GBuffer variant leaves that block unnamed). the normal isn't turned.
+`_SIMPLE_VERTEXANIM_USE_GRAVITY` (the scepter) is a variant not described here. of the eight
+materials whose paths are known, none sets `_Use_Custom_Anchor`, every one swings (`I` 0.5 to 2.75),
+and the chimes turn about +Y by up to 4° at 18.8 radians per unit of the clock.
 
 ### cloth simulation
 
-`_GPU_CLOTH` (map02's canvases, flags and banners, alongside the sway's keywords) lets a draw take
-its vertices from a cloth simulation. the keyword alone changes nothing: the variant computes the
-sway as above and adds it to the vertex either way, and replaces the object-space position only when
-a global switch is on and the draw's per-draw data names a slot in the simulation's skeleton buffer.
-the game fills that slot for entities that carry a cloth hash
+`_GPU_CLOTH` (map02's canvases, flags and banners, mostly alongside the sway's keywords) lets a draw
+take its vertices from a cloth simulation. the keyword alone changes nothing: the variant computes
+the sway as above, when the material has it, and adds it to the vertex either way, and replaces the
+object-space position only when a global switch is on and the draw's per-draw data names a slot in
+the simulation's skeleton buffer. the game fills that slot for entities that carry a cloth hash
 ([InitChunkData component 60](world.md#initchunkdata-layout)); an entity without one, such as Sword
 Vault Dale's red banner `P_cloth_map02_sfcanvas+1_001_01` under the scaffold bridge, only sways,
-though the canvases beside it are simulated.
+though the canvases beside it are simulated. some simulated cloths have no sway at all, so all their
+motion is the simulation's: `M_cloth_map02_sfcanvas+1_001_02`, the red emblem banners of Qingbo
+Stockade (five in cell −2, −11, each with a cloth hash), has `_GPU_CLOTH` and no
+`_SIMPLE_VERTEXANIM*`.
 
 a simulated vertex is its rest position through a 3 × 4 matrix of the skeleton buffer, which holds
 this step's and the previous step's matrix per bone. the vertex colour picks the bone: R and G
@@ -694,7 +698,8 @@ otherwise `_CommonVATCurrentFrame` plus a per-draw value, and it's read at
 `v = 1 − (frame + 0.5) / frames`; the maps are point-sampled, so the animation steps from frame to
 frame. `_CommonVATBlendNormal` blends the turned normal back to the mesh's. all seven materials play
 on their own at 30 frames a second, with RGBA half-float maps (14 bones over 200 frames for
-`T_vat_map02_sfornament+1_001_06_VAT`) and no normal blend. there, the bone indices are whole, the
+`T_vat_map02_sfornament+1_001_06_VAT`) and no normal blend. on that map and its mesh
+(`S_vat_map02_sfornament+1_001_06_LOD0`, the only pair checked), the bone indices are whole, the
 matrices are rigid (orthonormal to within 5 · 10⁻⁴), and the weights sum to 1 but for a handful of
 vertices within 0.01 of it and one at 0.87.
 

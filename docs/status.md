@@ -201,17 +201,20 @@ packs or renders correctly.
   vertex animation other than `HGRP/Lit`'s [swaying cloth](viewer/materials.md#swaying-cloth),
   [vertex offset](viewer/materials.md#vertex-offset) and
   [vertex animation textures](viewer/materials.md#vertex-animation-textures)
-  (`_SIMPLE_VERTEXANIM_ROPE`, a pendulum's gravity or own anchor, `HGRP/LitTransparent`'s cloth,
-  `HGRP/LitEffect`'s `_VAT_RIGIDBODY`, `_MOVING_BAMBOO`). the cloth sway and the
-  [pendulum](viewer/materials.md#swaying-cloth) are unchecked against an in-game shot
+  (`_SIMPLE_VERTEXANIM_ROPE`, a pendulum's gravity or own anchor, a pendulum on an alpha-blended
+  surface, such as the lamp glass `M_prop_map02_light+1_003_01h`, which may hang still inside a
+  swinging frame, `HGRP/LitTransparent`'s cloth, `HGRP/LitEffect`'s `_VAT_RIGIDBODY`,
+  `_MOVING_BAMBOO`). the cloth sway and the [pendulum](viewer/materials.md#swaying-cloth) are
+  unchecked against an in-game shot
 - [vertex animation textures](viewer/materials.md#vertex-animation-textures) are baked per mesh, so
   a mesh drawn with different animations holds still (map02's `s_zmdmachinevat_lod*`, played by five
   materials at different speeds, and one Hongshan waterway mesh); its frames are interpolated where
   the game steps them, and it's unchecked against an in-game shot
 - the [cloth simulation](game-data/materials.md#cloth-simulation) isn't run: entities with a cloth
   hash (canvases, flags; counted by `pack` as `clothSimulated`) draw their mesh at rest with the
-  sway alone. its input, the [cloth groups](game-data/world.md#cloth-groups), is located but has no
-  reader, and the game's compute step isn't read
+  sway alone, and those without a sway (Qingbo Stockade's red emblem banners) hang still. its input,
+  the [cloth groups](game-data/world.md#cloth-groups), is located but has no reader, and the game's
+  compute step isn't read
 - Lit's vertex offset (`_USE_VERTOFFSET`) is drawn only on alpha-tested materials, which all four on
   map02 are: an opaque one keeps still, as does one that offsets along the vertex normal, sits on a
   surface with a parallax glow or a layer, or weighs the offset by vertex alpha on an animated mesh.
