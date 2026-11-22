@@ -543,9 +543,29 @@ vectors, uses the previous wind clock. a per-pass `_DisableAnimateVert` scales t
 `1 − value`; what each pass sets it to isn't known. `_NoiseOffsetIntensity` enters only the gate in
 this variant.
 
-`_SIMPLE_VERTEXANIM_PENDULUM` and `_SIMPLE_VERTEXANIM_ROPE` are other branches of the same family,
-not described here. the [vertex offset](#vertex-offset) is a separate keyword, and a material with
-both adds the two offsets.
+`_SIMPLE_VERTEXANIM_ROPE` is another branch of the same family, not described here, and
+`_SIMPLE_VERTEXANIM_PENDULUM` [swings](#swinging-pendulums). the [vertex offset](#vertex-offset) is
+a separate keyword, and a material with both adds the two offsets.
+
+### swinging pendulums
+
+`HGRP/Lit` materials with `_SIMPLE_VERTEXANIM` and `_SIMPLE_VERTEXANIM_PENDULUM` (map02's wind
+chimes in Qingbo Stockade, `M_prop_map02_sfornament+1_001_01a` and `_03`, hanging lamps, a scepter
+and a logo; Valley IV's watchtower) turn each vertex about an anchor in the vertex stage of every
+pass, under the same gate as the sway. in world space, with `A` the object's origin (`_AnchorPoint`
+under `_Use_Custom_Anchor`), `x₀` its world X, `t` the wind clock, `I` and `F` as for the sway, and
+`(dx, 0, dz)` the sway's direction:
+
+- the vertex turns about `normalize(−dz, −dx, dx)` by `sin(t · F + x₀) · I · 0.05` radians
+- then about world +Y by `sin(t · _SelfRotationSpeed + x₀) · _SelfRotationRange · π / 360` radians
+  (the shader's degree factor is π/180 to 1e-4, halved)
+
+both through truncated Taylor series for the sine and cosine. the offset from the vertex's position
+is scaled by `lerp(a · I · 0.5, 1, _Stability) · a`, `a` the vertex colour's alpha, and by the
+pass's `1 − _DisableAnimateVert`. the normal isn't turned. `_SIMPLE_VERTEXANIM_USE_GRAVITY` (the
+scepter) is a variant not described here. of the eight materials whose paths are known, none sets
+`_Use_Custom_Anchor`, every one swings (`I` 0.5 to 2.75), and the chimes turn about +Y by up to 4°
+at 18.8 radians per unit of the clock.
 
 ### cloth simulation
 

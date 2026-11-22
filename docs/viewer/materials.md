@@ -99,17 +99,23 @@ blend into the terrain isn't drawn, which the gaps view marks.
 
 ## swaying cloth
 
-[swaying cloth](../game-data/materials.md#swaying-cloth) is the surface's `sway`, packed by
-`swayParams` into rows only foliage uses otherwise, and offset in `instance_rel`, which the shading,
-depth, alpha-tested depth and shadow passes share, so the passes agree on the swayed position. the
-vertex colour's alpha arrives as the position stream's W
+[swaying cloth](../game-data/materials.md#swaying-cloth) and
+[swinging pendulums](../game-data/materials.md#swinging-pendulums) are the surface's `sway`, packed
+by `swayParams` into rows only foliage uses otherwise (a pendulum marks its kind in the row dithered
+looks use, read only behind the sway's non-zero intensity), and offset in `instance_rel`, which the
+shading, depth, alpha-tested depth and shadow passes share, so the passes agree on the swayed
+position. the vertex colour's alpha arrives as the position stream's W
 ([geometry blob](../package-format.md#geometry-blob-mesh-efgm)), so the depth passes read no extra
 stream. the wind clock is `Frame.wind.x`, advanced with the animation clock at the blended
 environment's [wind](../game-data/environment.md#wind) rate, so the sway moves only while frames
 render, every placement swings from one clock rather than the game's running one, and no environment
 means still air. each pass's `_DisableAnimateVert` is taken as 0. the viewer draws no motion
 vectors, so the previous frame's offset isn't needed. skinned geometry drops the weight, so a
-swaying material on an animated mesh keeps still. the game's
+swaying material on an animated mesh keeps still. a pendulum turns by exact sines and cosines where
+the game takes Taylor series (within 10⁻³ at its angles); one with gravity, an anchor of its own, or
+no swing (which turns about +Y alone in game; none does on map02) keeps still, listed as a gap, as
+does a sway on a Lit trunk, whose rows the trunk holds. the packer grows a pendulum's bounds by its
+turns' reach along every axis. the game's
 [cloth simulation](../game-data/materials.md#cloth-simulation) isn't run: a simulated entity draws
 its mesh at rest, with the sway alone, and `pack` counts those entities (`clothSimulated`).
 

@@ -47,12 +47,14 @@ export interface ConvertedGeometry {
 }
 
 /**
- * how far a swaying material (`LitSway`) can move a vertex horizontally: `weight · (flat + perHeight · |y|)`
- * metres, with `weight` the vertex colour's alpha and `y` its object-space height
+ * how far a swaying material (`LitSway`) can move a vertex: `weight · (flat + perHeight · |y|)` metres
+ * horizontally and `weight · perDistance · |p|` in any direction, with `weight` the vertex colour's alpha,
+ * `y` its object-space height and `|p|` its distance from the object's origin
  */
 export interface SwayReach {
 	flat: number;
 	perHeight: number;
+	perDistance: number;
 }
 
 /** how far a material's vertex offset (`LitVertexOffset`) can move a vertex */
@@ -180,8 +182,9 @@ export const convertMesh = (
 		}
 	}
 	const scale = [0, 1, 2].map((k) => max[k] - min[k]);
-	// the farthest any vertex sways
+	// the farthest any vertex sways horizontally, and in any direction
 	let swayReach = 0;
+	let swingReach = 0;
 	{
 		const out = new Uint16Array(vertexCount * 4);
 		const weighted = sway !== undefined || offset?.weighted === true;
@@ -202,6 +205,8 @@ export const convertMesh = (
 				if (sway !== undefined) {
 					const y = Math.abs(positions[source + 1]);
 					swayReach = Math.max(swayReach, weight * (sway.flat + sway.perHeight * y));
+					const distance = Math.hypot(positions[source], positions[source + 1], positions[source + 2]);
+					swingReach = Math.max(swingReach, weight * sway.perDistance * distance);
 				}
 			}
 		}
@@ -295,6 +300,12 @@ export const convertMesh = (
 		bounds = {
 			min: [bounds.min[0] - swayReach, bounds.min[1], bounds.min[2] - swayReach],
 			max: [bounds.max[0] + swayReach, bounds.max[1], bounds.max[2] + swayReach],
+		};
+	}
+	if (swingReach > 0) {
+		bounds = {
+			min: bounds.min.map((value) => value - swingReach),
+			max: bounds.max.map((value) => value + swingReach),
 		};
 	}
 	if (offset !== undefined) {

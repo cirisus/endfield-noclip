@@ -3,19 +3,20 @@ import type { LitSway, LitVertexOffset } from '@endfield-noclip/package-format/s
 import type { MaterialReader } from '../material-values.ts';
 
 /**
- * `_SIMPLE_VERTEXANIM_CLOTH`'s sway (`docs/game-data/materials.md#swaying-cloth`). `_GPU_CLOTH` materials
- * sway too: that keyword only lets an entity with a cloth simulation replace the position the sway is added
- * to
+ * `_SIMPLE_VERTEXANIM`'s sway: the cloth's (`docs/game-data/materials.md#swaying-cloth`) or the pendulum's
+ * (`#swinging-pendulums`). `_GPU_CLOTH` materials sway too: that keyword only lets an entity with a cloth
+ * simulation replace the position the sway is added to
  *
  * @param reader an `HGRP/Lit` material's properties
- * @returns its sway, or `null` when it keeps still
+ * @returns its sway, or `null` when it keeps still or sways in a way the viewer doesn't draw (the rope, a
+ *   pendulum with gravity or its own anchor), which its surface lists as a gap
  */
 export const swayOf = (reader: MaterialReader): LitSway | null => {
 	const { float, has } = reader;
 	const intensity = float('_SimpleVertexAnimationWindIntensity', 0);
-	// the shader skips the sway when this sum is zero; the noise offset itself moves nothing in this variant
+	// the shader skips the sway when this sum is zero; the noise offset itself moves nothing in these variants
 	const enabled = intensity + float('_NoiseOffsetIntensity', 0) !== 0;
-	if (!has('_SIMPLE_VERTEXANIM') || !has('_SIMPLE_VERTEXANIM_CLOTH') || !enabled) {
+	if (!has('_SIMPLE_VERTEXANIM') || !enabled) {
 		return null;
 	}
 	let direction: LitSway['direction'] = null;
@@ -24,15 +25,41 @@ export const swayOf = (reader: MaterialReader): LitSway | null => {
 		const angle = (float('_MainDirectionAngle', 0) * Math.PI) / 180;
 		direction = [Math.cos(angle), Math.sin(angle)];
 	}
-	return {
-		intensity,
-		frequency: float('_SimpleVertexAnimationWindFreq', 1),
-		softness: float('_SimpleVertexAnimationWindSoftFactor', 0),
-		kite: float('_Kite', 0),
-		tendency: float('_DirectionTendency', 0),
-		direction,
-	};
+	const frequency = float('_SimpleVertexAnimationWindFreq', 1);
+	if (has('_SIMPLE_VERTEXANIM_CLOTH')) {
+		return {
+			kind: 'cloth',
+			intensity,
+			frequency,
+			softness: float('_SimpleVertexAnimationWindSoftFactor', 0),
+			kite: float('_Kite', 0),
+			tendency: float('_DirectionTendency', 0),
+			direction,
+		};
+	}
+	// a pendulum that doesn't swing still turns about +Y in the game; none on map02 does, and the viewer
+	// draws neither
+	if (has('_SIMPLE_VERTEXANIM_PENDULUM') && intensity !== 0 && !pendulumGap(reader)) {
+		return {
+			kind: 'pendulum',
+			intensity,
+			frequency,
+			spinFrequency: float('_SelfRotationSpeed', 0),
+			// the shader's degree factor is π/180 to 1e-4, halved
+			spinRange: (float('_SelfRotationRange', 0) * Math.PI) / 360,
+			stability: float('_Stability', 0),
+			direction,
+		};
+	}
+	return null;
 };
+
+/**
+ * @param reader an `HGRP/Lit` material with `_SIMPLE_VERTEXANIM_PENDULUM`
+ * @returns whether its swing takes inputs the viewer doesn't read: gravity, or an anchor of its own
+ */
+const pendulumGap = (reader: MaterialReader): boolean =>
+	reader.has('_SIMPLE_VERTEXANIM_USE_GRAVITY') || reader.float('_Use_Custom_Anchor', 0) !== 0;
 
 /**
  * `_USE_VERTOFFSET`'s offset by a scrolling texture, with `_USE_VERTOFFSETMASK`'s mask

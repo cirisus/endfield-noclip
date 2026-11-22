@@ -34,6 +34,8 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 			...LIT_KEYWORDS,
 			'_SIMPLE_VERTEXANIM',
 			'_SIMPLE_VERTEXANIM_CLOTH',
+			// drawn but for gravity (its own keyword) or an anchor of its own (`_Use_Custom_Anchor`)
+			'_SIMPLE_VERTEXANIM_PENDULUM',
 			// changes nothing on its own: the simulation it allows runs per entity, and the pack counts the
 			// entities that have one (`clothSimulated`)
 			'_GPU_CLOTH',
@@ -89,6 +91,8 @@ const PROPERTY_GAPS: readonly { property: string; keyword: string; off: number }
 	{ property: '_EnableEmissiveAnimFlicker', keyword: '_EMISSIVE_ANIM', off: 0 },
 	// the mask's R on a UV set and tiling of its own
 	{ property: '_UseMaskRUVSetAndTilingScale', keyword: '_TRI_CHANNEL_MASK', off: 0 },
+	// a pendulum's anchor of its own: it keeps still (`swayOf`)
+	{ property: '_Use_Custom_Anchor', keyword: '_SIMPLE_VERTEXANIM_PENDULUM', off: 0 },
 ];
 
 /** the shaders whose describer reads {@link PROPERTY_GAPS}' keywords */

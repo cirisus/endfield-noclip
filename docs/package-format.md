@@ -520,9 +520,11 @@ of hundred meshes, meshoptimizer's tangents agree on all but a few corners in te
 **swaying geometry**: a mesh drawn with a swaying material (a Lit surface's `sway`,
 [swaying cloth](game-data/materials.md#swaying-cloth)) carries its sway weights in position W, and
 its table `bounds` grow in X and Z by the farthest any vertex sways,
-`weight · (flat + perHeight · |y|)` from the strongest of its materials, so culling and tile bounds
-hold the motion under the yaw-only, near-unit-scale placements scenery uses. a mesh drawn with a
-material that offsets its vertices by a texture (a Lit surface's `vertexOffset`,
+`weight · (flat + perHeight · |y|)` from the strongest of its materials, and on every axis by the
+farthest any vertex [swings](game-data/materials.md#swinging-pendulums),
+`weight · perDistance · |p|` for its distance `|p|` from the origin, so culling and tile bounds hold
+the motion under the yaw-only, near-unit-scale placements scenery uses. a mesh drawn with a material
+that offsets its vertices by a texture (a Lit surface's `vertexOffset`,
 [vertex offset](game-data/materials.md#vertex-offset)) has its `bounds` grown on each axis by the
 farthest the offset reaches along it: the direction's own components when it's in object space, and
 its whole length on every axis when it's along the world's axes or the normal, which can point

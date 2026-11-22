@@ -851,7 +851,7 @@ describe('the Lit model', () => {
 		assert.equal(noise.overlay, null);
 	});
 
-	it("sways HGRP/Lit cloth by its own direction or the wind's, GPU cloth too, but not other shaders", () => {
+	it("sways HGRP/Lit cloth by its own direction or the wind's, GPU cloth too, swings pendulums, but not other shaders", () => {
 		// M_prop_map02_kite+1_001_01a's values
 		const shader = shaderEntry({
 			name: 'HGRP/Lit',
@@ -883,6 +883,7 @@ describe('the Lit model', () => {
 		assert.deepEqual(
 			{ ...swung, direction: null },
 			{
+				kind: 'cloth',
 				intensity: 1.5,
 				frequency: 7.4,
 				softness: 0.12,
@@ -897,7 +898,37 @@ describe('the Lit model', () => {
 		// M_cloth_map02_sfcanvas+1_001_01's keywords: the banner has no simulation and sways like any cloth
 		assert.deepEqual(sway([...cloth, '_GPU_CLOTH'], kite), swung);
 		assert.deepEqual(keywordsNotDrawn('HGRP/Lit', [...cloth, '_GPU_CLOTH']), []);
-		assert.equal(sway(['_SIMPLE_VERTEXANIM', '_SIMPLE_VERTEXANIM_PENDULUM'], kite), null);
+		// M_prop_map02_sfornament+1_001_01a, the wind chimes hung in Qingbo Stockade
+		const chime = {
+			_SimpleVertexAnimationWindIntensity: 2.75,
+			_SimpleVertexAnimationWindFreq: 9.9,
+			_NoiseOffsetIntensity: 1,
+			_SelfRotationSpeed: 18.8,
+			_SelfRotationRange: 8.6,
+			_Stability: 1,
+			_Use_Custom_Anchor: 0,
+		};
+		const pendulum = ['_SIMPLE_VERTEXANIM', '_SIMPLE_VERTEXANIM_PENDULUM'];
+		const swing = sway(pendulum, chime);
+		assert.ok(swing?.kind === 'pendulum');
+		assert.deepEqual(
+			{ ...swing, spinRange: Math.round(swing.spinRange * 1e6) / 1e6 },
+			{
+				kind: 'pendulum',
+				intensity: 2.75,
+				frequency: 9.9,
+				spinFrequency: 18.8,
+				spinRange: Math.round(((8.6 * Math.PI) / 360) * 1e6) / 1e6,
+				stability: 1,
+				direction: null,
+			},
+		);
+		assert.deepEqual(keywordsNotDrawn('HGRP/Lit', pendulum), []);
+		// gravity and an anchor of its own aren't read, so the pendulum keeps still and lists them
+		assert.equal(sway([...pendulum, '_SIMPLE_VERTEXANIM_USE_GRAVITY'], chime), null);
+		const anchored = values({ keywords: pendulum, floats: { ...chime, _Use_Custom_Anchor: 1 } });
+		assert.equal(lit(describeMaterial(anchored, shader)).sway, null);
+		assert.deepEqual(surfaceGaps(readerOf(anchored, shader)), ['_Use_Custom_Anchor']);
 		assert.equal(
 			sway(cloth, kite, { ...shader, name: 'HGRP/LitTransparent', family: 'litTransparent' }),
 			null,

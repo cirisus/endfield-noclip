@@ -651,7 +651,11 @@ const meshNeeds = (
 				sway[draw.geometry] =
 					held === null
 						? reach
-						: { flat: Math.max(held.flat, reach.flat), perHeight: Math.max(held.perHeight, reach.perHeight) };
+						: {
+								flat: Math.max(held.flat, reach.flat),
+								perHeight: Math.max(held.perHeight, reach.perHeight),
+								perDistance: Math.max(held.perDistance, reach.perDistance),
+							};
 			}
 			const moved = draw.material === null ? null : (offsetReaches[draw.material] ?? null);
 			const heldOffset = offset[draw.geometry];
@@ -957,17 +961,31 @@ const withSavedValues = (record: MaterialRecord, saved: MaterialValues | null): 
 };
 
 /**
- * how far a sway moves a vertex of full weight, the largest `(s + 1 + tendency) · amplitude` of
- * `docs/game-data/materials.md#swaying-cloth`: a kite's sine `s` is scaled by the object-space height, a
- * wave's stays within ±1
+ * how far a sway moves a vertex of full weight. the cloth's is the largest `(s + 1 + tendency) · amplitude`
+ * of `docs/game-data/materials.md#swaying-cloth`: a kite's sine `s` is scaled by the object-space height, a
+ * wave's stays within ±1. a pendulum's turns are no longer than their angles times the vertex's distance from
+ * the object's origin, scaled by the most the stability lets through
  */
-const swayReach = ({ intensity, kite, tendency }: LitSway): SwayReach => {
-	const offset = Math.abs(1 + tendency);
-	if (kite !== 0) {
-		const amplitude = Math.abs(intensity) * 0.05;
-		return { flat: amplitude * offset, perHeight: amplitude };
+const swayReach = (sway: LitSway): SwayReach => {
+	switch (sway.kind) {
+		case 'cloth': {
+			const { intensity, kite, tendency } = sway;
+			const offset = Math.abs(1 + tendency);
+			if (kite !== 0) {
+				const amplitude = Math.abs(intensity) * 0.05;
+				return { flat: amplitude * offset, perHeight: amplitude, perDistance: 0 };
+			}
+			return { flat: Math.abs(intensity) * 0.5 * (1 + offset), perHeight: 0, perDistance: 0 };
+		}
+		case 'pendulum': {
+			const { intensity, spinRange, stability } = sway;
+			const angle = Math.abs(intensity) * 0.05 + Math.abs(spinRange);
+			// the weight the stability blends toward 1 is at most half the intensity
+			const half = intensity * 0.5;
+			const follow = Math.max(Math.abs(half), 1, Math.abs(half + stability * (1 - half)));
+			return { flat: 0, perHeight: 0, perDistance: angle * follow };
+		}
 	}
-	return { flat: Math.abs(intensity) * 0.5 * (1 + offset), perHeight: 0 };
 };
 
 /**

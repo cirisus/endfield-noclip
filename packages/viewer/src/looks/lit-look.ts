@@ -211,7 +211,11 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		params[LookRow.detail2 + 3] = 1;
 	}
 	if (surface.sway !== null && surface.foliage === null) {
-		swayParams(look, surface.sway);
+		if (surface.trunk !== null) {
+			look.gaps.push('sway: a trunk holds its rows');
+		} else {
+			swayParams(look, surface.sway);
+		}
 	}
 	if (surface.trunk !== null && surface.foliage === null) {
 		trunkParams(look, surface.trunk);
@@ -237,24 +241,45 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 // #region vertex animation and pulse
 
 /**
- * where `_SIMPLE_VERTEXANIM_CLOTH`'s sway keeps its inputs: rows only leaves and grass use otherwise.
- * mesh.wgsl sways a vertex of a look that isn't foliage, erosion, unlit or an effect when the frequency or
- * intensity is non-zero and the geometry's position W (the sway weight) is
+ * where `_SIMPLE_VERTEXANIM`'s sway keeps its inputs: rows only leaves, grass and trunks use otherwise, and
+ * dithered looks the kind's (`DitherRow`), with a zero intensity. mesh.wgsl sways a vertex of a look that
+ * isn't foliage, erosion, unlit or an effect when the intensity and the geometry's position W (the sway
+ * weight) are non-zero
  */
 export const SwayRow = {
-	/** `_SimpleVertexAnimationWindIntensity`, `_SimpleVertexAnimationWindFreq`, the soft factor, `_Kite` */
+	/**
+	 * `_SimpleVertexAnimationWindIntensity`, `_SimpleVertexAnimationWindFreq`, then the cloth's soft factor and
+	 * `_Kite`, or the pendulum's `_Stability` and turn about +Y per unit of the wind clock
+	 */
 	sway: LookRow.foliage2,
-	/** `_DirectionTendency`, 1 for the material's own direction (0: the wind's), that direction's X and Z */
+	/**
+	 * the cloth's `_DirectionTendency` or the pendulum's largest turn about +Y (radians), 1 for the material's
+	 * own direction (0: the wind's), that direction's X and Z
+	 */
 	direction: LookRow.canopyColor,
+	/** 1 for a pendulum (0: cloth) */
+	kind: LookRow.canopy,
 } as const;
 
-/** `_SIMPLE_VERTEXANIM_CLOTH`'s sway in the wind (docs/game-data/materials.md#swaying-cloth) */
+/**
+ * `_SIMPLE_VERTEXANIM`'s sway in the wind (docs/game-data/materials.md#swaying-cloth,
+ * docs/game-data/materials.md#swinging-pendulums)
+ */
 const swayParams = (look: MaterialLook, sway: LitSway): void => {
-	look.params.set([sway.intensity, sway.frequency, sway.softness, sway.kite], SwayRow.sway);
-	look.params.set(
-		[sway.tendency, sway.direction === null ? 0 : 1, ...(sway.direction ?? [0, 0])],
-		SwayRow.direction,
-	);
+	const direction = [sway.direction === null ? 0 : 1, ...(sway.direction ?? [0, 0])];
+	switch (sway.kind) {
+		case 'cloth': {
+			look.params.set([sway.intensity, sway.frequency, sway.softness, sway.kite], SwayRow.sway);
+			look.params.set([sway.tendency, ...direction], SwayRow.direction);
+			break;
+		}
+		case 'pendulum': {
+			look.params.set([sway.intensity, sway.frequency, sway.stability, sway.spinFrequency], SwayRow.sway);
+			look.params.set([sway.spinRange, ...direction], SwayRow.direction);
+			look.params[SwayRow.kind] = 1;
+			break;
+		}
+	}
 };
 
 /**

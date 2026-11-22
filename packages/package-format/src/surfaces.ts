@@ -197,11 +197,17 @@ export interface LitVertexOffsetMask {
 }
 
 /**
- * `_SIMPLE_VERTEXANIM_CLOTH`'s sway (`docs/game-data/materials.md#swaying-cloth`): each vertex moves along a
- * horizontal direction by a sine of the wind clock, weighted by its colour's alpha, which the geometry's
- * position W carries
+ * `HGRP/Lit`'s `_SIMPLE_VERTEXANIM` (`docs/game-data/materials.md#swaying-cloth`): each vertex moves with the
+ * wind clock, weighted by its colour's alpha, which the geometry's position W carries
  */
-export interface LitSway {
+export type LitSway = LitClothSway | LitPendulumSway;
+
+/**
+ * `_SIMPLE_VERTEXANIM_CLOTH`'s sway: each vertex moves along a horizontal direction by a sine of the wind
+ * clock
+ */
+export interface LitClothSway {
+	kind: 'cloth';
 	/** `_SimpleVertexAnimationWindIntensity` */
 	intensity: number;
 	/** radians per unit of the wind clock (`_SimpleVertexAnimationWindFreq`) */
@@ -213,6 +219,27 @@ export interface LitSway {
 	/** `_DirectionTendency`: added to the sine, biasing the sway downwind */
 	tendency: number;
 	/** the unit XZ direction the vertices move along (`_MainDirectionAngle`), or `null` for the wind's own */
+	direction: [x: number, z: number] | null;
+}
+
+/**
+ * `_SIMPLE_VERTEXANIM_PENDULUM`'s swing (`docs/game-data/materials.md#swinging-pendulums`): each vertex turns
+ * about the object's origin, by a sine of the wind clock about an axis across the wind and then by another
+ * about world +Y
+ */
+export interface LitPendulumSway {
+	kind: 'pendulum';
+	/** `_SimpleVertexAnimationWindIntensity`: the swing is up to `intensity / 20` radians */
+	intensity: number;
+	/** radians per unit of the wind clock (`_SimpleVertexAnimationWindFreq`) */
+	frequency: number;
+	/** the turn about +Y: radians per unit of the wind clock (`_SelfRotationSpeed`) */
+	spinFrequency: number;
+	/** the turn about +Y: its largest angle in radians, `_SelfRotationRange` degrees halved */
+	spinRange: number;
+	/** `_Stability`, 0–1: how much of the turn the vertex follows regardless of its weight */
+	stability: number;
+	/** the unit XZ direction the swing follows (`_MainDirectionAngle`), or `null` for the wind's own */
 	direction: [x: number, z: number] | null;
 }
 

@@ -263,7 +263,7 @@ fn instance_rel(position: vec4f, ii: u32, draw: Draw, look: Look) -> vec3f {
 	return rel + grass_lean(flags, look, p.y) + sway(flags, look, p, position.w, rel, origin);
 }
 
-// `_SIMPLE_VERTEXANIM_CLOTH`'s world-space offset (`swayParams` in lit-look.ts,
+// `_SIMPLE_VERTEXANIM`'s world-space offset (`swayParams` in lit-look.ts,
 // docs/game-data/materials.md#swaying-cloth). `weight` is the vertex colour's alpha, which the geometry carries
 // in position W
 fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f) -> vec3f {
@@ -272,11 +272,15 @@ fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f
 		return vec3f(0.0);
 	}
 	let frequency = look.foliage2.y;
+	let along = select(frame.wind.zw, look.canopy_color.zw, look.canopy_color.y > 0.5);
+	let x0 = origin.x + frame.eye.x;
+	let phase = frame.wind.x * frequency + x0;
+	if (look.canopy.x > 0.5) {
+		return pendulum(look, weight, rel - origin, along, phase, x0);
+	}
 	let softness = look.foliage2.z;
 	let kite = look.foliage2.w;
 	let tendency = look.canopy_color.x;
-	let along = select(frame.wind.zw, look.canopy_color.zw, look.canopy_color.y > 0.5);
-	let phase = frame.wind.x * frequency + origin.x + frame.eye.x;
 	var s: f32;
 	var amplitude: f32;
 	if (kite != 0.0) {
@@ -288,6 +292,29 @@ fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f
 	}
 	let offset = (s + 1.0 + tendency) * amplitude * weight;
 	return vec3f(along.x, 0.0, along.y) * offset;
+}
+
+// `_SIMPLE_VERTEXANIM_PENDULUM`'s offset (docs/game-data/materials.md#swinging-pendulums): the vertex at `v`
+// from the object's origin swings about an axis across `along`, then turns about +Y, both by sines of the
+// wind clock with the object's world X `x0` as their phase; `phase` is the swing's
+fn pendulum(look: Look, weight: f32, v: vec3f, along: vec2f, phase: f32, x0: f32) -> vec3f {
+	let intensity = look.foliage2.x;
+	// the game's axis from its direction (x, 0, z) is (0 − z, −x, x), which still air leaves undefined
+	let across = vec3f(-along.y, -along.x, along.x);
+	var swung = v;
+	if (dot(across, across) > 1e-12) {
+		swung = rotate_about(normalize(across), sin(phase) * intensity * 0.05, v);
+	}
+	let spin = sin(frame.wind.x * look.foliage2.w + x0) * look.canopy_color.x;
+	let turned = rotate_about(vec3f(0.0, 1.0, 0.0), spin, swung);
+	let follow = mix(weight * intensity * 0.5, 1.0, look.foliage2.z);
+	return (turned - v) * follow * weight;
+}
+
+// `v` turned by `angle` radians about the unit `axis` (Rodrigues)
+fn rotate_about(axis: vec3f, angle: f32, v: vec3f) -> vec3f {
+	let c = cos(angle);
+	return v * c + cross(axis, v) * sin(angle) + axis * dot(axis, v) * (1.0 - c);
 }
 
 // `_USE_VERTOFFSET`'s world-space offset (`vertexOffsetParams` in lit-look.ts,

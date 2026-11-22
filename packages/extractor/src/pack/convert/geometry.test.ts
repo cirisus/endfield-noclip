@@ -240,7 +240,7 @@ describe('convertMesh', () => {
 		const positions = Float32Array.from(POSITIONS);
 		positions[2 * 3 + 1] = 2;
 		const { blob, entry } = convertMesh(testMesh({ colors, positions }), null, {
-			sway: { flat: 0.5, perHeight: 2 },
+			sway: { flat: 0.5, perHeight: 2, perDistance: 0 },
 		});
 		// vertex 2: 0.4 · (0.5 + 2 · 2)
 		const reach = 0.4 * 4.5;
@@ -262,6 +262,20 @@ describe('convertMesh', () => {
 		// without a sway, W stays 0
 		const still = decodeAll(convertMesh(testMesh({ colors }), null).blob);
 		assert.ok(still.read(VertexAttribute.Position).every(([, , , w]) => w === 0));
+	});
+
+	it("grows the bounds along every axis by a pendulum's reach", () => {
+		const still = convertMesh(testMesh({}), null).entry.bounds;
+		const swung = convertMesh(testMesh({}), null, { sway: { flat: 0, perHeight: 0, perDistance: 0.5 } });
+		const far = Math.max(
+			...Array.from({ length: 6 }, (_, v) =>
+				Math.hypot(POSITIONS[v * 3], POSITIONS[v * 3 + 1], POSITIONS[v * 3 + 2]),
+			),
+		);
+		for (let k = 0; k < 3; k++) {
+			assert.ok(Math.abs(swung.entry.bounds.min[k] - (still.min[k] - far * 0.5)) < 1e-6);
+			assert.ok(Math.abs(swung.entry.bounds.max[k] - (still.max[k] + far * 0.5)) < 1e-6);
+		}
 	});
 
 	it("grows the bounds by a vertex offset's reach, and carries the weight only when it's weighted", () => {

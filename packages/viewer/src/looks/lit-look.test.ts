@@ -109,12 +109,28 @@ test('a swaying Lit surface keeps its sway in the sway rows', () => {
 		entries: [
 			described(
 				litSurface({
-					sway: { intensity: 1.5, frequency: 7.4, softness: 0.12, kite: 1, tendency: 0, direction: [1, 0] },
+					sway: {
+						kind: 'cloth',
+						intensity: 1.5,
+						frequency: 7.4,
+						softness: 0.12,
+						kite: 1,
+						tendency: 0,
+						direction: [1, 0],
+					},
 				}),
 			),
 			described(
 				litSurface({
-					sway: { intensity: 1, frequency: 1, softness: 0, kite: 0, tendency: 0.5, direction: null },
+					sway: {
+						kind: 'cloth',
+						intensity: 1,
+						frequency: 1,
+						softness: 0,
+						kite: 0,
+						tendency: 0.5,
+						direction: null,
+					},
 				}),
 			),
 		],
@@ -125,6 +141,37 @@ test('a swaying Lit surface keeps its sway in the sway rows', () => {
 	);
 	assert.deepEqual([...look.params.subarray(SwayRow.direction, SwayRow.direction + 4)], [0, 1, 1, 0]);
 	assert.deepEqual([...wind.params.subarray(SwayRow.direction, SwayRow.direction + 4)], [0.5, 0, 0, 0]);
+	assert.equal(look.params[SwayRow.kind], 0);
+});
+
+test('a swinging Lit surface marks its sway a pendulum', () => {
+	// M_prop_map02_sfornament+1_001_01a: the wind chimes hung in Qingbo Stockade
+	const [look] = materialLooks({
+		entries: [
+			described(
+				litSurface({
+					sway: {
+						kind: 'pendulum',
+						intensity: 2.75,
+						frequency: 9.9,
+						spinFrequency: 18.8,
+						spinRange: 0.075,
+						stability: 1,
+						direction: null,
+					},
+				}),
+			),
+		],
+	});
+	assert.deepEqual(
+		[...look.params.subarray(SwayRow.sway, SwayRow.sway + 4)],
+		[2.75, 9.9, 1, 18.8].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(SwayRow.direction, SwayRow.direction + 4)],
+		[0.075, 0, 0, 0].map(Math.fround),
+	);
+	assert.equal(look.params[SwayRow.kind], 1);
 });
 
 test('a vertex offset takes the parallax slots and rows of an alpha-tested Lit surface', () => {
