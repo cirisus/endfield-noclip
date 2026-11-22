@@ -206,6 +206,23 @@ export class Vfs {
 		return this.readVerified(file);
 	}
 
+	/**
+	 * like {@link readFile}, without checking the file's MD5; use for large or high-volume files whose own
+	 * framing (headers, LZ4 sizes) already validates their bytes
+	 *
+	 * @param hash group hash
+	 * @param name logical file name
+	 * @returns the file's bytes
+	 * @throws {FormatError} if the group has no such file
+	 */
+	async readUnverified(hash: string, name: string): Promise<Uint8Array> {
+		const file = await this.find(hash, name);
+		if (file === undefined) {
+			throw new FormatError(`missing ${name}`);
+		}
+		return this.read(file);
+	}
+
 	/** closes cached chunk handles */
 	async close(): Promise<void> {
 		const chunks = [...this.#handles.values()];

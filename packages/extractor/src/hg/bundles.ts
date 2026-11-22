@@ -1,6 +1,10 @@
+import { mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { brotliDecompress, brotliDecompressSync } from 'node:zlib';
 
+import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { type BundleNode, type ByteSource, UnityBundle } from '@endfield-noclip/formats/hg/bundle';
 import { deriveBundlePad } from '@endfield-noclip/formats/hg/bundle-cipher';
 import { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
@@ -31,7 +35,9 @@ import {
 
 import { groupByDefined } from '@mary-ext/array-fns';
 
+import { DEFAULT_OUT } from '../cli-args.ts';
 import type { Keys } from '../config.ts';
+import { ignoreMissing } from '../errors.ts';
 
 import { type Vfs, type VfsFile, VfsGroup } from './vfs.ts';
 
@@ -41,26 +47,95 @@ export const BUNDLE_PREFIX = 'Data/Bundles/Windows/';
 /** the bundle manifest's logical path, in {@link VfsGroup.BundleManifest} */
 const MANIFEST_PATH = 'Data/Bundles/Windows/manifest.hgmmap';
 
+/** where decompressed install files (like the bundle manifest) are cached across CLI runs */
+const INSTALL_CACHE_DIR = fileURLToPath(new URL('.cache/install', DEFAULT_OUT));
+
 const brotliDecompressAsync = promisify(brotliDecompress);
 
 const MANIFEST_OPTIONS = { brotliDecompress: (data: Uint8Array) => brotliDecompressSync(data) };
 
+/** reads a file straight into a `SharedArrayBuffer`-backed view, or returns `undefined` if absent */
+const readIntoSharedBuffer = async (path: string): Promise<Uint8Array | undefined> => {
+	const handle = await ignoreMissing(open(path, 'r'), undefined);
+	if (handle === undefined) {
+		return undefined;
+	}
+	try {
+		const { size } = await handle.stat();
+		const bytes = new Uint8Array(new SharedArrayBuffer(size));
+		let offset = 0;
+		while (offset < size) {
+			// oxlint-disable-next-line no-await-in-loop -- finish short reads until EOF
+			const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
+			if (bytesRead === 0) {
+				break;
+			}
+			offset += bytesRead;
+		}
+		return offset === size ? bytes : undefined;
+	} finally {
+		await handle.close();
+	}
+};
+
+/** atomically writes the decompressed manifest to the install cache and removes older MD5 copies */
+const writeManifestCache = async (cacheDir: string, fileName: string, bytes: Uint8Array): Promise<void> => {
+	const target = join(cacheDir, fileName);
+	const tmp = join(cacheDir, `${fileName}.${process.pid}.tmp`);
+	try {
+		await mkdir(cacheDir, { recursive: true });
+		await writeFile(tmp, bytes);
+		await rename(tmp, target);
+		const entries = await ignoreMissing(readdir(cacheDir), []);
+		await Promise.all(
+			entries
+				.filter((name) => name.startsWith('manifest-') && name.endsWith('.bin') && name !== fileName)
+				.map((name) => rm(join(cacheDir, name), { force: true })),
+		);
+	} catch {
+		await rm(tmp, { force: true }).catch(() => {});
+	}
+};
+
 /**
  * @param vfs the VFS
+ * @param options.cacheDir directory for caching the decompressed manifest by MD5 (`null` disables caching;
+ *   defaults to `out/.cache/install`)
  * @returns the parsed bundle manifest, its {@link BundleManifest.bytes} backed by a `SharedArrayBuffer` so
  *   worker threads can read it through {@link sharedBundleManifest} without a copy of their own
  * @throws {Error} if it's missing or its md5 doesn't match the catalog
  */
-export const loadBundleManifest = async (vfs: Vfs): Promise<BundleManifest> => {
+export const loadBundleManifest = async (
+	vfs: Vfs,
+	options?: { cacheDir?: string | null },
+): Promise<BundleManifest> => {
 	const file = await vfs.find(VfsGroup.BundleManifest, MANIFEST_PATH);
 	if (file === undefined) {
 		throw new Error(`${MANIFEST_PATH} not found in vfs group ${VfsGroup.BundleManifest}`);
+	}
+	const cacheDir = options?.cacheDir === undefined ? INSTALL_CACHE_DIR : options.cacheDir;
+	const cacheFile = `manifest-${file.entry.dataMd5}.bin`;
+	if (cacheDir !== null) {
+		const cached = await readIntoSharedBuffer(join(cacheDir, cacheFile));
+		if (cached !== undefined) {
+			try {
+				return new BundleManifest(cached, MANIFEST_OPTIONS);
+			} catch (error) {
+				if (!(error instanceof FormatError)) {
+					throw error;
+				}
+			}
+		}
 	}
 	// ~150 MB decompressed; the async form keeps the event loop free for the reads setup runs alongside
 	const decompressed = await brotliDecompressAsync(await vfs.readVerified(file));
 	const bytes = new Uint8Array(new SharedArrayBuffer(decompressed.length));
 	bytes.set(decompressed);
-	return new BundleManifest(bytes, MANIFEST_OPTIONS);
+	const manifest = new BundleManifest(bytes, MANIFEST_OPTIONS);
+	if (cacheDir !== null) {
+		await writeManifestCache(cacheDir, cacheFile, bytes);
+	}
+	return manifest;
 };
 
 /**

@@ -141,9 +141,13 @@ caching, and cross-file lookups:
 | tables & data  | `formats/src/hg/string-pool.ts`, `spark-buffer.ts`, `endfield/memory-pack.ts` | `extractor/src/game/`                 |
 
 - **VFS (`hg/vfs.ts`)**: `VfsGroup` holds group hashes; `readVerified` checks each logical file's
-  decrypted MD5. `Persistent/index_main.json` and `CompressData.bin` are unused.
+  decrypted MD5, while `readUnverified` skips MD5 for large or high-volume files whose own framing
+  already validates them (StringPathHash tables, LZ4-framed chunk payloads).
+  `Persistent/index_main.json` and `CompressData.bin` are unused.
 - **bundles (`hg/bundles.ts`)**: `UnityBundle` reads headers/directories and decodes only blocks
-  overlapping a requested byte range. descrambling is ported from AnimeStudio.
+  overlapping a requested byte range. descrambling is ported from AnimeStudio. `loadBundleManifest`
+  caches the decompressed `manifest.hgmmap` in `out/.cache/install/` keyed by its catalog MD5 so
+  repeated CLI runs skip Brotli decompression (~430 ms).
 - **IL2CPP metadata (`il2cpp/metadata.ts`)**: detects the extra `i32` per type-definition row by row
   size and feeds the MemoryPack schema reader.
 

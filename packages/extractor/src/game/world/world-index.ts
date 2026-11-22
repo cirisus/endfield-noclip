@@ -121,17 +121,17 @@ export class WorldIndex {
 
 	/** @returns the main StringPathHash table (≈170 MB, loaded once) */
 	pathHash(): Promise<StringPathHashTable> {
-		this.#pathHash ??= this.#read(VfsGroup.ExtendData, STRING_PATH_HASH).then(
-			(b) => new StringPathHashTable(b),
-		);
+		this.#pathHash ??= this.vfs
+			.readUnverified(VfsGroup.ExtendData, STRING_PATH_HASH)
+			.then((b) => new StringPathHashTable(b));
 		return this.#pathHash;
 	}
 
 	/** @returns the initial-package StringPathHash table */
 	initPathHash(): Promise<StringPathHashTable> {
-		this.#initPathHash ??= this.#read(VfsGroup.InitialExtendData, INIT_STRING_PATH_HASH).then(
-			(b) => new StringPathHashTable(b),
-		);
+		this.#initPathHash ??= this.vfs
+			.readUnverified(VfsGroup.InitialExtendData, INIT_STRING_PATH_HASH)
+			.then((b) => new StringPathHashTable(b));
 		return this.#initPathHash;
 	}
 
@@ -500,7 +500,7 @@ export class WorldIndex {
 	 * @throws {Error} if the VFS doesn't have it
 	 */
 	async readInitPayload(file: ChunkFile): Promise<Uint8Array> {
-		return unpackHgPayload(await this.#read(VfsGroup.Streaming, file.name));
+		return unpackHgPayload(await this.vfs.readUnverified(VfsGroup.Streaming, file.name));
 	}
 
 	/**
@@ -512,7 +512,7 @@ export class WorldIndex {
 			VfsGroup.Streaming,
 			file.name.replace('/InitChunkData_', '/StreamingChunkData_'),
 		);
-		return entry === undefined ? null : unpackHgPayload(await this.vfs.readVerified(entry));
+		return entry === undefined ? null : unpackHgPayload(await this.vfs.read(entry));
 	}
 
 	/**

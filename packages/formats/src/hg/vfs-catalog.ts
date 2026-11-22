@@ -1,7 +1,6 @@
 import { chacha20 } from '@noble/ciphers/chacha.js';
 
 import { BinaryReader, FormatError, toHex } from '../binary/binary-reader.ts';
-import { bytesEqual } from '../binary/pe.ts';
 
 // #region types
 
@@ -126,9 +125,12 @@ export const parseVfsCatalog = (
 	const chunks: VfsChunkEntry[] = [];
 	let parsedFiles = 0;
 	for (let c = 0; c < chunkCount; c++) {
-		const md5Bytes = r.bytesView(16);
-		const md5 = toHex(md5Bytes);
-		const contentMd5 = toHex(r.bytesView(16));
+		const md5Offset = r.offset;
+		r.skip(16);
+		const md5 = hexRange(plain, md5Offset, 16);
+		const contentMd5Offset = r.offset;
+		r.skip(16);
+		const contentMd5 = hexRange(plain, contentMd5Offset, 16);
 		const length = r.i64Number();
 		const chunkBlockType = r.u8();
 		r.skip(tagLength);
@@ -143,9 +145,14 @@ export const parseVfsCatalog = (
 			// the name hash isn't needed to read files
 			r.skip(8);
 			// a Bundle catalog has hundreds of thousands of files, so they share their chunk's string rather than each holding a copy
-			const chunkMd5Bytes = r.bytesView(16);
-			const chunkMd5 = bytesEqual(chunkMd5Bytes, md5Bytes) ? md5 : toHex(chunkMd5Bytes);
-			const dataMd5 = toHex(r.bytesView(16));
+			const chunkMd5Offset = r.offset;
+			r.skip(16);
+			const chunkMd5 = bytesEqual16(plain, chunkMd5Offset, md5Offset)
+				? md5
+				: hexRange(plain, chunkMd5Offset, 16);
+			const dataMd5Offset = r.offset;
+			r.skip(16);
+			const dataMd5 = hexRange(plain, dataMd5Offset, 16);
 			const offset = r.i64Number();
 			const fileLength = r.i64Number();
 			const fileBlockType = r.u8();
@@ -216,6 +223,26 @@ export const decryptVfsFileSliceInPlace = (
 	view.setBigInt64(4, cipher.ivSeed, true);
 	const decrypt = options?.chacha20 ?? defaultChaCha20;
 	decrypt(cipher.key, nonce, 1 + cipher.position / 64, data, data);
+};
+
+const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0').toUpperCase());
+
+const hexRange = (bytes: Uint8Array, start: number, length: number): string => {
+	let out = '';
+	const end = start + length;
+	for (let i = start; i < end; i++) {
+		out += HEX[bytes[i]];
+	}
+	return out;
+};
+
+const bytesEqual16 = (bytes: Uint8Array, a: number, b: number): boolean => {
+	for (let i = 0; i < 16; i++) {
+		if (bytes[a + i] !== bytes[b + i]) {
+			return false;
+		}
+	}
+	return true;
 };
 
 const readShortString = (r: BinaryReader): string => {
