@@ -52,15 +52,33 @@ export interface VfsCatalog {
 /** bytes before the encrypted body: `u32 version ‖ 8 bytes`, which together form the nonce */
 const CATALOG_HEAD_LENGTH = 12;
 
+/** XORs `input` with a ChaCha20 keystream starting at `counter`, writing to `output` (which may alias `input`) */
+export type ChaCha20Cipher = (
+	key: Uint8Array,
+	nonce: Uint8Array,
+	counter: number,
+	input: Uint8Array,
+	output: Uint8Array,
+) => void;
+
+const defaultChaCha20: ChaCha20Cipher = (key, nonce, counter, input, output) => {
+	chacha20(key, nonce, input, output, counter);
+};
+
 /**
  * decrypts and parses a `.blc` catalog.
  *
  * @param raw entire `.blc` file
  * @param key 32-byte VFS ChaCha20 key
+ * @param options.chacha20 optional ChaCha20 implementation (defaults to the pure-JS fallback)
  * @returns the parsed catalog
  * @throws {FormatError} if the key is wrong or the layout is unrecognized
  */
-export const parseVfsCatalog = (raw: Uint8Array, key: Uint8Array): VfsCatalog => {
+export const parseVfsCatalog = (
+	raw: Uint8Array,
+	key: Uint8Array,
+	options?: { chacha20?: ChaCha20Cipher },
+): VfsCatalog => {
 	if (key.length !== 32) {
 		throw new FormatError('vfs key must be 32 bytes');
 	}
@@ -70,12 +88,13 @@ export const parseVfsCatalog = (raw: Uint8Array, key: Uint8Array): VfsCatalog =>
 
 	const plain = new Uint8Array(raw.length);
 	plain.set(raw.subarray(0, CATALOG_HEAD_LENGTH));
-	chacha20(
+	const decrypt = options?.chacha20 ?? defaultChaCha20;
+	decrypt(
 		key,
 		raw.subarray(0, CATALOG_HEAD_LENGTH),
+		1,
 		raw.subarray(CATALOG_HEAD_LENGTH),
 		plain.subarray(CATALOG_HEAD_LENGTH),
-		1,
 	);
 
 	const r = new BinaryReader(plain, { littleEndian: true });
@@ -180,9 +199,14 @@ export interface VfsSliceCipher {
  * @param data ciphertext covering file bytes `[position, position + data.length)`; overwritten with the
  *   plaintext
  * @param cipher the slice's position and key material
+ * @param options.chacha20 optional ChaCha20 implementation (defaults to the pure-JS fallback)
  * @throws {FormatError} if `position` isn't 64-byte aligned
  */
-export const decryptVfsFileSliceInPlace = (data: Uint8Array, cipher: VfsSliceCipher): void => {
+export const decryptVfsFileSliceInPlace = (
+	data: Uint8Array,
+	cipher: VfsSliceCipher,
+	options?: { chacha20?: ChaCha20Cipher },
+): void => {
 	if (cipher.position % 64 !== 0) {
 		throw new FormatError('vfs decryption must start on a 64-byte boundary');
 	}
@@ -190,7 +214,8 @@ export const decryptVfsFileSliceInPlace = (data: Uint8Array, cipher: VfsSliceCip
 	const view = new DataView(nonce.buffer);
 	view.setUint32(0, cipher.version, true);
 	view.setBigInt64(4, cipher.ivSeed, true);
-	chacha20(cipher.key, nonce, data, data, 1 + cipher.position / 64);
+	const decrypt = options?.chacha20 ?? defaultChaCha20;
+	decrypt(cipher.key, nonce, 1 + cipher.position / 64, data, data);
 };
 
 const readShortString = (r: BinaryReader): string => {

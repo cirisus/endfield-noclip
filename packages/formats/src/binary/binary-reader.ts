@@ -106,22 +106,26 @@ export class BinaryReader {
 	 * @throws {FormatError} if the value exceeds `Number.MAX_SAFE_INTEGER`
 	 */
 	i64Number(): number {
-		const at = this.offset;
-		const value = this.i64();
-		if (value > BigInt(Number.MAX_SAFE_INTEGER) || value < BigInt(Number.MIN_SAFE_INTEGER)) {
-			throw new FormatError(`64-bit value ${value} at 0x${at.toString(16)} isn't a safe integer`);
+		const at = this.#claim(8);
+		const lo = this.littleEndian ? this.view.getUint32(at, true) : this.view.getUint32(at + 4, false);
+		const hi = this.littleEndian ? this.view.getInt32(at + 4, true) : this.view.getInt32(at, false);
+		if (hi < 0x20_0000 && (hi > -0x20_0000 || (hi === -0x20_0000 && lo !== 0))) {
+			return hi * 0x1_0000_0000 + lo;
 		}
-		return Number(value);
+		const value = this.view.getBigInt64(at, this.littleEndian);
+		throw new FormatError(`64-bit value ${value} at 0x${at.toString(16)} isn't a safe integer`);
 	}
 
 	/** @see i64Number */
 	u64Number(): number {
-		const at = this.offset;
-		const value = this.u64();
-		if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-			throw new FormatError(`64-bit value ${value} at 0x${at.toString(16)} isn't a safe integer`);
+		const at = this.#claim(8);
+		const lo = this.littleEndian ? this.view.getUint32(at, true) : this.view.getUint32(at + 4, false);
+		const hi = this.littleEndian ? this.view.getUint32(at + 4, true) : this.view.getUint32(at, false);
+		if (hi < 0x20_0000) {
+			return hi * 0x1_0000_0000 + lo;
 		}
-		return Number(value);
+		const value = this.view.getBigUint64(at, this.littleEndian);
+		throw new FormatError(`64-bit value ${value} at 0x${at.toString(16)} isn't a safe integer`);
 	}
 
 	f32(): number {
@@ -151,13 +155,15 @@ export class BinaryReader {
 
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 
+const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0').toUpperCase());
+
 /** @returns uppercase hex of `bytes` */
 export const toHex = (bytes: Uint8Array): string => {
 	let out = '';
-	for (const byte of bytes) {
-		out += byte.toString(16).padStart(2, '0');
+	for (let i = 0; i < bytes.length; i++) {
+		out += HEX[bytes[i]];
 	}
-	return out.toUpperCase();
+	return out;
 };
 
 /**

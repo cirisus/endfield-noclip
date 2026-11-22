@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createDecipheriv, createHash } from 'node:crypto';
 import { open, readdir, readFile, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import {
+	type ChaCha20Cipher,
 	decryptVfsFileSliceInPlace,
 	parseVfsCatalog,
 	type VfsCatalog,
@@ -11,6 +12,17 @@ import {
 } from '@endfield-noclip/formats/hg/vfs-catalog';
 
 import { ignoreMissing } from '../errors.ts';
+
+/** OpenSSL ChaCha20 (RFC 8439: 4-byte LE block counter ‖ 12-byte nonce) */
+const nativeChaCha20: ChaCha20Cipher = (key, nonce, counter, input, output) => {
+	const iv = new Uint8Array(16);
+	new DataView(iv.buffer).setUint32(0, counter, true);
+	iv.set(nonce, 4);
+	const decipher = createDecipheriv('chacha20', key, iv);
+	output.set(decipher.update(input));
+};
+
+const VFS_CIPHER_OPTIONS = { chacha20: nativeChaCha20 };
 
 /** well-known VFS group hashes */
 export const VfsGroup = {
@@ -153,12 +165,16 @@ export class Vfs {
 		if (entry.ivSeed === null) {
 			return buffer;
 		}
-		decryptVfsFileSliceInPlace(buffer, {
-			position: alignedStart,
-			key: this.#key,
-			version: group.catalog.version,
-			ivSeed: entry.ivSeed,
-		});
+		decryptVfsFileSliceInPlace(
+			buffer,
+			{
+				position: alignedStart,
+				key: this.#key,
+				version: group.catalog.version,
+				ivSeed: entry.ivSeed,
+			},
+			VFS_CIPHER_OPTIONS,
+		);
 		return buffer.subarray(start - alignedStart);
 	}
 
@@ -211,7 +227,7 @@ export class Vfs {
 			throw new Error(`vfs group ${hash} has no catalog`);
 		}
 
-		const catalog = parseVfsCatalog(blc, this.#key);
+		const catalog = parseVfsCatalog(blc, this.#key, VFS_CIPHER_OPTIONS);
 		const files = new Map<string, VfsFileEntry>();
 		for (const chunk of catalog.chunks) {
 			for (const file of chunk.files) {

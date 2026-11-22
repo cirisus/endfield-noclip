@@ -93,7 +93,34 @@ test('entriesWithByteLength yields only paths of that length', () => {
 			[3n, 'cd'],
 		],
 	);
+	// second call builds the length index and must return the same results
+	assert.deepEqual(
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+		[...table.entriesWithByteLength(4)].sort(([a], [b]) => Number(a - b)),
+		[
+			[1n, 'ab'],
+			[3n, 'cd'],
+		],
+	);
 	assert.deepEqual([...table.entriesWithByteLength(6)], []);
+});
+
+test('matchEntries yields only matching paths', () => {
+	const table = new StringPathHashTable(
+		build([
+			[1n, 'assets/water.mat'],
+			[2n, 'assets/rock.mat'],
+			[3n, 'assets/waterfall.mat'],
+		]),
+	);
+	assert.deepEqual(
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+		[...table.matchEntries((path) => path.includes('water'))].sort(([a], [b]) => Number(a - b)),
+		[
+			[1n, 'assets/water.mat'],
+			[3n, 'assets/waterfall.mat'],
+		],
+	);
 });
 
 test('reports buckets outside the file as format errors', () => {
