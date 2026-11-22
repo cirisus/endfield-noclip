@@ -1,327 +1,250 @@
 # materials
 
-how the viewer draws the surface shaders [game-data/materials.md](../game-data/materials.md)
-describes. the extractor reads each material's properties and keywords into a
-[surface](../package-format.md#materials)
-([game/materials/surfaces/](../../packages/extractor/src/game/materials/surfaces/), one module per
-shader), which the viewer packs into a look
-([`looks/material-looks.ts`](../../packages/viewer/src/looks/material-looks.ts) picks the builder by
-surface kind: Lit in [`lit-look.ts`](../../packages/viewer/src/looks/lit-look.ts), erosion, dithered
-surfaces and matte paintings in
-[`special-looks.ts`](../../packages/viewer/src/looks/special-looks.ts), [effects](effects.md) in
-[`effects/`](../../packages/viewer/src/looks/effects)), shaded in
-[`mesh.wgsl`](../../packages/viewer/src/render/meshes/mesh.wgsl); what's left out is in
-[status](../status.md).
+viewer implementation of [game-data/materials.md](../game-data/materials.md); full gaps in
+[status.md](../status.md).
 
-the mesh shader has seven texture slots (`SLOTS` in
-[`looks/look.ts`](../../packages/viewer/src/looks/look.ts); the frame group takes the rest of
-WebGPU's sixteen), so features that rarely meet share a slot or a parameter row, and a material that
-has both draws only one. each section below names what that leaves out.
+pipeline: extractor describers
+([`game/materials/surfaces/`](../../packages/extractor/src/game/materials/surfaces/), one per
+shader) emit a [surface](../package-format.md#materials) →
+[`material-looks.ts`](../../packages/viewer/src/looks/material-looks.ts) dispatches to a look
+builder (`lit-look.ts` for Lit,
+[`special-looks.ts`](../../packages/viewer/src/looks/special-looks.ts) for erosion/dithered/matte
+painting, [`effects/`](../../packages/viewer/src/looks/effects) for [effects](effects.md)) →
+[`mesh.wgsl`](../../packages/viewer/src/render/meshes/mesh.wgsl) shades it.
 
-a material with a [motion](../package-format.md#materials) gets a `LookMotion` (`lookMotion` in
-`material-looks.ts`): at each step of the loop the surface takes its tracks' values and the look is
-built again for its parameters alone, the textures, queue and flags staying the first build's.
-`MeshRenderer.animate` advances the moving looks a frame draws and rewrites their rows of the look
-table, at the step `skinFrame` gives a looping geometry of the same clip, so the water of Qingbo's
-waterwheels pours as their scoops come round. like the geometry, it moves only while frames render.
+the mesh shader has 7 texture slots (`SLOTS` in
+[`looks/look.ts`](../../packages/viewer/src/looks/look.ts); frame group uses the rest of WebGPU's
+16), so rare feature combinations share slots or parameter rows (when two collide, one wins):
+
+| feature                                 | shared slot / rows                                                           | conflict / skipped when                                      |
+| --------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `_TRI_CHANNEL_MASK`                     | MRO slot, or emissive slot on MRO-layout materials (base sampler)            | emissive map or mask layer's mask map occupies emissive slot |
+| `_EMISSIVE_ANIM` pulse                  | parallax rows                                                                | parallax glow or layer present                               |
+| `_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`  | parallax slots & rows; mask map in emissive slot                             | mask layer on emissive-mapped material                       |
+| `FlowGlow` (glowing foliage)            | parallax noise slot; parallax rows unused by emission pulse (`FlowGlowRow`)  | parallax slots hold anything else                            |
+| `vertexOffset`                          | parallax slots (`VertexOffset` flag); parallax rows unused by emission pulse | parallax glow or layer present                               |
+| `HGRP/Foliage/Trunk` (`_FOLIAGE_TRUNK`) | leaf rows (`Trunk` flag; dithered looks use same rows)                       | sway on Lit trunk                                            |
+| swaying cloth / pendulum                | foliage rows (pendulum kind in dither row, gated on non-zero intensity)      | Lit trunk holds rows                                         |
+
+**animated materials**: materials with [motion](../package-format.md#materials) get a `LookMotion`
+(`lookMotion` in `material-looks.ts`). each loop step rebuilds parameters only (textures, queue,
+flags stay fixed). `MeshRenderer.animate` advances visible looks and rewrites their look-table rows
+in lockstep with `skinFrame` (e.g. Qingbo's waterwheels). moves only while frames render.
 
 ## emission
 
-[emission](../game-data/materials.md#emission)'s post exposure is the auto exposure times the
-viewer's exposure option, so `_IgnorePostExposure` emitters divide out both.
-
-`_EMISSIVE_ANIM`'s pulse runs on the animation clock, so like the parallax pulse it moves only while
-frames render. it keeps its inputs in the parallax rows, so a look with a parallax glow or a layer
-doesn't pulse. flickering emitters (`_EnableEmissiveAnimFlicker`) are drawn steady, and the emissive
-map doesn't scroll (`_EmissiveSpeed` isn't read).
-
-the emissive map's G, B and A colours, already times `_EmissiveType` (null when they add nothing),
-ride in the three rows effect looks keep for their own parameters, which mesh looks don't otherwise
-use.
-
-`_EMISSIVE_ANIM_SWEEP`'s band isn't drawn: the packer scales each emission colour by one minus its
-alpha, its value outside the band, so colours that glow only in the band are left out and steady
-ones stay. `_EMISSIVE_NOMAP`, which emits only through the band, emits nothing.
-
-the per-draw emission colour isn't known for static scenery, so it's taken as zero and those draws
-use their material's `_EmissiveColor`. a prefab's `AnimationProperties_Emissive` resting colours, or
-the emissive config its view states leave on it, are mixed into its renderers' emission colour at
-pack time ([emissive-override.ts](../../packages/extractor/src/game/prefabs/emissive-override.ts)),
-and its albedo tint travels as `LitEmission.albedoTint`, which `mesh.wgsl` applies to the albedo
-before the emission takes it. its breathing isn't read.
+- post exposure for [emission](../game-data/materials.md#emission) is
+  `autoExposure * viewerExposure`; `_IgnorePostExposure` divides out both.
+- `_EMISSIVE_ANIM` pulse runs on the animation clock (only while frames render) in the parallax rows
+  (skipped if parallax glow or layer is present). `_EnableEmissiveAnimFlicker` draws steady;
+  `_EmissiveSpeed` scroll is unread.
+- emissive map G, B, and A colours (pre-multiplied by `_EmissiveType`, null if zero) sit in the
+  three effect-parameter rows unused by mesh looks.
+- `_EMISSIVE_ANIM_SWEEP` omits the moving band: the packer scales each emission colour by
+  `1 − alpha` (steady value outside the band). `_EMISSIVE_NOMAP` emits nothing.
+- static scenery per-draw emission is taken as zero (uses `_EmissiveColor`). prefab
+  `AnimationProperties_Emissive` resting colours and view-state emissive configs bake into renderer
+  emission at pack time
+  ([`emissive-override.ts`](../../packages/extractor/src/game/prefabs/emissive-override.ts)); albedo
+  tint rides in `LitEmission.albedoTint` (applied in `mesh.wgsl` before emission reads albedo).
+  breathing is unread.
 
 ## lit layers
 
-`HGRP/LitEffect` is drawn as Lit, without its dissolve and disturb effects.
+`HGRP/LitEffect` draws as Lit (without dissolve or disturb).
 
-- **`_TRI_CHANNEL_MASK`**: the mask shares the MRO map's slot, so on MRO-layout materials it takes
-  the emissive slot instead (Sword Vault Dale's banners print their emblem this way, over UV set 1),
-  sampled with the base colour's sampler, and isn't drawn where an emissive map or a mask layer's
-  mask map holds that slot. of the switch-texture variants only R blends, since their G and B
-  textures have no slot. `_UseMaskRUVSetAndTilingScale` isn't read.
-- **`_PARALLAX_MAP`**: the [pulse](../game-data/materials.md#lit-layers) moves only while frames
-  render ([performance](performance.md); the `continuous` option keeps it moving), and the
-  brightening near the player puts the player at the camera. a glow without a noise map binds only
-  the pattern, and the march reads height 0 in place of the empty slot. a glow with a separate mask
-  texture (`_UseParallaxMask`) has no slot for it and isn't drawn, nor is the global highlight
-  (`_VFXParams2`, set natively).
-- **`_MATCAP`** has no free slot and isn't drawn, so the campfires' crystal glows without its sheen.
-- **`_LAYERBLEND_TOP`** and **`_LAYERBLEND_MASK`**: the layer's two maps take the parallax slots and
-  rows, and a mask map takes the emissive slot, so a mask layer on an emissive-mapped material isn't
-  drawn. a layer on UV set 2 samples UV set 0, and set 0 is bound in place of a missing set 1, as
-  the game reads a missing set. `_BaseHeightMap` has no slot and reads as the shader's grey default
-  (0.5). mask layers with noise (`_LAYERBLEND_NOISEBLEND`) or parallax
-  (`_LAYERBLEND_MASK_PARALLAX_PBR`) aren't drawn.
+- **`_TRI_CHANNEL_MASK`**: uses the MRO slot, or the emissive slot on MRO-layout materials (e.g.
+  Sword Vault Dale's UV1 banners) with the base-colour sampler; skipped if an emissive map or mask
+  layer uses that slot. only switch-texture R blends (no slots for G/B).
+  `_UseMaskRUVSetAndTilingScale` is unread.
+- **`_PARALLAX_MAP`**: [pulse](../game-data/materials.md#lit-layers) runs while frames render
+  ([performance](performance.md); `continuous` keeps it running); player brightening uses the camera
+  as the player. without a noise map, only the pattern binds and the march reads height 0. omitted:
+  `_UseParallaxMask` (no slot) and native `_VFXParams2` global highlight.
+- **`_MATCAP`**: omitted (no free slot; campfire crystals lack sheen).
+- **`_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`**: maps use parallax slots/rows; mask map uses emissive
+  slot (skipped on emissive-mapped materials). UV set 2 falls back to UV0; missing UV1 falls back to
+  UV0 (matching game). `_BaseHeightMap` has no slot and reads 0.5. omitted: `_LAYERBLEND_NOISEBLEND`
+  and `_LAYERBLEND_MASK_PARALLAX_PBR`.
 
 ## foliage
 
-the viewer evaluates the game's [foliage model](../game-data/materials.md#foliage) per pixel
-(`foliage_sun` in [`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl) for the sun, and
-the same terms per light in `local_lighting`). `HGRP/Foliage/Leaf`'s and the grass shaders' inputs
-are their surfaces' `foliage`
-([game/materials/surfaces/foliage.ts](../../packages/extractor/src/game/materials/surfaces/foliage.ts)),
-packed by `leafParams` and `grassParams`; a leaf's `_BLEND_COLOR` rides in the tri-channel mask's
-rows. a leaf without `_TwoSidedNormal` keeps its normal on back faces, as the game's does; with it,
-and on every other material, the viewer turns the normal towards the camera wherever it faces away
-rather than by the face that shows. the grass takes `h` as the vertex's object-space height. the
-grass card LOD takes neither the bend nor the masks, since its normal decoding isn't read.
-`HGRP/Foliage/Trunk` takes Lit's texture layout plus its `_FOLIAGE_TRUNK` vertex AO and ramp (the
-surface's `trunk`, packed by `trunkParams` into rows leaves use otherwise and marked by the look's
-`Trunk` flag, since those rows hold the dither on dithered looks), and
-`HGRP/Foliage/TreeFoliageCardMeshLod` draws as plain alpha-tested foliage.
-
-[glowing foliage](../game-data/materials.md#glowing-foliage) (`describeFoliageGlow`) is a Lit
-surface whose overlay is the flowing glow (`FlowGlow`): its noise takes the parallax noise slot, and
-its values the parallax rows the emission pulse leaves alone (`FlowGlowRow` in
-[lit-look.ts](../../packages/viewer/src/looks/lit-look.ts)). `flow_glow` in `mesh.wgsl` draws it on
-a look whose parallax slots hold that noise alone, and takes t as seconds, which is unchecked. the
-blend into the terrain isn't drawn, which the gaps view marks.
+- `foliage_sun` and `local_lighting` in
+  [`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl) evaluate the
+  [foliage model](../game-data/materials.md#foliage) per pixel.
+- `HGRP/Foliage/Leaf` and grass shaders pack `foliage`
+  ([`foliage.ts`](../../packages/extractor/src/game/materials/surfaces/foliage.ts)) via `leafParams`
+  / `grassParams`; leaf `_BLEND_COLOR` reuses tri-channel mask rows.
+- leaves without `_TwoSidedNormal` keep their normal on back faces; with it (and on all other
+  materials), normals flip toward the camera rather than by face winding. grass `h` is object-space
+  vertex height. grass card LOD omits bend and masks (normal decoding unread).
+- `HGRP/Foliage/Trunk` uses Lit layout plus `_FOLIAGE_TRUNK` vertex AO/ramp (`trunkParams`, `Trunk`
+  flag). `HGRP/Foliage/TreeFoliageCardMeshLod` draws as alpha-tested foliage.
+- [glowing foliage](../game-data/materials.md#glowing-foliage) (`describeFoliageGlow`) is Lit +
+  `FlowGlow` overlay (`flow_glow` in `mesh.wgsl`): noise in parallax noise slot, parameters in
+  `FlowGlowRow` ([`lit-look.ts`](../../packages/viewer/src/looks/lit-look.ts)), `t` in seconds
+  (unchecked). terrain blend is omitted (marked in gaps view).
 
 ## swaying cloth
 
 [swaying cloth](../game-data/materials.md#swaying-cloth) and
-[swinging pendulums](../game-data/materials.md#swinging-pendulums) are the surface's `sway`, packed
-by `swayParams` into rows only foliage uses otherwise (a pendulum marks its kind in the row dithered
-looks use, read only behind the sway's non-zero intensity), and offset in `instance_rel`, which the
-shading, depth, alpha-tested depth and shadow passes share, so the passes agree on the swayed
-position. the vertex colour's alpha arrives as the position stream's W
-([geometry blob](../package-format.md#geometry-blob-mesh-efgm)), so the depth passes read no extra
-stream. the wind clock is `Frame.wind.x`, advanced with the animation clock at the blended
-environment's [wind](../game-data/environment.md#wind) rate, so the sway moves only while frames
-render, every placement swings from one clock rather than the game's running one, and no environment
-means still air. each pass's `_DisableAnimateVert` is taken as 0. the viewer draws no motion
-vectors, so the previous frame's offset isn't needed. skinned geometry drops the weight, so a
-swaying material on an animated mesh keeps still. a pendulum turns by exact sines and cosines where
-the game takes Taylor series (within 10⁻³ at its angles); one with gravity, an anchor of its own, or
-no swing (which turns about +Y alone in game; none does on map02) keeps still, listed as a gap, as
-does a sway on a Lit trunk, whose rows the trunk holds. the packer grows a pendulum's bounds by its
-turns' reach along every axis. the game's
-[cloth simulation](../game-data/materials.md#cloth-simulation) isn't run: a simulated entity draws
-its mesh at rest, with the sway alone, and `pack` counts those entities (`clothSimulated`).
+[swinging pendulums](../game-data/materials.md#swinging-pendulums) pack `sway` (`swayParams`) and
+apply in `instance_rel` across shading, depth, cutout-depth, and shadow passes.
+
+- vertex-colour alpha arrives in position W
+  ([geometry blob](../package-format.md#geometry-blob-mesh-efgm)), so depth passes need no extra
+  stream. skinned geometry drops the weight (swaying animated meshes stay still).
+- wind clock `Frame.wind.x` advances with the animation clock at the blended environment's
+  [wind](../game-data/environment.md#wind) rate (one clock for all placements; still air without an
+  environment; pauses when idle). `_DisableAnimateVert` is 0; no motion vectors (previous offset
+  omitted).
+- pendulums use exact sin/cos instead of Taylor series (within 10⁻³); the packer grows bounds by
+  turn reach on all axes. pendulums with gravity, custom anchor, or no swing (none on map02), and
+  sways on Lit trunks, stay still and record a gap.
+- [cloth simulation](../game-data/materials.md#cloth-simulation) is not run (draws at rest with sway
+  only; `pack` reports `clothSimulated`).
 
 ## vertex animation textures
 
-[vertex animation textures](../game-data/materials.md#vertex-animation-textures) aren't drawn by the
-surface: the packer bakes them into the meshes their materials draw as a
-[skeletal animation](../package-format.md#geometry-blob-mesh-efgm), one bone per rigid piece or soft
-point, or the bone animation's own bones ([extraction](../extraction.md#asset-classes)), which the
-viewer plays like any animated geometry. so the surface reads nothing of them, and a keyword is a
-gap only for the cases `vatOf` doesn't play (a frame set per draw, particle data, the mesh's normals
-kept, no rotation texture). a bone animation's weights are normalized when packed, where the game
-blends them as stored. a soft body's normals and tangents are the bones' turn of +y and −x, as the
-game's are; its tangent keeps the mesh's bitangent sign where the game's is 0. the baked loop runs
-on the animation clock, its frames interpolated where the game steps them, and every placement plays
-in step, as the game's do on one clock. a mesh drawn with two different animations (map02's machine
-parts, one mesh at five speeds) holds still, as does one on a posed or animated renderer;
-`debug/assets.json` says which (`unanimated`).
+the packer bakes [VATs](../game-data/materials.md#vertex-animation-textures) into
+[skeletal animations](../package-format.md#geometry-blob-mesh-efgm) (one bone per rigid piece/soft
+point, or existing bones; [extraction](../extraction.md#asset-classes)). surfaces read nothing of
+them.
+
+- keywords record a gap only for cases `vatOf` skips (per-draw frame, particle data, kept mesh
+  normals, missing rotation texture).
+- bone weights are normalized at pack time (game blends as stored). soft-body normals/tangents
+  rotate `+y`/`−x` by the bone; tangent keeps the mesh's bitangent sign (game uses 0).
+- loops run on the animation clock, interpolating frames (game steps them) in sync across
+  placements. meshes with multiple animations (e.g. map02 machine parts at 5 speeds) or on
+  posed/animated renderers stay still (listed in `debug/assets.json` under `unanimated`).
 
 ## vertex offset
 
-the [vertex offset](../game-data/materials.md#vertex-offset) is the surface's `vertexOffset`
-([lit-sway.ts](../../packages/extractor/src/game/materials/surfaces/lit-sway.ts)), packed by
-`vertexOffsetParams`: the offset texture and its mask take the parallax slots, marked by the
-`VertexOffset` look flag so the fragment stage doesn't read them as a glow, and their inputs take
-the three parallax rows the emission pulse leaves alone. `vertex_offset` in `mesh.wgsl` samples them
-in the vertex stage, so the mesh pipelines' material group
-([`mesh-pipelines.ts`](../../packages/viewer/src/render/meshes/mesh-pipelines.ts)) shows the two
-parallax slots to the vertex stage and carries a fourth sampler, the noise slot's own, for the mask.
-the offset adds to the sway.
+[vertex offset](../game-data/materials.md#vertex-offset) (`vertexOffset` in
+[`lit-sway.ts`](../../packages/extractor/src/game/materials/surfaces/lit-sway.ts), packed by
+`vertexOffsetParams`) adds to sway in `vertex_offset` (`mesh.wgsl`).
+[`mesh-pipelines.ts`](../../packages/viewer/src/render/meshes/mesh-pipelines.ts) exposes the two
+parallax slots and a fourth sampler (noise slot's) to the vertex stage.
 
-- **passes**: the offset needs the UV sets and the material's textures wherever vertices are
-  positioned. the alpha-tested depth and shadow path already reads both (`vs_cutout_depth`), and the
-  opaque one reads positions alone, so only alpha-tested looks are offset, which every map02
-  material with the keyword is; an opaque one keeps still. `vs_main` and `vs_cutout_depth` add the
-  same expression, so the passes agree on the position. a look's draws are alpha-tested only once
-  the map holding its alpha is bound, and the shader tests that same flag, so a material drawn
-  opaque while it streams keeps still rather than splitting from its depth. the offset also waits
-  for its own textures.
-- **clock**: the scroll runs on the animation clock (`Frame.eye.w`, seconds), so it moves only while
-  frames render, and every placement scrolls in step.
-- **left out**: an offset along the vertex normal (`_OffsetSwitchDir` 2), since the depth passes
-  don't read normals; an offset on a surface with a parallax glow or a layer, whose maps hold the
-  slots; one whose offset texture is unset. a fractional `_OffsetUVSet` reads as the nearer set.
-- **weights and bounds**: an offset weighted by the vertex colour's alpha reads it from position W
-  as the sway does, and the packer grows the mesh's bounds by the offset's reach
-  ([geometry blob](../package-format.md#geometry-blob-mesh-efgm)). skinned geometry drops the
-  weight, so a weighted offset on an animated mesh keeps still; an unweighted one, like the
-  balloon's, is added after the skinning. an object-space direction turns by the transform the
-  geometry is drawn with, which for a skinned renderer posed into its prefab is the prefab's rather
-  than the renderer's; the balloon's renderers sit unrotated in theirs.
+- **passes**: applies only to alpha-tested looks (`vs_main` and `vs_cutout_depth` share the
+  expression; opaque depth reads positions only; all map02 materials with the keyword are
+  alpha-tested). stays off while alpha or offset textures stream so colour and depth never split.
+- **clock**: scrolls on `Frame.eye.w` (animation clock, seconds), in step across placements.
+- **weights and bounds**: vertex-colour alpha reads from position W; packer expands mesh bounds by
+  offset reach. skinned meshes drop the weight (weighted offsets stay still; unweighted ones, like
+  the balloon, apply after skinning). object-space directions transform by the draw transform
+  (prefab transform for posed skinned meshes).
+- **omitted**: normal-direction offset (`_OffsetSwitchDir` 2; depth passes lack normals), offset
+  colliding with parallax glow or layer, unset offset texture. fractional `_OffsetUVSet` rounds to
+  the nearest set.
 
 ## glass
 
-[glass](../game-data/materials.md#glass) is shaded like Lit, with the opacity taken from the alpha
-`_AlphaMaskChannel` picks, times `_BaseColor.a`; with the map still streaming, the tint's alpha
-alone. glass casts no shadows. premultiplied glass (source factor one) adds its whole radiance and
-lets the opacity only dim what lies behind.
+[glass](../game-data/materials.md#glass) shades like Lit, with opacity from `_AlphaMaskChannel`
+times `_BaseColor.a` (tint alpha alone while streaming), no shadows. premultiplied glass (src
+factor 1) adds full radiance and dims behind by opacity.
 
-the [transparent pass](frame.md) draws it with the effects, far to near by instance, over the
-composited scene: its radiance fogged at its own distance, as the game's shader fogs itself, then
-blended over by its opacity. so an effect kilometres behind a pane shows through it, dimmed by the
-pane (the corroded planet's plume behind Dijiang's deck glass).
+draws in the [transparent pass](frame.md) far-to-near with effects over the composited scene, fogged
+at its own distance before blending (so distant effects behind glass, like the corroded planet's
+plume behind Dijiang's deck, dim through the pane).
 
 ## decals
 
-the viewer has no GBuffer, so it draws a [decal](../game-data/materials.md#decals) like the VFXDecal
-boxes ([effects](effects.md#vfxbasev2-and-vfxdecal)): the box's back faces without a depth test, in
-a pass of their own over the composited scene
+without a GBuffer, [decals](../game-data/materials.md#decals) draw back-face cubes without depth
+test in a dedicated pass after composite and before water and the [transparent pass](frame.md)
 ([`litDecalLook`](../../packages/viewer/src/looks/effects/lit-decal.ts), `fx_lit_decal` in
-[`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl)). that pass runs before the
-water and the [transparent pass](frame.md), since the game's decals are part of the surface they lie
-on: drawn after the water, the moss and rust on a pool's bed showed through water that hides the bed
-itself. it takes the surface's normal and roughness from the main pass where the masks keep them,
-shades the decal like any surface, and lays it over by its alpha. placements of one material share
-its look and draw the game's VFXDecal cube; each row's block word indexes its placement's colour and
-UV transform in a placement buffer beside the rows (`row_placement` in frame.wgsl), which the effect
-vertex shader passes on. overlapping decals draw in no set order (`_DrawOrder` isn't read). under a
-laid-over decal that doesn't write them, the surface's occlusion and metallic are taken as 1 and 0.
+[`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl)) so bed decals stay under
+water.
 
-the game keeps lit decals off surfaces by a stencil bit. the viewer carries it in the main pass's
-packed surface instead (bit 31, `SURFACE_NO_LIT_DECALS` in frame.wgsl), so it works without a
-stencil buffer: looks whose shader writes `_StencilRef` and whose value has bit 32 set it
-(`keepsLitDecalsOff` in [lit-look.ts](../../packages/viewer/src/looks/lit-look.ts)), and laid-over
-and relit decals skip those pixels. VFXDecal boxes test it by their stencil reference
-(`decalFade.covers`): those whose read mask is 32 skip or cover only those pixels, and other read
-masks stay unsupported.
-
-decals that write no albedo can't be laid over the surface, because the main pass has already lit
-it. a pass between the main and the transparent pass (`fs_decal_relight`) adds the change in the
-surface's light instead: it lights the surface twice, with its own normal, roughness and occlusion
-and with the decal's, and adds the difference times the decal's alpha to the radiance. the surface's
-colour comes from the main pass's diffuse ambient divided by the ambient light at its normal, taken
-as a dielectric's; its emission, ambient occlusion and metallic stay as drawn. the change in its sky
-reflection also goes to the main pass's reflection target, and the surface the decal leaves (the
-normal, roughness and reflection weight blended by its alpha, as the game's G-buffer is) to a decal
-surface target that the [screen-space reflections](lighting.md#screen-space-reflections) read in
-place of the main pass's, so they march the decal's surface as the game's do. where decals overlap,
-the last one's surface wins. without this, the water-flow decals' near-mirror roughness
-(`_WaterRoughness` times the map's B, about 0.01) reflected the bright sky wherever the game's
-reflections find nearby rock.
-
-an emissive decal's glow is part of the decal's own shading when it's laid over; a relit one adds
-it, times its alpha, on top of the surface's emission rather than replacing it.
-`_BLEND_SLUDGE_EROSION`'s wall texture is the look's third slot, its UV row holding the scale, read
-through the texture's own sampler (the game's is a shared one).
-
-`_BLEND_WETNESS` decals write albedo but go through the relight pass, since they darken the
-surface's own colour, which only that pass estimates. there the surface's inputs blend as the game's
-targets do (`LitDecalSurface.wetness`, the look's `DecalLitRow.pbrPlaced` row): the estimated colour
-is darkened and laid over by the decal's, the normal and roughness mix by the alpha without the
-opacity, and the difference in light, sky reflection and surface are taken whole rather than blended
-by the alpha.
-
-[wetness decals](../game-data/materials.md#wetness-decals) (`HGRP/WetnessDecal`,
-[`wetnessDecalLook`](../../packages/viewer/src/looks/effects/lit-decal.ts)) go through the relight
-pass too (`wd_wetness`), darkening the estimated colour and lowering the roughness by the game's
-formulas, with the change taken whole. the viewer has no wetness mask, so each box relights on its
-own: overlapping boxes wet twice where the game keeps the wetter, and the porosity is taken from
-Lit's default factors, since the main pass doesn't keep each material's.
-
-lit decals with keywords past `_COMPLETE_PBR`, `_NORMAL_ANGLE_BLEND`, `_BLEND_WATER_FLOW`,
-`_BLEND_EMISSIVE`, `_BLEND_SLUDGE_EROSION` and `_BLEND_WETNESS` (footprints, UV noise, arcs), a
-sludge decal without its texture or with a water flow or emission, and a wetness decal with another
-blend keyword or without an albedo write, are [unsupported](#unsupported-materials): drawn by the
-opaque path, their box would show as a solid block.
+- **shared look & placement**: placements share one material look and draw the VFXDecal cube; each
+  row's block word indexes placement colour and UV transform in a side buffer (`row_placement` in
+  `frame.wgsl`). `_DrawOrder` is unread (no set overlap order).
+- **laid-over decals**: read main-pass normal/roughness where masks keep them (unwritten occlusion =
+  1, metallic = 0), shade normally, and blend by alpha.
+- **stencil emulation**: bit 31 of the main pass's packed surface (`SURFACE_NO_LIT_DECALS` in
+  `frame.wgsl`) replaces the stencil bit: looks writing `_StencilRef` with bit 32 set it
+  (`keepsLitDecalsOff` in [`lit-look.ts`](../../packages/viewer/src/looks/lit-look.ts)). lit decals
+  skip those pixels; VFXDecal boxes with read mask 32 test it via `decalFade.covers` (other read
+  masks are unsupported).
+- **relight pass (`fs_decal_relight`)**: handles decals that write no albedo, `_BLEND_WETNESS`, and
+  `HGRP/WetnessDecal` (`wetnessDecalLook`, `wd_wetness`):
+  - estimates surface albedo as dielectric from main-pass diffuse ambient divided by ambient light
+    at its normal (keeping emission, AO, metallic as drawn).
+  - lights the surface before and after applying the decal, adding the radiance delta (times alpha,
+    or whole for `_BLEND_WETNESS` / `WetnessDecal`) and updating the sky reflection target.
+  - writes the blended normal, roughness, and reflection weight to a decal surface target read by
+    [SSR](lighting.md#screen-space-reflections) (last overlapping decal wins), preventing
+    near-mirror water-flow decals (`_WaterRoughness * B ≈ 0.01`) from reflecting bright sky where
+    SSR hits rock.
+  - emissive relit decals add `emission * alpha` on top of existing emission.
+    `_BLEND_SLUDGE_EROSION` binds its wall texture in slot 3 (scale in UV row, texture's own
+    sampler).
+  - `HGRP/WetnessDecal` has no wetness mask, so overlapping boxes wet twice and porosity uses Lit
+    defaults.
+- **unsupported**: keywords beyond `_COMPLETE_PBR`, `_NORMAL_ANGLE_BLEND`, `_BLEND_WATER_FLOW`,
+  `_BLEND_EMISSIVE`, `_BLEND_SLUDGE_EROSION`, `_BLEND_WETNESS` (footprints, UV noise, arcs); sludge
+  without texture or combined with water flow/emission; wetness with another blend keyword or
+  without albedo write.
 
 ## matte paintings
 
-[matte paintings](../game-data/materials.md#matte-paintings) are drawn by
-[`mattePaintingLook`](../../packages/viewer/src/looks/special-looks.ts). the alpha scale is folded
-into the threshold so the shared alpha-test depth pass still applies, fog comes from the composite
-like everything else, and they're held back until their texture is resident. `_UseMainTexAsAlpha`
-isn't read, and a texture on a UV set other than 0 is dropped.
+[`mattePaintingLook`](../../packages/viewer/src/looks/special-looks.ts) draws
+[matte paintings](../game-data/materials.md#matte-paintings): folds alpha scale into the cutout
+threshold (reusing alpha-test depth), fogs in composite, and waits for texture residency.
+`_UseMainTexAsAlpha` is unread; non-UV0 textures are dropped.
 
 ## forward Lit
 
-[forward Lit](../game-data/materials.md#forward-lit) (`HGRP/LitForward`, the golden treasure chest)
-is drawn as Lit in the main pass with everything else, so it reflects the scene's sky cubemap and
-screen-space reflections rather than its own `_CUSTOM_IBL` cubemap, and its metal reads darker than
-the game's. none of Lit's optional layers are read for it.
+[forward Lit](../game-data/materials.md#forward-lit) (`HGRP/LitForward`, e.g. golden chest) draws as
+standard Lit in the main pass without optional layers. it reflects the scene sky cubemap and SSR
+instead of its `_CUSTOM_IBL` cubemap, making metal darker than in-game.
 
 ## erosion
 
-[erosion rock](../game-data/materials.md#erosion) is drawn by
 [`erosionLook`](../../packages/viewer/src/looks/special-looks.ts) and `erosion_surface` in
-`mesh.wgsl`, without the soft blend into what lies behind (`_ObjectBlend*`). its textures reuse the
-Lit slots (`erosionLook` lists which). `HGRP/ErosionDynamic` has no look and shows as
+`mesh.wgsl` draw [erosion rock](../game-data/materials.md#erosion), reusing Lit texture slots and
+omitting `_ObjectBlend*` soft blending. `HGRP/ErosionDynamic` is
 [unsupported](#unsupported-materials).
 
 ## unsupported materials
 
-a material the viewer can't draw can show as an unlit checker of magenta and black, in half-metre
-cells of world space, to mark where something is missing. two settings show it, both off by default
-since the checker covers what lies behind: "unsupported materials" for meshes in materials the
-viewer lacks, and "missing content" for the package's [stand-ins](../package-format.md#stand-ins)
-for content it doesn't draw at all. off, those draws are skipped during
-[mesh selection](../../packages/viewer/src/streaming/mesh-selection.ts) (`unsupportedLook` in
-[`looks/material-looks.ts`](../../packages/viewer/src/looks/material-looks.ts)). it shows both
-faces, casts no shadow and keeps its colour at any exposure. this covers effect shaders without a
-look of their own ([effects](effects.md)), effect materials using keywords, blend modes, stencil
-operations or texture combinations their look doesn't handle, or sampling a texture from a UV set
-the look doesn't read (sets past 1, past 0 for VFXWater and VFXRefract), lit decals in variants the
-viewer lacks or without a placement or base colour map, additive materials outside the effects,
-since the opaque path can't blend, shaders without a family (`HGRP/CharacterNPR`,
-`Hidden/HGRP/LitEffectBlend`, `HGRP/ErosionDynamic` and the like, which `pack` lists per shader),
-and materials that didn't convert. stand-ins (`DrawRole.Unsupported`) take the same look whatever
-their material.
+unhandled materials can display a 0.5 m world-space magenta/black checker (double-sided, unlit,
+exposure-invariant, no shadows) via two off-by-default toggles:
 
-the extractor decides which materials are unsupported when it
-[describes their surfaces](../package-format.md#materials), and `pack` counts them by shader and
-reason. its `debug/assets.json` lists per material why it's unsupported (`unsupported`, such as the
-keywords or texture combination an effect's look rejects), the surface keywords the viewer doesn't
-draw (`keywordsNotDrawn`, from
-[game/materials/surfaces/surface-keywords.ts](../../packages/extractor/src/game/materials/surfaces/surface-keywords.ts),
-beside the describers that read them) and the texture slots whose reference couldn't be followed
-(`slotErrors`). a surface shader draws without the keywords it doesn't read rather than showing the
-checker: most of such a material is right, and hundreds of them would checker whole scenes. the
-[gaps view](#gaps) marks them instead.
+- **"unsupported materials"**: meshes whose material lacks a viewer look.
+- **"missing content"**: package [stand-ins](../package-format.md#stand-ins)
+  (`DrawRole.Unsupported`).
+- when off, [`mesh-selection.ts`](../../packages/viewer/src/streaming/mesh-selection.ts) skips them
+  (`unsupportedLook` in `material-looks.ts`).
 
-only materials the game draws nothing visible with aren't drawn: `HGRP/WaterProxy`, whose passes all
-feed the water pipeline ([water](../game-data/water.md#waterproxy-and-waterdecal)), lit decals that
-write nothing the viewer draws, and VFXBaseV2 materials shown only during the
-[ink-wash screen effect](../game-data/effects.md#vfxbasev2), which the viewer doesn't draw.
+what becomes unsupported: effect shaders without a look ([effects](effects.md)); effect materials
+with unhandled keywords, blend modes, stencil ops, texture combos, or UV sets (>1, or >0 for
+VFXWater/VFXRefract); unhandled lit decals or ones lacking placement/base map; non-effect additive
+materials; shaders without a family (`HGRP/CharacterNPR`, `Hidden/HGRP/LitEffectBlend`,
+`HGRP/ErosionDynamic`, etc.); failed conversions.
+
+the extractor classifies these when [describing surfaces](../package-format.md#materials) and writes
+`unsupported`, `keywordsNotDrawn` (from
+[`surface-keywords.ts`](../../packages/extractor/src/game/materials/surfaces/surface-keywords.ts)),
+and `slotErrors` into `debug/assets.json`. surface shaders draw without unread keywords (marked in
+the [gaps view](#gaps)) rather than checkering whole scenes.
+
+intentionally undrawn (invisible in game): `HGRP/WaterProxy`, lit decals writing nothing the viewer
+draws, and ink-wash-only VFXBaseV2 materials ([effects](../game-data/effects.md#vfxbasev2)).
 
 ## gaps
 
-a surface material that draws, but without something the game draws, looks finished: a still banner
-or a blank one reads as intended. the `gaps` choice of the "show" setting marks those: surfaces turn
-grey, and every mesh whose material has a known gap shows amber and black stripes, with a legend
-under the setting naming what's missing in view, nearest first. `viewer.gapsInView()` returns the
-legend's rows and a selection bucket's `look.gaps` one material's
-([driving the viewer](../driving-the-viewer.md#inspecting)).
+the `gaps` debug view turns surfaces grey, stripes materials with known gaps amber/black, and lists
+missing features in view (nearest first). inspect programmatically via `viewer.gapsInView()` or a
+bucket's `look.gaps` ([driving the viewer](../driving-the-viewer.md#inspecting)).
 
-a look's gaps (`MaterialLook.gaps`) come from two places:
+`MaterialLook.gaps` collects from two sources:
 
-- the package's [`gaps`](../package-format.md#materials): the keywords the surface's describer
-  doesn't read (`keywordsNotDrawn`) and the properties it reads past (`PROPERTY_GAPS` in
-  [surface-keywords.ts](../../packages/extractor/src/game/materials/surfaces/surface-keywords.ts)).
-  a describer that starts reading a keyword adds it to that module's list; one that reads a keyword
-  but skips a case of it by a property's value adds the property there
-- the look's builder, where a feature loses its texture slot or parameter rows to another
-  ([`lit-look.ts`](../../packages/viewer/src/looks/lit-look.ts) pushes one each for the tri-channel
-  mask, a mask layer, the emission pulse and the vertex offset)
+- **package [`gaps`](../package-format.md#materials)**: unread keywords (`keywordsNotDrawn`) and
+  skipped property cases (`PROPERTY_GAPS` in `surface-keywords.ts`).
+- **look builder**: slot/row collisions in `lit-look.ts` (tri-channel mask, mask layer, emission
+  pulse, vertex offset).
 
-the view only knows what those two record. it doesn't mark what a describer reads wrongly, effect
-materials (their describers turn what they can't draw unsupported), the terrain, water, or gaps of
-an entity rather than its material: content the packer drops, runtime per-draw values, and the
-[cloth simulation](#swaying-cloth), which `pack` only counts.
+not tracked by `gaps`: misread properties, effect materials (marked unsupported instead), terrain,
+water, dropped content, runtime per-draw values, and [cloth simulation](#swaying-cloth).

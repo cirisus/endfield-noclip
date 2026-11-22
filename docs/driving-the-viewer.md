@@ -1,44 +1,42 @@
 # driving the viewer
 
-how an agent opens the viewer in a browser, poses the camera, reads its state and profiles it. how
-the viewer works is in [viewer/index.md](viewer/index.md); its options are `ViewerOptions` in
-[`src/viewer/options.ts`](../packages/viewer/src/viewer/options.ts) and its stats `ViewerStats` in
+how an agent opens, poses, inspects, and profiles the viewer in a browser. for viewer internals, see
+[viewer/index.md](viewer/index.md), `ViewerOptions` in
+[`src/viewer/options.ts`](../packages/viewer/src/viewer/options.ts), and `ViewerStats` in
 [`src/viewer/stats.ts`](../packages/viewer/src/viewer/stats.ts).
 
 ## opening it
 
-use the `agent-browser` CLI with WebGPU enabled; without it the canvas stays blank. on macOS, pass
-`--webgpu`:
+launch the dev server and open it with `agent-browser` (WebGPU must be enabled, or the canvas stays
+blank). on macOS, pass `--webgpu`:
 
 ```sh
 pnpm run dev --port 0
 agent-browser --webgpu open 'http://localhost:<port>/?package=map02&level=map02_lv007'
 ```
 
-read the port from the `Local:` line the server prints. the URL takes the
+read the port from the `Local:` line. the URL accepts
 [`package` and `level` parameters](viewer/loading.md#url-parameters).
 
-- after `agent-browser close`, reopen with `--webgpu` again.
-- `agent-browser console` keeps lines from before a reload; read only what follows
-  `[vite] connected`.
-- reload after editing a `.wgsl` file: the page keeps the pipelines it compiled, so a shader change
-  doesn't show until then.
-- reload after re-packing to read the new core. an open page retains the old manifest and may
-  request archives the replacement removed; see [sources](viewer/loading.md#sources).
-- wrap multi-statement `agent-browser eval` code in an IIFE: top-level `const` collides across
-  evals.
-- give `agent-browser screenshot` an absolute path; relative paths land in agent-browser's own
+- pass `--webgpu` again when reopening after `agent-browser close`.
+- `agent-browser console` keeps pre-reload output; read only lines after `[vite] connected`.
+- reload after editing `.wgsl` files; the page keeps already-compiled pipelines.
+- reload after re-packing; an open page retains the old manifest and may request removed archives
+  ([sources](viewer/loading.md#sources)).
+- wrap multi-statement `agent-browser eval` snippets in an IIFE so top-level `const` bindings don't
+  collide across evals.
+- pass an absolute path to `agent-browser screenshot`; relative paths resolve in agent-browser's own
   working directory.
 
 ### on Linux
 
-`--webgpu` runs WebGPU on SwiftShader, a software Vulkan, so the viewer crawls and screenshots time
-out. run the browser headed on the hardware Vulkan driver, inside
-[gamescope](https://github.com/ValveSoftware/gamescope)'s headless backend: a compositor with no
-window or display output, so nothing appears on the desktop while the browser keeps GPU compositing.
-frame times, GPU timings, screenshots, video, input and pointer lock behave as in a visible window.
-the flags and paths depend on the machine, so keep them in the gitignored `agent-browser.local.json`
-rather than in the repo or a global agent-browser config:
+`--webgpu` falls back to SwiftShader (software Vulkan), causing slow frames and screenshot timeouts.
+instead, run Chrome headed on hardware Vulkan inside
+[gamescope](https://github.com/ValveSoftware/gamescope)'s headless backend: it renders off-screen
+with full GPU compositing, so frame times, GPU timings, screenshots, video, input, and pointer lock
+match a visible window.
+
+keep machine-specific config in the gitignored `agent-browser.local.json`:
 
 ```json
 {
@@ -48,9 +46,8 @@ rather than in the repo or a global agent-browser config:
 }
 ```
 
-`executablePath` is a wrapper (add it to `.git/info/exclude`) that starts agent-browser's newest
-Chrome under gamescope. `-r 1000` lifts gamescope's 60 Hz pacing, and Chrome runs on X11 through
-gamescope's Xwayland:
+create the wrapper script (add it to `.git/info/exclude`); `-r 1000` lifts gamescope's 60 Hz cap,
+and Chrome runs on X11 via Xwayland:
 
 ```sh
 #!/usr/bin/env bash
@@ -60,43 +57,37 @@ exec gamescope --backend headless -w 2560 -h 1600 -W 2560 -H 1600 -r 1000 --forc
 	env -u WAYLAND_DISPLAY "$chrome" --ozone-platform=x11 "$@"
 ```
 
-point agent-browser at the config from `mise.local.toml` (add that file to `.git/info/exclude`),
-then run `mise trust`:
+point agent-browser at it in `mise.local.toml` (also add to `.git/info/exclude`), then run
+`mise trust`:
 
 ```toml
 [env]
 AGENT_BROWSER_CONFIG = "{{config_root}}/agent-browser.local.json"
 ```
 
-- interactive shells pick the variable up on entering the repo. non-interactive shells, such as an
-  agent's, skip mise's prompt hook: launch with `mise exec -- agent-browser open '<url>'`. later
-  commands reuse the open browser and can be plain `agent-browser`.
-- `agent-browser close` also ends that session's gamescope. sessions (`--session <name>`) each get
-  their own gamescope and GPU device, so several can run at once, though they share the GPU and CPU:
-  measure one at a time.
-- with the frame-rate limit off, `continuous` renders as fast as the GPU allows; turn it off when
-  done.
-- the window is 2560×1600 with the browser's own toolbar inside it; `agent-browser set viewport`
-  sets the page size.
-- to see the window, drop `executablePath` and add `--ozone-platform=wayland` (on a Wayland session)
-  to `args`. the vsync and frame-rate flags then also keep it drawing on a hidden workspace, where
-  Wayland otherwise stops sending frame callbacks and the page drops to about 1 fps while still
-  reporting itself visible.
-- check the adapter with `viewer.stats.adapter` (the stats panel shows it too); `google swiftshader`
-  means the config wasn't loaded.
+- non-interactive shells skip mise's prompt hook: launch with
+  `mise exec -- agent-browser open '<url>'`. subsequent commands reuse the session and can call
+  `agent-browser` directly.
+- `agent-browser close` terminates that session's gamescope. named sessions (`--session <name>`)
+  each spawn their own gamescope and GPU device; measure one at a time.
+- with the frame-rate limit disabled, `continuous` renders uncapped; turn it off when done.
+- the 2560×1600 window includes Chrome's toolbar; use `agent-browser set viewport` to set page size.
+- for a visible window on Wayland, drop `executablePath` and add `--ozone-platform=wayland` to
+  `args`. the vsync and frame-rate flags also keep rendering active on hidden workspaces (where
+  Wayland otherwise throttles frame callbacks to ~1 fps while reporting the page visible).
+- verify the GPU with `viewer.stats.adapter` (also in the stats panel); `google swiftshader` means
+  the config did not load.
 
 #### Chrome's own headless mode
 
-`"headed": false`, with `--disable-vulkan-surface` added to `args` (without it there's no adapter),
-also reaches the hardware GPU, with no gamescope. it fits where gamescope is missing, but Chrome
-composites in software there (`chrome://gpu` reads "Compositing: Software only", "WebGPU interop:
-Disabled"), with two consequences:
+where gamescope is unavailable, set `"headed": false` and add `--disable-vulkan-surface` to `args`
+(required for an adapter). this uses hardware Vulkan but composites in software (`chrome://gpu`
+shows "Compositing: Software only" and "WebGPU interop: Disabled"):
 
-- every frame is copied back to the CPU, which slows the frame and its CPU spans (on map02,
-  `mesh select` 8 ms rather than 6.5, flight median 11.7 ms rather than 7.4). compare headless runs
-  with each other only.
-- `agent-browser screenshot` shows the canvas blank. read the canvas itself instead: `toDataURL`
-  returns the last drawn frame, even with `continuous` off, without the UI panels:
+- every frame copies back to CPU, inflating frame and CPU times (on map02: `mesh select` 8 ms vs 6.5
+  ms, flight median 11.7 ms vs 7.4 ms). compare headless runs only against each other.
+- `agent-browser screenshot` captures a blank canvas. read the canvas directly instead (returns the
+  last drawn frame without UI panels, even with `continuous` off):
 
 ```sh
 agent-browser eval 'document.querySelector("canvas").toDataURL("image/png")' \
@@ -105,105 +96,80 @@ agent-browser eval 'document.querySelector("canvas").toDataURL("image/png")' \
 
 ## posing
 
-`pnpm run dev` exposes the `Viewer` as `window.viewer` (production builds, `vite preview` included,
-don't). because it renders only when dirty, set `viewer.options.continuous = true` before posing or
-measuring. change other options with `viewer.setOptions({...})`, which marks the frame dirty and
-applies the budget.
+`pnpm run dev` exposes `window.viewer` (production builds and `vite preview` do not). the viewer
+renders only when dirty, so set `viewer.options.continuous = true` before posing or measuring.
+update other options with `viewer.setOptions({...})`, which marks dirty and applies the budget.
 
 - `viewer.controls.flyTo({ position: [x, y, z], yaw, pitch })` takes **radians** (the on-screen
-  camera readout shows degrees) and animates for up to 3 s; wait for it before reading results. yaw
-  0 looks along +z, positive yaw turns towards +x, negative pitch looks down.
-- writing `viewer.camera.position` directly moves the view only while `continuous` is on, since it
-  doesn't mark the frame dirty; this is useful for walking the camera per frame.
-- `viewer.flyToLevel(id)` makes a level current and flies over it; every level shows either way.
-  after a flight lands, moving the camera into another level's cells makes that level current.
-  `viewer.flyToPoint([x, y, z], distance)` flies to a view of a point from that far away, and
-  `viewer.controls.flying` is true while a flight runs.
+  readout shows degrees) and animates up to 3 s; wait for completion before sampling. yaw 0 faces
+  `+z`, positive yaw turns toward `+x`, negative pitch looks down.
+- mutating `viewer.camera.position` directly skips the dirty flag and only renders while
+  `continuous` is on (useful for per-frame camera walks).
+- `viewer.flyToLevel(id)` makes `id` current and flies over it (all levels still render). after
+  landing, moving into another level's cells switches the current level.
+- `viewer.flyToPoint([x, y, z], distance)` frames a point from `distance` m away.
+  `viewer.controls.flying` is `true` during a flight.
 
 ## inspecting
 
-- environment: `viewer.environmentName`, `viewer.appliedVolumes` (volumes blended at the camera, in
-  order), `viewer.environmentPhases()`, and `viewer.options.environmentVolumes / environmentPin`;
-  switch a volume with `viewer.setSceneValue(volume.control, 0 | 1)`. volumes have height bands, so
-  pose near the ground to see a level's own look; a high camera gets only the scene's global
-  environment.
-- `viewer.manifest` holds levels and controls, and `viewer.scene.pkg.environment` the environment
-  table (`volumes`, `phases` with their sections looked up, `posts`); `viewer.currentLevel` is the
-  current level's entry and `viewer.currentLevelIndex` its index.
-  `await import('/src/environment/derive.ts')` gives `deriveEnvironment` for checking derived values
-  against a profile.
-- scene states are keyed by control index, the control's position in
-  `viewer.manifest.states.controls` (find one with
-  `controls.findIndex(({ id }) => id === 'quest:…')`): `viewer.sceneValues` (every control's value),
-  `viewer.scenePicks` (a `Map`), `viewer.conditionResults`, `viewer.setSceneValue(index, value)`
-  (`null` drops the pick), `viewer.setSceneValues(map)` for several at once and
-  `viewer.resetSceneValues()`. `viewer.waterVolumes` lists the gameplay water volumes with their
-  fill.
-- stream areas: `viewer.visibleStreamAreas` (the areas shown at the camera, `null` when every area
-  shows) and `viewer.options.streamAreas`
-  ([camera controls](viewer/scene-states.md#camera-controls)).
-- look: `viewer.options.exposure` (EV on top of the level's and the auto exposure's),
-  `viewer.options.autoExposure`, `viewer.stats.autoExposureEv` and `viewer.options.debugView`
-  (`'clouds'` shows the raw cloud panorama).
-- what's drawn incompletely: `viewer.setOptions({ debugView: 'gaps' })` stripes every mesh whose
-  material is drawn without something the game draws ([gaps](viewer/materials.md#gaps)), and
-  `viewer.gapsInView()` lists what's missing among the meshes drawn last frame (`gap`, `materials`,
-  `nearest` in metres), nearest first. check it at a pose before concluding a material is complete.
-- what draws something: `viewer.scene.meshes.selection.buckets` is the last frame's mesh selection
-  (what `MeshSelector.run` returned; `meshes` is `null` for a package without converted geometry).
-  each bucket has its `material` id (its row in the package's `debug/assets.json`), its `look`
-  (`queue`, `unsupported`, `gaps`, `flags`, `textures`, and `params`, laid out by `LookRow` in
-  [`looks/look.ts`](../packages/viewer/src/looks/look.ts): floats 0–2 the linear tint, 3 the
-  alpha-test threshold; effect looks by `EffectRow` in `looks/effects/effect-look.ts`), its
-  `geometry` item and `nearest`, the distance to its nearest instance. a look only says how a
-  material draws, so first check the content is loaded: `viewer.scene.stream.get(blob)` is
-  `undefined` for a blob never requested, and its `resident` is `null` until it's ready
-  (`bucket.geometry.resident`, or a texture's blob). to name the entity behind a draw, search by
-  position with [`world find --near`](extraction.md#finding-assets-and-scenery) or read the
-  package's `debug/instances.jsonl` ([debug outputs](extraction.md#report-and-debug-outputs)).
-- `viewer.stats` (refreshed every 250 ms): draws, triangles, instances, residency, queue and request
-  counters, `cpuMs`, `cpuPhases` and `gpuMs`. `viewer.scene.stream.residentByKind()` splits the
-  streamed residency by kind (textures, geometry, irradiance, …).
+| area         | APIs & notes                                                                                                                                                                                                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| environment  | `viewer.environmentName`, `viewer.appliedVolumes` (blended in order), `viewer.environmentPhases()`, `viewer.options.environmentVolumes` / `environmentPin`, `viewer.setSceneValue(volume.control, 0 \| 1)`. pose near ground to hit height bands                                                                            |
+| tables       | `viewer.manifest` (levels, controls), `viewer.scene.pkg.environment` (`volumes`, `phases`, `posts`), `viewer.currentLevel`, `viewer.currentLevelIndex`. `await import('/src/environment/derive.ts')` exposes `deriveEnvironment`                                                                                            |
+| scene states | keyed by index in `viewer.manifest.states.controls` (`controls.findIndex(({ id }) => id === 'quest:…')`): `viewer.sceneValues`, `viewer.scenePicks` (`Map`), `viewer.conditionResults`, `viewer.setSceneValue(i, v)` (`null` clears pick), `viewer.setSceneValues(map)`, `viewer.resetSceneValues()`, `viewer.waterVolumes` |
+| stream areas | `viewer.visibleStreamAreas` (`null` when all show), `viewer.options.streamAreas` ([camera controls](viewer/scene-states.md#camera-controls))                                                                                                                                                                                |
+| look         | `viewer.options.exposure` (EV offset), `viewer.options.autoExposure`, `viewer.stats.autoExposureEv`, `viewer.options.debugView` (`'clouds'` for raw cloud panorama, `'gaps'` for incomplete materials)                                                                                                                      |
+| stats        | `viewer.stats` (250 ms refresh: draws, triangles, instances, residency, queue/request counts, `cpuMs`, `cpuPhases`, `gpuMs`); `viewer.scene.stream.residentByKind()` splits residency by kind                                                                                                                               |
+
+- **incomplete materials**: `viewer.setOptions({ debugView: 'gaps' })` stripes meshes missing
+  features the game draws ([gaps](viewer/materials.md#gaps)). `viewer.gapsInView()` lists missing
+  features from last frame (`gap`, `materials`, `nearest` in metres, sorted nearest first). check it
+  before assuming a material is complete.
+- **draw inspection**: `viewer.scene.meshes.selection.buckets` holds last frame's `MeshSelector.run`
+  output (`meshes` is `null` if the package has no converted geometry). each bucket has:
+  - `material`: id matching its row in `debug/assets.json`
+  - `look`: `queue`, `unsupported`, `gaps`, `flags`, `textures`, `params` (`LookRow` in
+    [`looks/look.ts`](../packages/viewer/src/looks/look.ts): floats 0–2 linear tint, 3 alpha-test
+    threshold; effect looks use `EffectRow` in `looks/effects/effect-look.ts`)
+  - `geometry` and `nearest` (distance to nearest instance)
+  - check residency before debugging a look: `viewer.scene.stream.get(blob)` is `undefined` if never
+    requested, and `resident` is `null` while loading (`bucket.geometry.resident` or a texture
+    blob).
+  - to identify the source entity, run
+    [`world find --near`](extraction.md#finding-assets-and-scenery) or read `debug/instances.jsonl`
+    ([debug outputs](extraction.md#report-and-debug-outputs)).
 
 ## profiling
 
-- run `agent-browser set viewport 2560 1600` first to match a retina window.
-- for each pose, fly there with `continuous` on, wait until streaming settles (`stats.queued`,
-  `requestsInFlight`, `decoding` and `uploading` at 0), then sample `stats` over a couple of
-  seconds.
-- `stats.gpuMs` spans the first timed pass's start to the last one's end and matches frame time when
-  GPU-bound. `stats.cpuPhases` splits CPU time into `controls`, `tree`, `mesh select`, `sky, water`,
-  `stream`, `prepare`, `uniforms`, `encode` and `submit`.
-- `cpuMs` includes waiting on the GPU (backpressure lands in `writeBuffer`), so when GPU-bound a CPU
-  saving shows up as less waiting rather than a shorter frame; compare busy CPU time from a profile
-  (`agent-browser profiler`).
-- with the frame rate uncapped (the Linux flags above) and frames of a few milliseconds, the page
-  submits faster than the GPU process takes them, and now and then one GPU call (a `writeBuffer`, a
-  draw) blocks for 20–50 ms in whichever span it falls in. those frames aren't hitches a vsynced
-  viewer has: they went away when the same flight ran at two thirds of the frame rate. judge hitches
-  by the span that's long across runs, or by timing the call itself.
-- queue writes of a megabyte or more do stall the main thread
-  ([staged writes](viewer/gpu-resources.md)); time `queue.writeTexture` and `queue.writeBuffer` by
-  wrapping `GPUQueue.prototype` when a stream span is long with few uploads.
-- JS heap readings after a navigation include the previous page held in the back/forward cache, and
-  readings over 1 GB while streaming are uncollected garbage; measure the heap from a fresh browser
-  after a GC.
-- Apple GPUs (tile-based) overlap passes, so `stats.gpuPasses` are pass lifetimes, not costs, and
-  can sum to far more than `gpuMs`. attribute cost by ablation: toggle one option (`shadows`, `ao`,
-  `bloom`, `water`, `sky`, `terrain`, `instances`, HLOD tiers, …) at a fixed pose, take a fresh
-  baseline before each variant, and compare `gpuMs`.
-- ablate only frames well over the 16.7 ms budget (raise the viewport if needed): a lightly loaded
-  GPU clocks down, and a variant can then read slower than its baseline.
-- large regions at the default budget evict content during a run, so resident content differs
-  between runs; compare numbers within one run.
-- `viewer.stats` is smoothed and hides hitches. for per-frame times, import the module in an eval
-  (`await import('/src/viewer/stats.ts')`) and wrap `FrameTimes.prototype.begin` and `span`, with a
-  `requestAnimationFrame` recorder for frame intervals. restart the dev server after any source edit
-  before patching, and don't edit source during a run: once Vite has hot-updated a module it serves
-  it under a `?t=` URL, so the plain import is another module instance and the patch records
-  nothing.
-- to compare two builds, give each its own worktree and dev server
+- set a retina-sized viewport first: `agent-browser set viewport 2560 1600`.
+- fly to each pose with `continuous` on, wait for streaming to settle (`stats.queued`,
+  `requestsInFlight`, `decoding`, and `uploading` all 0), then sample `stats` for a couple seconds.
+- `stats.gpuMs` spans from the first timed pass's start to the last one's end (matches frame time
+  when GPU-bound). `stats.cpuPhases` breaks CPU time into `controls`, `tree`, `mesh select`,
+  `sky, water`, `stream`, `prepare`, `uniforms`, `encode`, and `submit`.
+- `cpuMs` includes GPU backpressure (shows up in `writeBuffer`). when GPU-bound, CPU savings reduce
+  wait time instead of frame time; compare busy CPU time with `agent-browser profiler`.
+- uncapped Linux frames of a few milliseconds can outpace the GPU process, causing occasional 20–50
+  ms blocks in `writeBuffer` or a draw. these disappear under pacing (tested at 2/3 frame rate) and
+  aren't vsynced hitches; judge hitches by spans that stay long across runs or by timing the call
+  directly.
+- queue writes ≥1 MB stall the main thread ([staged writes](viewer/gpu-resources.md)). wrap
+  `GPUQueue.prototype.writeTexture` and `writeBuffer` when `stream` is slow with few uploads.
+- JS heap after navigation includes the previous page in bfcache, and >1 GB during streaming is
+  uncollected garbage; measure heap in a fresh browser after GC.
+- Apple tile-based GPUs overlap passes, so `stats.gpuPasses` are pass lifetimes, not exclusive
+  costs, and can sum well above `gpuMs`. attribute cost by ablation: toggle one option (`shadows`,
+  `ao`, `bloom`, `water`, `sky`, `terrain`, `instances`, HLOD tiers, …) at a fixed pose, take a
+  fresh baseline before each variant, and compare `gpuMs`.
+- ablate only on frames well over 16.7 ms (raise the viewport if needed); lightly loaded GPUs clock
+  down, making a cheaper variant read slower.
+- large regions evict under the default budget, so resident sets vary across runs; compare within
+  one run.
+- `viewer.stats` is smoothed and hides hitches. for per-frame timings, import
+  `await import('/src/viewer/stats.ts')`, wrap `FrameTimes.prototype.begin` and `span`, and record
+  `requestAnimationFrame` intervals. restart the dev server after source edits and don't edit during
+  a run (Vite HMR serves updated modules with `?t=`, splitting module instances).
+- to compare two builds, use separate worktrees and dev servers
   (`git worktree add --detach <dir> <commit>`, `pnpm install --offline`,
-  `NOCLIP_PACKAGES=<repo>/out pnpm run dev --port 0`) and alternate runs between them, only while
-  the machine is quiet: an extractor `pack` running beside it makes every CPU span 2–3× longer. GPU
-  timestamps are steadier under load, but not immune.
+  `NOCLIP_PACKAGES=<repo>/out pnpm run dev --port 0`) and alternate runs on a quiet machine. a
+  concurrent `pack` makes CPU spans 2–3× longer; GPU timestamps are steadier but not immune.

@@ -1,298 +1,239 @@
 # particles and spline movers
 
-how the game's effects emit and move things inside prefabs: Unity `ParticleSystem`s, read from the
-engine as the game's effects set them, and Beyond's spline movers. the shaders particles draw with,
-and what they read of a particle's custom data, are in [effects.md](effects.md); prefabs and
-billboards are in [assets.md](assets.md#prefabs).
+how prefabs emit and move objects: Unity `ParticleSystem`s (as configured by the game) and Beyond's
+spline movers. see [effects.md](effects.md) for particle shaders and custom data, and
+[assets.md](assets.md#prefabs) for prefabs and billboards.
 
 ## particle systems
 
-a `ParticleSystemRenderer`'s `m_RenderMode` is 4 for meshes, 5 for none, otherwise a quad: billboard
-0, stretched 1, horizontal 2, vertical 3. a renderer with no render mode draws only its particles'
-trails, or nothing: the storehouse sparks' `light` systems (`p_fxmap_uninteractive_storehous_01` and
-`_var1`, `p_fxmap_map_spark_02`) only drive sub-emitters and lights.
+`ParticleSystemRenderer.m_RenderMode`:
+
+| value | mode                                                                                                                                            |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | billboard quad                                                                                                                                  |
+| 1     | stretched quad                                                                                                                                  |
+| 2     | horizontal quad                                                                                                                                 |
+| 3     | vertical quad                                                                                                                                   |
+| 4     | mesh                                                                                                                                            |
+| 5     | none (trails/sub-emitters/lights only, e.g. storehouse sparks `light` in `p_fxmap_uninteractive_storehous_01`, `_var1`, `p_fxmap_map_spark_02`) |
 
 ### emission and lifetime
 
-- **rate over time.** `EmissionModule.rateOverTime` is particles per second; a curve is read at the
-  system's time over its duration (`lengthInSec`), so it repeats every loop, as Unity documents it
-  (the engine's step isn't traced; how it draws between two curves isn't either). effects time their
-  emission to an animation this way: the water pouring off the scoops of Qingbo's waterwheels
-  (`bigwater_01` in `p_igroup_map02_sfwaterwheel+2_004_01`) emits 32 a second from 12% to 77% of a
-  3.125 s loop and nothing in its last 15%.
-- **cap.** without a ring buffer, the cap (`maxNumParticles`) only limits emission: each emission,
-  by rate or burst, makes at most the cap minus the live particles, none when the system is full,
-  and the skipped ones aren't made up later. live particles are never cut short to make room. the
-  Very Large Rift's ripple rings (`wenli_02` and the others in
-  `p_fxmap_dung02_dg005_boss_semicircle_ripple_01`) rely on this: a burst every 0.1 s loop with a
-  cap of 1 lets in one ring per 6 s lifetime. a cap of 0 emits nothing, except with a looping ring
-  buffer, which doesn't cap emission and replaces each particle as it's emitted, so each lives its
-  lifetime once (below): the tilted torch flames (`P_fxmap_common_tiltedflame_2501`) show so.
-- **ring buffer.** `ringBufferMode` 1 holds a particle's age at its end until a newer one replaces
-  it, 2 replays `ringBufferLoopRange` (its position goes on integrating while the age loops). a held
-  particle isn't frozen: every module goes on moving and turning it, reading its curves at their
-  end, and it moves by its velocity as before. emission isn't capped; an emission past the cap takes
-  the slots in order, oldest first, so the particle emitted `maxNumParticles` before it is replaced.
-  mode 1 drops the replaced particle and only then fires its death sub-emitters. mode 2 keeps it,
-  moved past the cap, where its age no longer loops: it lives out the cycle it was in and dies at
-  the end of its lifetime, so a colour over lifetime fades it out instead of it vanishing. Wuling
-  City's bamboo smoke (`p_fxmap_map02_lv002_bamboo_watersmoke_2501`) relies on this: two of its
-  systems cap at 2 particles but emit four per loop, each puff fading in and out over its life.
-  Jingyu Valley's fish school relies on mode 1: its one burst lives 5–10 s, then swims on in its
-  force field for good.
-- **simulation space.** `moveWithTransform` is Unity's simulation space: 0 Local, where the
-  particles move with the system's Transform, 1 World, where each stays where it was emitted and
-  moves on its own, and 2 Custom, relative to `moveWithCustomTransform`. it shows only on an emitter
-  that moves: the pour emitters of Qingbo's octagonal waterwheels (`bigwater_01 (6)` and `(7)` in
-  `p_igroup_map02_sfwaterwheel+2_004_01`) are World systems their prefab's clip carries round
-  ([scenery animators](animation.md#scenery-animators)), so the water falls from where each scoop
-  was. the splash at the wheel's foot (`huihuagenbu (2)`) holds still.
-- **donut shape.** `ShapeModule.type` 17 emits from a torus: `radius` around the shape's z,
-  `donutRadius` the tube's, `radiusThickness` the tube's outer part used, each particle leaving
-  outwards from the tube's centre line, as Unity documents it (not checked against the engine). the
-  accelerate mushroom's coin motes (`lizi1` in `int_acceleratemushroom_postmodel`) burst from one
-  stretched tall by the shape's scale.
-- **mesh shape.** `ShapeModule.type` 6 emits from `m_Mesh`. its primitives are every submesh's, or
-  only `m_MeshMaterialIndex`'s (clamped) with `m_UseMeshMaterialIndex`: triangles, lines, strips of
-  either (read as lists), and a submesh without indices as a line strip through its vertices; quads
-  and points make the mesh invalid and nothing is emitted. whether a primitive has two or three
-  corners is taken from the last submesh read, so a mesh mixing lines and triangles samples
-  inconsistently.
-  - `placementMode` 0 (vertex) picks a primitive evenly, then one of its corners, so vertices shared
-    by more primitives come up more often; 1 (edge) picks a triangle by area (a line by length),
-    then a point along its outline by parameter, each side a third whatever its length; 2 (triangle)
-    picks by area and a point evenly within, always at random.
-  - `m_MeshSpawn.mode` steps vertex placement through the vertex buffer itself (ignoring the
-    material index), one vertex per emitted particle from a running count, wrapping (Loop) or back
-    and forth (PingPong and BurstSpread), without reading `speed` or `spread`. edge placement in
-    those modes walks the outline by `m_MeshSpawn.speed` over time, and its `spread` snaps the place
-    to steps (random mode too).
-  - the particle leaves along the point's interpolated normal, normalized ((0, 0, 1) without
-    normals), `m_MeshNormalOffset` moving it along the unnormalized normal first, in the mesh's
-    space, so the shape's scale scales the move. with `m_UseMeshColors` and vertex colours, its
-    start colour is multiplied by the point's Color32, and a shape texture multiplies in after. the
-    shape's placement then applies as for other shapes.
-  - the red mission portals' sparks (`dot_Line` in
-    `p_fxint_s_missionportal_entrance_red_narrowloop_2103`) start on the edges of a ring mesh.
+- **rate over time**: `EmissionModule.rateOverTime` (particles/s). curves evaluate at
+  `systemTime / lengthInSec`, repeating each loop (per Unity docs; engine step and two-curve
+  sampling untraced). example: Qingbo waterwheel pours (`bigwater_01` in
+  `p_igroup_map02_sfwaterwheel+2_004_01`) emit 32/s from 12% to 77% of a 3.125 s loop and 0 in the
+  last 15%.
+- **cap (`maxNumParticles`)**: without a ring buffer, limits emission to `cap − live` (never drops
+  live particles; skipped emissions are lost). example: Very Large Rift ripple rings (`wenli_02`
+  etc. in `p_fxmap_dung02_dg005_boss_semicircle_ripple_01`) burst every 0.1 s with cap 1 → one ring
+  per 6 s life. cap 0 emits nothing unless a looping ring buffer is active (e.g. tilted torch flames
+  `P_fxmap_common_tiltedflame_2501`).
+- **ring buffer (`ringBufferMode`)**: removes the emission cap and replaces the oldest slot
+  (`maxNumParticles` emissions ago):
+  - `1` (PauseUntilReplaced): holds particle age at end of lifetime while modules and velocity keep
+    running (curves read at end). on replacement, drops the old particle and fires death
+    sub-emitters. example: Jingyu Valley fish school (one burst lives 5–10 s, then swims in its
+    force field indefinitely).
+  - `2` (LoopUntilReplaced): loops age over `ringBufferLoopRange` while position keeps integrating.
+    on replacement, moves the particle past the cap where it finishes its current cycle and dies
+    normally (allowing fade-out). example: Wuling City bamboo smoke
+    (`p_fxmap_map02_lv002_bamboo_watersmoke_2501`, cap 2, emits 4/loop).
+- **simulation space (`moveWithTransform`)**: `0` Local (moves with Transform), `1` World (stays
+  where emitted), `2` Custom (`moveWithCustomTransform`). example: Qingbo octagonal waterwheel pours
+  (`bigwater_01 (6)`, `(7)` in `p_igroup_map02_sfwaterwheel+2_004_01`) use World space while the
+  [Animator clip](animation.md#scenery-animators) rotates the scoops; splash `huihuagenbu (2)` holds
+  still.
+- **donut shape (`ShapeModule.type = 17`)**: torus of major radius `radius` around shape `z`, tube
+  radius `donutRadius`, outer fraction `radiusThickness`, emitting outward from the tube centreline
+  (per Unity docs; unchecked against engine). example: accelerate mushroom coin motes (`lizi1` in
+  `int_acceleratemushroom_postmodel`).
+- **mesh shape (`ShapeModule.type = 6`)**: emits from `m_Mesh` (all submeshes, or clamped
+  `m_MeshMaterialIndex` with `m_UseMeshMaterialIndex`). supports triangles, lines, strips (read as
+  lists), and unindexed submeshes (as line strips); quads or points invalidate the mesh (no
+  emission). corner count (2 or 3) comes from the last submesh read, so mixed line/triangle meshes
+  sample inconsistently.
+  - `placementMode`: `0` (vertex) picks a primitive uniformly then a corner (shared vertices bias
+    higher); `1` (edge) picks a triangle by area (line by length) then a uniform edge parameter
+    (each side weighted 1/3); `2` (triangle) picks uniformly by area.
+  - `m_MeshSpawn.mode`: for vertex placement, steps through the vertex buffer directly (ignoring
+    material index) via a running counter — Loop wraps, PingPong/BurstSpread bounce, ignoring
+    `speed`/`spread`. for edge placement, walks the outline at `m_MeshSpawn.speed`; `spread` snaps
+    positions (including in random mode).
+  - particles emit along normalized interpolated normal (`(0, 0, 1)` if absent), pre-offset by
+    `m_MeshNormalOffset` along the unnormalized normal in mesh space (scaled by shape scale).
+    `m_UseMeshColors` multiplies start colour by interpolated `Color32`, then shape texture.
+  - example: red mission portal sparks (`dot_Line` in
+    `p_fxint_s_missionportal_entrance_red_narrowloop_2103`) emit on ring edges.
 
 ### motion
 
-each step the engine adds gravity to the particle's own velocity, lets the external forces change
-it, adds Velocity over Lifetime's terms beside it, limits and drags the whole speed, then moves the
-particle by the whole velocity times the speed modifier.
+per-step order:
 
-- **Limit Velocity.** with `dampen` 0 the speed limit does nothing, and the module only applies its
-  drag: each frame the whole speed loses `k · dt`, or `k · s² · dt` with
-  `multiplyDragByParticleVelocity` (k the amount, times `π (size / 2)²` with
-  `multiplyDragByParticleSize`), stopping at 0. the splashes at the foot of Jingyu Valley's falls
-  (`shuihua` in `P_fxmap_common_splashes_middle_2501`) rely on it to hang in the air rather than
-  drop under their 2–6× gravity. with `dampen` above 0 the module limits the whole speed `s`, the
-  particle's own velocity plus the velocity-over-lifetime part: above the limit `L` (`magnitude`,
-  read at the particle's age; two constants pick a random value per particle) the speed becomes
-  `s + (L − s)·k` with `k = 1 − (1 − dampen)^(30·dt)`, frame-rate independent against 30 fps, and
-  the excess comes out of the particle's own velocity alone, so the velocity-over-lifetime part is
-  added in full again next frame. a particle moved only by velocity over lifetime thus builds up an
-  opposing velocity of its own and settles at the limit. the challenge start point's rising rock
-  cards (`stone` in `int_challenge_start_point_once_postmodel`) start still, are pushed up at 0.2–1
-  m/s and limited to 0.1–1 m/s with a dampen of 0.1. the module limits first and then drags the
-  limited speed, both out of the particle's own velocity; drag reads the particle's current size
-  (the largest axis of a 3D size). the smoke rising off Marker Stone Interiors' rift monsters
-  (`smoke_loop`, `smoke_end` in `p_fxmap_map02_lv004_liexi_only_*`) uses both. how the per-axis
-  limit (`separateAxis`) and drag curves behave isn't traced.
-- **speed modifier.** each frame the engine reads Velocity over Lifetime's `speedModifier` at the
-  particle's age over its lifetime (the time the linear velocity curves are read at; two constants
-  pick a random value per particle) and moves the particle by its whole velocity, its own plus the
-  velocity-over-lifetime part, times that value. a curve thus scales the start speed as much as the
-  module's own terms. the floating stones of Valley's Aberrants (`floatstone01` in
-  `p_fxmap_map01_lv001_floatstone_*`) rise at 0.5–1.5 m/s under a modifier ramping from 0.39 to 1
-  over their 5–10 s. gravity adds into the particle's own velocity, so the modifier scales its share
-  too. the modifier only scales the move: the speed limit, run before it, sees the velocity without
-  it.
-- **external forces.** `ExternalForcesModule` pushes particles with `ParticleSystemForceField`s:
-  those in `influenceList` (`influenceFilter` 1), those on the layers of `influenceMask` along with
-  wind zones (0), or both (2), when active and enabled. the module does nothing unless its
-  multiplier's scalar is above 0. each step, after gravity and before velocity over lifetime, noise
-  and the speed limit, each field changes the particle's own velocity in turn. a sphere field
-  measures the particle's distance from its centre in its own frame, scale included, so a field
-  squashed up its y reaches less far vertically; outside `m_StartRange`…`m_EndRange` it does
-  nothing, and its curves are read at the distance's place between the two. two constants pick one
-  value per particle, the same for every field; the multiplier is read at the particle's age. in
-  order: the direction curves add `direction · m · dt` along the field's axes; gravity adds
-  `−n · gravity · m · dt · 30` (`n` from the centre to the particle, reversed within
-  `m_GravityFocus` of the range); the swirl, only when both its speed and attraction scalars are
-  nonzero, pulls the velocity `v` towards `t · speed` by `attraction · m · dt · 30` of the way, `t`
-  the unit tangent about the field's +y tilted per particle by up to ± half a turn times
-  `m_RotationRandomness` (about x, then z); drag takes `drag · m · dt` off the speed, times
-  `π (size / 2)²` and the speed squared when its flags say so, to no less than 0. the ×30 makes the
-  pulls frame-rate independent against 30 fps. the fish school's field (start 3 m, end 15 m,
-  squashed to 0.2 up its y) swirls its fish at ±4 m/s with a 2–5% pull per 1/30 s, pulls them in at
-  3–7.5 m/s² and drags them by their speed squared; the large fish's field has no swirl attraction,
-  so it only holds them in and slows them. hemisphere, cylinder and box fields, vector fields and
-  wind zones aren't traced.
-- **rotation over lifetime.** `RotationModule`'s rates (`curve` about z, and `x`, `y` with
-  `separateAxes`) are angular velocities read at the particle's age over its lifetime, so curves
-  speed up or slow the spin. the mushroom's wind sheets (`wind01`/`wind02`) start spinning at up to
-  60°/s either way, between two curves, and slow to a stop.
+1. add gravity to particle velocity
+2. apply external forces to particle velocity
+3. add Velocity over Lifetime beside particle velocity (not baked into it)
+4. apply Limit Velocity (limit, then drag) to the combined speed, subtracting changes from particle
+   velocity alone
+5. advance position by `combinedVelocity · speedModifier · dt`
+
+details:
+
+- **Limit Velocity**:
+  - `dampen = 0`: skips speed limit; applies drag only. reduces combined speed by `k · dt` (or
+    `k · s² · dt` with `multiplyDragByParticleVelocity`), where `k = drag` (× `π · (size / 2)²` with
+    `multiplyDragByParticleSize`, `size` = max axis of 3D size), clamped at 0. example: Jingyu falls
+    splashes (`shuihua` in `P_fxmap_common_splashes_middle_2501`) hang against 2–6× gravity.
+  - `dampen > 0`: when combined speed `s > L` (`magnitude` at particle age; two constants pick per
+    particle), sets `s = s + (L − s) · (1 − (1 − dampen)^(30·dt))` (30 fps normalized), then applies
+    drag. because excess comes out of particle velocity alone, a particle driven only by Velocity
+    over Lifetime builds an opposing own velocity and settles at `L`. examples: challenge start
+    point rock cards (`stone` in `int_challenge_start_point_once_postmodel`: pushed 0.2–1 m/s,
+    limited 0.1–1 m/s, dampen 0.1); Marker Stone Interiors rift monster smoke (`smoke_loop`,
+    `smoke_end` in `p_fxmap_map02_lv004_liexi_only_*`). `separateAxis` limits and drag curves are
+    untraced.
+- **speed modifier**: `VelocityModule.speedModifier` (at normalized age; two constants pick per
+  particle) scales final displacement (`combinedVelocity · speedModifier · dt`), affecting start
+  speed, gravity, and Velocity over Lifetime alike, after Limit Velocity. example: Valley's
+  Aberrants floating stones (`floatstone01` in `p_fxmap_map01_lv001_floatstone_*`) rise at 0.5–1.5
+  m/s with modifier ramping 0.39 → 1 over 5–10 s.
+- **external forces (`ExternalForcesModule`)**: applies active, enabled `ParticleSystemForceField`s
+  selected by `influenceFilter` (`0` = `influenceMask` layers + wind zones, `1` = `influenceList`,
+  `2` = both) when multiplier scalar > 0. runs after gravity and before Velocity over Lifetime,
+  noise, and Limit Velocity.
+  - **sphere fields**: distance measured in field's scaled local frame (e.g. squashed y reaches less
+    vertically); inactive outside `m_StartRange`–`m_EndRange`; curves read at normalized distance
+    (two constants pick one value per particle across all fields; multiplier `m` read at particle
+    age). applied in order:
+    1. direction: `+= direction · m · dt` along field axes
+    2. gravity: `+= −n · gravity · m · dt · 30` (`n` = centre→particle, reversed within
+       `m_GravityFocus`)
+    3. swirl (when speed and attraction scalars ≠ 0): lerps `v` toward `t · speed` by
+       `attraction · m · dt · 30` (`t` = unit tangent around field `+y`, tilted per particle up to
+       `±180° · m_RotationRandomness` about x then z)
+    4. drag: reduces speed by `drag · m · dt` (× `π · (size / 2)²` and `s²` per flags), min 0
+  - `× 30` normalizes pulls to 30 fps. example: Jingyu fish school field (3–15 m, y scale 0.2, swirl
+    ±4 m/s @ 2–5% per 1/30 s, gravity 3–7.5 m/s², `s²` drag); large fish field has 0 swirl
+    attraction. hemisphere, cylinder, box, vector fields, and wind zones are untraced.
+- **rotation over lifetime (`RotationModule`)**: `curve` (about `z`, plus `x`/`y` with
+  `separateAxes`) gives angular velocity at normalized age. example: accelerate mushroom wind sheets
+  (`wind01`/`wind02`) start up to ±60°/s between two curves and slow to 0.
 
 ### size and pose
 
-- **scaling.** `scalingMode` picks the scale that sizes particles: Hierarchy the whole hierarchy's,
-  Local the system's own transform's, and Shape none, where the scale moves particles but leaves
-  their size. effects stretch a spawn box this way: Jingyu Valley's bird flock
-  (`p_fxmap_map_bird_03`) sits under a parent scaled 363 × 150 × 148 m, in Shape mode, so its birds
-  stay their start size. the engine builds the emitter's matrix by mode too: Hierarchy takes the
-  Transform's whole world matrix, while Local and Shape take its world position and world rotation
-  (the product of the local rotations above it) and scale that by the system's own scale (Local) or
-  nothing, scaling the shape by the lossy scale instead (Shape). under a non-uniform parent scale,
-  then, only Hierarchy's axes are sheared, and Hierarchy sizes particles by the lossy scale (each
-  world-rotation axis projected onto the matrix's), not by the sheared axes' lengths. Jingyu
-  Valley's big waterwheel (`int_big_wheel_postmodel`, near −630, 246, −1251) carries
-  `P_fxint_s_bambootube_waterfall_2501_variant` on each of its eight scoops, under a parent scaled
-  0.1 × 1 × 1 and turned 90° about y: its Hierarchy splashes (`water001 (3)`, `water001 (6)`) shoot
-  along the wheel's axle out of its side, sized about 0.13 wide and 1.2 tall, so they show as thin
-  streaks spinning at random.
-- **pivot.** the renderer's `m_Pivot` offsets each particle's mesh from the particle's position, in
-  the particle's turned frame, in multiples of the particle's size. in mesh mode it is also measured
-  in the mesh's own size, per axis twice the farthest its bounds reach from the origin
-  (`2·(|centre| + extent)`), as the renderer's bounds code sizes it. Dijiang's robot lamps
-  (`P_fxmap_common_robot_lamp_802`) offset their eyes, a 0.1 m plane, by ±0.95 of it: each eye sits
-  7 cm off centre under the eyes' 30× scaled parent, not 70 cm.
-- **meshes.** each particle draws one of up to four meshes (`m_Mesh` … `m_Mesh3`), evenly or by
-  `m_MeshWeighting*` when `m_MeshDistribution` is 1.
-- **render alignment.** `m_RenderAlignment` is Unity's: View 0, World 1, Local 2, Facing 3 and
-  Velocity 4, which points a particle's +z along its motion. the accelerate mushroom's arrows
-  (`dajiantou02`/`03`) are flat arrow meshes pointing along their +z, launched straight up a cone of
-  angle 0 and lifted by a slightly negative gravity, so Velocity alignment stands them upright as
-  they rise, spun about the vertical by their rotation over lifetime. for meshes, the velocity is
-  turned into the world (through the emitter's whole matrix, scale included) and the particle takes
-  a look rotation along it, rolled level by the world's +y: forward along the velocity, right
-  `(F.z, 0, −F.x)` normalized (the world's +x when moving straight up or down), up their cross
-  product; a still particle faces the world's +z. the mesh is offset by its pivot, sized, turned by
-  the particle's own rotation, scaled by the emitter's scale (Hierarchy the lossy scale, Local the
-  system's own, Shape none) along that rotation's axes, then turned into it. the fish
-  (`p_fxmap_map02_lv001_fish_2101`) are modelled along their y and turned −90° about x, so they swim
-  level along their path.
-- **stretched quads.** with `m_FreeformStretching` off, a stretched particle is a streak from the
-  particle back along its velocity, `size.y · m_LengthScale` (times the emitter's x scale) plus
-  `speed · m_VelocityScale` long, with the camera's velocity times `m_CameraVelocityScale` taken off
-  the velocity first (the camera's world velocity, not turned into the camera's frame). its width,
-  `size.x`, runs across the velocity as seen from the camera's position (the cross product of the
-  velocity and the camera-to-particle direction), flattened onto the view plane; the particle's
-  rotation and `m_RotateWithStretchDirection` don't enter. turning the camera in place thus barely
-  moves it, while a streak tilted off the line of sight turns about itself as the camera moves. a
-  still particle, or one moving along the line of sight, has no width and isn't drawn. the pivot
-  moves the head forward along the velocity by `pivot.y · size.y` (no length scale) and the whole
-  streak across by `pivot.x` times half the width; `pivot.z` is unused. each corner's normal leans
-  from the face's own normal (perpendicular to the width and the 3D streak, towards the camera) out
-  along its edge by `cos(m_NormalDirection · 90°)`; at `m_NormalDirection` 1 every corner takes the
-  face's normal. Suiming's drifting fog (`smoke` in `p_fxmap_map02_lv007_windice01`, 10–13 m streaks
-  twice their size long, blown sideways at 5–15 m/s) is such a streak, faded by a steep Fresnel term
-  on that normal. the freeform path isn't traced.
-- **on-screen size.** for every quad mode the renderer holds a particle's larger side between
-  `m_MinParticleSize` and `m_MaxParticleSize` times the viewport's width at the particle's view
-  depth (`2·tan(fov/2)·aspect·depth`; twice the orthographic size times the aspect for orthographic
-  cameras), scaling x and y together. behind the camera the minimum's bound is negative, which hides
-  the particle only when `m_MinParticleSize` is above 0; the maximum's negative bound is ignored, so
-  with no minimum a particle behind the camera keeps its whole size. a stretched quad's length is
-  worked out from its size before the limit, so the limit only narrows it. a dead particle (age at
-  or past 100% of its lifetime) gets no size.
+- **scaling (`scalingMode`)**:
+  - `Hierarchy`: emitter uses full Transform world matrix (axes shear under non-uniform parent
+    scale); particles size by lossy scale (world-rotation axes projected onto matrix, not sheared
+    lengths). example: Jingyu big waterwheel (`int_big_wheel_postmodel`, near −630, 246, −1251)
+    scoops carry `P_fxint_s_bambootube_waterfall_2501_variant` under `0.1 × 1 × 1` scale + 90° y
+    rotation → Hierarchy splashes (`water001 (3)`, `(6)`) become 0.13 × 1.2 thin streaks along axle.
+  - `Local`: emitter uses world pos/rotation × system local scale; particles size by local scale.
+  - `Shape`: emitter uses unscaled world pos/rotation; shape scales by lossy scale; particles keep
+    start size (e.g. Jingyu bird flock `p_fxmap_map_bird_03` under 363 × 150 × 148 m parent).
+- **pivot (`m_Pivot`)**: offsets particle in its rotated frame by `pivot · size`. in mesh mode, also
+  scales by mesh bounds size `2 · (|centre| + extent)` per axis (e.g. Dijiang robot lamps
+  `P_fxmap_common_robot_lamp_802` offset 0.1 m eye planes by ±0.95 → 7 cm under 30× parent).
+- **meshes**: up to four (`m_Mesh`..`m_Mesh3`), uniform or weighted by `m_MeshWeighting*` when
+  `m_MeshDistribution = 1`.
+- **render alignment (`m_RenderAlignment`)**: `0` View, `1` World, `2` Local, `3` Facing, `4`
+  Velocity (`+z` along motion).
+  - for meshes in Velocity mode: velocity transforms to world through the full emitter matrix; look
+    rotation has `F = normalize(vel)`, `R = normalize(F.z, 0, −F.x)` (`+x` if vertical), `U = R × F`
+    (still particles face `+z`). transform order: pivot offset → particle size → particle rotation →
+    emitter scale (lossy/local/none) along rotation axes → look rotation.
+  - examples: accelerate mushroom arrows (`dajiantou02`/`03`, flat `+z` meshes lifted vertically and
+    spun); Jingyu fish (`p_fxmap_map02_lv001_fish_2101`, modelled along `y`, rotated −90° about `x`
+    to swim level).
+- **stretched quads** (`m_FreeformStretching` off; freeform path untraced):
+  - length along `−vel`: `size.y · m_LengthScale · emitterScale.x + speed · m_VelocityScale`, using
+    `vel − cameraWorldVel · m_CameraVelocityScale`.
+  - width `size.x` along `vel × (particle − camera)` flattened onto the view plane (particle
+    rotation and `m_RotateWithStretchDirection` unused; zero velocity or velocity along view ray
+    draws nothing).
+  - pivot shifts head forward by `pivot.y · size.y` (no length scale) and sideways by
+    `pivot.x · width / 2` (`pivot.z` unused).
+  - corner normals lean from face normal (toward camera) out along edges by
+    `cos(m_NormalDirection · 90°)` (`1` = flat face normal). example: Suiming drifting fog (`smoke`
+    in `p_fxmap_map02_lv007_windice01`, 10–13 m streaks at 5–15 m/s, steep Fresnel).
+- **on-screen size**: all quad modes clamp the larger side between `m_MinParticleSize` and
+  `m_MaxParticleSize` × viewport width at particle depth (`2 · tan(fov/2) · aspect · depth`, or
+  `2 · orthoSize · aspect`), scaling x and y together. behind the camera, negative min hides the
+  particle only if `m_MinParticleSize > 0`; negative max is ignored. stretched quads compute length
+  before clamping (so clamping only narrows them). dead particles (`age ≥ lifetime`) get size 0.
 
 ### texture sheets and custom data
 
-- **texture sheet.** `UVModule` in grid mode plays the whole sheet or one row (fixed, random or by
-  mesh), timed over the lifetime by `frameOverTime` and `cycles` or by `fps`, offset by
-  `startFrame`, on the UV sets of `uvChannelMask`.
-- **custom data.** `CustomDataModule` in vector mode (`mode0` 1) gives each particle up to four
-  values (`vectorComponentCount0`, the rest 0), each a MinMaxCurve read every step at the particle's
-  age over its lifetime (clamped below 1). a random between two constants or curves is fixed per
-  particle: it comes from the particle's random seed, salted per component, with no time input. with
-  `m_UseCustomVertexStreams` the renderer packs its `m_VertexStreams` past position, normal, tangent
-  and colour into 4-wide texture coordinate sets in list order (UV and UV2 two components each,
-  Custom1XYZW four), the same on all four corners of a quad: with streams [0, 1, 3, 4, 5, 34] the
-  first set is UV and UV2 (equal without a texture sheet) and the second is the custom data, which
-  effect materials read ([particle custom data](effects.md#particle-custom-data)).
+- **texture sheet (`UVModule`)**: grid mode plays full sheet or one row (fixed, random, or by mesh),
+  timed by `frameOverTime` + `cycles` or `fps`, offset by `startFrame`, on `uvChannelMask`.
+- **custom data (`CustomDataModule`)**: vector mode (`mode0 = 1`) evaluates `vectorComponentCount0`
+  (≤4, rest 0) `MinMaxCurve`s per step at `min(age / lifetime, < 1)`. random-between-two values are
+  fixed per particle from its seed (salted per component). with `m_UseCustomVertexStreams`,
+  `m_VertexStreams` beyond position/normal/tangent/colour pack sequentially into 4-wide UV sets
+  (uniform across quad corners): streams `[0, 1, 3, 4, 5, 34]` pack `UV + UV2` in set 0 and
+  `Custom1XYZW` in set 1 ([particle custom data](effects.md#particle-custom-data)).
 
 ### trails
 
-`TrailModule` in its Particles mode (`mode` 0) draws a strip behind each particle, with the
-renderer's second material (`m_Materials[1]`). as Unity documents it (the engine's trail code isn't
-read):
+`TrailModule` renders behind/between particles with `m_Materials[1]` (per Unity docs; engine trail
+code unread):
 
-- `ratio` is the chance a particle has one, and each point of it lasts `lifetime` times the
-  particle's lifetime (times its size with `sizeAffectsLifetime`); with `dieWithParticles` the trail
-  goes with its particle.
-- `widthOverTrail` is its width in metres along it, from the particle (0) to its oldest point (1),
-  times the particle's size with `sizeAffectsWidth`; `colorOverTrail` tints it along the same
-  length, `colorOverLifetime` tints all of it by the particle's age over its lifetime, and
-  `inheritParticleColor` multiplies in the particle's colour.
-- texture mode 0 (Stretch) maps the texture once over the trail's length.
-
-ribbon mode (`mode` 1) joins the particles to each other instead: the water poured by map02's big
-wheel, fake waterfall and water pipes (`Particle System` and `(1)` in `int_big_wheel_postmodel`,
-`int_fake_waterfall_postmodel` and `int_waterpipe_postmodel`) draws only such ribbons.
-
-the purification devices of Valley's Aberrants (`trail` in `int_purification_device_postmodel`,
-dung01_wrdg001 ~2, 355, 208) draw only trails: particles leaving a 0.25 m sphere at 0.05–0.1 m/s,
-swept round the device's z by orbital velocity, each trailing 0.35–0.5 of its 2–3 s life behind it,
-0.037–0.05 m wide at its head and 0.017–0.023 m at its tail (random between two curves), the colour
-of its particle.
+- **Particles mode (`mode = 0`)**: strip behind each particle (`ratio` = probability). each point
+  lasts `lifetime · particleLifetime` (× size with `sizeAffectsLifetime`); `dieWithParticles`
+  removes trails on death. width = `widthOverTrail` (head 0 → tail 1, × size with
+  `sizeAffectsWidth`); tinted by `colorOverTrail`, `colorOverLifetime`, and `inheritParticleColor`.
+  texture mode 0 (Stretch) maps once over trail length.
+  - example: Valley's Aberrants purification devices (`trail` in
+    `int_purification_device_postmodel`, dung01_wrdg001 ~2, 355, 208): trail-only particles leaving
+    a 0.25 m sphere at 0.05–0.1 m/s, orbital velocity about `z`, trail lifetime 0.35–0.5 of 2–3 s,
+    width 0.037–0.05 m head → 0.017–0.023 m tail.
+- **Ribbon mode (`mode = 1`)**: connects particles to each other (e.g. map02 water pours in
+  `int_big_wheel_postmodel`, `int_fake_waterfall_postmodel`, `int_waterpipe_postmodel`).
 
 ### examples
 
-- Wuling City's threads swirling over the pillar array (`p_fxmap_lv002_fangyuzhenlie_*`) are single
-  particles kept past their lifetime by a ring buffer, without a texture sheet.
-- the floating rocks over Origin Lodespring's crater (`Rock02` in `P_fxmap_common_brokentree_01/02`)
-  draw four rock meshes each.
-- the campfire flames (`fire01`/`fire02` in `P_fxmap_common_damagefire_small_2501`) are one
-  ring-buffered particle stepping through an 8×8 flipbook every loop.
-- the spray and stretched mist cards at the foot of falls are `shuihua` and `shuiwu`.
+- Wuling City pillar-array threads (`p_fxmap_lv002_fangyuzhenlie_*`): single ring-buffered
+  particles, no texture sheet.
+- Origin Lodespring crater floating rocks (`Rock02` in `P_fxmap_common_brokentree_01/02`): four rock
+  meshes per system.
+- campfire flames (`fire01`/`fire02` in `P_fxmap_common_damagefire_small_2501`): single
+  ring-buffered particle playing an 8×8 flipbook per loop.
+- waterfall spray and stretched mist cards: `shuihua` and `shuiwu`.
 
 ## spline movers
 
-Beyond's `HGSplineMovingObjects` MonoBehaviour emits whole prefabs along a spline, simulated in
-native code rather than by a `ParticleSystem`. the cargo crates riding up and down Dijiang's central
-shaft are such movers: ten of them in `p_fxmap_base01_lv001_zmdlogistics_02_01` (and `_01_01` for
-the other scene state), placed with the shaft's effects in base01_lv001. it is recognised by its
-`desc`, `knotData` and `fixedPostion` fields. `desc` holds Unity `MinMaxCurve`s in their managed
-form (`m_Mode`, `m_ConstantMin/Max`, `m_CurveMultiplier`, `m_CurveMin/Max`), and the game:
+Beyond's `HGSplineMovingObjects` MonoBehaviour (identified by `desc`, `knotData`, `fixedPostion`)
+emits whole prefabs along a spline in native code. example: Dijiang central shaft cargo crates (ten
+movers in `p_fxmap_base01_lv001_zmdlogistics_02_01` and `_01_01`, base01_lv001). `desc` holds
+managed Unity `MinMaxCurve`s (`m_Mode`, `m_ConstantMin/Max`, `m_CurveMultiplier`, `m_CurveMin/Max`):
 
-- **emits** `emissionRateOverTime` objects per second of the mover's own time, the frame's time
-  times `simulateSpeed` (the logic clock's with `useLogicDeltaTime`). an object emitted partway
-  through a frame starts aged by the rest of it. each picks one of `lodGroups` at random and draws
-  that LOD group's renderers as one object.
-- **places** an object `d` metres along `knotData`, cubic Bézier segments (`p0`–`p3`) laid end to
-  end, each taking up its stored `length`. the segment's parameter is `d`'s share of that length, so
-  the speed along the curve follows the control points' spacing: the shaft's straight segments, with
-  their handles on their ends, ease objects in and out. `d` grows by `velocityOverLifeTime`, read at
-  the object's age over its lifetime, times the step. past the last segment the object is removed.
-  with `emissionType` 0 it starts at a random point of the `aabb` box, an offset added to every
-  spline point.
-- **lives** `startLifeTime` clamped to 0–1, times a span the game derives per mover: a fraction of
-  the trip, so the shaft's descending crates (lifetime 5) ride the whole 60 m and the rising ones
-  (0.6–0.75) stop part of the way up. the span read as the spline's length over the speed is
-  unverified.
-- **sizes and turns** it: uniform scale `startSize` times `sizeOverLifeTime`, Euler angles in
-  degrees from `startRotationX/Y/Z` in Unity's order (only z without `has3dStartRotation`), plus a
-  noise offset with `hasNoise`. with `hasRotation` each step adds a rate times the step to the
-  angles: `rotationOverLifeTime` about z and, with `has3dRotation`, `rotationXOverLifeTime` and
-  `rotationYOverLifeTime` about x and y, in degrees per second of the mover's time, read at the
-  object's age over its lifetime with the one random value the object's size and speed curves also
-  read. Sword Vault Dale's floating stones (`p_fxmap_map02_lv006_*stone_01`) tumble so at up to
-  10°/s about each axis; the shaft's movers neither spin nor wander. the object's matrix is the
-  mover's `objectToWorld`, updated from its transform.
-- **fades** with `hasAlphaControl`: each step reads `alphaOverLifeTime` at the object's age over its
-  lifetime, with the object's random value, and while it's below `transparentAlpha` hands the
-  renderer the object marked for fading at that value. how the renderer draws it isn't traced. the
-  authored curves suggest the value is how far the object has faded out, 0 showing it whole
-  (unverified): Qingbo's bucket chain (`p_fxmap_lv003_bucke_2101`/`2102`) runs 1 to 0 over the first
-  7% of the trip and back to 1 over the last 5%, and Sword Vault Dale's stones 1 to 0 over their
-  first 2–5%, with `transparentAlpha` 1 in both; read as opacity, either would hide its objects for
-  most of their trip. the shaft's movers set `transparentAlpha` 0, so they never fade.
+- **emission**: `emissionRateOverTime` objects/s in mover time (`dt · simulateSpeed`, using logic
+  clock if `useLogicDeltaTime`). mid-frame spawns pre-age by the remainder. each picks a random
+  entry from `lodGroups` and draws its renderers together.
+- **placement**: distance `d` along end-to-end cubic Bézier segments (`knotData` `p0`–`p3`, each
+  spanning its stored `length`). segment parameter `t = segmentDist / length` (control-point spacing
+  sets easing, e.g. shaft straight segments with handles at ends ease in/out).
+  `d += velocityOverLifeTime(age/life) · dt`; removed past the last segment. `emissionType = 0` adds
+  a random offset within `aabb` to every spline point.
+- **lifetime**: `clamp(startLifeTime, 0, 1) · span` (fraction of trip: shaft descending crates at 5
+  ride all 60 m; rising ones at 0.6–0.75 stop partway). `unverified:` `span = length / speed`.
+- **scale & rotation**: uniform `startSize · sizeOverLifeTime`; Euler degrees `startRotationX/Y/Z`
+  in Unity order (`z` only without `has3dStartRotation`), plus noise offset (`hasNoise`). with
+  `hasRotation`, adds `rotationOverLifeTime` (z) and, with `has3dRotation`,
+  `rotationX/YOverLifeTime` (deg/s in mover time) evaluated with the same per-object random value as
+  size and speed. matrix is `objectToWorld` from transform. example: Sword Vault Dale floating
+  stones (`p_fxmap_map02_lv006_*stone_01`) tumble ≤10°/s per axis; shaft crates neither spin nor
+  wander.
+- **fade (`hasAlphaControl`)**: evaluates `alphaOverLifeTime` at normalized age (same random value);
+  while `< transparentAlpha`, flags the object for renderer fade at that value (renderer behaviour
+  untraced). `unverified:` curves appear to encode fade-out amount (0 = fully visible): Qingbo
+  bucket chain (`p_fxmap_lv003_bucke_2101`/`2102`, `transparentAlpha = 1`) runs 1 → 0 over first 7%
+  and 0 → 1 over last 5%; Sword Vault Dale stones (`transparentAlpha = 1`) run 1 → 0 over first
+  2–5%; shaft movers set `transparentAlpha = 0` (never fade).
 
 ## open
 
 - [particle systems](#particle-systems): exact per-frame rate-curve integration, donut shape,
-  `separateAxis` speed limits, drag curves, non-sphere force fields, freeform stretch, and Unity's
+  `separateAxis` speed limits, drag curves, non-sphere force fields, freeform stretch, and Unity
   trail generation (`minVertexDistance`)
 - [spline movers](#spline-movers): lifetime span formula (`length / speed`, unverified) and how the
-  renderer applies the `alphaOverLifeTime` fade (untraced)
+  renderer applies `alphaOverLifeTime` fade (untraced)

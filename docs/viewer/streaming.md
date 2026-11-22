@@ -1,346 +1,266 @@
 # streaming and selection
 
-each frame whose view or content changed runs one traversal (`Traversal.run` in
+every frame whose view or content changed runs one traversal (`Traversal.run` in
 [`viewer/traversal.ts`](../../packages/viewer/src/viewer/traversal.ts)); frames that only settle
-antialiasing or exposure reuse the last selection. the stream's "frames" below count traversals.
+antialiasing or exposure reuse the last selection. "frames" in the stream rules below count
+traversals.
 
-1. `Selector.run` walks the tile tree for terrain patches and instance row ranges, and the selected
-   blocks' spinning and riding rows are moved ([per-instance LOD](#per-instance-lod)).
-2. `MeshSelector.run` culls and LOD-selects instances in those ranges and buckets them for drawing.
-3. sky textures, water surfaces and irradiance cells are requested.
-4. `StreamManager.update` cancels, dispatches, uploads and evicts; `TextureReduction.update` adjusts
-   the [texture reduction](#residency-and-budgets) and `TextureStore.commit` applies texture
+1. `Selector.run` walks the tile tree for terrain patches and instance row ranges; spinning and
+   riding rows in selected blocks advance ([per-instance LOD](#per-instance-lod)).
+2. `MeshSelector.run` culls, LOD-selects, and buckets instances in those ranges.
+3. sky textures, water surfaces, and irradiance cells are requested.
+4. `StreamManager.update` cancels, dispatches, uploads, and evicts; `TextureReduction.update`
+   adjusts [texture reduction](#residency-and-budgets); `TextureStore.commit` applies texture
    shrinks.
-5. if the frame renders, the renderers write their per-frame buffers (`prepare`).
+5. if rendering, renderers write per-frame buffers (`prepare`).
 
 ## tile tree
 
-[`scene/tile-tree.ts`](../../packages/viewer/src/scene/tile-tree.ts) links the package's quadtree
-nodes to their children and splits each node's content refs by kind: one terrain height page, one
-terrain surface page, a leaf's terrain splat page, HLOD refs (with a tier), detail refs and
-conditional refs. each node at or below the cell level records its cell id, for the current level's
-[priority](#priority).
+[`scene/tile-tree.ts`](../../packages/viewer/src/scene/tile-tree.ts) links quadtree nodes to their
+children and splits each node's content refs by kind: terrain height page, terrain surface page,
+leaf terrain splat page, HLOD refs (with tier), detail refs, and conditional refs. nodes at or below
+the cell level record their cell id for current-level [priority](#priority).
 
 ## levels
 
-every level of a package shows at once; a visibility group's level only says who owns the content.
-the viewer keeps one current level
-([`viewer/viewer.ts`](../../packages/viewer/src/viewer/viewer.ts),
-[`scene/level-pose.ts`](../../packages/viewer/src/scene/level-pose.ts)): the `level` URL parameter
-at load (else the first level with instances), the level picked in the levels panel (`flyToLevel`,
-which also flies over it), and otherwise the level owning the 128 m cell the camera moves into. the
-cell a level flight lands in, and the first cell after load, don't count, since a level's vantage
-point can sit over a neighbour's cells, and cells no level owns keep the last level. the current
-level gives the [base environment](environment.md#blending-at-the-camera), streams right after
-what's near the camera, and has its controls listed first in the
+every level in a package renders at once; a visibility group's level only records ownership. the
+viewer tracks one current level ([`viewer/viewer.ts`](../../packages/viewer/src/viewer/viewer.ts),
+[`scene/level-pose.ts`](../../packages/viewer/src/scene/level-pose.ts)), chosen in order from:
+
+1. the `level` URL parameter at load (else the first level with instances);
+2. a level picked in the levels panel (`flyToLevel`, which also flies over it);
+3. the level owning the 128 m cell the camera enters (ignoring the initial load cell, a level-flight
+   landing cell, and unowned cells).
+
+the current level sets the [base environment](environment.md#blending-at-the-camera), streams
+immediately after near-camera tiles, and lists its controls first in the
 [scene conditions panel](scene-states.md#the-scene-conditions-panel).
 
 ## instance selection
 
 [`streaming/selection.ts`](../../packages/viewer/src/streaming/selection.ts) uses 3D Tiles-style
-REPLACE refinement on the game's [HLOD rings](../game-data/world.md#streaming-layers), by the
-distance from the camera to the node's bounds (`hlodRing`). the game swaps each cluster on its own,
-once the last of its [linked children](../game-data/world.md#lod-and-hlod) has loaded; the package
-doesn't carry the links, so the viewer swaps a tile's clusters together at the ring those loads
-produce:
+REPLACE refinement over the game's [HLOD rings](../game-data/world.md#streaming-layers) by
+camera-to-bounds distance (`hlodRing`). because packages omit per-cluster
+[linked children](../game-data/world.md#lod-and-hlod), a tile swaps all of its clusters together:
 
-- a node holding HLOD tier 0 refines within `detailDistance` (default 160 m, the game's at its high
-  PC preset, 4000), tier 1 within HLOD0's radius (512 m) and tier 2 within HLOD1's (1024 m), each
-  widened to `detailDistance` if that's larger. HLOD2 keeps drawing past the game's 2048 m, so an
-  overview isn't empty. a node with no shown HLOD always refines, and a leaf with none refines
-  within `detailDistance`. a node refined on the last traversal stays refined until 20 m past its
-  ring, the game's unload hysteresis, so a camera hovering at a ring doesn't swap and refetch the
-  two representations every frame.
-- with `detail` on, a leaf refines into its detail blocks, even when it has none: a cluster's
-  children can all be filed under neighbouring leaves, where they draw anyway, so keeping the
-  cluster would overlay them.
-- the package's geometric error (1/16 of a node's edge) only orders requests
-  ([priority](#priority)): refining on its screen-space error would draw detail several times as far
-  out as the game does.
-- until everything a refinement needs is resident, the node keeps drawing its own HLOD, so streaming
-  never opens holes. disabled HLOD tiers are refined past.
-- conditional content has no HLOD stand-in, so it follows its own rule while `detail` is on. a ref
-  with a [reach](../package-format.md#tile-tree) draws while the camera, standing in for the game's
-  streaming centre, is inside that rectangle: dynamic structures' blocks reach as far as their game
-  grid loads them, so Dijiang's corroded planet and satellites show from its deck, though their
-  renderers sit hundreds of metres to kilometres from it. an effect layer shown at only some of its
-  LOD proxy's levels sits in blocks reaching where the proxy is at them
-  ([chains](../package-format.md#binary-encodings)). those blocks are listed by reach
-  (`TileTree.reached`), tested every frame a reach at a time (about 0.1 ms per traversal over
-  map02's couple of thousand grids). the rest, scene-state content and facilities, draw within
-  `detailDistance` of their tile.
-- the tree's global refs are pinned and drawn whenever they're resident, never requested. no cluster
-  stands in for them: in the game they're never hidden either, only loaded within their layer's
-  radius, which the viewer doesn't apply.
-- every ref is drawn only while its visibility group shows. the viewer evaluates `groupsShown` (see
-  [package-format.md](../package-format.md#visibility-groups)) whenever a scene value or the stream
-  areas at the camera change, and hands the same array to the selector, the water, the local lights
-  and the irradiance volume, which is how scene states switch content.
+| node / ref            | refinement / draw rule                                                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| HLOD tier 0           | refines within `detailDistance` (default 160 m, game's high PC preset 4000)                                                                  |
+| HLOD tier 1           | refines within `max(512 m, detailDistance)` (HLOD0 radius)                                                                                   |
+| HLOD tier 2           | refines within `max(1024 m, detailDistance)` (HLOD1 radius); keeps drawing past 2048 m so overviews aren't empty                             |
+| no shown HLOD         | internal nodes always refine; leaves refine within `detailDistance`                                                                          |
+| conditional (reached) | draws while `detail` is on and camera is inside its [reach](../package-format.md#tile-tree) rectangle (`TileTree.reached`, ~0.1 ms on map02) |
+| conditional (other)   | draws while `detail` is on within `detailDistance` of its tile (scene-state content, facilities)                                             |
+| global refs           | pinned, drawn whenever resident, never requested, no radius limit                                                                            |
+
+- **hysteresis.** a refined node stays refined until 20 m past its ring (the game's unload
+  hysteresis), preventing boundary thrashing.
+- **no holes.** a node keeps drawing its own HLOD until all refinement targets are resident.
+  disabled HLOD tiers are refined past.
+- **empty leaves.** with `detail` on, a leaf refines even if it has no detail blocks, because a
+  cluster's children may live in neighbouring leaves.
+- **geometric error.** package geometric error (1/16 of a node's edge) only orders
+  [priority](#priority); screen-space error refinement would draw detail far beyond the game's
+  radius.
+- **reached blocks.** dynamic structures (e.g. Dijiang's planet and satellites) and LOD-proxy effect
+  layers ([chains](../package-format.md#binary-encodings)) use reach rectangles so they stay visible
+  from distant vantage points.
+- **visibility groups.** every ref draws only while its visibility group is shown. `groupsShown`
+  ([package-format.md](../package-format.md#visibility-groups)) updates when a scene value or camera
+  stream area changes and is shared by the selector, water, local lights, and irradiance volume.
 
 ## terrain selection
 
-terrain is CDLOD, with the viewer's own LOD rule: the game's per-node `maxHeightError` isn't an
-error bound ([terrain](../game-data/terrain.md)). each level's distance range comes from its sample
-spacing and `terrainPixels` (default 3 px per sample). a node subdivides while the next finer range
-reaches it; a quadrant whose child page isn't resident is drawn from the parent page while the child
-is requested, and vertices morph to the coarser grid over the last 30% of a level's range (the
-coarsest level never morphs). every selected page quadrant is an instance of one shared grid, so
-terrain is a single draw
-([`render/terrain/terrain-renderer.ts`](../../packages/viewer/src/render/terrain/terrain-renderer.ts)).
+terrain uses CDLOD with a viewer-defined LOD rule (the game's `maxHeightError` is not an error
+bound; see [terrain](../game-data/terrain.md)).
 
-each visited node also wants its surface page at the same priority. a patch is shaded from the
-finest resident surface page at or above its node, magnified when it's an ancestor's, so the ground
-keeps its colours while finer pages stream. leaves within `DETAIL_DISTANCE` (160 m) also want their
-splat page, which the [close-up layers](terrain.md#close-up-layers) need along with every layer
-texture (pinned when the first splat page arrives). `terrainSurface` and `terrainSplat` turn the two
-off; without BC textures neither loads.
+- each level's distance range derives from its sample spacing and `terrainPixels` (default 3 px per
+  sample).
+- a node subdivides while the next finer range reaches it. quadrants whose child page is not
+  resident draw from the parent page while requesting the child.
+- vertices morph to the coarser grid over the last 30% of a level's range (coarsest never morphs).
+- every selected quadrant is an instance of one shared grid, drawn in a single call
+  ([`render/terrain/terrain-renderer.ts`](../../packages/viewer/src/render/terrain/terrain-renderer.ts)).
+- each visited node requests its surface page at the same priority and shades from the finest
+  resident surface page at or above it.
+- leaves within `DETAIL_DISTANCE` (160 m) also request their splat page for
+  [close-up layers](terrain.md#close-up-layers) (pinning all layer textures when the first splat
+  page arrives). `terrainSurface` and `terrainSplat` toggle them; neither loads without BC support.
 
 ## per-instance LOD
 
-before it runs, the selected blocks' [spinning rows](../package-format.md#instance-block-inst-efin)
-are turned to the viewer's clock (`turnRows` in
-[instance-rows.ts](../../packages/viewer/src/content/instance-rows.ts)): their transform and bounds
-centre are rewritten from the stored ones in the CPU copy, and the runs of rows holding them (runs
-bridge gaps of up to 8 still rows) are written to the GPU again. while any selected block has
-spinning rows, frames that render traverse again, as with particles, so the shadows follow. every
-wheel starts from its stored pose at the clock's zero; the game's phase is its gameplay clock's.
+before selection runs, moving rows in selected blocks update on the CPU and re-upload to the GPU:
 
-the blocks' [riding rows](../package-format.md#instance-block-inst-efin) move the same way
-(`rideRows`): each row's translation and bounds centre are its stored ones plus its path's offset at
-the clock, so everything that reads a row follows it, the mesh and effect shaders' instance origin,
-billboards, a particle emitter's frame (its live particles move with it, world-space ones included)
-and the row's cull sphere. an auto-moving platform, the effects mounted on it and their particles
-thus ride as one. every platform starts its loop at the clock's zero.
+- **spinning rows** ([`instance-rows.ts`](../../packages/viewer/src/content/instance-rows.ts),
+  `turnRows`): rotates transforms and bounds centres from their stored pose by the viewer clock
+  (phase starts at 0, not the game's gameplay clock) and re-uploads runs bridging ≤ 8 still rows.
+- **riding rows** (`rideRows`): offsets each row's translation and bounds centre by its path at the
+  viewer clock (loop starts at 0), moving meshes, effects, billboards, cull spheres, and particle
+  emitter frames (including live world-space particles) together.
+- any selected block with spinning or riding rows forces re-traversal on rendered frames so shadows
+  follow.
 
-[`streaming/mesh-selection.ts`](../../packages/viewer/src/streaming/mesh-selection.ts) runs on the
-CPU over the selected row ranges, with the sphere and shadow layer tests of
-[`instance-culling.ts`](../../packages/viewer/src/streaming/instance-culling.ts) and the chain slots
-and buckets of [`mesh-buckets.ts`](../../packages/viewer/src/streaming/mesh-buckets.ts). it first
-tests each group of 32 consecutive rows of a block
-([`row-groups.ts`](../../packages/viewer/src/streaming/row-groups.ts)) against the same rules with
-the group's bounds: its sphere, its largest row radius and its farthest LOD reach. the decode worker
-builds the groups, the [segments](#gpu-culling) and the rows' handedness beside the rows
-(`buildRowBounds`), and the selection only fills in each group's reach on the block's first
-selection, since that takes the chains' drawn slots. a group that fails a rule has no row that
-passes it, so it's skipped whole. rows are in placement order, which keeps a group's rows close
-together (a median radius of about 20 m on map02); groups holding spinning or riding rows are never
-skipped. per instance it:
+[`streaming/mesh-selection.ts`](../../packages/viewer/src/streaming/mesh-selection.ts) runs over
+selected row ranges using
+[`instance-culling.ts`](../../packages/viewer/src/streaming/instance-culling.ts) and
+[`mesh-buckets.ts`](../../packages/viewer/src/streaming/mesh-buckets.ts).
 
-1. culls by projected bounding-sphere radius (`minBoxPixels`, default 1.5 px) and by frustum planes;
-2. computes Unity's LODGroup metric (object size relative to screen height, the size being twice the
-   largest half-extent of its world bounds; unverified, see
-   [chains](../package-format.md#binary-encodings)), or for a `CameraDistance` chain the squared
-   distance to its distance origin, and picks every chain draw whose `(minSquared, maxSquared]` band
-   contains it. an instance past the chain's smallest threshold, or with nothing drawn in its band,
-   is culled, matching the game;
-3. if all picked geometries are resident, appends the row to a bucket keyed by (geometry, submesh,
-   material, mirrored). otherwise it requests the geometry at a priority of its projected pixel
-   height and draws the nearest LOD whose geometry is all resident (coarser first on ties), which is
-   usually the one it drew before the switch. that stand-in is kept from eviction but not requested;
-   only an instance with no resident LOD draws its box (particle emitters and shadow-only instances
-   never do). an instance is mirrored when its transform's determinant is negative, which flips its
-   triangles' winding.
+**group culling.** the decode worker groups every 32 consecutive rows
+([`row-groups.ts`](../../packages/viewer/src/streaming/row-groups.ts), `buildRowBounds`) with group
+sphere, max row radius, segments, and handedness (median radius ~20 m on map02); selection fills in
+each group's farthest LOD reach on first use. a group failing any cull test is skipped whole, except
+groups with spinning or riding rows.
+
+**per-instance steps (CPU path)**:
+
+1. cull by projected bounding-sphere radius (`minBoxPixels`, default 1.5 px) and frustum planes.
+2. compute Unity's LODGroup metric (`2 × maxHalfExtent / screenHeight`, unverified; see
+   [chains](../package-format.md#binary-encodings)), or squared distance to origin for
+   `CameraDistance` chains, and pick every draw whose `(minSquared, maxSquared]` band contains it.
+   instances past the smallest threshold or in an empty band are culled.
+3. if all picked geometries are resident, append the row to a bucket keyed by
+   `(geometry, submesh, material, mirrored)` (`mirrored` = negative transform determinant, flips
+   triangle winding). otherwise request missing geometries at projected pixel height and draw the
+   nearest resident LOD (coarser on ties, protected from eviction, not requested). only instances
+   with no resident LOD draw boxes (particle emitters and shadow-only instances never do).
 
 ### GPU culling
 
-with `gpuCulling` on (the default, where the GPU has `indirect-first-instance`), most rows skip that
-per-instance walk: the CPU does the bookkeeping per segment and the GPU tests the rows
+with `gpuCulling` on (default when `indirect-first-instance` is supported), the CPU operates per
+segment and a compute pass tests individual rows
 ([`gpu-cull-work.ts`](../../packages/viewer/src/streaming/gpu-cull-work.ts),
 [`render/meshes/instance-culler.ts`](../../packages/viewer/src/render/meshes/instance-culler.ts),
-`instance-cull.wgsl`). a segment is the rows of a group in one chain run, with its own bounds, its
-rows' smallest and largest LOD size, and their handedness. for each segment of a group that passes
-the group tests, the CPU:
+`instance-cull.wgsl`). a segment is the rows of one group in one chain run (bounds, min/max LOD
+size, handedness).
 
-1. picks the slots whose bands the segment's rows can reach, from its nearest and farthest row
-   centre and its sizes, with the bands widened 2% for the GPU's f32 arithmetic;
-2. requests their geometry at the segment's largest priority, capped at the top of each slot's band.
-   a LOD with a slot not resident is drawn by the slots of its stand-in in that LOD's band, as on
-   the CPU path;
-3. makes room in each picked slot's bucket for every row of the segment in view, and in each shadow
-   layer the slot can cast into from the first one the segment's sphere reaches.
+for each passing segment, the CPU:
 
-the segment's largest priority puts its largest row at its nearest row centre, unless its row
-centres spread wider than a quarter of their distance; then each row is measured, as the CPU path
-does. near the camera the segment bound reaches the 0.1 m floor and would rate every row as covering
-the screen, requesting every texture at full detail: at a close indie_race001 view the textures in
-use would grow about ninefold over the CPU path's, fill the budget and leave meshes as boxes.
-measured and capped, they take about a third more than the CPU path's.
+1. picks all slots whose bands the segment can reach (bands widened 2% for f32).
+2. requests missing geometry at the segment's max priority, capped at each slot's band top (falling
+   back to stand-in LOD slots). priority uses max row at nearest centre unless row centres spread
+   > 1/4 of their distance, in which case rows are measured individually — avoiding a ~9× texture
+   > spike near the 0.1 m floor at close indie_race001 views (measured + capped is ~1.3× the CPU
+   > path).
+3. reserves bucket space for visible rows and for every reachable shadow layer.
 
-each picked slot's GPU-culled bucket, one per (geometry, submesh, material, mirrored), holds the
-segment's rows in view and its casters out of view alike, in a region of the visible list for its
-rows in view and one per shadow layer. a pass of `instance cull` appends each row to the regions it
-draws in, with its draw id, and another turns each region's count into indirect arguments (one draw
-for the rows in view and one per shadow layer, clamped to the region's room). a shadow layer the
-bucket has no room in skips its draw.
+`instance cull` appends each passing row (in-view and out-of-view casters) to its bucket regions and
+writes indirect draw arguments, skipping empty shadow layers.
 
-segments stay on the CPU path when their chain draws particles, has a `CameraDistance` band or a
-slot outside the opaque and alpha-tested queues, when a LOD they reach has no resident stand-in and
-the chain draws boxes, and when their group holds spinning or riding rows. picking slots by a
-segment's range leaves some buckets empty: at a dense Jingyu view about half as many draws again as
-on the CPU path, whose extra encoding costs a fraction of what the mesh selection saves. the in-view
-instance and triangle stats of GPU-culled buckets are read back a few frames late.
+- **CPU fallback.** segments stay on the CPU path if their chain draws particles, has a
+  `CameraDistance` band or non-opaque/alpha-tested slot, needs a box fallback with no resident
+  stand-in, or belongs to a spinning/riding group.
+- **overhead.** segment-range slot picking leaves some buckets empty (~50% more draws at a dense
+  Jingyu view, far cheaper than CPU selection). in-view instance/triangle stats read back a few
+  frames late.
+- **occlusion culling.** with `occlusionCulling` on (default), `depth pyramid`
+  ([`depth-pyramid.ts`](../../packages/viewer/src/render/meshes/depth-pyramid.ts)) reduces last
+  frame's depth to a farthest-depth pyramid (half-res level 0). each row's bounding-sphere cube is
+  reprojected to last frame's camera, widened 1 texel for jitter, and tested at the level spanning ≤
+  3×3 texels. occluded rows skip the main pass (still casting shadows). bypassed for boxes crossing
+  the screen edge or near plane, on the first frame, after a cut, or when the eye moved
+  > 8 m. disoccluded rows appear 1 frame late. flying over Jingyu, this hides ~1/3 of in-view
+  > triangles and cuts ~5% GPU time.
 
-with `occlusionCulling` on too (the default), rows in view hidden behind what the main pass drew
-last frame skip it, while still casting shadows. before culling, `depth pyramid` reduces the depth
-buffer, which still holds last frame's depth, into a pyramid of the farthest depth under each texel,
-half its size at the first level
-([`depth-pyramid.ts`](../../packages/viewer/src/render/meshes/depth-pyramid.ts)). the cube around
-each row's bounding sphere goes through last frame's camera; it's hidden when its nearest corner is
-behind the farthest depth over the texels it covers, widened a texel for the jitter, at the level
-where they span at most three texels each way. a box reaching off last frame's screen or in front of
-its near plane is drawn, as is everything on the first frame, after a cut, and when the eye moved
-over 8 m since the last frame. a row coming out from behind something draws a frame late. flying
-over Jingyu it hid about a third of the triangles in view and took about 5% off the GPU time.
+**face culling, UVs, and textures**:
 
-meshes cull the faces their material culls (front faces are clockwise, as Unity's are), with front
-and back swapped for mirrored buckets. each mesh phase, shadows included, has a pipeline per face
-culling and UV format, and draws are sorted by both. the vertex shader dequantizes 16-bit UVs with
-per-draw transforms, so the fragment shader sees one kind of UV.
-
-materials the game draws nothing visible with are dropped from the chain once, when it's first used
-(the rest draw, the ones the viewer can't as [unsupported](materials.md#unsupported-materials)), as
-are shadow-only draws whose material casts no shadow; the other shadow-only draws go to cast-only
-buckets even for instances in view. textures are then requested per bucket, every piece at once,
-down to the mip level the view needs, then `textureBias` levels coarser (0 by default; each level
-quarters the textures' memory): by [mip feedback](#mip-feedback) for the materials the main pass
-shades, and for the rest (glass, scene effects, cast-only buckets, the parallax and layer slots) by
-size on screen, the mip that gives about one texel per pixel across the largest on-screen use,
-scaled by the UV tiling, as if the texture spanned the instance once. sky and water textures and
-effect materials' 3D textures are streamed whole (`streamWholeTexture`; all three ways are in
-[`texture-requests.ts`](../../packages/viewer/src/streaming/texture-requests.ts)).
+- front faces are clockwise (Unity); mirrored buckets flip front/back culling. each mesh phase
+  (including shadows) has a pipeline per `(cullMode, uvFormat)`, sorted by both. the vertex shader
+  dequantizes 16-bit UVs via per-draw transforms.
+- invisible materials and non-casting shadow-only draws are stripped from each chain on first use
+  ([unsupported](materials.md#unsupported-materials) materials still draw). remaining shadow-only
+  draws go to cast-only buckets.
+- texture pieces are requested per bucket down to the needed mip + `textureBias` (default 0; each
+  level quarters memory) via
+  [`texture-requests.ts`](../../packages/viewer/src/streaming/texture-requests.ts):
+  - **mip feedback** for main-pass materials;
+  - **screen size × UV tiling** (~1 texel/pixel across largest on-screen use) for glass, scene
+    effects, cast-only buckets, parallax, and layer slots;
+  - **whole texture** (`streamWholeTexture`) for sky, water, and 3D effect textures.
 
 ### mip feedback
 
-an instance's size on screen says little about the mips its textures are sampled at: the camera
-stands inside the bounds of the hulls and buildings that carry the largest textures, an atlas spans
-several meshes, a trim sheet repeats along one, and most of a street is hidden behind its nearest
-walls. by that rule the textures in use at street level in Wuling City came to about 450 MiB, and
-every package filled the stream budget with textures. measuring each submesh's UV density in the
-packer, the way Unity's streaming estimates it, asked for more still (atlases at a distance), so it
-wasn't kept.
+screen-size estimation over-requests on hulls, atlases, trim sheets, and occluded streets (~450 MiB
+at Wuling City street level; packer-computed UV density asked for even more on distant atlases).
 
-instead the GPU reports what it samples
-([`render/textures/mip-feedback.ts`](../../packages/viewer/src/render/textures/mip-feedback.ts)).
-the mesh shader's opaque and alpha-tested shading writes, per pixel, its material's slot in the look
-table and how finely each of its two UV sets is sampled there: the longer axis of the pixel's
-footprint in UV units, as the GPU picks the level by, in quarter levels (`pack_mip_feedback` in
-frame.wgsl), into a fifth main pass target. shading runs at equal depth, so only visible surfaces
-report. a face pinned to a texel or two of a colour swatch (a UV unit spread over more than 32 km of
-surface) reports nothing, since it looks the same at any level. after the main pass a compute pass
-reads one pixel of every 4 × 4 block, a different one each frame, and keeps the finest footprint per
-material and UV set; the result is read back a few frames later and kept over two windows of at
-least 16 readbacks and 0.4 s, so every pixel has been read and a material that leaves the view stops
-asking within about a second.
+instead, the GPU reports sampled footprints
+([`render/textures/mip-feedback.ts`](../../packages/viewer/src/render/textures/mip-feedback.ts)):
 
-a texture is then requested down to the level that footprint samples, `log2(texels · tiling)` less
-the footprint's levels, rounded as its sampler does (most of the game's take the nearest level
-rather than blend two). the base colour, normal, mask, emissive and detail slots stream this way; a
-material drawn but not reported (hidden, or about to show) gets its textures two levels coarser than
-its size on screen asks for and no larger than 256 texels, so what comes into sight has something to
-show while its levels load. levels that fall out of use stay resident until the budget needs their
-room. at the Wuling City stops this brought the textures in use to 150–250 MiB.
+- opaque and alpha-tested main-pass shaders write look-table slot + longest UV-footprint axis for
+  both UV sets in quarter-levels (`pack_mip_feedback` in `frame.wgsl`) to a 5th main-pass target.
+  equal-depth shading ensures only visible surfaces report; colour swatches (> 32 km per UV unit)
+  report nothing.
+- a compute pass reads 1 pixel per 4×4 block (rotating each frame) and keeps the finest footprint
+  per `(material, uvSet)`. readbacks arrive a few frames later and merge across two windows of ≥ 16
+  readbacks and 0.4 s, dropping off-screen materials in ~1 s.
+- target mip is `log2(texels · tiling) − footprintLevels`, rounded per sampler mode. applies to base
+  colour, normal, mask, emissive, and detail slots. drawn but unreported materials request 2 levels
+  coarser than screen size, capped at 256 px. unused levels stay resident until evicted.
+- cuts Wuling City textures in use to 150–250 MiB. falls back to screen-size without
+  `mipFeedbackTarget` or with `mipFeedback` off.
 
-without room for the target (`mipFeedbackTarget` in the stats panel's features) or with the
-`mipFeedback` option off, every texture streams by size on screen.
-
-the CPU path's output (a visible row list plus per-bucket ranges) has the shape the GPU cull pass
-writes.
+the CPU path outputs the same visible-row list and per-bucket ranges as GPU culling.
 
 ## priority
 
-priority is SSE (or projected pixels for geometry and textures). tiles within 256 m of the camera
-are boosted 64×, and farther tiles in the current level's cells 8×, so what surrounds the camera
-loads first, then the rest of the current level, then the other levels. nodes outside the frustum
-are requested at 0.1× where the traversal still reaches them: terrain children of a node in view
-(prefetch around the camera) and instance tiles in the [off-screen casters'](lighting.md#shadows)
-volume, whose instances' geometry is requested at 0.1× of its pixel height. a texture's pieces are
-requested in the same frame, at the bucket's priority divided by one plus the piece's index, so
-coarse levels come first but a sharp texture takes one round trip rather than one per piece (a
-texture's pieces mostly sit side by side in one archive, so they're usually read together).
-irradiance cells and the sky's and water's whole-streamed textures use fixed priorities above all
-scenery; an effect's 3D texture takes its bucket's.
+- **base.** SSE for tiles; projected pixel height for geometry and textures.
+- **boosts.** ×64 within 256 m of camera; ×8 for farther tiles in the current level's cells.
+- **off-frustum.** ×0.1 where traversal reaches outside the frustum: terrain children prefetch and
+  [off-screen casters](lighting.md#shadows) (and their geometry).
+- **texture pieces.** `bucketPriority / (1 + pieceIndex)` — coarse levels load first, while adjacent
+  pieces in one archive coalesce into a single round trip.
+- **fixed high priority.** irradiance cells and whole-streamed sky/water textures sit above all
+  scenery; effect 3D textures use their bucket's priority.
 
 ## residency and budgets
 
-[`streaming/stream-manager.ts`](../../packages/viewer/src/streaming/stream-manager.ts) owns each
-blob's lifecycle (`idle → queued → fetching → fetched → decoding → uploading → ready`, or `failed`,
-which isn't retried; a failed shard read returns the blob to idle twice before it fails, since a dev
-server under load sometimes answers a range request with no bytes). it doesn't know the kinds of
-content: each kind (`heights`, `surface`, `splat`, `layer`, `instances`, `geometry`, `texture`,
-`irradiance`) has a handler
-([`streaming/residency.ts`](../../packages/viewer/src/streaming/residency.ts)) that uploads its
-decoded blobs and frees them, and may build its decode job (instance blocks add their row kinds,
-from [`content/row-kinds.ts`](../../packages/viewer/src/content/row-kinds.ts)). `openScene`
-([`viewer/scene-loader.ts`](../../packages/viewer/src/viewer/scene-loader.ts)) wires the handlers to
-the renderers and stores that own the GPU side; their residency shapes are in
-[`streaming/resident.ts`](../../packages/viewer/src/streaming/resident.ts).
+[`streaming/stream-manager.ts`](../../packages/viewer/src/streaming/stream-manager.ts) manages blob
+lifecycles: `idle → queued → fetching → fetched → decoding → uploading → ready` (or `failed`, never
+retried; failed shard reads retry twice from `idle` to tolerate transient empty dev-server answers).
+it is content-agnostic: per-kind handlers (`heights`, `surface`, `splat`, `layer`, `instances`,
+`geometry`, `texture`, `irradiance`) live in
+[`streaming/residency.ts`](../../packages/viewer/src/streaming/residency.ts), instance row kinds in
+[`content/row-kinds.ts`](../../packages/viewer/src/content/row-kinds.ts), residency shapes in
+[`streaming/resident.ts`](../../packages/viewer/src/streaming/resident.ts), and `openScene`
+([`viewer/scene-loader.ts`](../../packages/viewer/src/viewer/scene-loader.ts)) wires them to the
+renderers.
 
-- **wanting.** the traversal calls `want(blob, priority)` every frame. a resident blob that's wanted
-  counts as used, even when a coarser stand-in is drawn, so a refinement in progress isn't evicted
-  and refetched.
-- **pinning.** the core archive's height pages and instance blocks (coarse terrain, every HLOD
-  block, global scenery) are pinned at load
-  ([`streaming/core-blobs.ts`](../../packages/viewer/src/streaming/core-blobs.ts)), plus, where BC
-  textures are supported, its surface pages. the terrain layer textures are pinned when the first
-  splat page arrives rather than at load, since only ground within the splat pages' reach draws from
-  them (tens of MB on map02 that an overview never needs). pinned blobs come first (core ones are
-  read from memory at once), upload first and are never evicted. pinned height pages keep their
-  samples on the CPU for ground-height queries
-  ([`scene/ground.ts`](../../packages/viewer/src/scene/ground.ts)), which place a level's first view
-  ([`scene/level-pose.ts`](../../packages/viewer/src/scene/level-pose.ts)).
-- **fetching.** at most 32 range reads in flight (`maxRequests`): a dense view wants thousands of
-  blobs averaging ~60 KiB, so latency, not bandwidth, bounds loading. measured from the dev server
-  on Wuling's first views, 32 loads about three times as fast as 8; 64, dispatching freed slots
-  between frames, and wider coalescing gain little or nothing. queued blobs seed reads by priority,
-  and each seed coalesces neighbours in the same archive (gaps ≤ 64 KiB, span ≤ 2 MiB, ≤ 96 blobs)
-  into one range read ([`streaming/coalesce.ts`](../../packages/viewer/src/streaming/coalesce.ts)).
-  a request then carries up to 32 such reads of one archive, 2 MiB in all (always one whole read),
-  as the ranges of one multi-range request where the [source](loading.md#sources) can answer one.
-  meshes and textures shared across a map sit far apart in their archives, so few of them coalesce:
-  the blobs in use at the Jingyu overview could have come in half as many reads as blobs at best,
-  and grouping each archive's meshes and textures by the tiles using them brought that down by only
-  a quarter, since no order suits what's shared map-wide. carrying several reads a request halved a
-  map02 flight's requests and took a quarter to a third off the 95th percentile of its waits from
-  wanting a mesh, texture or instance block to having it. every blob's place in byte order is sorted
-  once when the stream opens (a few tens of milliseconds for map02's hundred thousand or so blobs),
-  so a dispatch heapifies the queue and walks neighbours instead of sorting it twice, which took
-  milliseconds once thousands of blobs were queued. core blobs are read from memory without a
-  request slot. requests whose blobs nobody wanted for more than 2 frames are aborted; queued blobs
-  not wanted this frame return to idle. no new reads start while 384 blobs (`MAX_UNDECODED`) are
-  fetched or being read and not yet decoding.
-- **decoding.** fetched blobs wait in the stream manager, not in the decode pool, and each slot that
-  frees on a worker (64 per worker: a worker's answers wait for a busy main thread, so its jobs in
-  hand are what a frame can take in, see [decode workers](loading.md#decode-workers-and-zstd)) takes
-  the most wanted one; blobs nobody has wanted for 30 frames are dropped first. no decode starts
-  while 64 MiB of raw blobs are being decoded or wait decoded for an upload (one blob always may):
-  the workers outrun the frames' upload budget, and decoded content waits in memory. queued in the
-  pool in arrival order instead, thousands of blobs wait at once flying across map02, so what comes
-  into view waits behind what the camera has left while the workers sit idle nearly all the time.
-- **uploading.** pinned first, then by priority, until the frame has uploaded 24 MiB or spent 2 ms
-  on unpinned uploads (at least one a frame). the cost is per upload more than per byte: a frame
-  fits hundreds of average geometry blobs in 24 MiB, and flying over map02 bursts of dozens of
-  uploads landed on the worst frames. large uploads go through a [staging buffer](gpu-resources.md),
-  since a queue write of a megabyte stalls the main thread for longer than the whole budget. the
-  game spends 1.5 ms a frame loading ([streaming layers](../game-data/world.md#streaming-layers)).
-  decoded content nobody has wanted for 30 frames is dropped instead. a full pool evicts up to 16
-  resident, unpinned blobs of the same kind that weren't used this frame and have no higher
-  priority, oldest first, and retries.
-- **budget.** resident bytes of all kinds count against `budgetMiB` (default 1536). over budget, the
-  least recently used unpinned blobs not used this frame are evicted. if the budget is still
-  exceeded by content in use, the manager is _saturated_: unpinned fetches and uploads pause (queued
-  blobs return to idle and decoded ones are dropped) until something falls out of use, because
-  evicting fresh uploads only to refetch them would thrash.
-- **texture reduction.** textures are most of what saturates it: flying from Test Area over Yinglung
-  Pass into North Wuling, the view at (-508, 235, 1018) wants about 600 MiB of textures, which alone
-  would pause the stream at half the default budget with meshes still to load, left as boxes. while
-  the manager is saturated and textures in use are at least a quarter of the budget,
-  [`TextureReduction`](../../packages/viewer/src/streaming/texture-reduction.ts) adds half a mip
-  level to every material texture request (on top of `textureBias`, up to 3), every 4 frames. the
-  levels it lets go fall out of use and are evicted, and the paused loads resume. every 30 frames it
-  lowers the reduction by half a level if the content in use, with its textures doubled, would fit
-  in 85% of the budget. at that view one level more than halves the textures in use. the frame loop
-  keeps traversing a still view while a raise may help, since a saturated stream is otherwise idle.
-  the stats panel shows the reduction next to the texture bytes. the game does the same with Unity's
-  texture streaming ([textures](../game-data/world.md#texture-streaming)), though with a budget for
-  textures alone.
-- `version` is bumped on every upload and eviction; the frame loop redraws on a change.
+- **wanting.** traversal calls `want(blob, priority)` every frame. wanted resident blobs count as
+  used even while a coarser stand-in draws, preventing eviction during refinement.
+- **pinning.** core heights, core instances (coarse terrain, HLODs, global scenery), and core
+  surfaces (if BC supported) are pinned at load
+  ([`streaming/core-blobs.ts`](../../packages/viewer/src/streaming/core-blobs.ts)). terrain layer
+  textures pin when the first splat page arrives (saving tens of MB on overviews). pinned blobs load
+  from memory, upload first, and never evict. pinned heights stay on the CPU for ground-height
+  queries ([`scene/ground.ts`](../../packages/viewer/src/scene/ground.ts),
+  [`scene/level-pose.ts`](../../packages/viewer/src/scene/level-pose.ts)).
+- **fetching.** max 32 range reads in flight (`maxRequests`; 3× faster than 8 on Wuling; 64 or wider
+  coalescing gains little). queued blobs seed reads by priority and coalesce same-archive neighbours
+  (gap ≤ 64 KiB, span ≤ 2 MiB, ≤ 96 blobs;
+  [`streaming/coalesce.ts`](../../packages/viewer/src/streaming/coalesce.ts)). up to 32 reads (≤ 2
+  MiB total, always ≥ 1 full read) bundle into one multi-range request where supported
+  ([sources](loading.md#sources)), halving map02 flight requests and cutting p95 wait 25–33%. blobs
+  are sorted by archive offset once at open, so dispatch heapifies and walks neighbours instead of
+  re-sorting. core blobs skip request slots. requests unwanted > 2 frames abort; queued blobs
+  unwanted this frame return to `idle`. new reads pause at 384 undecoded blobs (`MAX_UNDECODED`).
+- **decoding.** fetched blobs queue in the stream manager; each freed worker slot (64/worker; see
+  [decode workers](loading.md#decode-workers-and-zstd)) pulls the highest-priority blob. blobs
+  unwanted for 30 frames are dropped. new decodes pause above 64 MiB of raw blobs decoding or
+  awaiting upload (at least 1 blob always proceeds).
+- **uploading.** pinned first, then by priority, up to 24 MiB or 2 ms/frame for unpinned uploads (at
+  least 1/frame; game uses 1.5 ms, see [streaming layers](../game-data/world.md#streaming-layers)).
+  large uploads use a [staging buffer](gpu-resources.md). decoded blobs unwanted for 30 frames are
+  dropped. on a full pool, evicts up to 16 unused unpinned same-kind blobs of ≤ priority (oldest
+  first) and retries.
+- **budget.** all resident bytes count against `budgetMiB` (default 1536). over budget, LRU unused
+  unpinned blobs evict. if in-use bytes still exceed budget, the manager becomes _saturated_:
+  unpinned fetches and uploads pause (queued blobs return to `idle`, decoded blobs drop) to avoid
+  thrashing.
+- **texture reduction.** while saturated and in-use textures ≥ 25% of budget,
+  [`TextureReduction`](../../packages/viewer/src/streaming/texture-reduction.ts) adds +0.5 mip to
+  material texture requests (on top of `textureBias`, max 3) every 4 frames, letting freed levels
+  evict so paused loads resume (e.g. North Wuling `(-508, 235, 1018)` wants ~600 MiB of textures; +1
+  mip more than halves it). every 30 frames it lowers by 0.5 if `inUse + inUseTextures` fits in 85%
+  of budget. the frame loop keeps traversing a still view while a raise may help. shown beside
+  texture bytes in the stats panel. the game uses Unity's
+  [texture streaming](../game-data/world.md#texture-streaming) with a texture-only budget.
+- `version` bumps on every upload and eviction to trigger a redraw.

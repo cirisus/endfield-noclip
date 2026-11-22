@@ -1,791 +1,602 @@
 # scene effects
 
-scenery effects are meshes placed like any other renderer, mostly in dynamic structures, with
-`HGRP/Effect/*` materials. the magenta blight around Jingyu Valley's corrupted shrine (map02_lv001,
-near unity −905, 228, −1505) is one: `VFXDecal` boxes stain the ground and `VFXBaseV2` cards rise
-from it as red and blue smoke, all in script group `script:458752:41` with the shrine's damaged
-pieces (on by default). the components that switch effects inside prefabs (one-shot effects and
-effect LOD tables) are at the end of this page; particle systems and spline movers are in
-[particles.md](particles.md), prefabs themselves and billboards in [assets.md](assets.md#prefabs).
+scenery effects are meshes using `HGRP/Effect/*` materials, mostly placed in dynamic structures. for
+example, the magenta blight at Jingyu Valley's corrupted shrine (map02_lv001 near unity −905, 228,
+−1505) combines `VFXDecal` ground stains and `VFXBaseV2` smoke cards in script group
+`script:458752:41` (on by default). see [particles.md](particles.md) for particle systems and spline
+movers, and [assets.md](assets.md#prefabs) for prefabs and billboards.
 
 ## VFXBaseV2 and VFXDecal
 
 ### the texture stack
 
-both are unlit and premultiplied (one, one minus source alpha), and build their colour from a stack
-of textures by role:
+both shaders are unlit and premultiplied (`One, OneMinusSrcAlpha`) and compose a stack of textures
+by role:
 
-- **disturb**: the texture's red channel, remapped by `_Bi_Disturb`, shifts the UVs of the textures
-  sampled after it by `_DisturbU/VIntensity1` (or `…2` for the second), each texture taking the
-  share its `*UseDisturb` sets (mostly 0–1, often fractional). the rising mist puffs of
-  `M_fxmap_dung02_rdg005_camille_range_smoke_01_1102` (Si's Painting, map02_lv010) shift their main
-  texture by a tenth: shifted fully, their 2×2 sheet's neighbouring puffs reach the quads' edges
-- **weight**: scales that shift (`_WeightTexIntensity · _DisturbUseWeight`) and the dissolve
-  threshold
-- **mask**: multiplies the main texture's colour and alpha
-- **blend**: adds `blend · saturate((alpha + blend.a) · _BlendTint.a) · _BlendTint.rgb`
-- **dissolve**: alpha survives where the texture's red exceeds a threshold that sweeps from −1.01 to
-  1.01 with `_DissolveScheduleOffset`, sharpened by `_DissolveEdgeSharp`; a band
-  `_DissolveEmissiveEdge` wide takes `_DissolveEmissiveColor`
+| role     | effect                                                                                                                                                                                             |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| disturb  | R channel (remapped by `_Bi_Disturb`) shifts later textures' UVs by `_DisturbU/VIntensity1` (or `…2`) × each texture's `*UseDisturb`                                                               |
+| weight   | scales distortion (`_WeightTexIntensity · _DisturbUseWeight`) and dissolve threshold                                                                                                               |
+| mask     | multiplies main texture colour and alpha                                                                                                                                                           |
+| blend    | adds `blend · saturate((alpha + blend.a) · _BlendTint.a) · _BlendTint.rgb`                                                                                                                         |
+| dissolve | keeps alpha where R exceeds a threshold sweeping `−1.01..1.01` with `_DissolveScheduleOffset`, sharpened by `_DissolveEdgeSharp`; edge band `_DissolveEmissiveEdge` takes `_DissolveEmissiveColor` |
 
-each texture's UVs scroll by its `*UVSpeed` per second, rotate about the texture's centre, then take
-an `_ST`; `*AsAlpha` turns a texture's red channel into its alpha. colour properties marked HDR are
-used as stored, the others are converted to linear. colours ignore the post exposure when
-`_IgnorePostExposure` is set, as emission does. the near camera fade (`_UseNearCameraFade`) fades a
-layer in between `_NearCameraFadeDistanceStart` and `…End` metres of view depth, and out between
-`…Start2` and `…End2`.
+- `*UseDisturb` is often fractional: Si's Painting rising mist
+  (`M_fxmap_dung02_rdg005_camille_range_smoke_01_1102`, map02_lv010) shifts its 2×2 sheet by 0.1 so
+  neighbouring puffs do not bleed in.
+- each texture scrolls by `*UVSpeed` per second, rotates about `(0.5, 0.5)`, then applies `_ST`.
+  `*AsAlpha` uses R as alpha.
+- HDR colour properties are used as stored; LDR colours are linearized. `_IgnorePostExposure`
+  divides out post exposure.
+- `_UseNearCameraFade` fades in over `_NearCameraFadeDistanceStart`–`…End` m of view depth and out
+  over `…Start2`–`…End2` m.
 
 ### VFXBaseV2
 
-**textures.** the main texture plus up to six `_SampleTexN`, each playing the role its
-`_SampleTexNUseWeightK` property selects (0 disturb, 1 second disturb, 2 weight, 3 mask, 4 blend, 5
-dissolve), with the `_ST` of that role's own texture property (`_DisturbTex1`, `_DisturbTex2`,
-`_WeightTex`, `_MaskTex`, `_BlendTex`, `_DissolveTex`). a sample texture its keyword switches on
-samples the property's default (white for every `_SampleTexN`) when the material binds none: the
-white talosite's shards switch on a mask that way, so it masks nothing. a material without a main
-texture samples the shader's default, white (the base ring of Origin Lodespring's crater column is
-one).
-
-**UV sources.** each texture's UVs start from its `*UVWeights` times UV0, UV1, polar and screen UVs
-(materials set one weight). polar UVs are computed with `_USE_POLARUV` and `_UsePolarUV`: about
-UV0's centre, the angle from +v as a fraction of a turn and twice the distance. screen UVs, with
-`_USE_SCREENUV` and `_UseScreenUV`, are the pixel's position, centred and divided by half the width,
-v optionally the world height (`_UsePosYAsScreenV`), times the object origin's view depth past the
-near plane (`_ScreenUVUseDepth`, on by default). `_LocalPivortSpace` replaces the pixel's position
-with the fragment's offset from the object's origin along the camera's right and up, in metres,
-before the height and depth steps, so the pattern is anchored to the object rather than the screen.
-a source that isn't computed is zero, so a texture weighted to it only scrolls. the sixth sample
-texture's UVs come from UV0 or UV1 alone and scroll by the first's `_SampleTex0UVSpeed`. on
-particles (`_InParticle`) UV1 is the first texture coordinate set's zw (the UV2 stream); the second
-set is the particle's [custom data](#particle-custom-data).
-
-**colour and alpha.** the colour starts from `_TintColor · _TintColorIntensity` times the vertex
-colour, alpha from `_TintColor.a · _TintColorAlpha`; it's brightened by `_ExpIntensity` above
-`_ExpThreshold`. `_USE_ANIM_BREATHING` pulses that alpha between `_BreathingMinAlpha` and 1, by
-`saturate((cos(t · _BreathingSpeed) · 0.5 + 0.5)^_BreathingPower)`, t the shader's time scaled and
-offset by two per-draw values; the panels of Dijiang's clue board breathe so. alpha fades by a
-Fresnel term (`saturate(N·V + _FresnelBias)^_FresnelPower`, flipped by `_FresnelFlip`, applied by
-`_FresnelAffectOpacity`), which also mixes the colour towards `_FresnelColor`'s rgb by its w times
-the term, before the exposure; N is the vertex normal as it is, on back faces too. with
-`_USE_SOFTBLEND` the alpha also fades where the surface comes within `_SoftDistance` metres of what
-lies behind it.
-
-**lighting.** with `_USE_LIGHTING` the colour is an albedo, divided by the post exposure under
-`_IgnorePostExposure`, then lit by the irradiance volume, the shadowed sun and local lights, at the
-vertex normal turned towards the camera or at the world's up (`_RotateNormalToWorldUp`). the
-irradiance is one L1 probe per renderer, not a lookup per pixel. the shader puts no 1/π on the sun,
-which is shadowed from the cached far map alone, without the cloud shadow, so a particle bank under
-a cloud-shadowed sky still catches the sun. the mist cards rising at the foot of falls are lit so,
-as are the 20–45 m smoke puffs over indie_ccdg002's pool (`p_fxmap_common_bigwind_smoke_medium_01`,
-normals turned to the world's up). `_USE_FORCE_DYNAMIC_LIGHTING` is a material toggle in the
-shader's keyword space that none of its compiled variants reads, so it changes nothing; the glow
-over Marker Stone Interiors' rift monsters (`M_fx_monster_enemy_etthillu_lsq_01`) sets it.
-
-**blend modes.** the shader writes its alpha times `1 − _BlendMode`, so under `_BlendMode` 1, the
-shader's default, the premultiplied colour adds to what lies behind instead of covering it; about a
-quarter of the scenery's VFXBaseV2 materials are such, among them the glare at the corroded planet's
-centre seen from Dijiang's deck. `_BlendMode` 2 writes `lerp(1, colour, alpha)` for a
-`Blend DstColor Zero` state, which multiplies what lies behind by it.
-
-**ink wash.** `_OnlyShowAfterInkWash` scales the alpha, and with it the premultiplied colour, by
-`lerp(1, _InkWashGlobalParams.x, _OnlyShowAfterInkWash)`. outside the ink wash such a material draws
-nothing: Si's Painting's grid quad (`M_fxint_s_micro_008_decal_2501` in
-`int_drawing_puzzle_01_postmodel`, near unity 753, 278, 1308) is absent from an in-game shot of the
-wall, which shows only the carved grid beneath. what writes the global isn't traced: it's a
-`ShaderVariablesGlobal` field beside the VFX parameters, and its link to the ink-wash screen effect
-(`VFXPPInkWash`, whose intensity `PaintingScrollComponent` tweens in and out) is by name only.
-
-**opaque.** a material whose `_SrcBlend` and `_DstBlend` are one and zero writes the shader's
-premultiplied colour (the colour times its alpha) over what lies behind, and its depth, in the
-opaque queue (2000); the shader's only pass is the forward one, so it writes no G-buffer and casts
-no shadow. the falling gravel by map01's mining pipes (`p_fxmap_common_gravel_02`, near unity 635,
-62, 632) is mesh particles of rock pieces in such a material, `M_fx_quicksand_1104`: lit at the
-world's up, with `_UseMainTexAsAlpha`, so each rock is the flat grey tint with its texture's red,
-times `_TintColorAlpha` 10, as its alpha, so only texels whose red is below 0.1 darken it. its near
-camera fade, out from 200 to 300 m, would turn rocks beyond 300 m black rather than hide them.
+- **textures**: main texture plus up to six `_SampleTexN` slots. `_SampleTexNUseWeightK` assigns
+  each slot's role (`0` disturb 1, `1` disturb 2, `2` weight, `3` mask, `4` blend, `5` dissolve),
+  applying that role's own `_ST` (`_DisturbTex1/2`, `_WeightTex`, `_MaskTex`, `_BlendTex`,
+  `_DissolveTex`). unbound enabled slots and unbound main textures sample white (e.g. white talosite
+  shards' mask, Origin Lodespring crater column base ring).
+- **UV sources**: each texture blends UV0, UV1, polar, and screen UVs by `*UVWeights` (materials set
+  one weight; disabled sources are 0, so textures weighted to them only scroll):
+  - **polar** (`_USE_POLARUV` + `_UsePolarUV`): angle from `+v` as fraction of a turn and `2 ×`
+    distance about UV0's centre.
+  - **screen** (`_USE_SCREENUV` + `_UseScreenUV`): centred pixel position divided by half width
+    (`v` = world height with `_UsePosYAsScreenV`), × object origin view depth past near plane
+    (`_ScreenUVUseDepth`, default on). `_LocalPivortSpace` replaces pixel position with fragment
+    offset from object origin along camera right/up (metres) before height/depth, anchoring to the
+    object.
+  - `_SampleTex5` (sixth slot) uses UV0 or UV1 alone and scrolls by `_SampleTex0UVSpeed`.
+  - on particles (`_InParticle`), UV1 is UV set 0's `zw` (UV2 stream); UV set 1 is
+    [particle custom data](#particle-custom-data).
+- **colour & alpha**:
+  - starts from `_TintColor · _TintColorIntensity · vertexColor` and
+    `_TintColor.a · _TintColorAlpha`, brightened by `_ExpIntensity` above `_ExpThreshold`.
+  - `_USE_ANIM_BREATHING` (e.g. Dijiang clue board panels): pulses alpha between
+    `_BreathingMinAlpha` and 1 by `saturate((cos(t · _BreathingSpeed) · 0.5 + 0.5)^_BreathingPower)`
+    (`t` = time scaled/offset by two per-draw values).
+  - **Fresnel**: `f = saturate(N·V + _FresnelBias)^_FresnelPower` (flipped by `_FresnelFlip`; `N` is
+    unflipped vertex normal on back faces too). fades alpha by `_FresnelAffectOpacity` and mixes
+    colour toward `_FresnelColor.rgb` by `_FresnelColor.w · f` before exposure.
+  - **`_USE_SOFTBLEND`**: fades alpha within `_SoftDistance` m of scene depth behind.
+- **lighting (`_USE_LIGHTING`)**: treats colour as albedo (divided by post exposure under
+  `_IgnorePostExposure`), lit by one per-renderer L1 irradiance probe, shadowed sun (no `1/π`,
+  cached far shadow map only, no cloud shadow), and local lights, using camera-facing vertex normal
+  or world up (`_RotateNormalToWorldUp`). examples: waterfall mist cards, indie_ccdg002 20–45 m
+  smoke puffs (`p_fxmap_common_bigwind_smoke_medium_01`, world up). `_USE_FORCE_DYNAMIC_LIGHTING`
+  (set on Marker Stone Interiors rift monster glow `M_fx_monster_enemy_etthillu_lsq_01`) is unread
+  by all compiled variants.
+- **blend modes**:
+  - writes `alpha · (1 − _BlendMode)`. `_BlendMode` 1 (default; ~25% of scenery VFXBaseV2, e.g.
+    corroded planet glare from Dijiang's deck) makes premultiplied output additive.
+  - `_BlendMode` 2 writes `lerp(1, colour, alpha)` for `Blend DstColor Zero` (multiplicative).
+- **ink wash**: `_OnlyShowAfterInkWash` scales alpha (and premultiplied colour) by
+  `lerp(1, _InkWashGlobalParams.x, _OnlyShowAfterInkWash)`. outside ink wash, such materials draw
+  nothing (e.g. Si's Painting grid quad `M_fxint_s_micro_008_decal_2501` in
+  `int_drawing_puzzle_01_postmodel`, near unity 753, 278, 1308). the writer of
+  `_InkWashGlobalParams` (`ShaderVariablesGlobal`) is untraced; its link to `VFXPPInkWash`
+  (`PaintingScrollComponent`) is by name only.
+- **opaque**: `_SrcBlend = One`, `_DstBlend = Zero` in queue 2000 overwrites colour with
+  premultiplied colour and writes depth (forward-only: no GBuffer, no shadow). example: map01
+  mining-pipe falling gravel (`p_fxmap_common_gravel_02`, near unity 635, 62, 632;
+  `M_fx_quicksand_1104`, world-up lit, `_UseMainTexAsAlpha`, `_TintColorAlpha` 10; near-camera fade
+  out 200–300 m turns distant rocks black instead of hiding them).
 
 ### edge colour
 
-`_USE_EDGECOLOR` marks where the surface meets what lies behind it, after the dissolve and before
-the brightening: `e = _EdgeColor.a · saturate(_EdgeDistance / max(d, 0.001) − _EdgeDistanceOffset)`,
-d the view depth from the surface to the main pass's depth behind it. `_EdgeColorMode` 1 adds
-`(_EdgeColor.rgb, _TintColorAlpha) · e` to the colour and alpha; 0 multiplies the colour by
-`_EdgeColor.rgb` and the alpha by e, so only the contact shows; the shader blends the two by the
-mode. the frames of Dijiang's aisle-guide panels (`M_fxmap_base01_lv001_ship_aisle_guide_01_fj_05`,
-mode 1, `_EdgeDistance` 0.002) glow only within millimetres of a contact, so they draw almost as
-without the keyword.
+`_USE_EDGECOLOR` highlights depth intersections after dissolve and before brightening:
+
+```
+e = _EdgeColor.a · saturate(_EdgeDistance / max(d, 0.001) − _EdgeDistanceOffset)
+```
+
+where `d` is view depth to scene depth behind. `_EdgeColorMode` blends between:
+
+- `0`: multiplies colour by `_EdgeColor.rgb` and alpha by `e` (contact only)
+- `1`: adds `(_EdgeColor.rgb, _TintColorAlpha) · e` (e.g. Dijiang aisle-guide panels
+  `M_fxmap_base01_lv001_ship_aisle_guide_01_fj_05`, `_EdgeDistance` 0.002)
 
 ### vertex offset and brightening
 
-`_USE_VERTOFFSET` moves each vertex along `_OffsetDir` (`_OffsetSwitchDir` 0: object space, 1: world
-space, 2: the vertex normal) by `_OffsetIntensity · (r · (1 + _Bi_Offset) − _Bi_Offset)`, where r is
-`_OffsetTex`'s red channel at UV set 0 (set 1 with `_OffsetUVSet`), after its `_ST`, scrolled by
-`_OffsetSpeed` per second. `_UseVertexColorAlphaAsVertOffsetWeight` weights it by the vertex alpha.
-the offset is scaled by `1 − _InParticle`, so it never moves particles, and a mesh material left at
-the default `_InParticle` of 1 doesn't move either.
-
-every VFXBaseV2 variant, with or without the keyword, also pulls each vertex towards the camera by
-`min(max(0, d − 1), _VertCameraOffset) + 0.001` metres, d its distance from the camera, scaled by
-the same `1 − _InParticle`. VFXDitherAlpha and VFXDecal don't pull. a pull lets a glow sit inside
-the object it lights without that object hiding it: Marker Stone's tower lamps
-(`P_fxmap_map_lv004_lamp_light_01`, one prefab for the whole tower) draw red streaks across the
-white lamp cubes from a mesh (`M_fxmap_map_lv004_lamp_light_01`, `_TintColor` red times 100) pulled
-1 m, and red stars from particle systems emitting from mesh shapes, pulled 3 m and, for the far
-stars that fade in past 200 m, 50 m; all three leave `_InParticle` at 0.
-
-the pull follows each vertex's own view ray by its own distance, so within `_VertCameraOffset + 1`
-of a large quad's corners they move by different amounts and its texture bends along the triangles'
-diagonal. Si's Painting's grid quad, 5.5 m across and pulled 5 m, would skew so from a few metres
-off while the [ink wash](#vfxbasev2) shows it.
-
-`_USE_VERTOFFSETMASK` scales the offset, but not the pull towards the camera, by `1 − p·(1 − m)`,
-where `p = _OffsetMaskPower / 5` and m is `_OffsetMaskTex`'s red at the offset texture's UVs, after
-the mask's own `_ST`, scrolled by `_OffsetMaskSpeed`. the fragment stage doesn't read it. the glow
-over the collectible pieces (`M_fx_interactive_collection_2102` in `int_collection_piece_postmodel`)
-pushes its vertices up to 1.2 m along world y (`_OffsetDir` 0.1 times `_OffsetIntensity` 12.15) by a
-flow texture, masked by a star texture at a power of 3; Jingyu's butterflies and waterfalls and
-Wuling's ink drops use it too.
-
-`_USE_BRIGHT` with `_BrightType` 0 and no `_BrightCenter` (w 0) adds `_BrightColor` and a UV wobble
-within `_OuterRadius` of the player. the teal streams winding between Wuling City's floating pillars
-(`M_fx_map02_zhenlie_*`, map02_lv002) use both. VFXBaseV2's radii are the material's alone;
-VFXAdvance and VFXDitherAlpha add the [global reveal radii](#invisible-bridges) under
-`_USE_GLOBAL_APPEAR`.
+- **`_USE_VERTOFFSET`**: moves vertices along `_OffsetDir` (`_OffsetSwitchDir`: 0 object, 1 world, 2
+  vertex normal) by `_OffsetIntensity · (r · (1 + _Bi_Offset) − _Bi_Offset) · (1 − _InParticle)`.
+  `r` is `_OffsetTex.r` at UV0 (UV1 with `_OffsetUVSet`), `_ST`, scrolled by `_OffsetSpeed`/s.
+  `_UseVertexColorAlphaAsVertOffsetWeight` scales by vertex alpha. `_InParticle = 1` (default)
+  disables it on particles and unconfigured meshes.
+- **camera pull**: every VFXBaseV2 variant pulls vertices toward the camera by
+  `(min(max(0, d − 1), _VertCameraOffset) + 0.001) · (1 − _InParticle)` m (`d` = camera distance).
+  VFXDitherAlpha and VFXDecal do not pull.
+  - keeps embedded glows visible: Marker Stone tower lamps (`P_fxmap_map_lv004_lamp_light_01`,
+    `_InParticle = 0`) pull red streaks (`M_fxmap_map_lv004_lamp_light_01`, `_TintColor` red × 100)
+    1 m, near stars 3 m, and far stars (>200 m) 50 m.
+  - because each vertex pulls along its own view ray by its own distance, large quads skew along
+    their diagonal within `_VertCameraOffset + 1` m (e.g. Si's Painting 5.5 m grid quad pulled 5 m).
+- **`_USE_VERTOFFSETMASK`**: scales vertex offset (not camera pull) by
+  `1 − (_OffsetMaskPower / 5) · (1 − m)`, where `m` is `_OffsetMaskTex.r` on offset UVs with its own
+  `_ST` and `_OffsetMaskSpeed` (vertex stage only). used on collectible pieces
+  (`M_fx_interactive_collection_2102` in `int_collection_piece_postmodel`: `_OffsetDir` 0.1 ×
+  `_OffsetIntensity` 12.15 = 1.2 m along world y, mask power 3), Jingyu butterflies/waterfalls, and
+  Wuling ink drops.
+- **`_USE_BRIGHT`** (`_BrightType = 0`, `_BrightCenter.w = 0`): adds `_BrightColor` and UV wobble
+  within `_OuterRadius` of the player (e.g. Wuling City floating-pillar teal streams
+  `M_fx_map02_zhenlie_*`, map02_lv002). VFXBaseV2 uses material radii only; VFXAdvance and
+  VFXDitherAlpha add [global reveal radii](#invisible-bridges) under `_USE_GLOBAL_APPEAR`.
 
 ## VFXAdvance
 
-`HGRP/Effect/VFXAdvance` is VFXBaseV2's sibling with fixed slots rather than sample textures: a main
-texture, `_DisturbTex1` (and a second) shifting the main texture and `_MaskTex` by their
-`*UseDisturb` shares as the [texture stack](#the-texture-stack)'s disturb role does, a mask, a
-dissolve, a blend layer, polar and screen UVs, soft blending, an edge colour and an "interior" (a
-parallax tunnel). the colour and alpha start as VFXBaseV2's (`_TintColor`, vertex colour, intensity,
-`_TintColorAlpha`), the Fresnel term fades the alpha and mixes the colour towards `_FresnelColor` by
-its w as VFXBaseV2's does, but reads the normal reversed on back faces, and `_BlendMode` 1 adds.
-`_NORMAL_MAP` bends that normal by `_NormalMap` (x from alpha times red, as Unity unpacks it, xy
-times `_NormalScale`; UVs built like the main texture's from `_NormalMap*` properties, undistorted),
-and changes nothing else. `_EMISSION` adds `_EmissionTex`'s rgb (at UV0 through its `_ST` alone)
-times `_EmissionColor` to the colour before the Fresnel colour mixes in. the shader has no variant
-with `_EMISSION` and a vertex offset. Deep Dale Street's floating rocks and gravel
-(`M_fxmap_dung02_rdg008_rock_01_*`, `…_rock_float_gravel_01_1101`, near unity −62, 68, 85) use both:
-a blue tint over a flow texture, rimmed towards a pale blue `_FresnelColor` at w 1.
-`_USE_VERTOFFSET` and the pull towards the camera are VFXBaseV2's. `_USE_DISSOLVE` is VFXBaseV2's
-[dissolve](#the-texture-stack) on `_DissolveTex` (its UVs built like the main texture's from
-`_Dissolve*` properties, shifted by `_DissolveTexUseDisturb` of the distortion), with the edge
-colour `_DissolveEmissiveColor · _TintColorIntensity`; it eats the alpha after the mask and before
-the near-camera fade. the ink bridge prefabs' walls, floors and joins
-(`M_fx_map02_lv007_inkbridge_freelance_wall_*`, `…_floor_*`, `…_join_*`) tear their edges with it.
-`_FogIntensity` mixes how much of the fog a fogged layer takes, fully past
-`_FogIntensityFadeOutDistance` metres. `_USE_SOFTBLEND` is VFXBaseV2's: the alpha fades by
-`saturate((d_scene − d + _SoftBias) / _SoftDistance)`, d the view depth, alongside the near-camera
-fade. the black and white ink layers of Si's Painting's ink road over the cave falls
-(`M_fxmap_map02_lv010_cave_inkroad_02_fj_01`, `…_02`, `…_04`, near unity 727, 239, 1166, script
-group 37900020000) fade so where they meet the rocks.
+`HGRP/Effect/VFXAdvance` is VFXBaseV2 with fixed texture slots instead of `_SampleTexN`: main,
+`_DisturbTex1/2` (shifting main and `_MaskTex` by `*UseDisturb`), mask, dissolve, blend, polar and
+screen UVs, soft blend, edge colour, and an "interior" parallax tunnel.
 
-`_USE_BLEND` is the texture stack's [blend layer](#the-texture-stack) on `_BlendTex` (UVs built like
-the main texture's from `_BlendTex*` properties, its `_ST` applied once, shifted by
-`_BlendTexUseDisturb`), except that `_BlendTint` is times the vertex colour unless
-`_BlendDisableVertColor` is set. `_DisturbTex1Normal` reads the disturb texture as a normal: the
-shift is `(a · r′, g) · 2 − 1` times `_DisturbUIntensity1` on both axes, r′ its red remapped by
-`_Bi_Disturb` (for a BC5 texture, whose alpha reads 1, `(r′, g) · 2 − 1`), in place of r′ times the
-u and v strengths.
+differences from VFXBaseV2:
 
-without `_USE_GLOBAL_APPEAR`, `_USE_BRIGHT` is the [reveal](#invisible-bridges) with the material's
-radii alone. Yinglung Pass's ink rooms (map02_lv007, near unity −450, 270, 703) are such: floors of
-`M_fx_map02_lv007_inkroom_floor_0*` (blend layer, normal-read disturb texture, `_INK_COLOR_DISTORT`)
-and `inkarea_*_postmod` walls of `M_fx_map02_lv007_inkbridge_freelance_wall_*`, in script groups
-10200150010, …011 and …021 (on by default). their materials set inner 8, outer 1 and `_DistortAlpha`
-0, so they show only within 1–8 m of the player, raised 2 m.
-
-`_INK_DISTORT` and `_INK_COLOR_DISTORT` read the runtime ink simulation, a texture the game draws
-around the player (`_InkSimulationWorldToUV`): the first (in VFXDitherAlpha's G-buffer pass too,
-where it shifts the main, dissolve and, by `_DisturbTex1UseInkSimulation`, disturb textures) shifts
-the UVs by its red and green times `_InkDisturbOffset`, the second blends `_InkColor` in by its
-result times `_InkStrength` (at most `_InkMaxAlpha`). both fade on steep surfaces and do nothing
-outside the simulation's square, so a scene the player hasn't disturbed draws as without them.
+- **Fresnel**: reverses normal on back faces.
+- **`_NORMAL_MAP`**: perturbs Fresnel normal with `_NormalMap` (Unity `alpha · red` unpack,
+  `xy × _NormalScale`, undistorted `_NormalMap*` UVs). affects nothing else.
+- **`_EMISSION`**: adds `_EmissionTex.rgb` (UV0 + `_ST`) × `_EmissionColor` before Fresnel colour.
+  no variant combines `_EMISSION` with vertex offset. Deep Dale Street floating rocks/gravel
+  (`M_fxmap_dung02_rdg008_rock_01_*`, `…_rock_float_gravel_01_1101`, near unity −62, 68, 85) use
+  `_NORMAL_MAP` and `_EMISSION` (pale blue `_FresnelColor` at `w = 1`).
+- **`_USE_DISSOLVE`**: VFXBaseV2 dissolve on `_DissolveTex` (`_Dissolve*` UVs,
+  `_DissolveTexUseDisturb`), edge colour `_DissolveEmissiveColor · _TintColorIntensity`, applied
+  after mask and before near-camera fade (e.g. ink bridge walls/floors/joins
+  `M_fx_map02_lv007_inkbridge_freelance_*`).
+- **`_USE_BLEND`**: VFXBaseV2 blend on `_BlendTex` (`_BlendTex*` UVs, `_ST` once,
+  `_BlendTexUseDisturb`); `_BlendTint` multiplies by vertex colour unless `_BlendDisableVertColor`
+  is set.
+- **`_DisturbTex1Normal`**: reads disturb texture as a normal:
+  `((a · r′, g) · 2 − 1) · _DisturbUIntensity1` on both axes (`r′` = R remapped by `_Bi_Disturb`;
+  BC5 has `a = 1`).
+- **fog & soft blend**: `_FogIntensity` scales fog (full past `_FogIntensityFadeOutDistance` m).
+  `_USE_SOFTBLEND` fades alpha by `saturate((d_scene − d + _SoftBias) / _SoftDistance)` (e.g. Si's
+  Painting cave ink road `M_fxmap_map02_lv010_cave_inkroad_02_fj_01/02/04`, near unity 727, 239,
+  1166, script group 37900020000).
+- **`_USE_BRIGHT`** (without `_USE_GLOBAL_APPEAR`): runs the [reveal](#invisible-bridges) with
+  material radii only. Yinglung Pass ink rooms (map02_lv007 near unity −450, 270, 703;
+  `M_fx_map02_lv007_inkroom_floor_0*` and `inkarea_*_postmod` walls in default-on script groups
+  10200150010, …011, …021) set inner 8, outer 1, `_DistortAlpha` 0 (visible within 1–8 m, raised 2
+  m).
+- **`_INK_DISTORT` & `_INK_COLOR_DISTORT`**: sample the runtime ink simulation around the player
+  (`_InkSimulationWorldToUV`). `_INK_DISTORT` (also in VFXDitherAlpha's GBuffer pass, shifting main,
+  dissolve, and disturb via `_DisturbTex1UseInkSimulation`) offsets UVs by `RG · _InkDisturbOffset`.
+  `_INK_COLOR_DISTORT` blends `_InkColor` by `result · _InkStrength` (max `_InkMaxAlpha`). both fade
+  on steep surfaces and do nothing outside the simulation square.
 
 ## CharacterNPR_VFX
 
-`HGRP/CharacterNPR_VFX` is an effect layer over a character's skinned mesh: one forward pass, a
-fixed-slot stack like VFXAdvance's (main texture, `_DisturbTex1`, mask, blend layer, Fresnel fade
-and colour, soft blend, near-camera fade, fog with `_FogIntensity`) with VFXBaseV2's
-[screen UVs](#vfxbasev2), and no dissolve but its own `VFX_CHARACTER_DISSOLVE`. its vertex offset is
-VFXBaseV2's, but its pull towards the camera is the whole `_VertCameraOffset` plus 1 mm rather than
-VFXBaseV2's capped one. Marker Stone Interiors' rift monsters (`p_fxmap_map02_lv004_liexi_only_*`,
-about 80 placements, most always shown) are ethillu meshes drawn only in effect materials: a
-VFXBaseV2 glow (`M_fx_monster_enemy_etthillu_lsq_01`) and a CharacterNPR_VFX shell
-(`M_fx_monster_enemy_etthillu_01d11d12_01_04_01`, and `…a`) pushed 0.25 m out along the normals by
-the shader's white offset texture, black but for its pale blue blend layer, edged by a flipped
-Fresnel term and flowing along screen UVs taken about the mesh's origin. the shell shows only near
-the camera: it fades out between 20 and 40 m (`…a`: 80 and 100 m).
+`HGRP/CharacterNPR_VFX` renders a single forward-pass effect shell over skinned character meshes:
+
+- fixed-slot stack like VFXAdvance (main, `_DisturbTex1`, mask, blend, Fresnel, soft blend,
+  near-camera fade, `_FogIntensity` fog) with VFXBaseV2 [screen UVs](#vfxbasev2) and
+  `VFX_CHARACTER_DISSOLVE` instead of standard dissolve.
+- vertex offset matches VFXBaseV2; camera pull is the full `_VertCameraOffset + 0.001` m (uncapped).
+- Marker Stone Interiors rift monsters (`p_fxmap_map02_lv004_liexi_only_*`, ~80 placements) pair a
+  VFXBaseV2 glow (`M_fx_monster_enemy_etthillu_lsq_01`) with a CharacterNPR_VFX shell
+  (`M_fx_monster_enemy_etthillu_01d11d12_01_04_01`, `…a`) pushed 0.25 m along normals, pale blue
+  blend layer, flipped Fresnel, object-anchored screen UVs, fading out at 20–40 m (`…a`: 80–100 m).
 
 ## invisible bridges
 
-Yinglung Pass (map02_lv007) has ink bridges that show only around the player while they carry a lit
-fire seed. their pieces are VFXAdvance (`M_fx_map02_lv007_inkbridge_freelance_801`, the
-Fresnel-rimmed body; `…_802`, the ink strokes, with a vertex offset) and VFXDitherAlpha (`…_802_01`,
-the solid surface) layers, all with `_USE_BRIGHT` and `_USE_GLOBAL_APPEAR`. the bridge between the
-pillars west of unity −602, 248, 569 is two script groups of such pieces along x ≈ −623: z 515–534
-(group 10200150050, loaded by default) and z 556–587 (10200150054, which only script 10200030004
-shows, on custom event `#16fa73e2`). no client data raises that event (no level script, table or
-config names it), so the server does: the northern group is server-driven.
+Yinglung Pass (map02_lv007) has ink bridges revealed around the player while carrying a lit fire
+seed. they layer VFXAdvance (`M_fx_map02_lv007_inkbridge_freelance_801` body, `…_802` ink strokes
+with vertex offset) and VFXDitherAlpha (`…_802_01` solid surface), all with `_USE_BRIGHT` and
+`_USE_GLOBAL_APPEAR`. west of unity −602, 248, 569 (along `x ≈ −623`), two script groups form the
+bridge: `z` 515–534 (group 10200150050, default-on) and `z` 556–587 (group 10200150054, shown by
+script 10200030004 on server-driven custom event `#16fa73e2`).
 
-**the reveal.** for d the distance from the player's position (`_VFXParams0.xyz`) raised by
-`_CharacterHeight`, and `s(x) = smoothstep(_OuterRadius + R.y, _InnerRadius + R.x, x)` with R the
-global reveal radii (`_VFXParams3.xy`):
-
-- the tint gains `_BrightColor · s(d)`, its alpha times the vertex alpha with `_BrightUseVertColor`
-- the alpha becomes `saturate(mix(a, a · _DistortAlpha, s(d + _DistortOnEdge · n)))`, n a value
-  noise in −1…1 (a sine hash of lattice points wrapped to 1024, smoothly interpolated) over the main
-  texture's UVs times `_DistortScale`, scrolled by the time times `_DistortSpeed` on both axes
-
-the bridges' materials set inner 2, outer −4 and `_DistortAlpha` 0, so they show within R.x − 4 m of
-the player and vanish past R.x + 2 m, over an edge the noise frays by up to `_DistortOnEdge` (1 m on
-the body).
-
-**the fire seed.** `FireSeedBrain.SetFireSeedLevel`, run only by the level-script action
-`SetFireSeedLevel` (scripts 10200030004 and 10200260001 set levels 0–4), sets R from
-`FireSeedGameplayConfig`: without a seed (level 0) its `invisibleBrightInnerRadius` and `…Outer`
-(9999 and 50000 m), which leave every revealed effect transparent; at level n, `effectRadius[n − 1]`
-(4, 7, 10, 10, 12 m) and that plus `radiusThickness` (0.5 m). the radius eases to a new level over
-`fadeTime` along `radiusChangeCurve`. what R holds before any script sets a level isn't recovered.
-
-script 10200030004 runs over the whole pass (an active sphere of 442 m about unity −589, 257, 607).
-on the player entering its trigger volume 80001 (two boxes covering the pass) it sets the level to
-map variable #142, `fire_seed_level_map`, and on leaving it sets level 0; other custom events set
-levels 1–4 (`#72485a44`, `#86ef311f`, `#d5cf68e0`, `#8da37c78`) and 0 (`#e5aceaf8`), and 10200260001
-also reads the variable. like those events, nothing in client data writes the variable (MapConfig
-only declares it), so the fire seed's level is server-held: no quest or mission state gates it on
-the client.
+- **reveal math**: let `d` = distance from player (`_VFXParams0.xyz`) raised by `_CharacterHeight`,
+  `R` = global reveal radii (`_VFXParams3.xy`), and
+  `s(x) = smoothstep(_OuterRadius + R.y, _InnerRadius + R.x, x)`:
+  - tint adds `_BrightColor · s(d)` (alpha × vertex alpha with `_BrightUseVertColor`).
+  - alpha becomes `saturate(mix(a, a · _DistortAlpha, s(d + _DistortOnEdge · n)))`, where
+    `n ∈ [−1, 1]` is smooth value noise (sine-hashed lattice wrapped to 1024) on main UVs ×
+    `_DistortScale`, scrolled by `time · _DistortSpeed` on both axes.
+  - bridge materials set inner 2, outer −4, `_DistortAlpha` 0: visible within `R.x − 4` m, gone past
+    `R.x + 2` m, frayed up to `_DistortOnEdge` (1 m on body).
+- **fire seed**: `FireSeedBrain.SetFireSeedLevel` (called by `SetFireSeedLevel` in scripts
+  10200030004 and 10200260001 for levels 0–4) sets `R` from `FireSeedGameplayConfig`:
+  - level 0 (no seed): `invisibleBrightInnerRadius` / `…Outer` = 9999 / 50000 m (fully transparent).
+  - level `n`: `effectRadius[n − 1]` (4, 7, 10, 10, 12 m) and `+ radiusThickness` (0.5 m), eased
+    over `fadeTime` along `radiusChangeCurve`. initial `R` before any call is unrecovered.
+  - script 10200030004 (active sphere 442 m around unity −589, 257, 607) sets level to map variable
+    #142 (`fire_seed_level_map`) on entering trigger 80001 (two pass boxes), 0 on exit; custom
+    events set levels 1–4 (`#72485a44`, `#86ef311f`, `#d5cf68e0`, `#8da37c78`) and 0 (`#e5aceaf8`).
+    script 10200260001 also reads #142. no client data writes #142 (server-held).
 
 ## water blending
 
-VFXBaseV2's `_USE_WATER_BLEND` fades the colour as if seen through water below `_WaterHeight`: it
-absorbs by `_WaterAbsorption`/`_WaterAbsorption2` and adds inscattered light over the distance the
-view ray travels under that height (`clamp(_WaterHeight − y, 0, 1000) / |view y|`, y the fragment's
-world height), and changes nothing above it. the vertex stage is unaffected. a `VFXWaterBlendConfig`
-component on the effect sets these from water surfaces it enters (from its fields and method names;
-its code isn't read). materials keep an authored `_WaterHeight` of −9999, −999 or 0, below where
-they're placed, so placed effects out of water draw as without the keyword. the glows of Aurelyne,
-the collectible orbs (`int_collection_coin_*_postmodel`, e.g. in Aburrey Quarry near unity 364, 44,
-−700), are such: the orbs placed in map01 and map02 lie at y 18.8 and above.
+VFXBaseV2's `_USE_WATER_BLEND` attenuates fragments below `_WaterHeight` by `_WaterAbsorption` /
+`_WaterAbsorption2` and adds inscatter over underwater ray length
+`clamp(_WaterHeight − y, 0, 1000) / |view.y|`. above `_WaterHeight` (and in the vertex stage) it
+does nothing.
+
+- `VFXWaterBlendConfig` updates these parameters when entering water (inferred from fields/methods;
+  code unread).
+- authored `_WaterHeight` is −9999, −999, or 0, so out-of-water placements render unchanged (e.g.
+  Aurelyne collectible orbs `int_collection_coin_*_postmodel` in Aburrey Quarry near unity 364, 44,
+  −700; all map01/map02 orbs sit at `y ≥ 18.8`).
 
 ## soft-body animation
 
-VFXBaseV2's `_VAT_SOFTBODY` plays a Houdini vertex animation: each vertex moves by
-`_PositionTexture`'s texel at UV set 1's column and the current frame's row, in object space. the
-frame is
-`floor(fract((time − _gameTimeAtFirstFrame) · _houdiniFPS / (_frameCount − 0.01) · _playbackSpeed) · _frameCount)`
-with `_B_autoPlayback`, else `_displayFrame − 1`; the texel is read at
-`(u · a, 1 − b · ((1 − v) + frame / _frameCount))`, where a and b are `1 + x − ceil(x)` for x ten
-times `_boundMinZ` and `_boundMaxX` (1 for the bounds seen). textures of HDR offsets
-(`_TextureFormat` 1) store them as they are; 8-bit ones a fraction between the `_boundMin*` and
-`_boundMax*`. vertices whose UV1 v is at most 0.1 collapse to the object's origin.
-`_RotationTexture` holds a quaternion per vertex that turns the normal and tangent from +y and −x.
-the wobbling blob at the heart of the Hub's Aurelyne (`M_erosionmud_core`, map01_lv001 near unity
-−104, 118, −534) is one, 100 frames looped 3.5 times a second.
+VFXBaseV2's `_VAT_SOFTBODY` plays a Houdini VAT in object space, reading `_PositionTexture` at UV1
+and the current frame:
 
-[VFXWater](#waterfalls) has the same keyword and vertex stage, and shades with the turned normal
-(8-bit rotation textures store `q / 2 + 0.5`). without `_B_autoPlayback` its frame is
-`floor(_displayFrame + d) − 1`, d a per-draw value whose writer isn't traced (taken as 0), plus the
-particle's custom data w under `_HoudiniVATInParticle`. the water pouring off the scoops of Qingbo's
-octagonal waterwheels (`M_fx_xiaoshuiche` on two mesh renderers of
-`p_igroup_map02_sfwaterwheel+2_004_01`, 400 frames at 60 a second) is such, and nothing in the
-material plays it: the wheel's [Animator clip](animation.md#scenery-animators) animates
-`_displayFrame` on each renderer, four ramps from 1 to 375 over its 25 s loop, the two renderers
-half a ramp apart, along with `_TintColorAlpha` and `_DissolveScheduleOffset`, which fade each pour
-in and out.
+- **frame**:
+  `floor(fract((time − _gameTimeAtFirstFrame) · _houdiniFPS / (_frameCount − 0.01) · _playbackSpeed) · _frameCount)`
+  with `_B_autoPlayback`, else `_displayFrame − 1`.
+- **UV**: `(u · a, 1 − b · ((1 − v) + frame / _frameCount))`, where `a`, `b` = `1 + x − ceil(x)` for
+  `x = 10 · _boundMinZ` and `10 · _boundMaxX` (1 for seen bounds).
+- **decoding**: `_TextureFormat` 1 stores raw HDR offsets; 8-bit maps `0..1` to
+  `_boundMin*`..`_boundMax*`. vertices with `UV1.v ≤ 0.1` collapse to origin. `_RotationTexture`
+  holds a quaternion rotating normal/tangent from `+y`/`−x` (8-bit stores `q / 2 + 0.5`).
+- example: Hub Aurelyne core blob (`M_erosionmud_core`, map01_lv001 near unity −104, 118, −534; 100
+  frames looped 3.5×/s).
+
+[VFXWater](#waterfalls) shares `_VAT_SOFTBODY` and shades with the rotated normal. without
+`_B_autoPlayback`, its frame is `floor(_displayFrame + d) − 1` (`d` = untraced per-draw offset,
+taken as 0) plus particle custom data `w` under `_HoudiniVATInParticle`. Qingbo's octagonal
+waterwheel pours (`M_fx_xiaoshuiche` on two renderers of `p_igroup_map02_sfwaterwheel+2_004_01`, 400
+frames @ 60 fps) drive `_displayFrame` from the wheel's
+[Animator clip](animation.md#scenery-animators) (four 1→375 ramps over 25 s, staggered half a ramp
+apart) alongside `_TintColorAlpha` and `_DissolveScheduleOffset`.
 
 ## VFXDecal
 
-`HGRP/Effect/VFXDecal` draws a unit box (`s_fx_particle_decal_cube`): each covered pixel finds the
-surface behind from the scene depth and, if that point lies inside the box, projects the textures
-down the box's y (UV = local xz + 0.5). its roles are fixed: `_MainTex`, `_MaskTex`, `_BlendTex`,
-`_DisturbTex1/2`, `_WeightTex`, `_DissolveTex`, each only with its `_USE_*` keyword. a texture's
-`*SwitchUV` swaps the box UVs for screen UVs (1: the pixel's position over the width) or polar UVs
-(2: about the box's axis, as VFXBaseV2's), each computed only with its keyword and `_UseScreenUV` /
-`_UsePolarUV`. the weight texture neither scrolls nor turns, and scales the distortion and the
-dissolve by `1 − _WeightTexIntensity + red · _WeightTexIntensity` (`_DisturbUseWeight`,
-`_DissolveUseWeight`). the rift in Power Plateau's grating (map01_lv007, near unity −129, 173, 593)
-is two such decals around VFXBaseV2 rings and swirls on polar UVs. the colour is `_DecalBaseColor`,
-alpha its alpha times `_TintColorAlpha`, faded towards the box's x and z faces (`_EdgeFadeX/Z`, over
-`_EdgeFadeIntensity`), its top and bottom (`_HeightFade` around `_HeightFadeOffset`), and with
-`_USE_NORMALBLEND` on surfaces facing away from the box's y (`N·up` to the power
-`_AngleBlendFallOff`, N the surface's normal). the colour is premultiplied by the alpha twice. under
-`Blend One One` the decal adds that colour, and `_BlendMode` 1 drops the fog's in-scatter from it
-(its alpha output isn't scaled by the mode): the ground glow under Marker Stone Interiors' flowing
-lights (`M_fxmap_dung02_rdg002_flowinglight_02_ground_fj_01`) is such.
+`HGRP/Effect/VFXDecal` draws a unit cube (`s_fx_particle_decal_cube`), reconstructs scene depth, and
+projects down box `y` (`UV = local.xz + 0.5`) for points inside the box.
 
-the pass tests the stencil for equality with `_StencilRef` under `_StencilReadMask` (the shader's
-defaults 0 and 32), whatever `_StencilComp` says, as the scenery's [decals](materials.md#decals) do,
-so it leaves foliage and other surfaces whose `_StencilRef` has bit 32 alone: Si's Painting's water
-decals (`M_fxmap_map02_lv010_waterdecal_02`, boxes 28 to 35 m across in its waterfall cave, near
-unity 1110, 378, 1155) take the defaults, so they cover the rock but not the trees inside them. so
-do the 29 VFXDecal materials with known asset paths.
-
-`_USE_PARALLAX` sinks the decal into the surface. the view direction, taken in the box's frame (x
-and z across, y up), steps the main texture's UVs by `−_ParallaxScale · v.xz / v.y / 30` per layer
-through `_DepthTex`'s red, a height that is 1 at the top: from 29/30 down, 30 layers and at most 31
-samples, stopping at the first layer below the height, and the shift interpolates between that
-sample and the one before. the main texture and `_CrackMask` sample at the shifted UVs (the mask
-without the distortion), and `_CrackNoiseTex` at its own UVs (`_ParallaxSwitchUV`, its `_ST`, then
-`_CrackNoiseSpeed` per second), shifted by `_ParallaxUseDisturb` of the distortion and by the
-parallax. the colour adds
-`lerp(_CrackColor · m, noise · _CrackNoiseColor · _CrackNoiseIntensity, m)`, m the crack mask's red,
-before the dissolve's edge colour; all three textures default to white. the dissolve doesn't take
-the shift. two materials use it: the ash on Marker Stone Interiors' floors
-(`M_fxmap_map02_lv004_ash_01_03` in `p_fxmap_map02_lv004_ash_large_01`, placed across indie_dg007),
-dark blue under glowing pale cracks on polar UVs, and the core of the erosion-mud anchors
-(`M_fx_angel_anchorcore_852`).
-
-off particles its textures shift by their speed's zw times constants of the material
-(`_MainCustomData`, `_DisturbCustomData`, `_MaskCustomData`, `_BlendCustomData`,
-`_DissolveCustomData`), where VFXBaseV2's take custom data, and its dissolve schedule takes nothing.
-under `_USE_IN_PARTICLE` it reads custom data from its own stream layout instead
-([below](#particle-custom-data)).
+- **fixed slots** (each gated by its `_USE_*` keyword): `_MainTex`, `_MaskTex`, `_BlendTex`,
+  `_DisturbTex1/2`, `_WeightTex`, `_DissolveTex`.
+  - `*SwitchUV`: `1` = screen UVs (pixel pos / width; requires `_USE_SCREENUV` + `_UseScreenUV`),
+    `2` = polar UVs about box axis (requires `_USE_POLARUV` + `_UsePolarUV`).
+  - `_WeightTex` does not scroll or rotate; scales distortion and dissolve by
+    `1 − _WeightTexIntensity + red · _WeightTexIntensity` (`_DisturbUseWeight`,
+    `_DissolveUseWeight`).
+  - example: Power Plateau grating rift (map01_lv007 near unity −129, 173, 593; two decals around
+    polar-UV VFXBaseV2 rings).
+- **colour & fades**: `_DecalBaseColor` (alpha × `_TintColorAlpha`), faded at x/z faces
+  (`_EdgeFadeX/Z` over `_EdgeFadeIntensity`), top/bottom (`_HeightFade` around `_HeightFadeOffset`),
+  and with `_USE_NORMALBLEND` by `(N · boxUp)^_AngleBlendFallOff`. colour is premultiplied by alpha
+  twice. under `Blend One One`, `_BlendMode` 1 drops fog in-scatter without scaling alpha (e.g.
+  Marker Stone Interiors flowing-light ground glow
+  `M_fxmap_dung02_rdg002_flowinglight_02_ground_fj_01`).
+- **stencil**: tests `Equal` against `_StencilRef` with `_StencilReadMask` (defaults 0 and 32),
+  ignoring `_StencilComp` (same as [decals](materials.md#decals)), so bit-32 surfaces (foliage) are
+  excluded (e.g. Si's Painting 28–35 m water decals `M_fxmap_map02_lv010_waterdecal_02` near unity
+  1110, 378, 1155, and all 29 known-path VFXDecal materials).
+- **`_USE_PARALLAX`**: sinks the decal via 30-layer raymarch (`−_ParallaxScale · v.xz / v.y / 30`
+  per layer in box frame, ≤31 samples from 29/30 down) through `_DepthTex.r` (1 at top), refining
+  between the last two layers.
+  - `_MainTex` and `_CrackMask` (undistorted) sample shifted UVs; `_CrackNoiseTex`
+    (`_ParallaxSwitchUV`, `_ST`, `_CrackNoiseSpeed`/s) shifts by `_ParallaxUseDisturb` + parallax.
+  - adds `lerp(_CrackColor · m, noise · _CrackNoiseColor · _CrackNoiseIntensity, m)` (`m` =
+    `_CrackMask.r`) before dissolve edge colour. all three textures default white; dissolve is
+    unshifted.
+  - used by two materials: Marker Stone Interiors floor ash (`M_fxmap_map02_lv004_ash_01_03` in
+    `p_fxmap_map02_lv004_ash_large_01`, indie_dg007) and erosion-mud anchor core
+    (`M_fx_angel_anchorcore_852`).
+- **custom data**: off particles, textures shift by `*UVSpeed.zw` × material constants
+  (`_MainCustomData`, `_DisturbCustomData`, `_MaskCustomData`, `_BlendCustomData`,
+  `_DissolveCustomData`), and dissolve schedule has no offset. on particles (`_USE_IN_PARTICLE`),
+  uses its own stream layout ([below](#particle-custom-data)).
 
 ## particle custom data
 
-on a particle, an effect shader's second texture coordinate set holds the particle's custom data c
-([custom data](particles.md#texture-sheets-and-custom-data)). the effect shaders share one rule: the
-main texture's UVs shift by its `*UVSpeed.zw · c.x` and every other texture's by its own
-`*UVSpeed.zw · c.y`, before the rotation, and c.z adds to `_DissolveScheduleOffset`. per shader:
+on particles, UV set 1 carries custom data `c`
+([custom data](particles.md#texture-sheets-and-custom-data)). shared rule: main UVs shift by
+`*UVSpeed.zw · c.x`, other textures by `*UVSpeed.zw · c.y` (before rotation), and `c.z` adds to
+`_DissolveScheduleOffset`.
 
-- VFXBaseV2, VFXDitherAlpha, [VFXWater](#waterfalls) and [six-way smoke](#six-way-smoke) (whose
-  lightmaps are its main texture) follow it under `_InParticle`.
-- [VFXRefract](#refraction) reads the second set without that gate, so on a mesh its second UV set
-  stands in: c.x shifts its refraction texture and c.y its mask and blend texture; its dissolve and
-  spread UVs aren't shifted.
-- VFXDitherAlpha's vertex offset, whose speed's zw c.y also scrolls, is off on particles anyway
-  ([vertex offset](#vertex-offset-and-brightening)).
-- VFXBaseV2 reads c.w with `_UseParticleDisturb` (off the ink-wash path, where that component holds
-  UV0's v): it scales the whole distortion, so a mesh with it set isn't distorted. VFXRefract's
-  spread adds c.w to its schedule.
-- VFXDecal reads custom data only under `_USE_IN_PARTICLE`, from its own stream layout (box centre
-  and 3D size from the Center and SizeXYZ streams, c.xyz from Custom1.xyz). one material uses it,
-  `M_fx_map_lv007_angeresidue_2104`, on mesh particles of the decal cube.
+| shader                                               | gate                | specifics                                                                                                                                                                                                                                    |
+| ---------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VFXBaseV2, VFXDitherAlpha, VFXWater, VFXSmoke_SixWay | `_InParticle`       | six-way lightmaps act as main texture; VFXBaseV2 `c.w` scales distortion under `_UseParticleDisturb` (off ink-wash path, where `w` is `UV0.v`, so meshes get 0 distortion); VFXDitherAlpha vertex offset `zw` takes `c.y` (off on particles) |
+| VFXRefract                                           | none (always reads) | on meshes, UV1 stands in; `c.x` shifts refract, `c.y` shifts mask/blend (dissolve/spread unshifted), `c.w` adds to spread schedule                                                                                                           |
+| VFXDecal                                             | `_USE_IN_PARTICLE`  | Center and SizeXYZ streams give box centre/size; `Custom1.xyz` gives `c.xyz` (only `M_fx_map_lv007_angeresidue_2104` on decal-cube mesh particles)                                                                                           |
 
-no effect shader reads the second custom stream or a colour-mode custom value. the black smoke over
-the anchors in dung02_rdg011 (`blackfire01` in `p_fxmap_map_lv006_angel_anchor_smoke_active_1p8`,
-`M_fx_angel_anchorlight_834`) gives each particle a random shift of its smoke texture and a dissolve
-that climbs from about 0.35 to 0.95 over its life, so its 30–40 m streaks are mostly eaten away by
-the time they rise high and long enough to turn visibly with the camera.
+no effect shader reads the second custom stream or colour-mode custom data. example: dung02_rdg011
+anchor black smoke (`blackfire01` in `p_fxmap_map_lv006_angel_anchor_smoke_active_1p8`,
+`M_fx_angel_anchorlight_834`) randomizes UV shift and ramps dissolve from ~0.35 to 0.95 over life.
 
 ## portals
 
-VFXBaseV2 takes its stencil test and write (`_StencilComp`, `_StencilOp`, `_StencilRef`,
-`_StencilReadMask`, `_StencilWriteMask`) and its depth test (`_ZTest`) from material properties, and
-`_UseVFXPortal` materials use them to show one effect only through another. the glowing cracks in
-the Hub's plaza (map01_lv001, near unity −365, 95, −439) are one: an opaque mask on the crack mesh
-writes 7 (queue 2000), and the crack's glow and a cylinder of red chasm walls draw only where the
-stencil equals 7, without a depth test, so the chasm shows below the ground through the crack. drawn
-whole, the cylinder stands on the ground as a solid red ring. the opaque mask is also shaded and
-writes its depth, but its effects cover it wherever it shows. other pairs write the stencil from a
-transparent layer and draw a second layer only where it didn't (`NotEqual`).
+VFXBaseV2 exposes stencil (`_StencilComp`, `_StencilOp`, `_StencilRef`, `_StencilReadMask`,
+`_StencilWriteMask`) and depth (`_ZTest`) states. `_UseVFXPortal` uses them to mask one effect
+through another:
+
+- Hub plaza cracks (map01_lv001 near unity −365, 95, −439): an opaque crack mask (queue 2000,
+  shaded + depth write) writes stencil 7; the glow and red chasm cylinder draw only where stencil ==
+  7 with depth test off.
+- other pairs write stencil from a transparent layer and draw a second layer with `NotEqual`.
 
 ## solid effects
 
-`HGRP/Effect/VFXDitherAlpha` writes the G-buffer like an opaque surface, for effect meshes that are
-solid, such as the rocks floating over Origin Lodespring's crater
-([mesh particles](particles.md#examples)). the colour is `_TintColor · _TintColorIntensity` times
-the vertex colour (a particle's colour; left out with `_DisableVertColor`) and `_MainTex` (without
-the texture under `_UseMainTexAsAlpha`), times `_MainTex2Color` when `_USE_MAIN2` takes `_MainTex2`
-as alpha (`_UseMainTex2AsAlpha`) and multiplies (`_MainTex2BlendMode` 0); the G-buffer pass then
-doesn't sample `_MainTex2` at all, and the depth pass has no `_USE_MAIN2` variant, so the texture
-changes neither the colour nor the dithered alpha. with `_UseLighting` the colour is the albedo,
-saturated as the G-buffer stores it, else emitted; either way `_IgnorePostExposure` first multiplies
-it by an unnamed per-material value, taken as the inverse post exposure. `_NORMAL_MAP` adds a
-tangent-space normal map (`_NormalScale`; x from alpha times red, as Unity unpacks it); roughness
-and metallic are `_Roughness` and `_Metallic`. the shader has no shadow caster pass. the rocks'
-material multiplies a gold mask by a tint twelve times over, so the saturated albedo is black rock
-with gold veins.
+three dithered-alpha shaders draw solid effect meshes using interleaved gradient noise:
 
-`HGRP/Effect/VFXWaterDitherAlpha` has the same G-buffer and depth passes under another name, with
-fewer variants (`_NORMAL_MAP`, `_USE_DISTURB`, `_USE_DISSOLVE`, `_USE_MASK` in the depth pass, and
-its own `_SUBSURFACE` and `_USE_SEQUENCE_FRAME_*`). `_SUBSURFACE` lights the surface with the
-[subsurface model](materials.md#subsurface), where `_Metallic` scales the scattering instead of
-making a metal: the splashes under Wuling City's dam (`M_fxmap_water_citywaterfall_820` in
-`p_fxmap_common_citywatersplashes_small_b_802`, near unity −1243, 286, −336) have a grey subsurface
-colour and `_Metallic` 0, so nothing scatters and they're plain white foam. waterfall splashes use
-the shader: map02 has over a dozen such materials, among them the foam sheet at the foot of Si's
-Painting's cave falls (`M_fx_map_common_waterdecal_splashes_2504_01` in
-`p_fxmap_map02_lv010_water_splashes_01`, near unity 734, 233, 1151), lit at `_TintColorIntensity` 50
-(so its albedo saturates to white) with metallic 0.8, a normal map, and its main texture's red as
-the dithered alpha (`_UseMainTexAsAlpha`, raised to 2).
+| shader                                 | pass    | lighting & notes                                                                                                                                                                                                                                 |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HGRP/Effect/VFXDitherAlpha`           | GBuffer | `_UseLighting` writes saturated albedo, else emission; `_IgnorePostExposure` scales by inverse post exposure; `_NORMAL_MAP` (`_NormalScale`, `a·r` unpack); `_Roughness`, `_Metallic`; no shadow pass                                            |
+| `HGRP/Effect/VFXWaterDitherAlpha`      | GBuffer | same passes with fewer variants (`_NORMAL_MAP`, `_USE_DISTURB`, `_USE_DISSOLVE`, `_USE_MASK` in depth, plus `_SUBSURFACE`, `_USE_SEQUENCE_FRAME_*`); `_SUBSURFACE` uses [subsurface](materials.md#subsurface) with `_Metallic` as scatter weight |
+| `HGRP/Effect/VFXDitherAlphaNoLighting` | forward | no `_UseLighting`, no fog; draws only where depth pass survived (`ZTest Equal`, `One Zero`); colour × saturated alpha (without mask, before dither power)                                                                                        |
 
-`HGRP/Effect/VFXDitherAlphaNoLighting` is the same surface drawn unlit in a forward pass instead of
-the G-buffer, and doesn't declare `_UseLighting`. its depth pass is the dithered test below; the
-forward pass then draws only where that depth survived (ZTest Equal, blend One Zero), writing
-`_TintColor · _TintColorIntensity` times `_MainTex` (the tint alone with `_UseMainTexAsAlpha`) and
-times the alpha, saturated, without the mask and before the dither's power, so where few pixels
-survive they're also dark. Si's Painting's ink plane
-(`M_fxmap_map02_lv010_inkpattern_huge_01_fj_03_d02`, in `p_fxmap_map02_lv010_inkpattern_huge_01`) is
-one: its shape comes from a mask texture's red alone, tinted 2. its effect variants (below) test the
-same alpha as VFXDitherAlpha's in the depth pass, mask included, and their colour pass computes the
-same colour, times that alpha without the mask and before the power; neither pass applies fog. the
-ink sheet hanging down the cliff over Si's Painting's cave
-(`M_fxmap_map02_lv010_inkpattern_crack_cave_01_fj_01_d` in
-`p_fxmap_map02_lv010_inkpattern_crack_cave_01`, near unity 1100, 356, 1246, under the level script
-group 37900000011) is one, with a distortion read as a normal, a mask and a vertex offset, and a
-black tint, so the extra factor leaves it black.
-
-its depth pass keeps a pixel where the alpha beats an interleaved gradient noise of the pixel
-position times `_DitherTilling`, so a fraction of the pixels equal to the alpha survives. the alpha
-is `_TintColor.a · _TintColorAlpha` times `_MainTex`'s alpha (its red with `_UseMainTexAsAlpha`),
-the vertex colour's alpha (unless `_DisableVertColor`) and the near camera fade (in over view depths
-`_NearCameraFadeDistanceStart`–`…End`, out over `…Start2`–`…End2`), saturated and raised to
-`_DitherAlphaExp`. on particles the vertex alpha is the particle's colour, so they thin out as they
-fade: the dam splashes' start at a random alpha of 0.3–1 and fade out over most of their life. the
-noise's pixel position is offset by `_TaaFrameInfo.z` (the frame's place in the temporal
-antialiasing's cycle in Unity's HDRP, unread in the game's code), so the pattern moves every frame
-and the antialiasing resolves it into coverage. this shapes the dark disc at the centre of Power
-Plateau's sky vortex (`blackspot`), a quad whose texture's alpha is a soft round mask.
-
-`_USE_DISTURB`, `_USE_DISSOLVE`, `_USE_POLARUV` and `_USE_SCREENUV` bring in VFXBaseV2's texture
-stack: `_DisturbTex1` shifts the main and dissolve UVs (`_MainTexUseDisturb`,
-`_DissolveTexUseDisturb`, both 1 by default; read as a normal under `_DisturbTex1Normal`, as
-[VFXAdvance's](#vfxadvance) is), each texture's UVs start from its `*UVWeights` of UV0, UV1, polar
-and screen UVs, and the dissolve multiplies the tested alpha and colours its edge as VFXBaseV2's
-does. the vertex alpha and the near camera fade also scale the tested alpha. the walls of the rift's
-ripples are such ([below](#the-very-large-rifts-ripples)).
-
-`_USE_MASK` exists only in the depth pass: `_MaskTex` multiplies the tested alpha by its alpha, or
-its red under the default `_UseMaskTexAsAlpha`, and doesn't colour the surface. its UVs scroll,
-rotate and take the distortion (`_MaskTexUseDisturb`) like the main texture's. the faint blue band
-around the Very Large Rift's portal (`glow_04_line` in `p_fxmap_dung02_dg005_boss_semicircle_01`) is
-a mask-only material. Yinglung Pass's falling camphor leaves (`M_fxmap_common_camphor_leaves_07` in
-`p_fxmap_map02_lv007_camphor_leaves_01`, near unity −816, 286, 613) are lit ones that leave
-`_MainTex` unset: the shader's white default stands in, so the mask's red alone cuts the leaf shape,
-and the albedo is the tint (white, times 4.7) times each particle's start colour, a random one
-between a brown and a dull gold, so the leaves fall orange to yellow.
-
-`_USE_VERTOFFSET` moves the vertices as VFXBaseV2's does, in both passes, without the vertex alpha's
-weight and the pull towards the camera. the rift's escaping trails
-(`p_fxmap_dung02_dg005_boss_semicircle_escapism_trail_02`, children `blue02` and `red02`, placed
-around the arena) are such: tall sheets pushed half a metre in along their normals by a scrolling
-noise, dissolved and distorted into streaks.
+- **base colour**: `_TintColor · _TintColorIntensity` × vertex colour (unless `_DisableVertColor`) ×
+  `_MainTex` (omitted under `_UseMainTexAsAlpha`). in VFXDitherAlpha, `_USE_MAIN2` with
+  `_UseMainTex2AsAlpha` and `_MainTex2BlendMode` 0 multiplies by `_MainTex2Color` without sampling
+  `_MainTex2` (depth pass has no `_USE_MAIN2`).
+- **dithered depth pass**: keeps pixel when alpha exceeds interleaved gradient noise at
+  `pixelPos · _DitherTilling`, offset by `_TaaFrameInfo.z` (TAA cycle index, unread in game code,
+  resolved by TAA). tested alpha =
+  `saturate(_TintColor.a · _TintColorAlpha · mainAlpha · vertexAlpha · nearFade)^_DitherAlphaExp`
+  (`mainAlpha` = R under `_UseMainTexAsAlpha`; `vertexAlpha` omitted under `_DisableVertColor`).
+  - examples: Power Plateau sky vortex `blackspot`; Origin Lodespring crater floating rocks (gold
+    mask × tint 12× → black rock with gold veins); Wuling dam splashes
+    (`M_fxmap_water_citywaterfall_820` in `p_fxmap_common_citywatersplashes_small_b_802` near unity
+    −1243, 286, −336: `_Metallic` 0 → plain white foam, particle alpha 0.3–1 fading out); Si's
+    Painting cave falls foam (`M_fx_map_common_waterdecal_splashes_2504_01` in
+    `p_fxmap_map02_lv010_water_splashes_01` near unity 734, 233, 1151: intensity 50, metallic 0.8,
+    normal map, `_UseMainTexAsAlpha`, power 2); Si's Painting ink plane
+    (`M_fxmap_map02_lv010_inkpattern_huge_01_fj_03_d02` in `p_fxmap_map02_lv010_inkpattern_huge_01`)
+    and cliff ink sheet (`M_fxmap_map02_lv010_inkpattern_crack_cave_01_fj_01_d` near unity 1100,
+    356, 1246, script group 37900000011).
+- **texture stack keywords**: `_USE_DISTURB` (`_DisturbTex1`, normal-read under `_DisturbTex1Normal`
+  as in [VFXAdvance](#vfxadvance), `_MainTexUseDisturb` / `_DissolveTexUseDisturb` default 1),
+  `_USE_DISSOLVE`, `_USE_POLARUV`, `_USE_SCREENUV` work as in VFXBaseV2.
+- **`_USE_MASK`**: depth pass only. `_MaskTex` (alpha, or R under default `_UseMaskTexAsAlpha`;
+  scrolls, rotates, `_MaskTexUseDisturb`) multiplies tested alpha without colouring. examples: Very
+  Large Rift portal band (`glow_04_line` in `p_fxmap_dung02_dg005_boss_semicircle_01`); Yinglung
+  Pass camphor leaves (`M_fxmap_common_camphor_leaves_07` in `p_fxmap_map02_lv007_camphor_leaves_01`
+  near unity −816, 286, 613: unset `_MainTex` defaults white, mask cuts leaf, tint 4.7 × particle
+  colour).
+- **`_USE_VERTOFFSET`**: VFXBaseV2 vertex offset in both passes, without vertex-alpha weight or
+  camera pull (e.g. Very Large Rift escaping trails `blue02`/`red02` in
+  `p_fxmap_dung02_dg005_boss_semicircle_escapism_trail_02`, pushed 0.5 m along normals).
 
 ## reflection-only effects
 
-`HGRP/Effect/VFXReflectionPass` is never shaded into the image. its passes are `ForwardReflection`
-and two ray-traced reflection passes. the deferred path collects `ForwardReflection` materials into
-a draw list of their own, and only the
-[screen-space reflection](lighting.md#screen-space-reflections) pass draws it, into the normal,
-roughness and depth it marches from, as water does. the pass writes the mesh's normal with a
-roughness of 1 wherever its alpha (VFXBaseV2's tint, vertex colour, `_MainTex` and near camera fade)
-reaches `_ReflectionPassAlphaCutout`, so behind a transparent effect the reflections are traced from
-the effect's surface instead of the opaque one. two materials use it: the Very Large Rift portal's
-`quan_ad_01_pass` (dung02_dg005), twin of its VFXBaseV2 `quan_ad_01` ring, and
-`zhuangfangyi_shu_04_03_pass` (indie_dg005). what this changes on screen behind the ring isn't
-checked against the game.
+`HGRP/Effect/VFXReflectionPass` is never shaded into the main image. it defines `ForwardReflection`
+and two ray-traced reflection passes. the deferred path draws `ForwardReflection` only in the
+[SSR](lighting.md#screen-space-reflections) pass, writing mesh normal and roughness 1 wherever alpha
+(VFXBaseV2 tint, vertex colour, `_MainTex`, near fade) ≥ `_ReflectionPassAlphaCutout`. used by two
+materials: Very Large Rift portal `quan_ad_01_pass` (dung02_dg005, twin of VFXBaseV2 `quan_ad_01`)
+and `zhuangfangyi_shu_04_03_pass` (indie_dg005). on-screen effect is unchecked against the game.
 
 ## refraction
 
-`HGRP/Effect/VFXRefract` draws in a pass of its own after the transparent effects (LightMode
-`Distortion`), from a copy of the scene drawn so far. each pixel shows that copy at its own screen
-position plus an offset: `_RefractDir · r · _Intensity · _TintColorAlpha · vertex alpha`, in screen
-UVs, where r is `_RefractTex`'s red remapped by `_Bi_Refract` (with `_RefractIsNormal`, the
-texture's xy as a normal instead). `_MaskTex` (`_USE_MASK`) multiplies it, and its alpha, or its red
-under the default `_UseMaskTexAsAlpha`, blends it over the scene (most materials set
-`Blend SrcAlpha OneMinusSrcAlpha`), faded by the near camera fade. the vertex alpha scales only the
-offset, so a mesh whose particle fades out stops distorting but still covers. the blend state is the
-material's (`_SrcBlend`, `_DstBlend`, `_ZWrite`, `_ZTest`), and the pass draws an opaque-queue list
-of these objects before the transparent one, both sampling the one copy. a material in the opaque
-queue with `One Zero` blending and depth writes, as the Hub's technology-ball panels and logo
-screens (`M_fx_technologyballpanel_862`, map01_lv001 near unity −21, 104, −382 and −52, 105, −367),
-replaces the scene with the refracted colour outright: the shader's colour isn't premultiplied, and
-its alpha (the mask, spread and near fade) is discarded. both textures scroll by their `*UVSpeed`,
-rotate by `*UVRotate` degrees and take UV0, or polar UVs with `_USE_POLARUV` and their `*SwitchUV`
-set.
+`HGRP/Effect/VFXRefract` runs after transparent effects (`LightMode` `Distortion`), sampling a copy
+of the scene drawn so far at
+`screenUV + _RefractDir · r · _Intensity · _TintColorAlpha · vertexAlpha` (`r` = `_RefractTex.r`
+remapped by `_Bi_Refract`, or normal `xy` under `_RefractIsNormal`).
 
-`_USE_RBOFFSET` splits colours: the copy is sampled again at a further offset,
-`_RBOffset.xy · 0.01 · _Intensity · vertex alpha` (times r, or the normal offset's length, under
-`_UseMainTexAsMask`), and each channel keeps the brightest of the refracted sample times
-`_RBMainColorMask` and the further one times `_RBOffsetColorMask`. `_USE_RGBOFFSET` does nothing
-alone; with `_USE_RBOFFSET` it adds a third sample at `_GOffset` times the further offset, and the
-two further samples take `_RBOffset1ColorMask` and `_RBOffset2ColorMask` instead. `_RBIntensity`
-blends from the refracted sample to the split. `_USE_SOFTBLEND` fades the alpha over `_SoftDistance`
-metres of view depth in front of the opaque scene.
-
-`_USE_DISSOLVE` dissolves the offset:
-`d = saturate((r − (_DissolveScheduleOffset · 2.02 − 1.01)) · _DissolveEdgeSharp)`, with r the red
-of `_DissolveTex` (UV0 scrolled by `_DissolveUVSpeed`, rotated by `_DissolveUVRotate` degrees about
-the centre), scales the refraction offset, so the mask's UVs take the dissolved offset too, but not
-the colour split's further shift. `_DissolveAffectBlend` blends the alpha from 1 to `d`. custom data
-z adds to the schedule offset ([custom data](#particle-custom-data)).
-
-`_USE_BLEND` tints the refracted scene by `_BlendTex`: the colour is multiplied by
-`(1 − _BlendColor.a) + blend.rgb · _BlendColor.rgb · _BlendColor.a` (`_BlendColor` is HDR, used as
-stored), and the alpha by the texture's alpha, or its red under `_UseBlendTexAsAlpha`. its UVs
-scroll, rotate and switch to polar UVs as the mask's do, and take `_BlendTexUseRefract` of the
-refraction offset. `_USE_SPREAD` replaces the cover the mask scales, otherwise 1, with a band that
-sweeps across `_SpreadTex`: with s its red (UV0, scrolled by `_SpreadUVSpeed.xy`, rotated by
-`_SpreadUVRotate` degrees, never polar), flipped to `1 − s` by `_SpreadFlip`, and R `_SpreadRange`,
-the cover is `saturate(1 − |(_SpreadScheduleOffset + c.w) · (1 + 2R) − R − s| / R)` times
-`_SpreadAlphaCurve`, c.w the particle's custom data: texels within R of a level that climbs from −R
-to 1 + R as the schedule goes from 0 to 1, so the band sweeps from the texture's darkest values to
-its brightest and is gone at both ends. no shipped variant pairs the spread with polar UVs.
-
-the fire column at Valley Pass (map01_lv002, `p_fxmap_smoke_range_f_smoke_02` at unity −753, 143,
-55, under global variable 4 = 2) uses both: `PatternSmoke01_ref`'s five billboards
-(`M_fx_common_smoke_01_02_03_1`) are a heat haze that a normal map pushes the column around in,
-tinted warm by a scrolling flow texture and swept in by the spread.
-
-the balloons (`int_balloon_postmodel`) glitch the scene behind their "connecting" sign this way
-(`distortion01` in `P_interactive_ballonconnecting`, `M_fx_robotemoji_821`), whose split tints the
-main sample magenta (`_RBMainColorMask`) against a cyan further one. Deep Dale Street
-(dung02_rdg008) uses a split for the heat haze of its fog walls (`p_fxmap_map02_lv008_fogwall_01`,
-child `refract`): particle sheets whose red and blue are pushed apart vertically.
+- **mask & blend**: `_MaskTex` (`_USE_MASK`) scales the offset and supplies blend alpha (R under
+  default `_UseMaskTexAsAlpha`), faded by near-camera fade. vertex alpha scales only the offset, not
+  blend coverage. blend/depth state comes from `_SrcBlend`, `_DstBlend`, `_ZWrite`, `_ZTest` (most
+  use `SrcAlpha OneMinusSrcAlpha`). the pass draws opaque-queue refractors before transparent ones
+  from the same copy: opaque `One Zero` materials (e.g. Hub technology-ball panels/logos
+  `M_fx_technologyballpanel_862`, map01_lv001 near unity −21, 104, −382 and −52, 105, −367) replace
+  the scene outright, discarding alpha. textures scroll (`*UVSpeed`), rotate (`*UVRotate` deg), and
+  use UV0 or polar UVs (`_USE_POLARUV` + `*SwitchUV`).
+- **`_USE_RBOFFSET` & `_USE_RGBOFFSET`**: chromatic split. takes an extra sample at
+  `_RBOffset.xy · 0.01 · _Intensity · vertexAlpha` (× `r` or normal length under
+  `_UseMainTexAsMask`), keeping `max(refract · _RBMainColorMask, shifted · _RBOffsetColorMask)` per
+  channel. `_USE_RGBOFFSET` (only with `_USE_RBOFFSET`) adds a third sample at `_GOffset` × shift
+  using `_RBOffset1ColorMask` and `_RBOffset2ColorMask`. `_RBIntensity` blends toward the split.
+  `_USE_SOFTBLEND` fades alpha over `_SoftDistance` m of depth.
+  - examples: balloon "connecting" glitch (`distortion01` in `P_interactive_ballonconnecting`,
+    `M_fx_robotemoji_821`, magenta vs cyan); Deep Dale Street fog-wall heat haze (`refract` in
+    `p_fxmap_map02_lv008_fogwall_01`, vertical red/blue split).
+- **`_USE_DISSOLVE`**:
+  `d = saturate((_DissolveTex.r − (_DissolveScheduleOffset · 2.02 − 1.01)) · _DissolveEdgeSharp)`
+  (UV0, `_DissolveUVSpeed`, `_DissolveUVRotate` deg; custom data `c.z` adds to schedule) scales the
+  refraction offset (affecting mask UVs, not chromatic split shift). `_DissolveAffectBlend` blends
+  alpha from 1 to `d`.
+- **`_USE_BLEND`**: multiplies colour by
+  `(1 − _BlendColor.a) + blend.rgb · _BlendColor.rgb · _BlendColor.a` (HDR `_BlendColor` as stored)
+  and alpha by `blend.a` (or R under `_UseBlendTexAsAlpha`). UVs scroll, rotate, support polar, and
+  take `_BlendTexUseRefract` of the refraction offset.
+- **`_USE_SPREAD`**: replaces mask base cover (default 1) with a sweeping band over `_SpreadTex.r`
+  (`s`, UV0, `_SpreadUVSpeed.xy`, `_SpreadUVRotate` deg, never polar; `1 − s` under `_SpreadFlip`,
+  `R = _SpreadRange`):
+  `saturate(1 − |(_SpreadScheduleOffset + c.w) · (1 + 2R) − R − s| / R) · _SpreadAlphaCurve`. no
+  shipped variant pairs spread with polar UVs.
+  - example: Valley Pass fire column (`PatternSmoke01_ref` in `p_fxmap_smoke_range_f_smoke_02` at
+    unity −753, 143, 55, global var 4 = 2; `M_fx_common_smoke_01_02_03_1`) uses both `_USE_BLEND`
+    and `_USE_SPREAD`.
 
 ### the Very Large Rift's ripples
 
-in Wuling Very Large Rift (dung02_dg005), waves ripple out from the rift at unity 297, 100, 2: two
-prefabs, `p_fxmap_dung02_dg005_boss_semicircle_ripple_01` and `…_ripple_01_ground`, in script groups
-37000020004 and 37000020005. both load by default; a 3 m area at the arena's entrance (unity 23.6,
-100, 18.7) and the server hide them, so they are the arena's look before the fight. each child is a
-one-particle system that emits a mesh every 6 s and grows it over its life, so the rings spread:
+in Wuling Very Large Rift (dung02_dg005, unity 297, 100, 2), two default-on prefabs
+(`p_fxmap_dung02_dg005_boss_semicircle_ripple_01` and `…_ripple_01_ground`, script groups
+37000020004 and 37000020005; hidden by a 3 m entrance trigger at unity 23.6, 100, 18.7 and by the
+server) emit one growing mesh every 6 s per child:
 
-- `wenli_02`: a 142 m cylinder of VFXDitherAlpha (dissolve, distortion and polar UVs), the rings'
-  patterned walls
+- `wenli_02`: 142 m VFXDitherAlpha cylinder (dissolve, disturb, polar UVs)
 - `line_z`, `wai_noise1`: VFXBaseV2 cylinders
-- `niuqu02`, and in the ground prefab two 300 m cylinders: VFXRefract, the distortion that travels
-  with the rings
-- `quan_ad_01`, `quan_ad_02`: half-second flashes at the centre, a VFXDitherAlpha disc and a
-  `_BlendMode` 2 VFXBaseV2 quad that multiplies what lies behind
+- `niuqu02` (and two 300 m ground cylinders): VFXRefract distortion rings
+- `quan_ad_01`, `quan_ad_02`: 0.5 s centre flashes (VFXDitherAlpha disc + `_BlendMode` 2 VFXBaseV2
+  multiply quad)
 
 ## waterfalls
 
-a falls is a stack of prefab placements: the river surface running down the cliff behind it, one or
-two VFXWater sheets (a flipbook sheet and a frothier outer one), [WaterDecal](water.md#waterdecal)
-foam boxes at its foot, particle mist and splashes, and FogSimple cards around it. some add a
-shimmer: `niuqu` planes of [VFXRefract](#refraction) and VFXBaseV2 `add2`/`dark` planes with a
-[vertex offset](#vertex-offset-and-brightening) (`P_fxmap_waterfall_map01lv005_00x`). a few falls
-are ECS entities in dynamic streaming chunks instead of prefab placements (a few dozen
-`P_waterfall_map02lv001_*` on map02), with VFXWater, VFXBaseV2 or VFXRefract materials. the sheets
-of falling water are `HGRP/Effect/VFXWater` meshes (about 1800 placements on map02, in
-`P_fxmap_*waterfall*` prefabs). per pixel:
+waterfalls layer river surfaces, one or two `HGRP/Effect/VFXWater` sheets (~1,800 placements on
+map02 in `P_fxmap_*waterfall*` prefabs; a few dozen `P_waterfall_map02lv001_*` are ECS entities in
+dynamic streaming chunks), [WaterDecal](water.md#waterdecal) foam boxes, particle mist/splashes,
+`FogSimple` cards, and optional shimmer planes (`niuqu` VFXRefract + vertex-offset VFXBaseV2
+`add2`/`dark`, e.g. `P_fxmap_waterfall_map01lv005_00x`).
 
-- **colour and opacity.** `_TintColor · _TintColorIntensity` (alpha `· _TintColorAlpha`) times the
-  vertex colour (unless `_DisableVertColor`), `_MainTex` and `_MaskTex` (`_USE_MASK`), each taking
-  only its red as alpha under `_UseMainTexAsAlpha` / `_UseMaskTexAsAlpha`. UVs scroll, rotate about
-  0.5 and take their `_ST` as in VFXBaseV2. `_WaterRandomUV` stretches and offsets the main UVs by
-  the fractional sum of the object's position.
-- **distortion.** `_USE_DISTURB`: `_DisturbTex1`'s red, remapped by `_Bi_Disturb`, times
-  `_DisturbU/VIntensity1` (or its normal's xy with `_DisturbTex1Normal`), shifts the main, mask,
-  normal map and dissolve UVs by their `_…UseDisturb` fractions. `_USE_DISSOLVE` eats the alpha
-  below `_DissolveScheduleOffset`'s threshold, with a glowing edge.
-- **flipbook.** `_USE_SEQUENCE_FRAME`: `_SequenceBaseColorMap` holds `_SequenceFrameSize` frames
-  (columns by rows, from the top) played at `_PlaybackSpeed` per second, offset per object by
-  `_RandomStartByPos`; two frames blend, each pushed along `_SequenceMotionVectorMap` towards the
-  other by `_MotionVectorDistortionStrength`. the frame adds `rgb · _SequenceBaseColorMapTint · a`
-  and the opacity becomes `saturate(alpha · a · s − _SequenceOpacitySdf) · s`
-  (`s = _SequenceOpacityScale`).
-- **fades.** the near camera fade, `_USE_SOFTBLEND` against what lies behind, the vertex alpha
-  (`_UseVertexColorAsOpacity`) and `|N·V|^_FresnelStrength` (`_UseFresnelAsOpacity`).
-- **lighting.** the `_UseLighting` share of the colour is an albedo. it takes the irradiance volume
-  at the normal (the flipbook's `_SequenceNormalMap` or `_NORMAL_MAP`, scaled by `_FrameNormalScale`
-  / `_NormalScale`), plus a subsurface colour
-  (`HSV(_SubsurfaceHue, _SubsurfaceSaturation, _SubsurfaceValue · thickness · albedo red)`) times
-  `_SubsurfaceIndirect`, desaturated by `_IndirectSaturation`. the sun adds diffuse, a GGX highlight
-  (`_Roughness`, f0 `0.08 · _Specular`, `· _DirSpecularStrength`, divided by the opacity so it
-  survives premultiplication) and the subsurface colour through a wrap lobe plus a see-through lobe
-  towards the sun, the light that makes falls glow against a low sun.
-- **sun shadow.** the sheet is shadowed at half a metre along its normal from the sharp cascades
-  (four taps), or, with the material's `_directional_shadow_asm_only` above 0, from the cached far
-  map alone, tent-filtered. Si's Painting's ink falls set it (`*_asm` materials), so the sun coming
-  through the cave mouth lights them in soft patches rather than the cascades' sharp slivers.
-- **output.** under `_IgnorePostExposure` the colour, lit share included, is divided by the post
-  exposure. `_BlendMode` 1 adds the sheet to what lies behind, as VFXBaseV2's does.
+`HGRP/Effect/VFXWater` per pixel:
+
+- **colour & opacity**: `_TintColor · _TintColorIntensity` (alpha `· _TintColorAlpha`) × vertex
+  colour (unless `_DisableVertColor`) × `_MainTex` × `_MaskTex` (`_USE_MASK`; R as alpha under
+  `_UseMainTexAsAlpha` / `_UseMaskTexAsAlpha`). UVs scroll, rotate about 0.5, and take `_ST`.
+  `_WaterRandomUV` stretches/offsets main UVs by the fractional sum of object position.
+- **distortion & dissolve**: `_USE_DISTURB` shifts main, mask, normal, and dissolve UVs by
+  `_…UseDisturb` using `_DisturbTex1.r` (`_Bi_Disturb`, `_DisturbU/VIntensity1`) or normal xy
+  (`_DisturbTex1Normal`). `_USE_DISSOLVE` eats alpha below `_DissolveScheduleOffset` with glowing
+  edge.
+- **flipbook (`_USE_SEQUENCE_FRAME`)**: `_SequenceBaseColorMap` (`_SequenceFrameSize` cols × rows
+  from top) plays at `_PlaybackSpeed`/s (per-object offset `_RandomStartByPos`), blending two frames
+  warped along `_SequenceMotionVectorMap` by `_MotionVectorDistortionStrength`. adds
+  `rgb · _SequenceBaseColorMapTint · a`; opacity becomes
+  `saturate(alpha · a · s − _SequenceOpacitySdf) · s` (`s = _SequenceOpacityScale`).
+- **fades**: near-camera fade, `_USE_SOFTBLEND`, vertex alpha (`_UseVertexColorAsOpacity`), and
+  `|N·V|^_FresnelStrength` (`_UseFresnelAsOpacity`).
+- **lighting**: `_UseLighting` fraction is albedo. ambient = irradiance volume at normal
+  (`_SequenceNormalMap` or `_NORMAL_MAP`, scaled by `_FrameNormalScale` / `_NormalScale`) +
+  subsurface
+  `HSV(_SubsurfaceHue, _SubsurfaceSaturation, _SubsurfaceValue · thickness · albedo.r) · _SubsurfaceIndirect`,
+  desaturated by `_IndirectSaturation`. sun adds diffuse, GGX (`_Roughness`, F0 `0.08 · _Specular`,
+  `· _DirSpecularStrength / opacity` so it survives premultiplication), and subsurface wrap +
+  see-through lobes.
+- **sun shadow**: sampled 0.5 m along normal from 4-tap sharp cascades, or tent-filtered cached far
+  map alone when `_directional_shadow_asm_only > 0` (e.g. Si's Painting `*_asm` ink falls).
+- **output**: `_IgnorePostExposure` divides out post exposure (including lit share). `_BlendMode` 1
+  adds, as in VFXBaseV2.
 
 ## six-way smoke
 
-`HGRP/Effect/VFXSmoke_SixWay` is Unity's six-way smoke lighting: billboard particles whose two
-lightmaps store how much light the smoke lets through from each axis of the particle's frame.
-`_PositiveAxesLightmap` holds light from its right, up and the side away from the camera in rgb and
-the opacity in alpha; `_NegativeAxesLightmap` holds left, down and the camera's side. Valley's
-Aberrants' black smoke columns (`p_fxmap_common_smokeblack_large_01`, `M_fx_damagesmoke_06`, 18–25 m
-particles) are drawn with it; dung01_wrdg001 has several such materials. with
-`_USE_SIXWAY_LIGHTMAP`, per pixel:
+`HGRP/Effect/VFXSmoke_SixWay` implements Unity six-way smoke lighting on billboard particles (e.g.
+Valley's Aberrants black smoke columns `p_fxmap_common_smokeblack_large_01`, `M_fx_damagesmoke_06`,
+18–25 m; several materials in dung01_wrdg001). `_PositiveAxesLightmap` stores transmission from `+X`
+(right), `+Y` (up), `+Z` (away from camera) and opacity in A; `_NegativeAxesLightmap` stores `−X`,
+`−Y`, `−Z`.
 
-- **UVs.** the lightmaps share one transform: `_LightMapUVSpeed` scroll, a turn of
-  −`_LightMapUVRotate` degrees about 0.5, then `_LightMapControls` as their scale and offset (their
-  own `_ST` is unused). the mask, blend and dissolve textures take their `_…UVSpeed`, `_…UVRotate`
-  (degrees) and `_ST` the same way; the blend texture's `_ST` is applied a second time after the
-  distortion. every texture reads UV set 0; `_MaskUVSet` and `_DissolveUVSet` switch the mask and
-  dissolve to UV set 1: on particles the UV2 stream, which holds the particle's own UVs without a
-  texture sheet, on meshes their UV1. custom data shifts and dissolves as the
-  [shared rule](#particle-custom-data) says.
-- **switched UVs.** the shader has `_USE_POLARUV` and `_USE_SCREENUV` only together. with them each
-  texture's `*SwitchUV` (`_LightMap…`, `_Disturb…` for both distortion textures, `_Mask…`,
-  `_Blend…`, `_Dissolve…`) picks where its UVs start before the scroll: 1 the screen position (as
-  VFXBaseV2's, v from the world height under `_UsePosYAsScreenV`), times the object origin's view
-  depth past the near plane where its `*ScreenDepthUV` is set; 2 polar UVs about UV0's centre (the
-  mask's about UV set 1's under `_MaskUVSet`); any other value UV0. the dissolve's `_DissolveUVSet`
-  overrides its switch. the fire column at Valley Pass (`smoke001_150` in
-  `p_fxmap_smoke_range_f_smoke_02`, `M_fx_lv001_207_09`, 20 stretched 10 m billboards with a fire
-  lightmap) switches only its blend layer to the screen, so the red-hot flow texture its
-  `_BlendTint` (1.84, 0.25, 0.12) colours drifts across the screen rather than with each particle.
-- **distortion.** `_USE_DISTURB` (and `_USE_DISTURB_TEX2` for the second texture): each texture's
-  red, remapped by `_Bi_Disturb`, times `_DisturbU/VIntensityN` (or its normal with
-  `_DisturbTexNNormal`), summed, shifts the lightmap, mask, blend and dissolve UVs by their
-  `_…UseDisturb` fractions.
-- **colour and opacity.** as VFXBaseV2's stack without a main texture: `_TintColor` (LDR) times
-  `_TintColorIntensity`, alpha times `_TintColorAlpha`, times the vertex colour and `_MaskTex`
-  (`_USE_MASK`, red as alpha under `_UseMaskTexAsAlpha`), plus the blend layer (`_USE_BLEND`, its
-  tint `_BlendTint` always times the vertex colour), eaten by the dissolve (`_USE_DISSOLVE`), then
-  brightened above `_ExpThreshold`. the opacity is that alpha, faded by `_USE_SOFTBLEND` and the
-  near camera fade, times the positive lightmap's alpha.
-- **absorption.** the colour isn't multiplied in; it sets how strongly each channel is absorbed. a
-  lightmap value t lets through `min(R, (saturate(t / R))^k · R)` per channel, with
-  `k = 1 − log2(colour) / log2(0.2)` and `R = (_AbsorptionRange + 1/π) / (1 − 1/π)`, so dark tints
-  thin the light that passes and white leaves it as stored.
-- **lighting.** the main light's direction, in the particle's frame (its x axis, up, and away from
-  the camera), weights each lightmap channel by its squared component, picking the positive or
-  negative map by its sign; the sum passes through the absorption and takes the light's colour and
-  shadow (the shadow is sampled per vertex and tinted by a ramp texture). the irradiance volume at
-  the normal takes the sum of all six absorbed channels, desaturated by `_EnvLightSaturation`. the
-  game's global scene-effect colour adjustment applies to both.
-- **output.** `_USE_FOG` fogs the smoke at its own distance. the materials blend
-  `SrcAlpha, OneMinusSrcAlpha`.
+with `_USE_SIXWAY_LIGHTMAP`:
+
+- **UVs**: lightmaps share `_LightMapUVSpeed`, rotation `−_LightMapUVRotate` deg about 0.5, and
+  `_LightMapControls` scale/offset (own `_ST` unused). mask, blend, dissolve use `_…UVSpeed`,
+  `_…UVRotate`, `_ST` (blend applies `_ST` a second time after distortion). default UV0;
+  `_MaskUVSet` and `_DissolveUVSet` switch to UV1 (UV2 stream on particles, UV1 on meshes). follows
+  [particle custom data](#particle-custom-data).
+- **switched UVs**: `_USE_POLARUV` and `_USE_SCREENUV` compile only together. `*SwitchUV`
+  (`_LightMap…`, `_Disturb…`, `_Mask…`, `_Blend…`, `_Dissolve…`) selects base UV before scroll: `1`
+  screen (`_UsePosYAsScreenV`, `*ScreenDepthUV`), `2` polar about UV0 (or UV1 for mask under
+  `_MaskUVSet`), else UV0. `_DissolveUVSet` overrides dissolve's switch. example: Valley Pass fire
+  column (`smoke001_150` in `p_fxmap_smoke_range_f_smoke_02`, `M_fx_lv001_207_09`) uses screen UVs
+  only on its `_BlendTint` `(1.84, 0.25, 0.12)` blend layer.
+- **distortion**: `_USE_DISTURB` and `_USE_DISTURB_TEX2` sum R (`_Bi_Disturb`,
+  `_DisturbU/VIntensityN`) or normal (`_DisturbTexNNormal`) and shift lightmap, mask, blend, and
+  dissolve UVs by `_…UseDisturb`.
+- **colour & opacity**: LDR `_TintColor · _TintColorIntensity`, alpha `· _TintColorAlpha`, × vertex
+  colour × `_MaskTex` (`_USE_MASK`, `_UseMaskTexAsAlpha`), + `_USE_BLEND` (`_BlendTint` always ×
+  vertex colour), − `_USE_DISSOLVE`, brightened above `_ExpThreshold`. opacity = alpha × soft blend
+  × near fade × `_PositiveAxesLightmap.a`.
+- **absorption**: colour sets per-channel absorption rather than multiplying directly: lightmap
+  value `t` transmits `min(R, saturate(t / R)^k · R)` where `k = 1 − log2(colour) / log2(0.2)` and
+  `R = (_AbsorptionRange + 1/π) / (1 − 1/π)`.
+- **lighting & output**: main light direction in particle frame weights squared components of
+  positive/negative lightmaps, passes through absorption, and takes light colour + per-vertex
+  ramp-tinted shadow. irradiance volume takes the sum of all 6 absorbed channels, desaturated by
+  `_EnvLightSaturation`. global scene-effect colour grade applies to both. `_USE_FOG` fogs at smoke
+  depth. blends `SrcAlpha, OneMinusSrcAlpha`.
 
 ## mist
 
-the drifting mist banks are effects too: `HGRP/FogSimple` cards (several hundred on map02,
-`SimpleFogCard*`) and `HGRP/Effect/VFXFakeVolumeFog` boxes (a few dozen, `SimpleFakeVolumeFog*`):
+mist banks use `HGRP/FogSimple` cards (hundreds on map02, `SimpleFogCard*`; mostly additive, rest
+premultiplied) and `HGRP/Effect/VFXFakeVolumeFog` boxes (dozens, `SimpleFakeVolumeFog*`; all
+additive, with depth prepass).
 
-- **cards.** alpha is `_MainTex`'s red times `(1 − _FogNoiseIntensity) + noise · _FogNoiseIntensity`
-  (`_NoiseTex` red) times `_BaseColor.a`. with `_UseWind`, a second `_NoiseTex` sample at the UV ×
-  `_WindScale` (× `_WindScaleX/Y` with `_UseSeparateScale`), scrolling by
-  `(−_WindDirX, _WindDirY) · _WindSpeed` per second, remapped by `_WindNoiseContrast` and mixed in
-  by `_WindNoiseIntensity`, scales both colour and alpha. the colour is `_BaseColor` (`[HDR]`, like
-  `_IndirectColor`, so used as stored); with `_USE_LIGHTING` it's `_BaseColor` times the sun's light
-  colour, mixed towards `_IndirectColor` away from the sun by `_LightFactor`, at the normal its
-  normal map gives. alpha then fades in over `_DistanceFadeStart…End` and out over
-  `_NearCameraFadeDistanceStart…End` metres of view depth, upwards
-  (`saturate(h · _TopFadeContract + _TopFadeOffset)`, where `h` is the world height below the card's
-  origin divided by the length of its y axis, so a card placed upside down, like the 77 m one at
-  Suiming's cave exit, still fades towards the sky rather than the ground), with `_USE_SOFTBLEND`
-  within `_SoftDistance` metres of what lies behind, and is scaled by `_BaseAlphaIntensity`. the
-  `_UseFresnel` switch (a float, not a keyword) scales colour and alpha after the wind by
-  `lerp(1, f^_FresnelContract, _FresnelIntensity)`, f being `1 − N·V` (`N·V` with `_FlipFresnel`), N
-  the card's normal facing the camera. `_NoiseTex` defaults to white: Marker Stone Interiors'
-  `M_fog_indie_dg007_001` (always-shown 50 m cards, additive at `_BaseColor` 311 with
-  `_BaseAlphaIntensity` 0.02) binds none, so its noise and wind change nothing, and its flipped
-  Fresnel at intensity 0.28 dims it slightly where the card is seen edge-on.
-- **light through openings.** some cards fake daylight falling into a cave rather than mist. at
-  Suiming's cave exit (near unity −145, 149, −188) a 77 m card, flipped so its mask
-  (`T_fog_smoothradial_grad_01_M`, a half-radial glow brightest along v = 0) lights its top edge,
-  glows at `_BaseColor` ≈ (16, 20, 30). from the ledge below it reads as a soft shaft through the
-  gap; from above the cave's rocks its straight, nearly opaque top edge shows as a white wall.
-- **boxes.** from the nearer of the surface behind (water surfaces included: the deferred path binds
-  the water pass's copy of the depth with the water drawn in as `_FakeVolumeFogDepthTexture`, so fog
-  over a pool ends at its surface rather than its bed) and the box's far side, the fog's thickness
-  is the distance along the view ray through the unit cube towards the camera (stopping at the
-  camera inside it), and alpha is
-  `_FogColor.a · _TintColorAlpha · (1 − 2^(−thickness · _FogExponent)) · _FogDensity`, faded within
-  `_CubEdgeFade` of the box's axis line, above `_HeightOffset` by `_HeightFalloff`, between
-  `_VerticalFalloffMin/Max`, close to boxes the camera can't walk into (`_NearFadeDistance`), out to
-  `_FogIntensityFadeDistance` from the point (or the box's centre), and with `_FogDepthStart` in
-  from the camera up to that distance, starting at the `_FogDepthEnd` fraction of it. the colour is
-  `_FogColor`.
-- **box noise.** with `_USE_NOISE3D`, `_NoiseTex3D`'s alpha `n` (a 64³ texture), sampled with repeat
-  at the world position (or the box's own with `_NoiseTexUseWorldUVW` off) × `_NoiseTexTilling1`,
-  scrolling by `_NoiseUVWDir1 · _NoiseUVWSpeed1` per second, scales alpha by
-  `saturate(1 − n + i · n)`. the intensity `i` moves from `_NoiseIntensity` at the camera to
-  `_NoiseFarIntensity` by `10 · _NoiseFar` metres. most map02 boxes set 0 near and about −0.3 far,
-  so the noise only thins them, and more with distance: dense boxes read as broken drifting banks
-  rather than a solid wall.
-
-most cards and every box blend additively; the other cards are premultiplied. the cards' own fog
-(`_USE_FOG`) is faded by `_FogIntensity` and `_FogIntensityFadeOutDistance`, and the boxes also
-carry a depth prepass. at Sword Vault Dale (map02_lv006) the cards make the haze over the valley's
-middle distance.
+- **cards (`HGRP/FogSimple`)**:
+  - alpha starts from `_MainTex.r · mix(1, _NoiseTex.r, _FogNoiseIntensity) · _BaseColor.a`.
+  - `_UseWind`: samples `_NoiseTex` at `uv · _WindScale` (`_WindScaleX/Y` under
+    `_UseSeparateScale`), scrolling `(−_WindDirX, _WindDirY) · _WindSpeed`/s, remapped by
+    `_WindNoiseContrast`, mixed by `_WindNoiseIntensity`, scaling both colour and alpha.
+  - `_UseFresnel` (float, not keyword): scales colour and alpha after wind by
+    `lerp(1, f^_FresnelContract, _FresnelIntensity)` (`f = 1 − N·V`, or `N·V` with `_FlipFresnel`,
+    `N` facing camera). `_NoiseTex` defaults white (e.g. Marker Stone Interiors
+    `M_fog_indie_dg007_001`: 50 m additive cards, `_BaseColor` 311, `_BaseAlphaIntensity` 0.02,
+    flipped Fresnel 0.28).
+  - colour: HDR `_BaseColor` (and `_IndirectColor`, as stored). `_USE_LIGHTING` multiplies
+    `_BaseColor` by sun colour and blends toward `_IndirectColor` away from sun by `_LightFactor`
+    using the normal map.
+  - fades: distance in `_DistanceFadeStart`–`…End`, near camera out
+    `_NearCameraFadeDistanceStart`–`…End`, top `saturate(h · _TopFadeContract + _TopFadeOffset)`
+    (`h` = world height below card origin / y-axis length, so upside-down cards still fade upward),
+    `_USE_SOFTBLEND` (`_SoftDistance`), × `_BaseAlphaIntensity`. `_USE_FOG` fogs by `_FogIntensity`
+    and `_FogIntensityFadeOutDistance` (e.g. Sword Vault Dale middle-distance haze).
+- **light through openings**: some cards fake daylight shafts. at Suiming's cave exit (near unity
+  −145, 149, −188), an upside-down 77 m card (`T_fog_smoothradial_grad_01_M`, `_BaseColor` ≈ (16,
+  20, 30)) creates a soft shaft from below and a bright top edge from above.
+- **boxes (`HGRP/Effect/VFXFakeVolumeFog`)**:
+  - `thickness` = ray segment through unit cube from camera (if inside) to nearer of box far face or
+    scene depth (`_FakeVolumeFogDepthTexture`, which includes water surfaces on the deferred path).
+  - alpha = `_FogColor.a · _TintColorAlpha · (1 − 2^(−thickness · _FogExponent)) · _FogDensity`,
+    faded by `_CubEdgeFade`, height (`_HeightOffset`, `_HeightFalloff`, `_VerticalFalloffMin/Max`),
+    `_NearFadeDistance`, `_FogIntensityFadeDistance`, and `_FogDepthStart` / `_FogDepthEnd`. colour
+    is `_FogColor`.
+- **box noise (`_USE_NOISE3D`)**: 64³ `_NoiseTex3D.a` (`n`, repeat) at world pos (or local with
+  `_NoiseTexUseWorldUVW` off) × `_NoiseTexTilling1`, scrolling `_NoiseUVWDir1 · _NoiseUVWSpeed1`/s,
+  scales alpha by `saturate(1 − n + i · n)`. `i` interpolates from `_NoiseIntensity` at camera to
+  `_NoiseFarIntensity` at `10 · _NoiseFar` m (most map02 boxes use 0 near, ~−0.3 far to break up
+  distant banks).
 
 ## blending
 
-the game draws effects after its fog and its water, so mist in front of water covers it, and only
-effects with `_USE_FOG` are fogged, at their own distance; the rest stay clear of the fog, as Origin
-Lodespring's red light stripes along the crystal ridge (`M_fx_prop_connectline_*`) do.
+effects draw after fog and water (so mist covers water). only `_USE_FOG` materials are fogged at
+their own depth; others ignore fog (e.g. Origin Lodespring red light stripes
+`M_fx_prop_connectline_*`).
 
-the transparent pass starts from a copy of the opaque scene (the copy refracting glass samples,
-which never holds transparents) and draws, in order: a full-screen scene colour adjustment of the
-effect manager's (`_VFXParams1`, driven by `HGVFXManager.m_currentSceneDarkValue` and saturation;
-neutral `(1, 1, 1, 1)` unless a `VFXSceneDark` playable runs), the water's lighting on the one-pass
-deferred path, the scan-line post effect, forward decals, the VFXDecal boxes in a list of their own
-(so every box lies under every other effect), glass and effects in one sorted list
-([transparent draw order](materials.md#transparent-draw-order)), then world-space UI, rain and snow.
-it attaches the depth read-only and writes a second target, the motion vectors, where each bright
-transparent pixel (luminance times alpha above 0.05) sets a flag for the temporal pass. the sorted
-list takes queues 2900–3100, or 2900–3400 where the frame settings leave low-resolution transparents
-off, and starts at 2650 where they leave refraction off; the other transparent queues draw in later
-passes (distortion, after distortion, after depth of field, after post-processing). the pass can
-render whole at half size and be upsampled, a setting only the one-pass deferred path reads: it
-defaults to off, no PC quality level sets it, and the scene-effect saturation adjustment forces it
-off.
+transparent pass order (starts from an opaque-scene copy without transparents, used by refracting
+glass):
+
+1. full-screen scene colour grade (`_VFXParams1`, driven by `HGVFXManager.m_currentSceneDarkValue`
+   and saturation; neutral `(1, 1, 1, 1)` unless `VFXSceneDark` runs)
+2. water lighting (one-pass deferred path)
+3. scan-line post effect
+4. forward decals
+5. `VFXDecal` boxes (own list, always beneath other effects)
+6. glass and effects in one sorted list
+   ([transparent draw order](materials.md#transparent-draw-order)) — queues 2900–3100 (2900–3400
+   with low-res transparents off; starts at 2650 with refraction off)
+7. world-space UI, rain, and snow
+
+later passes handle distortion, after-distortion, after-DoF, and after-post-processing queues. the
+transparent pass binds depth read-only and writes a motion-vector flag where `luma · alpha > 0.05`
+for temporal passes. half-size transparent rendering exists only on the one-pass deferred path
+(default off, unused on PC quality levels, forced off by scene saturation adjustment).
 
 ## one-shot effects
 
-a prefab can carry its own view-state controller (`PostModelViewStateController`, recognised by its
-`stateList` and `animatorNode` fields). each state's `effectPlayConfigs` can name an `effectNode`, a
-GameObject the state plays as an effect; with `controlActive` set, playing it switches the node on.
-an `EffectSetting` MonoBehaviour (recognised by `effectLogicCfg`) under the node says whether the
-effect loops (`isLoop`) and for how long it plays (`duration`, in seconds).
+prefabs may carry `PostModelViewStateController` (`stateList`, `animatorNode`). each state's
+`effectPlayConfigs` can target an `effectNode` GameObject (`controlActive` toggles it on). an
+`EffectSetting` (`effectLogicCfg`) under the node records `isLoop` and `duration` (seconds).
 
-a node that is switched off as saved, and whose `EffectSetting`s all have `isLoop` 0, is a burst: it
-shows only for the moments after its state plays it, and never at rest. the challenge start point
-(`int_challenge_start_point_once_postmodel`) is one: its `OneShot` node, a 3 s ring of expanding
-spheres, 40 m decal boxes, a radial blur and smoke, plays when the challenge starts
-(`SwitchToRunning`).
-
-the controller's states drive an Animator in the prefab, whose clips switch GameObjects on and off
-([activity bindings](animation.md#bindings)). a GameObject switched off as saved that every clip
-animating it starts and ends off is never shown by any state. the one-time and repeatable challenge
-points share an effect block: in the repeatable one (`int_challenge_start_point_postmodel`) its
-rising motes (`dotAdd3stages`) and blue decal are part of the idle and running looks, while the
-one-time point's clips hold both off in every state.
+- **bursts**: a node saved inactive whose `EffectSetting`s all have `isLoop = 0` plays only when
+  triggered and never rests on (e.g. `int_challenge_start_point_once_postmodel`'s 3 s `OneShot` node
+  on `SwitchToRunning`).
+- **clip-disabled nodes**: controller states drive an Animator whose clips toggle GameObjects
+  ([activity bindings](animation.md#bindings)). a node saved inactive that every clip starts and
+  ends off never appears (e.g. `int_challenge_start_point_once_postmodel` holds `dotAdd3stages` and
+  blue decal off in all states, unlike repeatable `int_challenge_start_point_postmodel`).
 
 ## effect LOD tables
 
-an enabled `EffectSetting` lists GameObjects in its `lodSetting` table, each with a `gameobject`, a
-quality level and per-distance `_distanceLodInfos` (`isActive`, `speedPercent`). the first time the
-table is applied it records each GameObject's saved activity, and from then on it shows a GameObject
-only when its LOD entry is on and it was saved on; the only other switch it makes is off. so a
-GameObject the table lists and that is saved off never shows through the table, even with `isActive`
-1 at every distance, and the table's next refresh switches it back off if something else switched it
-on. the Very Large Rift (dung02_dg005) places two `p_fxmap_map02_lv002_qinshihuoyan_middle_01_half`
-walls whose `dither` layer (a `VFXDitherAlpha` sheet) is one, beside the drawn `caihong`, `wenli`
-and `trans` layers on the same mesh.
+an enabled `EffectSetting` holds a `lodSetting` table of entries (`gameobject`, quality level,
+per-band `_distanceLodInfos` with `isActive` and `speedPercent`).
 
-the table can list the setting's own GameObject, even a prefab's root. effects placed by dynamic
-structures are instantiated as saved and have their table applied when they load, and nothing on
-that path switches the root on, so a root saved off and listed in its own table never shows. in
-map02 there's one such prefab: `p_fxmap_lv002_fangyuzhenlie_middle_01`, ungated placements of thread
-particles and stream meshes along Wuling City's pillar array, beside the drawn `_high_03`,
-`_middle_02` and `_middle_03` streams.
-
-`distanceLodCfgList` holds the bands, and each listed GameObject is on in band `i` while its
-`_distanceLodInfos[i].isActive` is 1. an entry switches its whole GameObject, so its subtree with
-it. what picks the band depends on what placed the effect:
-
-- **by the camera.** an effect the game wraps in an effect instance (scene effects, factory effects,
-  battle effects) has its setting's band picked from the main camera's 3D distance to the setting's
-  own GameObject, whenever either moves, if `isUseDistanceLod` is set: the last band whose
-  `distance` the camera is beyond (strictly), else the first. past `cullDis` the setting stops
-  picking bands, and with `_isCullDisable` set it switches its own GameObject off, hiding the whole
-  effect, until the camera comes back within it. `lodFadeTime` fades between bands.
-- **by a LOD proxy.** an effect a [dynamic structure](world.md#dynamic-load-grids) places is never
-  measured against the camera and never culled by `cullDis`, whatever `isUseDistanceLod` says. its
-  root's setting is switched on and shown band `i` when its LOD proxy sets level `i`: 0 while the
-  proxy's near grid is loaded, 1 while only its far grid is, 2 while neither is. a level with no
-  band leaves the table as it was. settings below the root aren't driven. so indie_ccdg002's green
-  light beam (`p_fxmap_map02_lv002_dragonball_lightbeam_01`, `cullDis` 150 m) shows from the battle
-  arena 225 m away: its near grid is the level-2 cell holding it (x 128–256), which loads only for x
-  ≥ 0, so across the arena's x < 0 half only its far grid is loaded, and band 1 keeps the beam on
-  with its `01` glow and `wenli` streaks off, leaving `01_ad`.
-
-the collectible marker (`int_collection_common_postmodel`, whose view states only switch it off once
-collected) is one: bands from 0, 30 and 60 m, culled at 80 m. within 30 m it shows everything: the
-triangle icon, its glow card, two line trails, sparks and rings; from 30 to 60 m the icon and the
-rings; from 60 to 80 m the icon alone.
+- **saved-off rule**: on first application, the table records each GameObject's saved activity. it
+  activates a GameObject only if both its LOD band `isActive` and its saved activity are true;
+  otherwise it deactivates it (even if `isActive = 1` in all bands or something else turned it on).
+  - example: Very Large Rift `p_fxmap_map02_lv002_qinshihuoyan_middle_01_half` keeps its `dither`
+    layer off beside `caihong`, `wenli`, and `trans`.
+  - a dynamic-structure prefab whose root is saved off and listed in its own table never shows (in
+    map02: `p_fxmap_lv002_fangyuzhenlie_middle_01`, beside drawn `_high_03`, `_middle_02`,
+    `_middle_03`).
+- **bands**: `distanceLodCfgList` defines bands; each entry toggles its GameObject's whole subtree.
+  band selection depends on placement:
+  - **camera distance** (scene, factory, battle effect instances): when `isUseDistanceLod` is set,
+    picks the last band whose `distance < cameraDist` (else band 0) using 3D distance to the
+    setting's GameObject. beyond `cullDis`, band updates stop; with `_isCullDisable`, the setting's
+    GameObject disables until back in range. `lodFadeTime` fades transitions.
+    - example: collectible marker (`int_collection_common_postmodel`): bands 0, 30, 60 m, culled at
+      80 m (0–30 m all; 30–60 m icon + rings; 60–80 m icon only).
+  - **LOD proxy** ([dynamic structures](world.md#dynamic-load-grids)): ignores camera distance,
+    `isUseDistanceLod`, and `cullDis`. only the root `EffectSetting` is driven: band 0 when near
+    grid is loaded, 1 when only far grid is loaded, 2 when neither is loaded (missing bands leave
+    the table unchanged).
+    - example: indie_ccdg002 green light beam (`p_fxmap_map02_lv002_dragonball_lightbeam_01`,
+      `cullDis` 150 m) stays visible 225 m away across the arena's `x < 0` half because its level-2
+      near grid (`x` 128–256) unloads while its far grid selects band 1 (`01_ad` on, `01` and
+      `wenli` off).
 
 ## open
 

@@ -1,272 +1,195 @@
 # scene effects
 
-how the viewer draws the effects [game-data/effects.md](../game-data/effects.md) describes, and the
-[light beams](#light-beams) ([`looks/effects/`](../../packages/viewer/src/looks/effects), a module
-per family beside the rows they share in `effect-look.ts`, and
-[`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl)). the extractor reads each
-effect material's properties and keywords into a [surface](../package-format.md#materials)
-([game/materials/effects/](../../packages/extractor/src/game/materials/effects/), one module per
-shader), or marks it unsupported with the reason; the viewer packs the surface into the look's 48
-rows, all of which effect looks lay out for themselves (mesh looks use the first 35). effects on
-particle meshes play through the [particles](particles.md#particles), which also carry their
-[custom data](particles.md#custom-data); what's left out is in [status](../status.md).
+viewer implementation of [game-data/effects.md](../game-data/effects.md) and
+[light beams](#light-beams); full gaps in [status.md](../status.md).
+
+pipeline: extractor describers
+([`game/materials/effects/`](../../packages/extractor/src/game/materials/effects/), one per shader)
+emit a [surface](../package-format.md#materials) or mark it unsupported →
+[`looks/effects/`](../../packages/viewer/src/looks/effects) (shared rows in `effect-look.ts`) packs
+it into all 48 look rows (mesh looks use the first 35) →
+[`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl) shades it. particle-mesh
+effects run through [particles](particles.md#particles) and carry
+[custom data](particles.md#custom-data).
 
 ## VFXBaseV2 and VFXDecal
 
-- VFXBaseV2's sixth sample texture takes the vertex offset's slot, and the vertex stage samples the
-  offset texture from the look's seventh slot.
-- a [vertex offset mask](../game-data/effects.md#vertex-offset-and-brightening) takes the highest
-  sample slot the stack leaves empty (`EffectVertexOffsetMask.slot`), with no role, so the fragment
-  stage skips it; the vertex stage reads its slot and strength from `EffectRow.offsetMask`. with all
-  five sample slots taken the material stays unsupported.
-- a sample texture switched on without one bound keeps its role over an unset slot, which binds
-  white, when the shader's default is white; with another default it's left out.
-- each slot's share of the distortion (`*UseDisturb`) rides in its slot bits above the low byte, in
-  1/1024ths (`slotDisturb`).
-- [`_BlendMode` 1](../game-data/effects.md#vfxbasev2) materials add their light, unfogged, as
-  additive mist does.
-- [opaque](../game-data/effects.md#vfxbasev2) VFXBaseV2 materials shade in the main pass after the
-  meshes (`effectOpaque` queue, `fs_effect_opaque`), writing depth, the colour times the alpha as
-  their radiance, and nothing for the screen-space reflections, the AO or the decals. the effect
-  group's main-pass outputs are bound to 1×1 stand-ins there (`mainPassStandIns`), so materials with
-  a soft blend or edge colour, which read them, stay unsupported, as do those with a stencil. the
-  composite fogs them as it does any opaque surface, unchecked against the game.
-- [lighting](../game-data/effects.md#vfxbasev2) takes the irradiance volume per pixel rather than
-  per renderer, and the sun shadowed from the far layer alone without the cloud shadow
-  (`sun_visibility_far_cloudless`), without local lights. the sun keeps the viewer's 1/π
-  ([sun](lighting.md#sun)).
-- the [breathing](../game-data/effects.md#vfxbasev2) runs on the viewer's clock, with the per-draw
-  time scale and offset left at none (their values aren't traced), so every placement pulses in
-  step. its values ride in the decal fade row, which only VFXDecal reads.
-- [water blending](../game-data/effects.md#water-blending) is left out, which matches the game above
-  the authored `_WaterHeight`. fragments below it show the unsupported checker (`waterBlendBelow`),
-  since neither the blend nor the water a `VFXWaterBlendConfig` finds is followed; heights at or
-  below −1000 are taken as under every level.
-- [soft-body animations](../game-data/effects.md#soft-body-animation) also take the vertex offset's
-  slot for their position texture, its UV and scroll rows holding the UV1 scales and the playback's
-  cycles per second and phase (a held frame is a still phase), and the offset rows the bounds and
-  frame count (`VertexMotion` in [`stack.ts`](../../packages/viewer/src/looks/effects/stack.ts)).
-  the rotation texture isn't read: materials with lighting or a Fresnel term, which would read the
-  turned normals, stay unsupported, as do those with a vertex offset, a sixth sample texture or
-  particle-driven playback.
-- the [pull towards the camera](../game-data/effects.md#vertex-offset-and-brightening) is packed per
-  surface (`EffectStackSurface.cameraPull`, `null` in particle mode and for VFXDitherAlpha and
-  VFXDecal) and added in `vs_effect` for meshes and particles alike, measured from the position
-  before the vertex offset (`EffectRow.cameraPull`).
-- the [edge colour](../game-data/effects.md#edge-colour) compares the fragment's view depth with the
-  main pass's depth, as the soft blend does (`EffectRow.edgeColor`, `edge`, `edgeAlpha`).
-- VFXDecal boxes draw their back faces without a depth test, so they still show with the camera
-  inside. each covered pixel reconstructs the main pass's surface from the depth buffer, and
-  `_USE_NORMALBLEND` reads its normal from the main pass's packed surface normal. the extractor
-  folds the shift of their `*CustomData` constants into each slot's offset; the `_USE_IN_PARTICLE`
-  variant is unsupported. additive ones (`Blend One One` with `_BlendMode` 1) add without the fog's
-  transmittance, as the stack's additive layers do; other additive modes stay unsupported.
-  [parallax](../game-data/effects.md#vfxdecal) (`DecalParallax`) puts the depth texture, crack mask
-  and crack noise in three slots no layer takes, with no role so the stack's loop skips them, and
-  its values in the reveal's rows (`EffectRow.parallax`, `crack`, `crackNoise`), which decals don't
-  have; `fx_decal_parallax` and `fx_decal_cracks` in `effect.wgsl` follow the shader. parallax
-  beside a blend layer stays unsupported, since where the cracks add against it isn't known.
+- **slots and packing**:
+  - 6th sample texture uses the vertex-offset slot; vertex stage reads vertex offset from slot 7.
+  - [vertex offset mask](../game-data/effects.md#vertex-offset-and-brightening) takes the highest
+    empty sample slot (`EffectVertexOffsetMask.slot`, no role so fragment skips it; vertex reads
+    `EffectRow.offsetMask`). if all 5 sample slots are used, material is unsupported.
+  - enabled sample slots with no bound texture bind white when the shader default is white, else
+    omitted.
+  - per-slot distortion share (`*UseDisturb`) packs into slot bits above the low byte in 1/1024ths
+    (`slotDisturb`).
+- **blending & opaque queue**: `_BlendMode` 1 adds unfogged.
+  [opaque](../game-data/effects.md#vfxbasev2) VFXBaseV2 draws in the main pass after meshes
+  (`effectOpaque`, `fs_effect_opaque`), writing depth and `rgb * a` radiance (no SSR, AO, or
+  decals). main-pass outputs bind 1×1 `mainPassStandIns`, so opaque materials with soft blend, edge
+  colour, or stencil stay unsupported. composite fogs them as opaque surfaces (unchecked).
+- **lighting**: per-pixel irradiance volume + far-layer-only sun shadow without cloud shadow
+  (`sun_visibility_far_cloudless`), no local lights, sun divided by π ([sun](lighting.md#sun)).
+- **breathing**: runs on the viewer clock with no per-draw time scale/offset (all placements pulse
+  in step); values sit in the decal-fade row.
+- **water blending**: omitted (matches game above `_WaterHeight`). fragments below `_WaterHeight`
+  show the unsupported checker (`waterBlendBelow`); heights ≤ −1000 are treated as below all levels.
+- **soft-body animation**: position texture takes the vertex-offset slot, UV/scroll rows hold UV1
+  scales + cycles/s + phase (held frame = still phase), offset rows hold bounds and frame count
+  (`VertexMotion` in [`stack.ts`](../../packages/viewer/src/looks/effects/stack.ts)). rotation
+  texture is unread, so soft bodies with lighting, Fresnel, vertex offset, 6th sample texture, or
+  particle playback stay unsupported.
+- **camera pull & edge colour**: `EffectStackSurface.cameraPull` (`null` in particle mode,
+  VFXDitherAlpha, VFXDecal) applies in `vs_effect` before vertex offset (`EffectRow.cameraPull`).
+  edge colour compares fragment view depth to main-pass depth (`EffectRow.edgeColor`, `edge`,
+  `edgeAlpha`).
+- **VFXDecal**: draws back-face cubes without depth test, reconstructing main-pass surface from
+  depth (and normal from packed surface for `_USE_NORMALBLEND`). `*CustomData` shifts fold into slot
+  offsets; `_USE_IN_PARTICLE` is unsupported. additive (`Blend One One` + `_BlendMode` 1) adds
+  unfogged; other additive modes are unsupported. [parallax](../game-data/effects.md#vfxdecal)
+  (`DecalParallax`) places depth, crack mask, and crack noise in 3 unused role-less slots and its
+  parameters in reveal rows (`EffectRow.parallax`, `crack`, `crackNoise`), evaluated by
+  `fx_decal_parallax` and `fx_decal_cracks`; parallax beside a blend layer stays unsupported.
 
 ## VFXAdvance and the reveal
 
-[VFXAdvance](../game-data/effects.md#vfxadvance) materials with only a main texture, the first
-disturb texture, a mask, a blend layer, a dissolve, a Fresnel term, a normal map, an emission, a
-soft blend, fog, a vertex offset and the reveal draw through the texture stack
-(`variant: 'advance'`, `describeVfxAdvance`), in slots 0–4 (main, disturb, mask, blend, dissolve),
-the dissolve with VFXBaseV2's sweep and edge colour; their other keywords and interiors stay
-unsupported. the normal map (`EffectStackSurface.normalMap`) and the emission texture take slots 5
-and 6 with no role, so the stack's loop skips them, and `fx_fresnel_normal` and `fx_stack_layer`
-sample them through their own UVs; an emission beside a vertex offset, which would share slot 6,
-stays unsupported. the Fresnel colour, the normal map's slot and scale, the switch that reverses
-back faces' normals, and the emission's colour and slot sit in rows 44–46 of the look
-(`EffectRow.fresnelColor`, `normalMap`, `emission`), which the look grew to 48 rows for. VFXBaseV2's
-Fresnel colour is drawn the same way. two switches in row 43 of the look cover what only VFXAdvance
-does: `disturbNormal` reads the disturb texture as a normal, and `blendVertexColor` scales the blend
-tint by the vertex colour. the ink keywords are drawn as the game draws them where the ink
-simulation hasn't run, since the viewer has none.
-
-[CharacterNPR_VFX](../game-data/effects.md#characternpr_vfx) is classified with VFXAdvance and drawn
-by the same steps (`describeCharacterVfx`), with screen UVs and without the dissolve; a nonzero
-`_VertCameraOffset` stays unsupported, since the viewer's pull is VFXBaseV2's capped one. screen UVs
-about the object's origin (`screenUv.localPivot`, bit 4 of the look's screen-UV flags) measure from
-the draw's origin, which for a skinned mesh posed into its prefab is the prefab's rather than the
-renderer's, so the pattern can sit shifted against the game's.
-
-the [reveal around the player](../game-data/effects.md#invisible-bridges) (`EffectAppear`, rows
-40–43 of the look) changes the tint before the stack combines it (`fx_appear` in `effect.wgsl`), for
-VFXAdvance and VFXDitherAlpha's effect variants alike. the camera stands in for the player, so the
-fire seed reveals bridges around the camera. the global radii ride in `frame.render_size.zw`, set
-from the `fireSeed:player` control through `PackageManifest.fireSeed` (`revealRadii`); in scenes
-without one they're 0, which leaves the materials' own radii about the camera. a reveal without
-`_USE_GLOBAL_APPEAR` (`EffectAppear.global` false) takes the material's radii alone, so Yinglung
-Pass's ink rooms show only within a few metres of the camera; a reveal about a fixed point stays
-unsupported. the reveal's brightening colour is linearized as the tint is.
+- **`describeVfxAdvance` (`variant: 'advance'`)**: supports main, disturb 1, mask, blend, dissolve
+  (slots 0–4; dissolve uses VFXBaseV2 sweep/edge), Fresnel, normal map, emission, soft blend, fog,
+  vertex offset, and reveal; other keywords/interiors stay unsupported.
+  - normal map (`EffectStackSurface.normalMap`) and emission texture take role-less slots 5 and 6
+    (`fx_fresnel_normal`, `fx_stack_layer`); emission + vertex offset collides on slot 6
+    (unsupported).
+  - rows 44–46 (`EffectRow.fresnelColor`, `normalMap`, `emission`) hold Fresnel colour (also used by
+    VFXBaseV2), normal-map slot/scale, back-face normal flip, and emission colour/slot.
+  - row 43 adds `disturbNormal` (read disturb as normal) and `blendVertexColor` (multiply blend tint
+    by vertex colour). ink keywords draw as without ink simulation.
+- **`CharacterNPR_VFX` (`describeCharacterVfx`)**: shares the VFXAdvance path with screen UVs and no
+  dissolve; nonzero `_VertCameraOffset` is unsupported. `screenUv.localPivot` (bit 4 of screen-UV
+  flags) uses the draw origin (prefab origin for posed skinned meshes, which can shift the pattern
+  vs. game).
+- **reveal (`EffectAppear`, rows 40–43)**: `fx_appear` modifies tint before stack combine for
+  VFXAdvance and VFXDitherAlpha effects. camera stands in for player; global radii pass via
+  `frame.render_size.zw` from `fireSeed:player` (`PackageManifest.fireSeed`, `revealRadii`, 0 if
+  absent). `EffectAppear.global == false` uses material radii around the camera (e.g. Yinglung Pass
+  ink rooms); fixed-point reveals are unsupported. brightening colour is linearized like tint.
 
 ## over the composited scene
 
-effects whose blending the transparent pass's targets can't hold draw after compositing (and after
-the water), into the composited scene with the main pass's depth attached read-only
-(`MaterialLook.queue`, the `multiply`, `refractOpaque` and `refract` passes in
+passes running after composite and water, into the composited scene with main-pass depth read-only
+(`MaterialLook.queue`: `multiply`, `refractOpaque`, `refract` in
 [`draw-ranges.ts`](../../packages/viewer/src/render/meshes/draw-ranges.ts)):
 
-- `_BlendMode` 2 VFXBaseV2 layers multiply the scene (`fs_effect_multiply`). they have no stencil
-  there, so those with one stay unsupported.
-- [VFXRefract](../game-data/effects.md#refraction) layers then sample a copy of the scene, taken
-  after the multiplies into the main pass's radiance target, and blend over it (`fs_refract`). the
-  copy holds the fog, the transparent layers and the water, which the game's copy may not. colour
-  offsets take their further samples from the same copy, and the soft blend reads the main pass's
-  depth. a dissolve samples slot 2 and scales the offset and alpha as the game's does; the blend
-  layer takes slot 3 and the spread slot 4, their rows on the stack's vertex offset and edge colour
-  rows, which only VFXBaseV2 reads (`RefractRow`). custom data comes only from particles, so a
-  mesh's second UV set, which the game's shader reads in its place, isn't.
-- opaque VFXRefract layers (`RefractSurface.opaque`) draw from the same copy just before them, in a
-  pass of their own that replaces the colour (`One Zero`) and writes the main pass's depth, so they
-  hide each other and the blended layers behind them. a pass can't sample the depth it writes, so
-  their effect group binds a stand-in depth; only the discarded alpha reads it.
+- **multiply (`fs_effect_multiply`)**: `_BlendMode` 2 VFXBaseV2 layers (no stencil available;
+  stencilled ones stay unsupported).
+- **refraction (`fs_refract`)**: [VFXRefract](../game-data/effects.md#refraction) samples a copy of
+  the post-multiply scene (includes fog, transparents, water, which the game's copy may not); colour
+  offsets sample the same copy, soft blend reads main-pass depth. slot 2 = dissolve, slot 3 = blend
+  layer, slot 4 = spread (rows reuse VFXBaseV2 vertex-offset/edge rows via `RefractRow`). custom
+  data comes from particles only (mesh UV1 unread).
+- **opaque refraction (`RefractSurface.opaque`)**: draws just before blended refraction from the
+  same copy with `One Zero` blend, writing main-pass depth (effect group binds stand-in depth; only
+  discarded alpha reads it).
 
 ## reflection-only effects
 
-[reflection-only effects](../game-data/effects.md#reflection-only-effects) aren't drawn
-(`UNDRAWN_SHADERS` in
-[`material-describe.ts`](../../packages/extractor/src/game/materials/material-describe.ts)), since
-the game never shades them into the image. the viewer's screen-space reflections don't take their
-normal and roughness either.
+omitted (`UNDRAWN_SHADERS` in
+[`material-describe.ts`](../../packages/extractor/src/game/materials/material-describe.ts)) and
+excluded from viewer SSR inputs.
 
 ## portals
 
-[portals](../game-data/effects.md#portals) draw with a stencil buffer
-([`look.ts`](../../packages/viewer/src/looks/look.ts), `LookStencil`). an opaque mask writes only
-the stencil, at the end of the main pass, tested against the depth there, and isn't shaded or
-written to depth. in the transparent pass, effects that write the stencil draw before the rest, and
-each effect's stencil state and depth test pick a pipeline variant. stencil operations other than
-keep and replace are unsupported, and portals need the GPU's `depth32float-stencil8`.
+[portals](../game-data/effects.md#portals) use a stencil buffer (`LookStencil` in `look.ts`,
+requires `depth32float-stencil8`). opaque masks write stencil only at the end of the main pass
+(depth-tested, no colour/depth write). in the transparent pass, stencil writers draw first; stencil
+state and depth test select pipeline variants. stencil ops other than keep/replace are unsupported.
 
 ## solid effects
 
-VFXDitherAlpha and VFXWaterDitherAlpha (classified into one family) shade through the opaque mesh
-path ([`special-looks.ts`](../../packages/viewer/src/looks/special-looks.ts), `ditheredLook`). its
-[dither](../game-data/effects.md#solid-effects) is an alpha test in the cutout depth pass
-(`fs_cutout_depth` in `mesh.wgsl`), for materials without `_USE_MAIN2` in the default
-`_DitherAlphaMode`. with `_UseMainTexAsAlpha` the texture only feeds the test: unlit looks bind it
-in the normal slot, lit ones (which may need that slot for their normal map) in the base slot, with
-the tint covering the base colour as an untextured look's does. the test takes the instance's colour
-(a particle's) as the vertex alpha, since the depth passes don't bind a mesh's own vertex colours,
-and the near camera fade from `DitherRow.near`; its pattern moves by the temporal antialiasing's
-jitter phase (`frame.params.w`), 0 with antialiasing off. `_USE_MAIN2` is drawn only when its second
-texture masks (`_UseMainTex2AsAlpha` with `_MainTex2BlendMode` 0): the tint is multiplied by
-`_MainTex2Color`, and the surface draws without the test. a lit material whose only effect keyword
-is [`_USE_MASK`](../game-data/effects.md#solid-effects) stays on this path
-(`DitheredSurface.dither.mask`): the test multiplies in the mask from the noise slot, bound without
-the slot's flag so the shading never reads it, and only a still mask on UV set 0 is drawn. the reeds
-and bamboo leaves blowing through Qingbo Stockade (`M_fx_map_common_bigwind_reed_01`, `…_leaves_02`,
-lit mesh particles with a normal map) are such. where such a material leaves `_MainTex` unset, the
-mask is the whole alpha, so the describer packs it as the tested texture (`dither.texture`, no
-`mask`) and the look binds it like a red-alpha main texture, the tint alone colouring the surface:
-Yinglung Pass's falling camphor leaves (`M_fxmap_common_camphor_leaves_07`), unchecked against an
-in-game shot.
+VFXDitherAlpha and VFXWaterDitherAlpha split into two paths:
 
-the colour takes the vertex colour as the game's does (`DitheredSurface.vertexColor`,
-`DitherFlags.VertexColor`): the row's colour, a particle's, times the mesh's own where it has one,
-multiplied into the tint and the texture before the albedo saturates, so the look keeps its tint
-unclamped. every dithered look sets `DitherFlags.Surface` in its row, which tells the shading the
-row is a dithered look's (`dither_bits` in `mesh.wgsl`); a mesh's vertex colours are taken as
-linear, unchecked. the NoLighting variant's colour is also times its alpha
-(`dither.colorTimesAlpha`, `DitherFlags.AlphaColor`): the shading recomputes the test's alpha before
-the mask and the power (`dither_alpha`), with the mesh's own vertex alpha, which the test leaves
-out.
-
-`_SUBSURFACE` surfaces take the game's [subsurface model](../game-data/materials.md#subsurface) for
-the sun and the ambient light (`subsurface_sun` and `Surface.scatter` in `frame.wgsl`): the look
-packs the scattered colour times its amount in `DitherRow.subsurface` and zeroes the metallic. local
-lights light them as a default surface.
-
-unlit VFXDitherAlpha materials with a distortion, a dissolve, a mask or polar or screen UVs draw
-through VFXBaseV2's texture stack (`describeDitherEffect`, `stackLook`), as do
-VFXDitherAlphaNoLighting ones with a distortion, a mask and a vertex offset (the passes read so
-far), fogged, blended by the alpha the game dithers with rather than dithered, which the temporal
-antialiasing would average to the same coverage. the NoLighting variant's colour is also times the
-alpha before the mask and the power (`colorTimesAlpha`, `EffectRow.colorTimesAlpha`), which
-`fx_combine` hands back unmasked, and its fog is the G-buffer surface's, unchecked against the
-game's (its passes apply none themselves). that alpha is raised to `_DitherAlphaExp` as the game's
-is, which thins the Very Large Rift's red sky ring (`wenli_01_red` in
-`p_fxmap_dung02_dg005_boss_semicircle_sky_02`, exponent 3) to streaks. unlike the game's, they don't
-write depth, so they don't hide effects behind them. their mask scales only the alpha
-(`maskAlphaOnly`, `EffectRow.maskAlphaOnly`), by its red (`_UseMaskTexAsAlpha`, the default) or else
-its alpha, as the game's depth pass tests it and its colour pass never samples it; lit variants,
-other dither modes and object-relative screen UVs stay unsupported; `_INK_DISTORT` is drawn as
-without it, as VFXAdvance's ink keywords are. their vertex offset fills the same rows as
-VFXBaseV2's, leaving out VFXBaseV2's vertex-alpha weight and camera pull. a vertex offset alone
-doesn't bring a material onto the stack, and those stay unsupported. `_USE_MAIN2` that takes its
-second texture as alpha and multiplies multiplies the tint by `_MainTex2Color`, as the game's colour
-pass does without sampling the texture; other second-texture modes stay unsupported. Wuling City's
-red-tide walls (`M_fxmap_chichao_06_05`) are such.
+- **opaque mesh path (`ditheredLook` in `special-looks.ts`)**:
+  - [dither](../game-data/effects.md#solid-effects) runs as alpha-test in `fs_cutout_depth`
+    (`mesh.wgsl`) for default `_DitherAlphaMode` without `_USE_MAIN2`. `_UseMainTexAsAlpha` binds
+    texture in normal slot (unlit) or base slot (lit, tint provides base colour). uses instance
+    colour as vertex alpha, `DitherRow.near` for near-camera fade, and TAA jitter phase
+    (`frame.params.w`, 0 when AA off).
+  - `_USE_MAIN2` draws only for `_UseMainTex2AsAlpha` + `_MainTex2BlendMode` 0 (multiplies tint by
+    `_MainTex2Color`, skips alpha-test).
+  - lit materials whose only effect keyword is `_USE_MASK` bind a still UV0 mask in the noise slot
+    without its shading flag (`DitheredSurface.dither.mask`, e.g. Qingbo reeds/bamboo leaves). if
+    `_MainTex` is unset, the mask packs as `dither.texture` (red-alpha main texture, tint-only
+    colour; e.g. Yinglung camphor leaves, unchecked).
+  - `DitherFlags.VertexColor` multiplies instance colour × mesh vertex colour (assumed linear,
+    unchecked) into tint and texture before albedo saturate (`DitherFlags.Surface` tags the row for
+    `dither_bits`). NoLighting sets `DitherFlags.AlphaColor` to multiply colour by pre-mask,
+    pre-power `dither_alpha` (including mesh vertex alpha).
+  - `_SUBSURFACE` uses `subsurface_sun` and `Surface.scatter` (`DitherRow.subsurface`, metallic
+    zeroed; local lights treat as default surface).
+- **texture-stack path (`describeDitherEffect`, `stackLook`)**:
+  - unlit VFXDitherAlpha with distortion, dissolve, mask, or polar/screen UVs, plus
+    VFXDitherAlphaNoLighting with distortion, mask, and vertex offset.
+  - alpha-blends using `alpha^_DitherAlphaExp` instead of dithering (no depth write, so effects
+    behind are not occluded; thins Very Large Rift's red sky ring `wenli_01_red` at exp 3).
+  - `maskAlphaOnly` (`EffectRow.maskAlphaOnly`) scales alpha only (red under `_UseMaskTexAsAlpha`,
+    else alpha). NoLighting sets `EffectRow.colorTimesAlpha` and uses G-buffer surface fog
+    (unchecked). `_INK_DISTORT` draws as without it. vertex offset omits vertex-alpha weight and
+    camera pull (offset alone does not promote a material to the stack). `_USE_MAIN2` (alpha +
+    multiply) multiplies tint by `_MainTex2Color` without sampling (e.g. Wuling red-tide walls).
+  - unsupported on stack: lit variants, other dither/main2 modes, object-relative screen UVs.
 
 ## waterfalls
 
-VFXWater sheets are drawn by `fs_effect` (`water_sheet` in `effect.wgsl`; `waterSheetLook` in
-[`water-sheet.ts`](../../packages/viewer/src/looks/effects/water-sheet.ts)). `_BlendMode` 1 sheets
-add their light. the [post-exposure division](../game-data/effects.md#waterfalls) applies to the
-unlit share only, since on the lit share it darkens sheets in dark places, such as Jingyu's cave
-falls, far below the game's. the normal map's frame comes from the UVs' screen derivatives rather
-than mesh tangents. `VFX_WATER_SIMPLE_LIGHT` sheets are lit the full way, and textures on UV sets
-other than 0 are unsupported. a sheet with `WaterSheetSurface.farShadowOnly` takes the sun's shadow
-from the far layer alone (`sun_visibility_far` in `frame.wgsl`). both kinds take the surfaces'
-shadow lookup, not the sheet's own four-tap cascade filter and half-metre normal offset.
+VFXWater draws via `water_sheet` (`effect.wgsl`,
+[`water-sheet.ts`](../../packages/viewer/src/looks/effects/water-sheet.ts)):
 
-a sheet's [soft body](../game-data/effects.md#soft-body-animation) (`WaterSheetSurface.softBody`)
-moves through the stack's vertex path: the position texture in slot 6 (`setSoftBodySlot`), and the
-rotation texture in slot 5, from which `vs_effect` turns the normal the sheet shades with
-(`fx_soft_body_normal`). the sheet keeps the bounds and frame count in rows of its own
-(`WaterSheetRow.softMin`), since its surface rows sit where the stack keeps them. the two slots are
-the flipbook's motion vectors' and the normal map's, so a soft body with either stays unsupported,
-as does one that particle data plays.
+- `_BlendMode` 1 adds light. post-exposure division applies to the unlit share only (applying it to
+  lit darkened dark-cave falls like Jingyu). normal-map tangent frame uses UV screen derivatives.
+- `VFX_WATER_SIMPLE_LIGHT` shades fully; non-UV0 textures are unsupported.
+  `WaterSheetSurface.farShadowOnly` uses `sun_visibility_far`; both kinds use standard surface
+  shadow lookup (not the sheet's 4-tap cascade filter and 0.5 m normal offset).
+- **soft body (`WaterSheetSurface.softBody`)**: position texture in slot 6 (`setSoftBodySlot`),
+  rotation texture in slot 5 (`fx_soft_body_normal` in `vs_effect`), bounds/frame count in
+  `WaterSheetRow.softMin`. collides with flipbook motion vectors and normal map (unsupported if
+  combined, or if particle-driven).
 
 ## six-way smoke
 
-[six-way smoke](../game-data/effects.md#six-way-smoke) draws through `fs_effect`, which hands it to
-`six_way_smoke` in `effect.wgsl` (`sixWaySmokeLook` in
-[`six-way-smoke.ts`](../../packages/viewer/src/looks/effects/six-way-smoke.ts)). the positive
-lightmap takes slot 0 and the negative one slot 6, sampled at slot 0's UVs; the distortion, mask,
-blend and dissolve take slots 1–5. each slot's bits carry where its
-[switched UVs](../game-data/effects.md#six-way-smoke) start, as the texture stack's do, plus
-`SIX_WAY_SCREEN_DEPTH` for screen UVs scaled by the object's depth; `_UsePosYAsScreenV` rides in the
-stack's screen-UV flags, whose own depth scale stays off. the particle's frame is its normal turned
-towards the camera and its object x axis made square to it. the sun takes the viewer's light colour
-over π, as Lit's diffuse does, and the shadow is sampled per pixel without the game's ramp texture.
-a mask or dissolve switched to UV set 1 reads UV0 on particles (`_InParticle`), as the UV2 stream
-holds the same UVs without a texture sheet, and stays unsupported on meshes.
+draws via `six_way_smoke` (`effect.wgsl`,
+[`six-way-smoke.ts`](../../packages/viewer/src/looks/effects/six-way-smoke.ts)):
+
+- slot 0 = positive lightmap, slot 6 = negative lightmap (at slot 0 UVs), slots 1–5 = distortion,
+  mask, blend, dissolve.
+- slot bits carry switched-UV starts plus `SIX_WAY_SCREEN_DEPTH` (depth-scaled screen UVs);
+  `_UsePosYAsScreenV` rides in screen-UV flags (stack's own depth scale stays off).
+- particle frame: normal faces camera, object X orthogonalized to it. sun uses `lightColor / π` with
+  per-pixel shadow (no ramp texture). mask/dissolve on UV1 reads UV0 on particles (`_InParticle`),
+  unsupported on meshes.
 
 ## mist
 
-the [mist](../game-data/effects.md#mist) cards and boxes draw by their own entry points in
-`effect.wgsl` (`fs_mist_card`, `fs_mist_volume`). lit cards take the sun over π, at the mesh normal
-rather than the game's normal map, and the cards' own fog (`_USE_FOG`) isn't drawn. a card without a
-noise texture binds white (`MistCardSurface.noise` `null`), and its Fresnel term is
-`MistCardSurface.fresnel`. boxes draw their back faces without a depth test, like the decals, and
-take the thickness from the nearer of the surface behind, the water's depth and the back face; only
-additive boxes are drawn, without their depth prepass or vertex colour. a box's 3D noise is the
-look's `volumeTexture`, streamed whole and bound beside the slots (a zeroed placeholder leaves boxes
-without it unchanged); the box waits for it like an effect's other textures. additive cards and
-boxes add their light unfogged; premultiplied cards blend over and fog themselves
-([blending](#blending)).
+[mist](../game-data/effects.md#mist) uses `fs_mist_card` and `fs_mist_volume` in `effect.wgsl`:
+
+- **cards**: lit cards use `sun / π` with mesh normal (no normal map) and omit `_USE_FOG`. missing
+  noise binds white (`MistCardSurface.noise == null`); Fresnel is `MistCardSurface.fresnel`.
+  additive cards add unfogged; premultiplied cards fog and blend over.
+- **boxes**: additive only (no depth prepass or vertex colour). draw back faces without depth test;
+  thickness uses the nearer of scene depth, water depth, and back face. 3D noise streams whole into
+  `volumeTexture` (zeroed placeholder when absent; box waits for residency).
 
 ## light beams
 
-[light beams](../game-data/lighting.md#light-beams) draw through `fs_effect`, which hands them to
-`light_beam` (`lightBeamLook` in
-[`light-beam.ts`](../../packages/viewer/src/looks/effects/light-beam.ts)). `vs_effect` shapes the
-cone first (`beam_vertex`); the fragment stage takes the beam's own frame and the camera's from the
-instance's inverse transform rather than extra varyings. additive beams add their light, unfogged;
-alpha-blended ones blend over, fogging themselves under `VLB_USE_FOG`. the 3D noise, the
-per-renderer scale and the global tint are left out, and the colour isn't scaled by exposure, which
-the game's shader doesn't do either (unverified against an in-game shot).
+[light beams](../game-data/lighting.md#light-beams) draw via `light_beam` (`effect.wgsl`,
+[`light-beam.ts`](../../packages/viewer/src/looks/effects/light-beam.ts)):
+
+- `beam_vertex` in `vs_effect` shapes the cone; fragment recovers beam and camera frames from the
+  instance inverse transform.
+- additive beams add unfogged; alpha-blended beams fog under `VLB_USE_FOG`.
+- omitted: 3D noise, per-renderer scale, global tint. colour is not scaled by exposure (matches game
+  shader; unverified against an in-game shot).
 
 ## blending
 
-effects draw in the [transparent pass](frame.md) with the glass, far to near by instance, as the
-game's transparent queue does
-([transparent draw order](../game-data/materials.md#transparent-draw-order)): each writes
-premultiplied colour and its opacity, blended over the scene behind (`fx_accumulate` in
-`effect.wgsl`). those the game [fogs](../game-data/effects.md#blending) fog their colour at their
-own distance first, as glass does; additive light (`fx_additive`) adds with an opacity of 0 and
-stays out of the fog. effects cast no shadows and wait until all their textures are resident.
+transparent effects draw with glass in the [transparent pass](frame.md), far-to-near by instance:
+`fx_accumulate` fogs fogged effects at their own distance and blends premultiplied colour + opacity;
+`fx_additive` adds unfogged with opacity 0. effects cast no shadows and wait until all textures are
+resident.

@@ -1,802 +1,648 @@
 # status
 
-what the extractor and viewer cover, where they knowingly differ from the game, and what is still
-unknown, with [code follow-ups](#code-follow-ups) at the end. topic pages carry the detail; this
-page is the index of gaps. update it in the same commit that closes or opens one.
+coverage, known divergences from the game, open unknowns, and [code follow-ups](#code-follow-ups).
+topic docs hold the details; this page is the index. update it in the same commit that closes or
+opens a gap.
 
-map01 and map02 are the tested scenes. a scene listed by `world scenes` is not evidence that it
-packs or renders correctly.
+only `map01` and `map02` are tested. other scenes listed by `world scenes` are unverified.
 
 ## covered
 
-- container-aware asset resolution, conversion workers and the pack cache
+- **extraction**: container-aware asset resolution, conversion workers, and pack cache
   ([extraction](extraction.md))
-- a scene's levels shown together over shared terrain, streaming around the camera, then the current
-  level ([world](game-data/world.md), [streaming](viewer/streaming.md#levels))
-- static and dynamic stream areas switched by the camera through the game's trigger zones
-  ([world](game-data/world.md#stream-areas))
-- terrain heights, baked surface pages and the close-up layer blend ([terrain](viewer/terrain.md))
-- initial and alternative dynamic structures, active prefab hierarchies and skinned meshes; looping
-  clips of interactives' settled view states and of prefabs' own Animators (skinned and rigid
-  renderers, ACL-compressed or not); spinning ECS scenery ([assets](game-data/assets.md),
-  [animation](game-data/animation.md))
-- quest, mission and variable state as preview controls, with scene states derived from them and
-  dynamic load gates reading them; story progress picked per mission or across the main story;
-  progressions, facility visual forms (shops, depots, recycling stations, monitoring terminals),
-  Dijiang cabins and Control Nexus level (region walls), doors, telescopic bridges, campfire
-  activation, blight with its cores, outpost upgrade missions as outpost levels, tree harvest state,
-  stream areas and script/event groups as controls, each listed for the levels it gates;
-  variable-driven view states on dynamic entities and the decoration animator values scripts set as
-  they start. script groups list what sets them in game (quests, switches, areas, dungeons), from
-  the level scripts, follow the quests their scripts check when they run, and follow the camera's
-  path where a script sets them only as the player crosses its repeatable trigger volumes; so do
-  looks that the player's presence changes ([scene states](game-data/scene-states.md),
+- **world & streaming**: multi-level scenes over shared terrain, camera-based streaming, static and
+  dynamic stream areas via trigger zones ([world](game-data/world.md),
+  [streaming](viewer/streaming.md#levels))
+- **terrain**: heights, baked surface pages, and close-up layer blending
+  ([terrain](viewer/terrain.md))
+- **scenery & animation**: initial/alternative dynamic structures, active prefabs, skinned meshes,
+  settled view-state and prefab Animator looping clips (skinned/rigid, ACL or uncompressed), and
+  spinning ECS scenery ([assets](game-data/assets.md), [animation](game-data/animation.md))
+- **scene controls**: quests, missions, variables, derived scene states, dynamic load gates, story
+  progress, progressions, facility forms (shops, depots, recycling stations, monitoring terminals),
+  Dijiang cabins and Control Nexus region walls, doors, telescopic bridges, campfires, blight/cores,
+  outpost upgrades, tree harvest, stream areas, variable-driven view states, start-time decoration
+  animators, and script/event groups (with script drivers, quest tracking, and repeatable trigger
+  volumes) ([scene states](game-data/scene-states.md),
   [scene controls](extraction/scene-controls.md))
-- environment profiles and volume blending, spatial rain, water, post-processing, baked irradiance
-  with its scene-state bakes (plus the bakes of Dijiang's rooms with a cabin built) and local point,
-  spot and tube lights ([environment](viewer/environment.md), [lighting](viewer/lighting.md),
+- **environment & lighting**: environment profiles and volume blending, spatial rain, water,
+  post-processing, baked irradiance (with scene-state and Dijiang room bakes), and local
+  point/spot/tube lights ([environment](viewer/environment.md), [lighting](viewer/lighting.md),
   [water](viewer/water.md))
-- scene effects in six effect shaders, mist, six-way smoke, portals, and particle systems with their
-  custom data ([effects](game-data/effects.md), [particles](game-data/particles.md),
-  [viewer](viewer/particles.md))
+- **effects & particles**: six scene-effect shaders, mist, six-way smoke, stencil portals, and
+  particle systems with custom data ([effects](game-data/effects.md),
+  [particles](game-data/particles.md), [viewer](viewer/particles.md))
 
 ## lighting and post-processing
 
-- ambient ([ambient](viewer/lighting.md#ambient)): checked against an in-game shot only at Jingyu's
-  cave arch; the volume's default SH isn't recovered ([open](game-data/lighting.md#open)); the
-  lookup has no jitter or forward-shifted clipmap centres; the AO multi-bounce fit uses the albedo's
-  luminance rather than each channel; specular occlusion takes no GTAO; the specular ambient falls
-  back to the ambient probe until the reflection cubemap streams in; local reflection probes aren't
-  drawn (placements not found). next: compare GPU clipmap samples with the bake at one point, and
-  check clipmap seams (L0 repeats, L1 clamps)
-- irradiance volume ([irradiance volume](viewer/lighting.md#irradiance-volume)): levels refill whole
-  rather than partially; room bakes reach only the finest clipmap; which scene-state bake applies is
-  inferred from the bakes, not read from the game's native selection; the index's pair table,
-  trailing rows, three directory words and other index magics are unread
-  ([open](game-data/irradiance.md#open))
-- sun ([sun](viewer/lighting.md#sun)): it may be π too dark against local lights and the game (the
-  two conventions differ, [open](game-data/lighting.md#open)); unchecked
-- sun shadows ([shadows](viewer/lighting.md#shadows)): no contact shadows; the far layer filters
-  with a 3×3 bilinear grid rather than the game's tent over cached tiles; acne is biased by a normal
-  offset rather than the game's push towards the sun; casters aren't culled by the game's per-layer
-  screen sizes (its measure isn't decoded); a realtime-only caster among listed rows also casts into
-  the far layer; prefab renderers cast into every layer, since the packer doesn't read their
-  `m_StaticShadowCaster` and `m_RealtimeShadowCaster` fields
-  ([render flags](game-data/world.md#render-flags)); cascade selection and the sharp-to-far fade
-  follow an unverified reading. for interiors: off-screen casters reach only 250 m, so the sun can
-  leak past that reach, `_ShadowCullMode` isn't read, and outside the game's sun-off volumes rooms
-  get the outdoor sun wherever no drawn geometry shadows them. map02's `shadowOC_CAVE_*` entities
-  (InitChunkData component 61, [world](game-data/world.md#initchunkdata-layout)) are likely the
-  game's cave shadow occluders; they aren't packed and what they do is unchecked
-- local lights ([local lights](viewer/lighting.md#local-lights)): no cookies, flicker or
-  multiple-scattering term; directional, shadow-only and character-only lights aren't packed. their
-  [shadows](viewer/lighting.md#local-light-shadows) come from static scenery through the game's
-  cached tiles only (no per-frame tiles for moving lights or objects), drawn from the sun's
-  far-layer casters at the camera's LODs rather than culled for the light's view and its culling
-  box, with the sun passes' bias and a 3 × 3 filter for the game's 5 × 5 tent, and redrawn as
-  casters stream in, which the game doesn't need; they go off with the sun's shadows. checked
-  against in-game shots at Jingyu's cherry-tree pit and cave arch only, where lit blossoms still
-  read a little paler than the game's. [light beams](viewer/effects.md#light-beams) lack their 3D
-  noise, a per-renderer scale and a global tint, and aren't checked against an in-game shot
-- surface shading that shows most indoors: meshes without tangents draw their normal map flat (what
-  the game's bump does there is unchecked); normals are transformed by the model matrix rather than
-  its inverse transpose; every material but leaves without `_TwoSidedNormal` lights the side facing
-  the camera; the packed tangent frame isn't decoded, so tangents are generated (MikkTSpace) from a
-  UV set ([geometry](package-format.md#binary-encodings)). per-draw emission overrides are under
-  [surfaces and terrain](#surfaces-and-terrain)
-- screen-space reflections
-  ([screen-space reflections](viewer/lighting.md#screen-space-reflections)): the rain wetness
-  variant's ripple normals aren't drawn; reflection-only effects are under
-  [effects and particles](#effects-and-particles). thin emissive strips reflect as stable white
-  speckles on glossy floors (Dijiang's deck, under its light strips): only some of the
-  half-resolution rays hit a strip a pixel or two wide, and the temporal filter keeps each hit at
-  full brightness. untraced beyond that
-- ambient occlusion ([ambient occlusion](viewer/post-processing.md#ambient-occlusion)): normals come
-  from depth, one depth-aware blur stands in for the game's temporal and two spatial filters, there
-  are no depth mips, and the reach is capped at 48 half-resolution pixels
-- auto exposure can sit off in-game shots where characters or effects the viewer doesn't draw would
-  count ([auto exposure](viewer/post-processing.md#auto-exposure))
-- post passes ([post-processing](viewer/post-processing.md)): depth of field, motion blur, fisheye,
-  frosted glass and cutscene effects aren't drawn; the vignette's extra mode and fields (the viewer
-  draws URP's); bloom's compute-shader variant, dirt, additive upsampling, character bloom and
-  anamorphic stretch; colour curves aren't packed
-- post profiles
-  ([the level's base environment](extraction/environments.md#the-levels-base-environment)): a bloom,
-  ambient occlusion, vignette or reflection parameter the profile doesn't override is packed with
-  its authored value rather than the game's default, and a lower-priority volume never shows
-  through; whether any shipped profile differs by it is unchecked
-- light shafts ([light shafts](viewer/post-processing.md#light-shafts)): the occlusion term and the
-  cloud mask aren't drawn; unchecked against an in-game shot facing the sun. the
-  [sun disc](game-data/sky-and-fog.md#sun-disc) is unchecked against one too
-- lens flare ([lens flare](viewer/post-processing.md#lens-flare)): polygon elements and inverse SDFs
-  aren't drawn; the flare component's own settings (when the environment's flare is off) aren't
-  known, so no flare draws then; per-light curves take SRP core's directional-light defaults, and
-  Unity's random-number mapping is assumed. at Origin Lodespring's overview the viewer's flare is
-  fainter than the game's: the crystal mountain behind the sun occludes it in the viewer's depth
-  buffer (the game may not write it there)
+- **ambient** ([viewer](viewer/lighting.md#ambient), [open](game-data/lighting.md#open)):
+  - verified against an in-game shot only at Jingyu's cave arch.
+  - missing: volume default SH, lookup jitter, forward-shifted clipmap centres, per-channel AO
+    multi-bounce (uses luminance), GTAO specular occlusion, and local reflection probes (placements
+    not found).
+  - specular ambient falls back to the ambient probe until the reflection cubemap streams in.
+  - next: compare GPU clipmap samples with the bake at one point and check clipmap seams (L0
+    repeats, L1 clamps).
+- **irradiance volume** ([viewer](viewer/lighting.md#irradiance-volume),
+  [open](game-data/irradiance.md#open)):
+  - levels refill whole rather than partially; room bakes reach only the finest clipmap.
+  - scene-state bake selection is inferred, not read from the game's native selector.
+  - index pair table, trailing rows, three directory words, and other index magics are unread.
+- **sun** ([viewer](viewer/lighting.md#sun), [open](game-data/lighting.md#open)): may be `π` too
+  dark relative to local lights and the game (unchecked).
+- **sun shadows** ([viewer](viewer/lighting.md#shadows)):
+  - missing: contact shadows, per-layer screen-size caster culling (measure undecoded),
+    `_ShadowCullMode`, and map02's `shadowOC_CAVE_*` cave shadow occluders (InitChunkData component
+    61, [world](game-data/world.md#initchunkdata-layout)).
+  - divergences: far layer uses a 3×3 bilinear filter instead of the game's tent over cached tiles;
+    acne uses normal-offset bias instead of pushing toward the sun; realtime-only listed casters
+    also cast into the far layer; prefab renderers cast into all layers (`m_StaticShadowCaster` and
+    `m_RealtimeShadowCaster` unread, [render flags](game-data/world.md#render-flags)); cascade
+    selection and sharp-to-far fade are unverified.
+  - interiors: off-screen casters reach only 250 m (sun leaks past that), and rooms outside sun-off
+    volumes receive outdoor sun wherever no drawn geometry blocks it.
+- **local lights** ([viewer](viewer/lighting.md#local-lights)):
+  - missing: cookies, flicker, multiple-scattering term, directional/shadow-only/character-only
+    lights, and per-frame shadow tiles for moving lights/objects.
+  - [shadows](viewer/lighting.md#local-light-shadows) use static cached tiles only, drawn from sun
+    far-layer casters at camera LODs (not light-view/culling-box culled), with sun bias and a 3×3
+    filter (vs 5×5 tent), redrawn as casters stream in, and toggled off with sun shadows.
+  - verified only at Jingyu's cherry-tree pit and cave arch (lit blossoms read slightly paler).
+  - [light beams](viewer/effects.md#light-beams) lack 3D noise, per-renderer scale, and global tint
+    (unverified in game).
+- **surface shading (most visible indoors)**:
+  - tangentless meshes draw normal maps flat (game bump behavior unchecked); packed tangent frame is
+    undecoded (MikkTSpace generated from UVs, [geometry](package-format.md#binary-encodings)).
+  - normals transform by model matrix rather than inverse transpose; all materials except leaves
+    without `_TwoSidedNormal` light the camera-facing side.
+- **screen-space reflections** ([viewer](viewer/lighting.md#screen-space-reflections)):
+  - rain-wetness ripple normals not drawn; reflection-only effects listed under
+    [effects and particles](#effects-and-particles).
+  - thin emissive strips (Dijiang's deck under light strips) reflect as stable white speckles:
+    half-res rays hit 1–2 px strips sparsely and the temporal filter holds full brightness
+    (untraced).
+- **ambient occlusion** ([viewer](viewer/post-processing.md#ambient-occlusion)): depth-derived
+  normals, single depth-aware blur (vs temporal + two spatial filters), no depth mips, reach capped
+  at 48 half-res pixels.
+- **auto exposure** ([viewer](viewer/post-processing.md#auto-exposure)): can differ from in-game
+  shots where undrawn characters or effects contribute.
+- **post passes** ([viewer](viewer/post-processing.md)):
+  - missing: depth of field, motion blur, fisheye, frosted glass, cutscene effects, vignette extra
+    mode/fields (URP only), bloom compute variant/dirt/additive upsampling/character
+    bloom/anamorphic stretch, and colour curves.
+- **post profiles** ([extraction](extraction/environments.md#the-levels-base-environment)):
+  non-overridden bloom/AO/vignette/reflection parameters pack their authored values instead of game
+  defaults, blocking lower-priority volumes (impact on shipped profiles unchecked).
+- **light shafts & sun disc** ([light shafts](viewer/post-processing.md#light-shafts),
+  [sun disc](game-data/sky-and-fog.md#sun-disc)): occlusion term and cloud mask not drawn; both
+  unverified against sun-facing in-game shots.
+- **lens flare** ([viewer](viewer/post-processing.md#lens-flare)):
+  - missing: polygon elements, inverse SDFs, and flare component's own settings when environment
+    flare is off.
+  - per-light curves use SRP core defaults; Unity RNG mapping is assumed.
+  - fainter than game at Origin Lodespring's overview (crystal mountain occludes it in viewer depth
+    buffer).
 
 ## environment, sky and fog
 
-- environment volume activation ([activation](game-data/environment.md#activation)): what switches
-  story-state chunk volumes isn't known, so every loaded volume counts as enabled (manual-blend ones
-  default off and preview at full strength), which is visibly wrong at The Hub (night and
-  destruction volumes) and Snowy Forest (night volume), and the base-environment vote is wrong
-  wherever the game keeps a volume off. the order among equal-priority volumes is assumed
-  ([viewer](viewer/environment.md#activation))
-- environment volumes not packed ([volumes](extraction/environments.md#volumes)): cylinder volumes
-  (`volumeType` 4), the volumes of a prefab with a prism under a non-identity placement, and local
-  post `Volume`s (read but not applied); scenes without levels get no environment
-- environment phases ([environment](game-data/environment.md#environment-phases)): `windConfig`
-  drives only the [wind clock](viewer/materials.md#swaying-cloth) (wind motors aren't read), and
-  `snowConfig`, `volumetricCloudConfig` and other sections aren't extracted. the blend's rules for
-  directions, integers and the fog's deferred Rayleigh scale are the viewer's, and it doesn't follow
-  the game's cloud-shadow crossfade or its weighted `drawCloudAfterPlanet`
-  ([blending](viewer/environment.md#blending-at-the-camera)). packed but unread: the cloud flow
-  (`cloudFlowType`, `cloudFlowMap`, `flowSpeed`, so the panorama never moves), `skyMaterialType` 1
-  and its `skyboxCubeMap` (a few boss phases), `reflectionType`, `useCustomIVDefaultSH` and
-  `heightFogConfig.enableVolumetricFog` (the PC fog path switches on `volumetricFogConfig.enable`
-  alone) ([viewer](viewer/environment.md#environment-phases))
-- weather ([weather](game-data/environment.md#weather)): spatial rain applies with its volumes, but
-  quest-driven rain lives in LevelData's dynamic volumes, which aren't extracted (and what starts
-  their scripts is unknown); snow isn't packed and falling precipitation (streaks, splashes,
-  ripples) doesn't render. rain wetness ignores shelter, since the rain occlusion map isn't
-  rendered, and has no jittered coverage edges, water running down walls or flooding of
-  normal-mapped dips ([wetness](viewer/environment.md#wetness))
-- sky ([sky](viewer/sky-and-fog.md#sky)): the sky-view LUT's ground bounce isn't drawn; at Power
-  Plateau's overcast the sky stays 15–20 sRGB levels brighter than the in-game shot and the clouds
-  lighter and thinner, while Wuling's sky matches. which of the game's two cloud-alpha paths runs on
-  PC is unchecked
-- the sky's celestial layers ([beyond the atmosphere](viewer/sky-and-fog.md#beyond-the-atmosphere))
-  are unchecked against in-game shots: sky planets are always added rather than blended by their
-  `_BlendMode` and miss the global colour adjustment, stars aren't thinned behind their rings, the
-  ray-traced planet takes the viewer's sun as its light, and the moon's sky-wide ring (`HG_RING`)
-  and the aurora aren't drawn
-- volumetric fog ([fog](viewer/sky-and-fog.md#fog)): local fog volumes and the volumetric light's
-  flow noise (`enableVLFlowNoise`) aren't drawn, the grid is a fixed 160 × 90 × 64 against the
-  game's up to 240 × 135 × 128 at PC high ([quality settings](game-data/quality-settings.md)), the
-  slices per doubling and history weight are Unreal's defaults (the game's aren't recovered), a
-  froxel the history misses takes one sample rather than the game's 16. the height fog's
-  [flow noise](viewer/sky-and-fog.md#flow-noise) is drawn on opaque surfaces only (the game's is
-  unchecked on the sky, water and glass), and its volume blend is read from the height-fog section's
-  and assumed for the volumetric one
+- **environment volume activation** ([game-data](game-data/environment.md#activation),
+  [viewer](viewer/environment.md#activation)):
+  - story-state chunk volume triggers are unknown, so all loaded volumes count as enabled
+    (manual-blend ones default off and preview at full strength). visibly wrong at The Hub (night
+    and destruction volumes) and Snowy Forest (night volume), and skews the base-environment vote.
+  - tie-breaking among equal-priority volumes is assumed.
+- **unpacked environment volumes** ([extraction](extraction/environments.md#volumes)): cylinder
+  volumes (`volumeType` 4), prefab prisms under non-identity placements, local post `Volume`s (read
+  but not applied), and scenes without levels (no environment).
+- **environment phases** ([game-data](game-data/environment.md#environment-phases),
+  [viewer](viewer/environment.md#environment-phases)):
+  - `windConfig` drives only the [wind clock](viewer/materials.md#swaying-cloth) (wind motors
+    unread); `snowConfig`, `volumetricCloudConfig`, and other sections are not extracted.
+  - blending rules for directions, integers, and deferred Rayleigh scale are the viewer's; cloud
+    shadow crossfade and weighted `drawCloudAfterPlanet` are skipped
+    ([blending](viewer/environment.md#blending-at-the-camera)).
+  - packed but unread: cloud flow (`cloudFlowType`, `cloudFlowMap`, `flowSpeed`), `skyMaterialType`
+    1 + `skyboxCubeMap` (boss phases), `reflectionType`, `useCustomIVDefaultSH`, and
+    `heightFogConfig.enableVolumetricFog` (PC path uses `volumetricFogConfig.enable` alone).
+- **weather** ([game-data](game-data/environment.md#weather),
+  [wetness](viewer/environment.md#wetness)):
+  - quest-driven rain (LevelData dynamic volumes), snow, and falling precipitation (streaks,
+    splashes, ripples) are not extracted/rendered.
+  - rain wetness ignores shelter (no rain occlusion map) and lacks jittered coverage edges, wall
+    runoff, and flooded normal-map dips.
+- **sky** ([viewer](viewer/sky-and-fog.md#sky)):
+  - sky-view LUT ground bounce not drawn; PC cloud-alpha path selection unchecked.
+  - Power Plateau overcast reads 15–20 sRGB levels brighter with lighter/thinner clouds than in game
+    (Wuling matches).
+- **celestial layers** ([viewer](viewer/sky-and-fog.md#beyond-the-atmosphere)): unverified in game.
+  planets always add (ignoring `_BlendMode`) without global colour adjustment; stars are not thinned
+  behind rings; ray-traced planet uses viewer sun; moon ring (`HG_RING`) and aurora are not drawn.
+- **volumetric & height fog** ([viewer](viewer/sky-and-fog.md#fog),
+  [flow noise](viewer/sky-and-fog.md#flow-noise)):
+  - missing: local fog volumes and `enableVLFlowNoise`.
+  - grid is fixed 160×90×64 (vs up to 240×135×128 at PC high,
+    [quality settings](game-data/quality-settings.md)); slice distribution and history weight use
+    Unreal defaults; history misses take 1 sample instead of 16.
+  - height-fog flow noise draws on opaque surfaces only (sky/water/glass unchecked); volumetric
+    volume blend is assumed from height fog.
 
 ## surfaces and terrain
 
-- emission ([emission](game-data/materials.md#emission), [viewer](viewer/materials.md#emission)):
-  `_EMISSIVE_ANIM_SWEEP`'s moving band isn't drawn (colours that glow only inside it stay dark,
-  steady ones glow), so `_EMISSIVE_NOMAP` emits nothing; flicker and the emissive map's scroll
-  (`_EmissiveSpeed`; Dijiang's shaft cargo rings) are drawn still, the pulse stops on looks with a
-  parallax glow or layer, and the emission Fresnel term is left out. of the per-draw emission
-  overrides, only prefabs' `AnimationProperties_Emissive` resting colours, or the emissive config
-  their view states leave on it, are read: its breathing (and a config's cycle) and an
-  `EntityRenderHelper` target aren't, nor are overrides other scripts set at runtime; the albedo
-  tint applies after the tri-channel mask and detail blends, where the game tints the base colour
-  before them
-- glass ([glass](game-data/materials.md#glass)): refraction, Fresnel opacity, planar reflections and
-  subsurface scattering aren't drawn; premultiplied glass is read from the blend state, and whether
-  the game lets glass cast shadows is unchecked
-- foliage ([foliage](game-data/materials.md#foliage), [viewer](viewer/materials.md#foliage)): wind,
-  the grass's per-instance colour and terrain albedo blend (`_BLEND_TERRAIN_ALBEDO`), the card LOD's
-  normal decoding (so it takes neither the bend nor the masks), the trunks' detail map, layers and
-  terrain blend (they take Lit's texture layout and their vertex AO and ramp; `HGRP/Lit`'s own
-  `_FOLIAGE_TRUNK` isn't read), `TreeFoliageCardMeshLod`'s own inputs (shaded as plain alpha-tested
-  foliage, so without its `_BLEND_COLOR`: blossom trees lose their colour at card distance, unless
-  the card's atlas carries it), leaves' `_AO_MASK_TUNE_COLOR`, the card LODs' view and height
-  culling, sphere-shadow proxies, the vertical-normal AO boost, broadleaf indirect transmission and
-  contact shadows. grass and tree grids ([terrain](viewer/terrain.md#foliage-grids)) draw every
-  instance at the cluster's LOD, without the game's sparsity thinning; the cluster LOD measure
-  (`rendererHalfSize`), the per-instance parameters and column 7 aren't read
-- Lit layers ([lit layers](viewer/materials.md#lit-layers)): `HGRP/LitEffect` (about 100 map02
-  materials) draws as Lit without dissolve and disturb; the tri-channel mask on MRO-layout materials
-  that also have an emissive map or a mask layer's map (the banners' emblem, drawn, is unchecked
-  against an in-game shot), G and B of its switch-texture variants, `_UseMaskRUVSetAndTilingScale`,
-  the parallax glow's separate mask (`_UseParallaxMask`; those don't glow), global highlight and
-  world-space, PBR and deform variants, matcaps (the campfires' crystal glows without its sheen),
-  mask layers on emissive-mapped materials and with noise or parallax, the top layer's
-  `_BaseHeightMap` (read as grey) and `_TERRAIN_BLEND`'s fade into the terrain aren't drawn
-- other surface keywords the viewer ignores, listed per material in `debug/assets.json` and striped
-  by the viewer's [gaps view](viewer/materials.md#gaps), which doesn't cover effects, terrain, water
-  or per-entity gaps, on map02: `_MACRO_NORMAL_MAP` (about 90 materials), `_SUBSURFACE*`, `_FAKE*`
-  (glints, cracks, dust, volume, refraction), interior parallax and mapping, `_ZWRITE_OFF`, and
-  vertex animation other than `HGRP/Lit`'s [swaying cloth](viewer/materials.md#swaying-cloth),
-  [vertex offset](viewer/materials.md#vertex-offset) and
-  [vertex animation textures](viewer/materials.md#vertex-animation-textures)
-  (`_SIMPLE_VERTEXANIM_ROPE`, a pendulum's gravity or own anchor, a pendulum on an alpha-blended
-  surface, such as the lamp glass `M_prop_map02_light+1_003_01h`, which may hang still inside a
-  swinging frame, `HGRP/LitTransparent`'s cloth, `HGRP/LitEffect`'s `_VAT_RIGIDBODY`,
-  `_MOVING_BAMBOO`). the cloth sway and the [pendulum](viewer/materials.md#swaying-cloth) are
-  unchecked against an in-game shot
-- [vertex animation textures](viewer/materials.md#vertex-animation-textures) are baked per mesh, so
-  a mesh drawn with different animations holds still (map02's `s_zmdmachinevat_lod*`, played by five
-  materials at different speeds, and one Hongshan waterway mesh); its frames are interpolated where
-  the game steps them, and it's unchecked against an in-game shot
-- the [cloth simulation](game-data/materials.md#cloth-simulation) isn't run: entities with a cloth
-  hash (canvases, flags; counted by `pack` as `clothSimulated`) draw their mesh at rest with the
-  sway alone, and those without a sway (Qingbo Stockade's red emblem banners) hang still. its input,
-  the [cloth groups](game-data/world.md#cloth-groups), is located but has no reader, and the game's
-  compute step isn't read
-- Lit's vertex offset (`_USE_VERTOFFSET`) is drawn only on alpha-tested materials, which all four on
-  map02 are: an opaque one keeps still, as does one that offsets along the vertex normal, sits on a
-  surface with a parallax glow or a layer, or weighs the offset by vertex alpha on an animated mesh.
-  its scroll clock is [assumed](game-data/materials.md#vertex-offset) to be seconds, and it's
-  unchecked against an in-game shot beyond the ribbons of Jingyu's cherry-tree islet being known to
-  flap
-- shaders without a look, shown as [unsupported](viewer/materials.md#unsupported-materials) and
-  counted per shader by `pack`: on map02 `Hidden/HGRP/Effect/VFXInkWashPaint`,
-  `HGRP/Effect/VFXRadialBlur`, `HGRP/CharacterNPR`, `Hidden/HGRP/LitEffectBlend`,
-  `HGRP/Effect/VFXTransparentDepthOnly` and the factory placement and outline shaders
-- glowing foliage ([viewer](viewer/materials.md#foliage)): the flow's clock is taken as seconds, and
-  Deep Dale Street's mushrooms are unchecked against an in-game shot
-- forward Lit ([viewer](viewer/materials.md#forward-lit)): the golden treasure chest reflects the
-  scene instead of its own `_CUSTOM_IBL` cubemap; the shader's other variants aren't decoded
-- matte paintings ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` isn't read
-  (no map01 material sets it)
-- erosion rock ([viewer](viewer/materials.md#erosion)): the soft blend into what lies behind
-  (`_ObjectBlend*`) and fake translucency aren't drawn; `HGRP/ErosionDynamic` (only on clearable
-  patches, hidden by default) has no look and shows as unsupported
-- decals ([decals](viewer/materials.md#decals)): `HGRP/DecalLit`'s footprint, UV-noise and arc
-  variants, and placements without their colour and UV, show as unsupported; the sludge erosion and
-  wetness variants (Yinglung Pass's puddles) and the water-flow decals' wet rock are unchecked
-  against an in-game shot; overlaps ignore `_DrawOrder`; decals that write no albedo, and wetness
-  decals, relight the surface from an estimate of its colour, as a dielectric, leave its ambient
-  occlusion and metallic as they were, add their emission over the surface's, and hand the
-  screen-space reflections only the last overlapping decal's surface; under a laid-over decal that
-  doesn't write them, the surface's occlusion and metallic are taken as 1 and 0. terrain decals
-  (InitChunkData component 28) aren't packed and `HGRP/DecalUnlit` has no look.
-  [wetness decals](viewer/materials.md#decals) (Qingbo's big waterwheel) take the porosity from
-  Lit's default factors rather than each material's `_PorosityFactor*` and `_DisableVerticalFlow`,
-  wet twice where they overlap, aren't gated by the global that gates the game's wetness mask, and
-  are unchecked against an in-game shot; whether the game's screen-space reflections see their
-  roughness is unchecked (the viewer's do). prefabs' `HGDecalProjector`s
-  ([decals](game-data/materials.md#decals)) of shapes other than the box show as unsupported, ignore
-  `m_LODScreenSizeMin` and `m_SortOrderOffset`, and stay where the prefab saved them under a
-  Transform a looping clip moves
-- terrain close up ([terrain](viewer/terrain.md#close-up-layers)): smooth triplanar replaces the
-  game's random plane choice; the cliff projection, cone-map parallax and the `A` page's subsurface
-  curvature aren't drawn; the fade distances are the viewer's own and the blend's GPU cost is
-  unprofiled. terrain LOD uses the viewer's own sample-spacing rule, since what the game uses
-  `maxHeightError` for isn't known ([streaming](viewer/streaming.md#terrain-selection))
-- terrain holes ([terrain](viewer/terrain.md#terrain)) follow the game's base pass, where one hole
-  vertex drops its triangles, on quads cut along the game's alternating diagonals (their alignment
-  to the page's samples is inferred). where the game deforms its terrain it draws its subdivision
-  passes instead ([terrain](game-data/terrain.md#heights-and-holes)), and solid ground reaches up to
-  a sample further into holes than the viewer draws it; which scenes do isn't surveyed. triangles
-  touching a hole are rasterized and then discarded, though they can span the screen
-- puddles ([terrain](viewer/terrain.md#puddles)) stop past the leaf splat pages' load distance,
-  ignore the parallax layers' height, and have no ripples
-- HLOD/detail, LOD and mip swaps pop without cross-fade; ground-blend and decal meshes z-fight
-  without the game's depth offsets (the viewer applies none)
+- **emission** ([game-data](game-data/materials.md#emission),
+  [viewer](viewer/materials.md#emission)):
+  - missing: `_EMISSIVE_ANIM_SWEEP` moving band (`_EMISSIVE_NOMAP` emits nothing), Fresnel term,
+    emissive breathing/cycle, `EntityRenderHelper` targets, and runtime script overrides.
+  - flicker and `_EmissiveSpeed` scroll (Dijiang shaft cargo rings) draw still; pulse stops on
+    parallax-glow/layer looks.
+  - albedo tint applies after tri-channel mask and detail blends (game tints before them).
+- **glass** ([game-data](game-data/materials.md#glass)): no refraction, Fresnel opacity, planar
+  reflections, or subsurface scattering; premultiplied glass inferred from blend state; shadow
+  casting unchecked.
+- **foliage** ([game-data](game-data/materials.md#foliage), [viewer](viewer/materials.md#foliage),
+  [grids](viewer/terrain.md#foliage-grids)):
+  - missing: wind, grass per-instance colour and `_BLEND_TERRAIN_ALBEDO`, card LOD normal decoding,
+    trunk detail/layers/terrain blend (`HGRP/Lit` `_FOLIAGE_TRUNK` unread), `TreeFoliageCardMeshLod`
+    inputs (`_BLEND_COLOR` — blossom trees lose colour at card distance unless baked in atlas), leaf
+    `_AO_MASK_TUNE_COLOR`, card LOD view/height culling, sphere-shadow proxies, vertical-normal AO
+    boost, broadleaf indirect transmission, and contact shadows.
+  - grass/tree grids draw all instances at cluster LOD without sparsity thinning
+    (`rendererHalfSize`, per-instance params, and column 7 unread).
+  - glowing foliage: flow clock assumed seconds; Deep Dale Street mushrooms unverified in game.
+- **Lit layers** ([viewer](viewer/materials.md#lit-layers)):
+  - `HGRP/LitEffect` (~100 map02 materials) draws as Lit without dissolve/disturb.
+  - missing: tri-channel mask on MRO materials with emissive/mask-layer maps (drawn banner emblem
+    unverified in game), switch-texture G/B, `_UseMaskRUVSetAndTilingScale`, parallax glow separate
+    mask (`_UseParallaxMask`), global highlight, world-space/PBR/deform variants, matcaps (campfire
+    crystals lack sheen), mask layers on emissive-mapped materials or with noise/parallax, top-layer
+    `_BaseHeightMap` (read as grey), and `_TERRAIN_BLEND` fade.
+- **ignored surface keywords** (listed in `debug/assets.json` and striped by the
+  [gaps view](viewer/materials.md#gaps), which excludes effects, terrain, water, and per-entity
+  gaps): on map02, `_MACRO_NORMAL_MAP` (~90 materials), `_SUBSURFACE*`, `_FAKE*` (glints, cracks,
+  dust, volume, refraction), interior parallax/mapping, `_ZWRITE_OFF`, `_SIMPLE_VERTEXANIM_ROPE`,
+  pendulum gravity/anchor and alpha-blended pendulums (e.g. lamp glass
+  `M_prop_map02_light+1_003_01h`), `HGRP/LitTransparent` cloth, `HGRP/LitEffect` `_VAT_RIGIDBODY`,
+  and `_MOVING_BAMBOO`. cloth sway and [pendulums](viewer/materials.md#swaying-cloth) are unverified
+  in game.
+- **vertex animation textures** ([viewer](viewer/materials.md#vertex-animation-textures)): baked per
+  mesh, so meshes shared by different animations hold still (map02 `s_zmdmachinevat_lod*` and one
+  Hongshan waterway mesh). frames interpolate (game steps); unverified in game.
+- **cloth simulation** ([game-data](game-data/materials.md#cloth-simulation),
+  [cloth groups](game-data/world.md#cloth-groups)): not run. `clothSimulated` entities draw at rest
+  with sway only (Qingbo Stockade's red emblem banners hang still); group reader and compute step
+  not implemented.
+- **Lit vertex offset (`_USE_VERTOFFSET`)** ([game-data](game-data/materials.md#vertex-offset)):
+  alpha-tested materials only (all 4 on map02). opaque, normal-direction, parallax/layered, and
+  alpha-weighted animated meshes hold still. clock assumed seconds; unverified in game beyond
+  Jingyu's cherry-tree islet ribbons flapping.
+- **unimplemented shaders** ([unsupported](viewer/materials.md#unsupported-materials), counted by
+  `pack`): on map02, `Hidden/HGRP/Effect/VFXInkWashPaint`, `HGRP/Effect/VFXRadialBlur`,
+  `HGRP/CharacterNPR`, `Hidden/HGRP/LitEffectBlend`, `HGRP/Effect/VFXTransparentDepthOnly`, and
+  factory placement/outline shaders.
+- **forward Lit** ([viewer](viewer/materials.md#forward-lit)): golden treasure chest reflects the
+  scene instead of `_CUSTOM_IBL`; other variants undecoded.
+- **matte paintings** ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` unread
+  (unused on map01).
+- **erosion rock** ([viewer](viewer/materials.md#erosion)): `_ObjectBlend*` soft blend and fake
+  translucency not drawn; `HGRP/ErosionDynamic` (clearable patches, hidden by default) is
+  unsupported.
+- **decals** ([viewer](viewer/materials.md#decals), [game-data](game-data/materials.md#decals)):
+  - unsupported: `HGRP/DecalLit` footprint/UV-noise/arc variants, placements without colour/UV,
+    non-box prefab `HGDecalProjector`s, and `HGRP/DecalUnlit`. terrain decals (InitChunkData
+    component 28) are unpacked.
+  - divergences: overlaps ignore `_DrawOrder`; no-albedo and wetness decals relight from estimated
+    dielectric colour, keep prior AO/metallic, add emission, and pass only the last decal to SSR
+    (overlaid non-writing decals assume AO 1, metallic 0); prefab projectors ignore
+    `m_LODScreenSizeMin`/`m_SortOrderOffset` and do not follow looping-clip Transforms.
+  - wetness decals (Qingbo's big waterwheel) use Lit default porosity (ignoring `_PorosityFactor*`,
+    `_DisableVerticalFlow`), double-wet on overlap, ignore the global wetness gate, and expose
+    roughness to SSR (unchecked).
+  - unverified in game: sludge erosion/wetness variants (Yinglung Pass puddles), water-flow wet
+    rock, and wetness decals.
+- **terrain** ([viewer](viewer/terrain.md), [streaming](viewer/streaming.md#terrain-selection)):
+  - close-up: smooth triplanar replaces random plane choice; cliff projection, cone-map parallax,
+    and `A`-page subsurface curvature not drawn; fade distances are viewer-chosen; GPU cost
+    unprofiled; LOD uses sample spacing (`maxHeightError` purpose unknown).
+  - holes ([game-data](game-data/terrain.md#heights-and-holes)): follow base pass (alternating
+    diagonals inferred); deformed-terrain subdivision passes aren't drawn (solid ground extends up
+    to 1 sample further into holes in game; scenes unsurveyed); hole-touching triangles rasterize
+    then discard.
+  - [puddles](viewer/terrain.md#puddles): stop past leaf splat distance, ignore parallax height, no
+    ripples.
+- **transitions & depth offsets**: HLOD/detail, LOD, and mip swaps pop without cross-fade;
+  ground-blend and decal meshes z-fight (no depth offsets applied).
 
 ## water
 
-- water ([viewer](viewer/water.md#shading)): sector flow tiles and the rain map are packed but
-  unread (flow and foam come from the global map); the LOD grid's wave displacement, rain and
-  character ripples and ground wetness around water aren't drawn; LOD surfaces are drawn as their
-  meshes rather than the game's grid resampled from above
-  ([how surfaces are drawn](game-data/water.md#how-surfaces-are-drawn)). `FlowmapOption` 1's
-  coverage mask isn't applied, the sun highlight isn't aimed at the nearest point of the sun's disc
-  and has no multiple scattering, configs sharing a `materialIndex` keep their own looks where the
-  game gives both the last loaded's, and effects below the surface show over it, unchecked against
-  the game
-- [foam boxes](viewer/water.md#foam-boxes) (`HGRP/WaterDecal`): the displacement pass
-  (`_BLEND_DISPLACEMENT`) isn't drawn, prefab boxes' `HGWaterDecalRenderer` values aren't packed
-  (neutral on every map02 prefab), and the distortion texture's mip bias (an unnamed material value)
-  isn't read. `_BLEND_BASECOLOR2` boxes (11 map02 materials), variants beyond `_USE_DISTURB`,
-  `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE` and `_USE_WATER_EROSION`, `_ZTest` outside 4/5/8,
-  and erosion alongside dissolve/distortion/mask stay
-  [unsupported](viewer/materials.md#unsupported-materials); Wuling falls' foam and Wuling City's red
-  tide ([erosion](game-data/water.md#water-erosion), clamped samplers approximated) are unchecked
-  against in-game shots, and other fluid types are unverified
-- water volumes ([viewer](viewer/water.md#water-volumes)): volumes without a `WaterConfig` of their
-  own draw with their water type's surface prefab config, but without its foam decal or per-level
-  multipliers ([game data](game-data/water.md#water-volumes)); moves are linear; floaters keep their
-  authored height and don't lag; `ground_distance`, flow and transfers between volumes aren't read;
-  volumes coinciding with a placed surface draw twice, unverified against the game; Suiming's lily
-  pads end 0.9 m under the pit's surface at the first stage, as the data says, unverified in game;
-  no shoreline wetness; how opaque the Test Area's sewage and acid read is unchecked against an
-  in-game shot (the acid still shows its bed faintly, as its config's values give).
-  [pumped pools](game-data/water.md#depletable-pools) offer only empty, authored and full, not the
-  fills between that a pump can stop at; whether the server's starting amount always equals the
-  authored one, and whether an empty pool's surface still draws in game, aren't checked
-- waterfalls: Jingyu's pool falls (near unity −763, 209, −1190) and the cascade over the lip of Si's
-  Painting's lily pool (near 980, 293, 972) now draw as foamed water down the rock, but read
-  grey-teal where the game shows them white; unchecked against an in-game shot from the same pose.
-  at Jingyu the VFXWater sheet still sits inside the rocks in front of the falls
+- **shading** ([viewer](viewer/water.md#shading),
+  [game-data](game-data/water.md#how-surfaces-are-drawn)):
+  - sector flow tiles and rain map are packed but unread (uses global map).
+  - missing: LOD-grid wave displacement, rain/character ripples, shoreline wetness, `FlowmapOption`
+    1 coverage mask, sun-disc nearest-point highlight, and multiple scattering.
+  - divergences: LOD surfaces draw as meshes (not resampled grid); shared-`materialIndex` configs
+    keep distinct looks (game uses last loaded); underwater effects draw over water (unchecked).
+- **foam boxes (`HGRP/WaterDecal`)** ([viewer](viewer/water.md#foam-boxes)):
+  - missing: `_BLEND_DISPLACEMENT`, prefab `HGWaterDecalRenderer` values (neutral on map02), and
+    unnamed distortion mip bias.
+  - unsupported: `_BLEND_BASECOLOR2` (11 map02 materials), keywords beyond `_USE_DISTURB`,
+    `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`, `_ZTest` outside 4/5/8,
+    and erosion combined with dissolve/distortion/mask.
+  - unverified in game: Wuling falls foam, Wuling City red tide
+    ([erosion](game-data/water.md#water-erosion), clamped samplers approximated), and other fluid
+    types.
+- **water volumes** ([viewer](viewer/water.md#water-volumes),
+  [game-data](game-data/water.md#water-volumes)):
+  - volumes without their own `WaterConfig` use the type's prefab config without foam decals or
+    per-level multipliers.
+  - moves are linear; floaters keep authored height with no lag; `ground_distance`, flow, and
+    inter-volume transfers unread; no shoreline wetness; coinciding placed surfaces draw twice
+    (unchecked).
+  - [pumped pools](game-data/water.md#depletable-pools) offer only empty/authored/full (server start
+    amount and empty-surface visibility unchecked).
+  - unverified in game: Suiming lily pads (0.9 m under pit surface at stage 1 per data) and Test
+    Area sewage/acid opacity (acid faintly shows bed).
+- **waterfalls**: Jingyu pool falls (−763, 209, −1190) and Si's Painting lily pool cascade (980,
+  293, 972) read grey-teal instead of white (unverified from matching pose); at Jingyu, the VFXWater
+  sheet sits inside the rocks in front of the falls.
 
 ## effects and particles
 
-- scene effects ([scene effects](game-data/effects.md), [viewer](viewer/effects.md)): drawn are
-  VFXBaseV2, VFXDecal, VFXDitherAlpha, VFXAdvance's simpler variants, CharacterNPR_VFX, VFXRefract,
-  VFXWater sheets, six-way smoke and the mist (FogSimple, VFXFakeVolumeFog). other effect shaders
-  and these shaders' undrawn variants show as
-  [unsupported](viewer/materials.md#unsupported-materials)
-  - [VFXAdvance](game-data/effects.md#vfxadvance): the second disturb texture, polar and screen UVs,
-    edge colour, interiors and `_FogIntensity` aren't drawn. the Fresnel colour on lit
-    (`_USE_LIGHTING`) VFXBaseV2 layers mixes in before the lighting, which no dump checks; Deep Dale
-    Street's normal-mapped floating rocks are unchecked against an in-game shot. the dissolving
-    walls, Yinglung Pass's ink rooms (`…_inkroom_floor_*`, the `inkarea_*` walls, shown only within
-    8 m of the camera) and Si's Painting's ink road over the cave falls (which draws mostly white)
-    are unchecked against an in-game shot, and the ink simulation isn't run
-  - [ink wash](game-data/effects.md#vfxbasev2): the ink-wash screen effect isn't drawn, so the
-    VFXBaseV2 materials shown only during it aren't either (listed by `undrawn` in
-    `debug/assets.json`)
-  - [CharacterNPR_VFX](game-data/effects.md#characternpr_vfx): drawn as VFXAdvance's stack; its
-    dissolve, a nonzero `_VertCameraOffset` and its other keywords aren't. on Marker Stone
-    Interiors' rift monsters, the shell's screen UVs about the mesh's origin measure from the
-    prefab's origin (the mesh is posed into the prefab), and the look is unchecked against an
-    in-game shot
-  - [invisible bridges](game-data/effects.md#invisible-bridges): the fire seed reveals them about
-    the camera, at its highest level by default since the server holds its level, without its radius
-    easing between levels; the northern bridge's group is server-driven and stays at its stored
-    default (hidden). the bridges' look is unchecked against an in-game shot, as is the reveal radii
-    before any script sets a level (0 in scenes without a fire seed)
-  - VFXBaseV2 and VFXDecal: VFXBaseV2's additive blend states and VFXDecal's outside `_BlendMode` 1,
-    `_BlendMode` 2 outside a multiplying blend or with a stencil, opaque blending with a stencil, a
-    soft blend or an edge colour (opaque layers are fogged by the composite and the falling gravel
-    is unchecked in game), the sixth sample texture alongside a vertex offset, a vertex offset mask
-    alongside all five other sample textures, brightening that is a scan line or centred on a fixed
-    point (the player-centred one is left out), rigid-body, fluid and particle vertex animation,
-    soft bodies that are lit, take a Fresnel term or a vertex offset, or play from particle data
-    (the Aurelyne blob is unchecked in game), [water blending](game-data/effects.md#water-blending)
-    (fragments below the authored height show the checker; the height a water surface would set
-    isn't followed), VFXDecal's `_USE_IN_PARTICLE`, lighting and 3D-texture variants, its parallax
-    beside a blend layer and stencil read masks other than 0 and 32, and local lights on lit effects
-    (whose irradiance is also sampled per pixel, not per renderer)
-  - VFXBaseV2's breathing pulses every placement in step (per-draw time scale and offset untraced);
-    Dijiang's clue board and the aisle-guide panels' edge colour are unchecked in game
-  - VFXDitherAlpha's effect variants blend rather than dither and write no depth; lit ones, other
-    dither modes, object-relative screen UVs and a vertex offset with none of the stack's other
-    keywords stay unsupported, as do lit surfaces with a distortion, a dissolve, switched UVs or a
-    mask that scrolls or turns, since the dithered G-buffer path draws only still textures (Marker
-    Stone Interiors' ink patterns `p_fxmap_map02_lv004_inkpattern_801` and `…_802`); a lit surface
-    with a still mask is drawn (Qingbo's wind-blown reeds and leaves and Yinglung Pass's falling
-    camphor leaves, unchecked against an in-game shot); a lit surface's albedo leaves out the
-    post-exposure factor the game multiplies in before saturating it under `_IgnorePostExposure`;
-    the plain variant's dither leaves out a mesh's own vertex alpha (a particle's is drawn) and
-    moves by the viewer's jitter phase where the game's frame value is unread, and `_USE_MAIN2`
-    draws only where its second texture masks, as its colour times the tint, and on the plain
-    variant without the dither (Wuling City's red-tide walls, unchecked in game). the NoLighting
-    variant is fogged, unchecked against the game, and Si's Painting's ink plane and North Wuling's
-    wind-blown water (`M_fxmap_map02_lv008_wind_water_2501_nld`) are unchecked against an in-game
-    shot. its effect variants draw on the texture stack only with a distortion, a mask and a vertex
-    offset: those with `_INK_COLOR_DISTORT`, a dissolve, polar or screen UVs or `_USE_MAIN2` stay
-    unsupported (Si's Painting's ink sheet `…_inkpattern_huge_01_fj_12`); the cave's ink sheet
-    (`…_crack_cave_01_fj_01_d`) is unchecked against an in-game shot. the Very Large Rift's escaping
-    trails are unchecked in game
-  - [VFXWaterDitherAlpha](game-data/effects.md#solid-effects) splashes draw as VFXDitherAlpha's
-    plain variant, `_SUBSURFACE` ones with the game's
-    [subsurface lighting](game-data/materials.md#subsurface) from the sun and the ambient light but
-    not from local lights; the sequence-frame variants stay unsupported (one map02 material), and
-    the splash at the foot of Si's Painting's cave falls and those under Wuling City's dam are
-    unchecked against an in-game shot
-  - [VFXRefract](game-data/effects.md#refraction): its saturation, Fresnel mask and trail aren't
-    drawn, its scene copy includes the water and fog (unchecked against the game's), and on meshes
-    it ignores the second UV set the game reads as custom data; Deep Dale Street's fog-wall haze,
-    the balloons' glitch and Valley Pass's fire-column haze are unchecked in game
-  - VFXWater: `VFX_WATER_REFRACT`, punctual lights, matcaps, `VFX_WATER_SIMPLE_LIGHT`'s probe (lit
-    the full way instead), the dissolve's vertex-colour weight
-    (`_UseVertexColorAlphaAsDissolveWeight`), and the sheet's own sun-shadow lookup (a four-tap
-    cascade filter at half a metre along the normal; the viewer uses the surfaces' lookup). a
-    [soft body](game-data/effects.md#soft-body-animation) with a flipbook or a normal map, or played
-    by particle data, stays unsupported; its per-draw frame offset is taken as 0. the waterwheels'
-    pouring water, whose frame, opacity and dissolve their clip plays, is unchecked against an
-    in-game shot
-  - [six-way smoke](game-data/effects.md#six-way-smoke): no shadow ramp texture, local lights or
-    main texture; a mask or dissolve on UV set 1 stays unsupported on meshes; unchecked in game,
-    including Valley Pass's fire column and its screen-space blend layer
-  - [mist](game-data/effects.md#mist): lit cards light by the mesh normal rather than their normal
-    map, the cards' own fog and the boxes' depth prepass and vertex colour aren't drawn, and only
-    additive boxes draw; Suiming's cave-exit light card is unchecked in game. at Si's Painting's
-    lily pool (946, 295, 973) a box hazes the pads 15 m out more than the game does, though the box
-    follows the shader; the PC exposure the box divides by and `Material.SetColor` linearisation are
-    the untraced inputs. that cards' and boxes' [distance LODs](game-data/world.md#lod-and-hlod) are
-    measured from their LOD centre is inferred
-  - across effects: `VFXSceneDark` playable overrides of `_VFXParams1` aren't run (neutral
-    `(1, 1, 1, 1)` otherwise; the Jingyu blight still reads less saturated than in game)
-  - stencil [portals](game-data/effects.md#portals) draw without their masks' own colour and depth,
-    support only keep and replace, and need `depth32float-stencil8`
-- [reflection-only effects](game-data/effects.md#reflection-only-effects) aren't drawn, as in the
-  game, but don't write the normal, roughness and depth the reflections march from either. next:
-  compare the reflections behind the Very Large Rift's portal ring with an in-game shot
-- effect distance bands ([effect LOD tables](game-data/effects.md#effect-lod-tables)) switch without
-  the game's fade; a billboarded renderer's offset from the effect's origin doesn't turn with the
-  camera; only prefab renderers take them (whether static scenery has banded effects is unchecked);
-  the quality half of an entry (`settingLodLevel`, `platformLayer`) is ignored, as for the highest
-  preset; a band an entry has no info for is read as on (unchecked). outside dynamic structures,
-  every setting in a prefab is banded by the camera, where the game's effect instance drives one
-  setting (which one, and what drives the rest, isn't traced), and interactives' and dynamic models'
-  effects are assumed camera-driven. dynamic structures' effects follow their LOD proxy's level
-  without its grids' unload hysteresis, a level with no band takes the last band rather than the one
-  shown before, and a root saved off but not listed in its own table stays off where the game's
-  proxy switches it on
-- particles ([particle systems](game-data/particles.md#particle-systems),
+- **scene effects** ([game-data](game-data/effects.md), [viewer](viewer/effects.md)): drawn are
+  VFXBaseV2, VFXDecal, VFXDitherAlpha, simpler VFXAdvance variants, CharacterNPR_VFX, VFXRefract,
+  VFXWater sheets, six-way smoke, and mist (FogSimple, VFXFakeVolumeFog). all other shaders and
+  variants show as [unsupported](viewer/materials.md#unsupported-materials).
+  - **VFXAdvance** ([game-data](game-data/effects.md#vfxadvance)): missing second disturb texture,
+    polar/screen UVs, edge colour, interiors, `_FogIntensity`, and ink simulation. lit
+    (`_USE_LIGHTING`) VFXBaseV2 Fresnel mixes before lighting (unchecked). unverified in game: Deep
+    Dale Street normal-mapped floating rocks, dissolving walls, Yinglung Pass ink rooms
+    (`…_inkroom_floor_*`, `inkarea_*` shown within 8 m), and Si's Painting ink road over cave falls
+    (draws mostly white).
+  - **ink wash** ([game-data](game-data/effects.md#vfxbasev2)): screen effect not drawn, so
+    ink-wash-only VFXBaseV2 materials are `undrawn` (`debug/assets.json`).
+  - **CharacterNPR_VFX** ([game-data](game-data/effects.md#characternpr_vfx)): drawn as VFXAdvance
+    without dissolve, nonzero `_VertCameraOffset`, or other keywords. Marker Stone Interiors rift
+    monsters measure shell screen UVs from prefab origin (unverified in game).
+  - **invisible bridges** ([game-data](game-data/effects.md#invisible-bridges)): fire seed reveals
+    around camera at max level by default without radius easing; northern bridge's server-driven
+    group stays hidden; look and pre-script reveal radii (0 without fire seed) unverified in game.
+  - **VFXBaseV2 & VFXDecal**: unsupported/missing — VFXBaseV2 additive blends; VFXDecal outside
+    `_BlendMode` 1; `_BlendMode` 2 non-multiply or stenciled; opaque with stencil, soft blend, or
+    edge colour (opaque fogged by composite; falling gravel unchecked); 6th texture + vertex offset;
+    vertex offset mask + all 5 textures; scan-line/fixed-point/player brightening;
+    rigid-body/fluid/particle VAT; lit/Fresnel/vertex-offset/particle-driven soft bodies (Aurelyne
+    blob unchecked); [water blending](game-data/effects.md#water-blending) (below-height fragments
+    show checker, surface height ignored); VFXDecal `_USE_IN_PARTICLE`, lighting, 3D textures,
+    parallax + blend layer, stencil masks outside 0/32; local lights on lit effects (irradiance
+    sampled per-pixel, not per-renderer). VFXBaseV2 breathing pulses in sync across placements;
+    Dijiang clue board and aisle-guide edge colour unchecked.
+  - **VFXDitherAlpha**:
+    - effect variants blend without dithering/depth and support only distortion, mask, and vertex
+      offset (unsupported: lit, other dither modes, object-relative screen UVs, lone vertex offset,
+      `_INK_COLOR_DISTORT`, dissolve, polar/screen UVs, `_USE_MAIN2` — e.g. Si's Painting
+      `…_inkpattern_huge_01_fj_12`; G-buffer path draws still textures only, leaving Marker Stone
+      Interiors `p_fxmap_map02_lv004_inkpattern_801`/`_802` unsupported).
+    - lit still-mask surfaces draw (Qingbo reeds/leaves, Yinglung Pass camphor leaves, unchecked)
+      without `_IgnorePostExposure` scaling.
+    - plain variant ignores mesh vertex alpha (uses particle alpha), steps dither by viewer jitter,
+      and draws `_USE_MAIN2` without dither (Wuling City red-tide walls, unchecked).
+    - unverified in game: NoLighting fogging, Si's Painting ink plane, North Wuling
+      `M_fxmap_map02_lv008_wind_water_2501_nld`, cave ink sheet `…_crack_cave_01_fj_01_d`, and Very
+      Large Rift escaping trails.
+  - **VFXWaterDitherAlpha** ([game-data](game-data/effects.md#solid-effects)): drawn as plain
+    VFXDitherAlpha; `_SUBSURFACE` uses sun + ambient only (no local lights); sequence-frame variants
+    unsupported (1 map02 material); Si's Painting cave-falls and Wuling City dam splashes
+    unverified.
+  - **VFXRefract** ([game-data](game-data/effects.md#refraction)): no saturation, Fresnel mask,
+    trail, or mesh UV1 custom data; scene copy includes water/fog (unchecked). Deep Dale Street
+    fog-wall haze, balloon glitch, and Valley Pass fire-column haze unverified.
+  - **VFXWater**: missing `VFX_WATER_REFRACT`, punctual lights, matcaps, `VFX_WATER_SIMPLE_LIGHT`
+    probe (uses full lighting), `_UseVertexColorAlphaAsDissolveWeight`, and 4-tap normal-offset
+    sun-shadow lookup. soft bodies with flipbook/normal-map/particle data stay unsupported (frame
+    offset = 0); waterwheel pouring water unverified.
+  - **six-way smoke** ([game-data](game-data/effects.md#six-way-smoke)): no shadow ramp, local
+    lights, or main texture; UV1 mask/dissolve unsupported on meshes; unverified in game (including
+    Valley Pass fire column and its screen-space blend).
+  - **mist** ([game-data](game-data/effects.md#mist)): lit cards use mesh normal (not normal map);
+    no card fog, box depth prepass, vertex colour, or non-additive boxes; distance-LOD centre
+    inferred. Suiming cave-exit card unverified; Si's Painting lily-pool box (946, 295, 973) hazes
+    pads 15 m out too strongly (PC exposure divisor and `Material.SetColor` linearisation untraced).
+  - **global effect overrides**: `VFXSceneDark` `_VFXParams1` overrides not run (Jingyu blight reads
+    less saturated).
+  - **portals** ([game-data](game-data/effects.md#portals)): no mask colour/depth, keep/replace
+    only, requires `depth32float-stencil8`.
+- **reflection-only effects** ([game-data](game-data/effects.md#reflection-only-effects)): not drawn
+  and do not write SSR normal/roughness/depth. next: compare reflections behind the Very Large Rift
+  portal ring with an in-game shot.
+- **effect distance bands** ([game-data](game-data/effects.md#effect-lod-tables)):
+  - switch without fade; billboarded offset does not turn with camera; prefab renderers only (static
+    scenery unchecked); quality fields (`settingLodLevel`, `platformLayer`) ignored; missing band
+    info treated as on (unchecked).
+  - non-dynamic prefabs band all settings by camera (game's per-setting driver untraced); dynamic
+    structures follow LOD proxy without unload hysteresis, fall back to last band on gaps, and leave
+    unlisted saved-off roots off.
+- **particles** ([game-data](game-data/particles.md#particle-systems),
   [viewer](viewer/particles.md#particles)):
-  - frozen mesh particles lose their start colour and their drift and spin over lifetime (a held
-    particle goes on moving in game), and take the midpoint of random start values
-  - played systems ignore the noise, collision, trigger, sub-emitter, light and by-speed modules,
-    use the viewer's own random values and move only while frames render (so the fish school circles
-    without its noise's wobble); all copies of one flipbook step in phase
-  - [trails](game-data/particles.md#trails) follow Unity's documentation, unchecked against the
-    engine or an in-game shot (the purification devices' swirls, dung01_wrdg001 ~2, 355, 208): nine
-    points per trail rather than one per `minVertexDistance`, and `worldSpace` isn't read, so a
-    moving emitter carries its trails. drawn particles play without ribbon-mode trails, trails in
-    other texture modes or outliving their particles, and trails of ring-buffered, force-field or
-    speed-limited systems
-  - stand-ins at the emitter: systems that don't play on awake; systems with no render mode whose
-    trails aren't drawn (the map02 water ribbons) or that only drive lights and sub-emitters (the
-    storehouse sparks); a start delay or drag curve; a per-axis speed limit; speed-modifier curves
-    alongside drag without a speed limit; force fields other than spheres or with a vector field;
-    shapes other than sphere, hemisphere, cone, box, circle, donut and mesh (under 20 map02 systems,
-    single-sided edges and box edges); mesh shapes with a shape texture, edge placement in Loop or
-    PingPong, or quads, points or lines mixed with triangles; sprite-mode sheets, sheet time modes
-    other than lifetime or frames per second, sheets over 64 tiles a side
-  - approximations: a rate between two constants or curves emits at their mean, and a rate curve
-    emits by its exact integral rather than the game's per-frame sum (the waterwheels' pouring water
-    is unchecked against an in-game shot); without a limit or force fields, drag slows only the
-    start velocity and the fall; orbits turn the whole path (exact only along the orbit's axis);
-    force fields push only from within the system's own prefab (no wind zones or scene fields); a
-    particle replaying a ring buffer's loop range replays its path; `Facing` turns to the camera's
-    plane like `View`; velocity-aligned billboards roll by the viewer's choice; vertex Loop and
-    PingPong mesh shapes pick at random for bursts and count the rate's emissions from the start
-    delay (when the game's count restarts isn't traced); cones and circles ignore the arc's mode and
-    spread (about 20 map02 systems set one), sphere and hemisphere arcs aren't applied; stretched
-    quads ignore the camera's velocity (no map02 system scales by it), the freeform mode and an
-    `m_NormalDirection` below 1; Hierarchy-mode particles under a sheared matrix are sized by its
-    axes' lengths rather than the game's lossy scale (the package carries no separate scale), so
-    Jingyu's big waterwheel splashes draw about a third wider than in game
-  - limits: at most 1024 live particles per emitter (a couple of map01 systems can hold slightly
-    more), bounds that a ring-buffered particle moving far past its lifetime can outrun, colours
-    clamped to 1 (RGBA8), custom data in colour mode isn't packed (no map02 system uses it)
-- [spline movers](game-data/particles.md#spline-movers) (Dijiang's shaft cargo) take their lifetime
-  span as the spline's length over the speed, the faster for a random one (unverified), and draw
-  each LOD group's renderers at the group's origin; those with noise, a speed or lifetime curve, an
-  emission type other than the box, or more than four LOD groups stand in. objects draw opaque
-  through their [fade](game-data/particles.md#spline-movers), so Qingbo's buckets and Sword Vault
-  Dale's floating stones appear and leave without fading (the stones also shrink from and to
-  nothing)
-- Marker Stone's low mist banks over the valley are missing; their source is unknown
-- the transparent pass sorts by sorting band (prefab sorting layer/order, static scenery band 0
-  since its ECS band byte isn't traced), render queue, then distance to each instance's
-  bounding-sphere centre (what the game measures, likely bounds centre, isn't traced); renderer
-  priority isn't sorted, and only neighbouring instances of one draw share a call
-  ([frame](viewer/frame.md)). the corroded planet's plume through Dijiang's deck glass is unchecked
-  against the in-game shot's brightness
+  - **frozen mesh particles**: lose start colour, drift, and spin; take midpoint of random
+    constants.
+  - **played systems**: ignore noise, collision, trigger, sub-emitter, light, and by-speed modules;
+    use viewer RNG; advance only while rendering (fish school circles without noise wobble);
+    flipbook copies step in phase.
+  - **trails** ([game-data](game-data/particles.md#trails)): follow Unity docs (unverified, e.g.
+    purification swirls `dung01_wrdg001` ~2, 355, 208); fixed 9 points/trail (ignoring
+    `minVertexDistance`); `worldSpace` unread (moving emitter drags trails). omitted: ribbon mode,
+    other texture modes, trails outliving particles, and trails on ring-buffered/force-field/
+    speed-limited systems.
+  - **stand-ins**: non-play-on-awake; renderless systems without supported trails (map02 water
+    ribbons) or light/sub-emitter-only (storehouse sparks); curve start delay/drag; per-axis speed
+    limit; speed-modifier curve + drag without speed limit; non-sphere or vector-field force fields;
+    unsupported shapes (< 20 map02 systems: single-sided/box edges); mesh shapes with texture,
+    Loop/PingPong edges, or mixed topologies; sprite sheets, non-lifetime/fps sheet timing, sheets
+    > 64×64.
+  - **approximations**: random-range rate emits at mean; rate curve uses exact integral (waterwheel
+    pouring water unverified); unclamped drag slows only start velocity and gravity; orbits rotate
+    whole path; force fields limited to same prefab (no wind zones/scene fields); ring-buffer loop
+    replays path; `Facing` → `View`; velocity-billboard roll is viewer-chosen; Loop/PingPong mesh
+    bursts pick randomly and count from start delay; cone/circle arc mode/spread (~20 map02 systems)
+    and sphere/hemisphere arcs ignored; stretched quads ignore camera velocity, freeform mode, and
+    `m_NormalDirection < 1`; sheared Hierarchy particles size by axis lengths instead of lossy scale
+    (Jingyu big waterwheel splashes ~1/3 wider).
+  - **limits**: 1024 live particles/emitter (a few map01 systems exceed slightly); ring-buffered
+    particles can outrun bounds; colours clamped to `[0, 1]` (RGBA8); colour-mode custom data
+    unpacked (unused on map02).
+- **spline movers** ([game-data](game-data/particles.md#spline-movers)): Dijiang shaft cargo
+  lifetime formula (`length / maxSpeed`) unverified; LOD renderers draw at group origin; noise,
+  speed/lifetime curves, non-box emission, or > 4 LOD groups stand in; `hasAlphaControl` fade
+  omitted (Qingbo buckets and Sword Vault Dale floating stones pop in/out).
+- **missing mist**: Marker Stone's low valley mist banks are missing (source unknown).
+- **transparent sorting** ([frame](viewer/frame.md)): sorts by sorting band (static scenery fixed at
+  0; ECS band byte untraced), render queue, then distance to bounding-sphere centre (game measure
+  untraced); renderer priority ignored; only adjacent identical draws batch. corroded planet plume
+  through Dijiang deck glass unverified for brightness.
 
 ## scenes and conditional content
 
 ### world and streaming
 
-- separate scenes (interiors, offices, arenas) are unvalidated
-- the game's HLOD-unload volumes (`FBStreamArea` root slots 7–9) aren't decoded or applied
-  ([world](game-data/world.md#stream-areas))
-- clusters and detail swap per tile at a ring, not per cluster by its
-  [HLOD links](game-data/world.md#lod-and-hlod), which aren't packed. so a cluster whose children
-  span several leaves swaps as soon as its own tile is in range instead of when its farthest child
-  is, a child filed under another leaf than its cluster's can draw with the cluster or be missing
-  with it (large objects most visibly), and a cluster whose child never loads hides anyway. the
-  rings are the game's at its high preset (4000), measured in 3D from the camera to the tile's
-  bounds rather than in XZ from the player to the layer's cells, and HLOD2 stays drawn past 2048 m
-  ([instance selection](viewer/streaming.md#instance-selection))
-- an entity's [streaming layer](game-data/world.md#streaming-layers) is read but not applied: detail
-  on `Tiny` or `Lighting` draws to the `Default` radius, and global scenery on an HLOD layer draws
-  at any distance instead of within that tier's radius
-- dynamic structures load by their game grid's block around the camera rather than the player,
-  without the ~10 m unload hysteresis or the per-row radius test (which the shipped radii almost
-  never fail); facilities and Dijiang's cabin scenes, which no `fb_main` grid stores, still draw
-  within `detailDistance` of their tile
-  ([dynamic load grids](game-data/world.md#dynamic-load-grids))
-- HLOD tiers whose grid sits half a cell off the tile tree (dung02_dg002's HLOD1) are filed under
-  one of the two tiles each cell straddles ([tile tree](package-format.md#tile-tree))
-- billboards turn only mesh renderers; skinned meshes and particle systems under a `VFXBillBoard`
-  stay as authored; a renderer away from the `VFXBillBoard`'s origin turns in place instead of
-  swinging around it, and modes 2–3 turn about the world's vertical rather than their own up, so
-  tilted placements face wrong ([billboards](game-data/assets.md#billboards))
-- the AIC buildable-grid data (`factorygrids/fbgrids_*.bytes`, a FlatBuffer of per-1 m column height
-  spans and buildable/water flags on the 128 m cells) has no decoder
-- some mesh/material references are missing from the install's path-hash table; failed exact lookups
-  stay explicit (the report counts hashes without a path)
+- separate scenes (interiors, offices, arenas) are unvalidated.
+- HLOD-unload volumes (`FBStreamArea` root slots 7–9) are undecoded
+  ([world](game-data/world.md#stream-areas)).
+- **HLOD/detail swaps** ([streaming](viewer/streaming.md#instance-selection),
+  [HLOD](game-data/world.md#lod-and-hlod)): swap per tile at a ring, not per cluster via HLOD links
+  (unpacked). multi-leaf clusters swap early, children in other leaves can double-draw or vanish,
+  and unloaded children still hide their cluster. rings use PC high (4000) in 3D from camera to tile
+  bounds (vs XZ from player to cells), and HLOD2 stays drawn past 2048 m.
+- **streaming layers** ([world](game-data/world.md#streaming-layers)): read but unapplied (`Tiny`/
+  `Lighting` draw to `Default` radius; global HLOD-layer scenery draws at any distance).
+- **dynamic structures** ([load grids](game-data/world.md#dynamic-load-grids)): load around camera
+  (not player), without ~10 m unload hysteresis or per-row radius test. facilities and Dijiang cabin
+  scenes (no `fb_main` grid) draw within `detailDistance`.
+- **straddling HLOD tiers** (e.g. `dung02_dg002` HLOD1): filed under one of the two straddled tiles
+  ([tile tree](package-format.md#tile-tree)).
+- **billboards** ([assets](game-data/assets.md#billboards)): mesh renderers only (skinned meshes and
+  particles stay as authored); offset renderers turn in place rather than orbiting; modes 2–3 use
+  world +Y instead of local up (tilted placements face wrong).
+- **AIC buildable grid** (`factorygrids/fbgrids_*.bytes`): no decoder.
+- **path-hash misses**: some mesh/material hashes are absent from the install's path-hash table
+  (counted in pack report).
 
 ### interactives and animation
 
-- interactives ([interactives](game-data/interactives.md)) with view states draw the pose their
-  state machines settle in from the placement's starting `state`; a `state` the server or a level
-  script sets later isn't followed. of the keys components set before view states start, only a
-  vertical rope's `RopeLength`, a lift's door bools and a broken robot's `level`, `damage_type` and
-  `exit_type` are read (a lift stays at its starting floor, which the server saves as the player
-  rides); of `VFXAdjustLength`, only scale targets and tiling (a component switching anything else
-  boxes its prefab), and a `PositionFollower` holds its walk position under a looping clip
-- [one-shot effects](game-data/effects.md#one-shot-effects) and transitions' bursts (the talosites'
-  activation) aren't drawn. looping effects that rest looks' states play are
-  ([effects at rest](extraction/prefabs-and-interactives.md#effects-at-rest)), but not doors',
-  bridges' or facility forms'; that a non-persistent effect ends with its state is assumed, and
-  effects on a looping clip's GameObjects hold its end pose. of the effects components place
-  themselves only the jump pad's arrow, the vertical jump pad's vent and laser gates' beams are
-  drawn, unchecked against an in-game shot; the older `int_electric_fence`, whose state its logic
-  computes from server power, draws without beams. the AIC buildings the world places for the
-  factory power network (The Hub's power ports beside its laser-gate switches) aren't drawn: no
-  client file holds their positions ([laser gates](game-data/interactives.md#laser-gates))
-- a settled loop clip moves skinned bones and the Transforms of mesh renderers, including ones under
-  its bones, but not billboarded renderers or particle systems. of its material values it plays the
-  floats, stepped at the clip's frames rather than interpolated; vector and colour components, a
-  float that changes more of the surface than numbers, ACL-compressed clips' curves and its
-  GameObject switches hold their end values
-  ([looping clips](extraction/prefabs-and-interactives.md#looping-clips)). every placement plays in
-  step from the viewer's clock (the game's start per placement is unknown), the animation moves only
-  while frames render, each moving renderer stores every frame of its own, and the balloon's sway
-  and its tube's [vertex offset](viewer/materials.md#vertex-offset), whose object-space direction
-  the viewer turns by the prefab's transform, are unchecked against an in-game shot
-- facility visual forms settle with every key false. looks the player's presence changes follow the
-  camera ([keys the player sets](game-data/interactives.md#keys-the-player-sets)); a campfire's
-  `InZone` sphere uses the template's 2.5 m radius, not the runtime radius the game swaps in once
-  inside, and `Distance` is assumed a plain 3D distance. `InBattle` and `isDead` stay false
-- two-state interactives preview both states, since what switches them in game (a level script
-  reacting to a mission's cutscene, the server) isn't followed: doors draw open or closed
-  ([interactive doors](game-data/interactives.md#interactive-doors)), closed by default except a
-  Dijiang cabin's; campfires draw not activated or activated
-  ([campfires](game-data/interactives.md#campfires)), activated by default, without their fight look
-  or the colour layer's VAT clips; a template's saved Animator bool (The Hub's comm terminal,
-  `fixed`) draws unset or set
-  ([template animator parameters](game-data/interactives.md#template-animator-parameters)), set by
-  default, and int and trigger parameters aren't set; telescopic bridges draw retracted or extended
-  ([telescopic bridges](game-data/interactives.md#telescopic-bridges)), retracted by default
-- level scripts' own interactives (indie_race001's moving platforms and coins, open-world event
-  pieces) aren't placed: they exist while their script runs, and which scripts the server starts
-  (the player's distance to its start shape, missions, activities) isn't known from the data
-- [auto-moving platforms](game-data/interactives.md#auto-moving-platforms) ride their splines from
-  the viewer clock's zero, and drop no overshoot at the end of a loop. ones parked at a knot that
-  waits for the player don't set off as the camera comes near; ones that turn along the curve, vary
-  their speed by segment or curve, or stop at their target stay at their placement
-  (`unsupported-interactives.json`). platforms a level script starts through the server, such as
-  map02's floating tower 10200030295 at the fire seed altar, stay at their placement (see
-  [auto-moving platforms](game-data/interactives.md#auto-moving-platforms)). the lights of a moving
-  platform's prefab stay behind, and so do effects its components place (only its look's resting
-  effects ride with it); particles on it move with it whole, where the game leaves world-space ones
-  behind as a trail. other curve movers (coins, butterflies, kickable balls), which scripts start,
-  hold still
-- [bamboo rafts](game-data/interactives.md#bamboo-rafts) stay at their placement: the docks, the
-  spline and the dock the server last left them at aren't read, so they never ride, and their wakes,
-  which show only while they move, aren't drawn
-- [crane towers](game-data/interactives.md#crane-towers) draw their placement's starting steps, with
-  the container hung from the hook; the steps the player's operations save on the server aren't
-  offered as controls
-- interactives with a mini-game or submit lock draw their model's locked look
-  ([gameplay locks](game-data/interactives.md#gameplay-locks)); the unlocked look the player's
-  repair saves on the server isn't offered as a control, and the effects a lock mounts on the model
-  aren't drawn
-- rows created later (`createState` ≠ 0) draw only with their level's "created during play" toggle,
-  off by default; one toggle covers a level's rows, since which of them the server or a script
-  creates isn't followed ([spawning](game-data/interactives.md#spawning))
-- interactives whose model id is missing from the model table, templates without a data file of
-  their own (weapon-wall racks, some doors), templates where zero or several positions frame the
-  variant table, door models with an ambiguous open-idle state (not drawn as doors), and LevelData
-  with any populated field or condition the reader doesn't implement (the blackbox scenes' blackbox
-  settings; the placement reader decodes no LevelData members after the interactive list, and
-  gameplay locks and splines come from decoding the whole file, which fails for Dijiang's) are
-  reported in `out/<map>/debug/unsupported-interactives.json`; those whose template or model wasn't
-  found are [stand-ins](package-format.md#stand-ins), the rest omitted
-- skeletons the reader can't pose and nonzero blend shapes (meshes with them are stand-ins);
-  characters' skeletal animation isn't played. prefab
-  [scenery animators](game-data/animation.md#scenery-animators) play their controllers' settled
-  states; a looping clip's GameObject switches hold their end values (its material values as
-  [above](#interactives-and-animation)), and each moving renderer stores every frame (Qingbo's
-  octagonal waterwheels: dozens of renderers over more than a thousand frames). particle emitters it
-  moves [play along](viewer/particles.md#moving-emitters), but a world-simulated one's velocity
-  module and force fields keep the end pose's frame, a local one feels gravity in the frame the clip
-  has now rather than gathering it step by step, and one the clip ends scaled to nothing holds that
-  end pose. of [ACL-compressed clips](game-data/animation.md#acl-compressed-clips) only the
-  Transform tracks play: float tracks and root motion aren't decoded, and buffers with a database,
-  non-trivial default values or Euler bindings hold their end pose. blend-tree states, additive or
-  partial-weight layers, override controllers and the Animators of models with view states hold
-  their saved pose. of the [decoration animator](game-data/animation.md#decoration-animators) values
-  level scripts set, only those set on script start (constant or by one saved property) are read;
-  `PlayDecorationAnimation` and values set by quest, custom or volume events aren't, and a saved
-  property's default (set, as in a finished save) is assumed. vertex-animation-texture meshes other
-  than [Lit's VAT](viewer/materials.md#vertex-animation-textures) ones (`_vat`, e.g. floating rocks)
-  draw their rest pose
-- [spinning scenery](game-data/animation.md#spinning-scenery) (Qingbo's other waterwheels, the
-  originium hub frames) turns from its stored pose at the viewer clock's zero rather than at the
-  game's clock phase, and how the native systems turn it is inferred from the data, not read.
-  renderers under MonoBehaviour rotators (`DynamicSceneSimpleRotate`, `TransformRotateAroundAxis`)
-  in prefabs hold still; whether any placed prefab has such renderers isn't surveyed (the
-  waterwheels' rotators turn only colliders and decals)
-- runtime world-space UI, including Dijiang's cabin nameplates and assigned-operator panels, is not
-  drawn ([cabins](game-data/scene-states.md#dijiang-cabins)); neither are the Images and Text of
-  world-space canvases inside prefabs, such as the counters on Dijiang's weapon wall displays
+- **interactives & view states** ([game-data](game-data/interactives.md)):
+  - draw settled pose from starting `state` only (server/script updates unfollowed).
+  - only vertical rope `RopeLength`, lift door bools (lifts stay at starting floor), and broken
+    robot `level`/`damage_type`/`exit_type` are read before view states start.
+  - `VFXAdjustLength` supports scale and tiling only (others box the prefab); `PositionFollower`
+    holds its walk position under looping clips.
+- **interactive effects** ([one-shot](game-data/effects.md#one-shot-effects),
+  [at rest](extraction/prefabs-and-interactives.md#effects-at-rest)):
+  - one-shot effects, transition bursts (talosite activation), and door/bridge/facility-form looping
+    effects are not drawn; effects on looping-clip GameObjects hold end pose.
+  - component-placed effects draw only jump-pad arrows, vertical jump-pad vents, and laser-gate
+    beams (unverified in game); `int_electric_fence` (server-powered) draws without beams; factory
+    power-network AIC buildings (The Hub power ports) have no client positions
+    ([laser gates](game-data/interactives.md#laser-gates)).
+- **looping clips** ([extraction](extraction/prefabs-and-interactives.md#looping-clips)):
+  - move skinned bones and mesh-renderer Transforms, not billboards or particles.
+  - float material properties step per frame (not interpolated); vectors, colours, non-numeric float
+    effects, ACL curves, and GameObject switches hold end values.
+  - all placements play in sync from viewer clock 0 (advance only while rendering); per-renderer
+    frame storage (Qingbo octagonal waterwheels: dozens of renderers × >1000 frames). balloon sway
+    and tube [vertex offset](viewer/materials.md#vertex-offset) unverified in game.
+- **player-presence & facility keys** ([game-data](game-data/interactives.md#keys-the-player-sets)):
+  facility forms settle with all keys false; campfire `InZone` uses 2.5 m template radius (not
+  runtime inner radius); `Distance` assumed 3D; `InBattle` and `isDead` stay false.
+- **two-state interactives** (server/script switches unfollowed; both states previewable):
+  [doors](game-data/interactives.md#interactive-doors) default closed (open for Dijiang cabins);
+  [campfires](game-data/interactives.md#campfires) default activated (no fight look or colour-layer
+  VAT); [template Animator bools](game-data/interactives.md#template-animator-parameters) (The Hub
+  comm terminal `fixed`) default set (ints/triggers unset);
+  [telescopic bridges](game-data/interactives.md#telescopic-bridges) default retracted.
+- **script-spawned interactives**: not placed (`indie_race001` moving platforms/coins, open-world
+  event pieces — server script triggers unknown).
+- **auto-moving platforms** ([game-data](game-data/interactives.md#auto-moving-platforms)):
+  - start at viewer clock 0 without loop-end overshoot.
+  - stay at placement: player-wait knots, curve-turning/variable-speed/stopping platforms
+    (`unsupported-interactives.json`), server-started platforms (map02 floating tower `10200030295`
+    at fire seed altar), and other scripted curve movers (coins, butterflies, kickable balls).
+  - prefab lights and component-placed effects stay behind; world-space particles move with the
+    platform instead of trailing.
+- **bamboo rafts** ([game-data](game-data/interactives.md#bamboo-rafts)): stay at placement (docks,
+  spline, and server dock unread); wakes not drawn.
+- **crane towers** ([game-data](game-data/interactives.md#crane-towers)): draw starting steps with
+  hung container only (no controls for server-saved steps).
+- **gameplay locks** ([game-data](game-data/interactives.md#gameplay-locks)): draw locked look only
+  (no unlocked control, no lock-mounted effects).
+- **late-spawned rows (`createState ≠ 0`)** ([spawning](game-data/interactives.md#spawning)): gated
+  by one per-level "created during play" toggle (default off).
+- **unsupported interactives** (`debug/unsupported-interactives.json`): missing model IDs, data-less
+  templates (weapon-wall racks, some doors), ambiguous variant positions, ambiguous door open-idle
+  states, and unimplemented LevelData fields (blackbox settings; full-file decode for locks/splines
+  fails on Dijiang). missing template/model → [stand-ins](package-format.md#stand-ins); rest
+  omitted.
+- **skeletons & animators** ([animation](game-data/animation.md)):
+  - unposable skeletons and nonzero blend shapes → stand-ins; character skeletal animation unplayed.
+  - [scenery animators](game-data/animation.md#scenery-animators): blend trees, additive/partial
+    layers, override controllers, and view-state model Animators hold saved pose.
+  - [moving emitters](viewer/particles.md#moving-emitters): world-space velocity/forces keep
+    end-pose frame; local gravity uses instantaneous frame; emitters ending at zero scale hold end
+    pose.
+  - [ACL clips](game-data/animation.md#acl-compressed-clips): Transform tracks only (no float tracks
+    or root motion); databases, non-trivial defaults, and Euler bindings hold end pose.
+  - [decoration animators](game-data/animation.md#decoration-animators): start-time constant/single-
+    property sets only (`PlayDecorationAnimation` and quest/custom/volume sets unread; saved
+    properties assumed set).
+  - non-Lit VAT meshes (`_vat`, e.g. floating rocks) draw rest pose.
+- **spinning scenery** ([game-data](game-data/animation.md#spinning-scenery)): Qingbo waterwheels
+  and originium hub frames start from stored pose at clock 0 (native system inferred). prefab
+  MonoBehaviour rotators (`DynamicSceneSimpleRotate`, `TransformRotateAroundAxis`) hold still
+  (unsurveyed; waterwheel rotators turn only colliders/decals).
+- **world-space UI**: runtime UI (Dijiang cabin nameplates, operator panels;
+  [cabins](game-data/scene-states.md#dijiang-cabins)) and prefab world-space canvas Images/Text
+  (weapon-wall counters) are not drawn.
 
 ### scene states and controls
 
-- entities controlled only by `ActivityControlComp` aren't gated; every owner's component is empty
-  ([open](game-data/scene-states.md#open))
-- scenery that scripts, switches or the player move at runtime draws as authored: water pipes'
-  rotation, bamboo puzzle positions, rune columns, entities scripts move or attach, scripted factory
-  buildings, conveyors' motion and the scripted water look override; LevelData's energy point
-  environment volumes aren't read
-  ([other runtime state](game-data/scene-states.md#other-runtime-state))
-- event photo spots share one control per scene, not one per event; other kinds of event placement
-  are recognised only through missions and dungeon scripts
-  ([event placements](game-data/scene-states.md#event-placements))
-- resource nodes (doodad groups) share one level control per level; the game's per-group level and
-  its source in LevelData aren't read ([scene states](game-data/scene-states.md#doodad-groups))
-- graded doodads (breakable crates) follow one development level control per map, not per domain; a
-  level that fixes its own domain level (a branch of the game's lookup) isn't read
-  ([scene states](game-data/scene-states.md#graded-doodads)). rows another kind claims (a rest look)
-  keep their template's model
-- interactive facilities are gathered from levels whose map is the packed scene, so a scene streamed
-  by levels of other maps (`base01_lv001`, streamed by `base01_lv003` and `indie_dg014`) probably
-  loses their facilities; select levels by `defaultState.exportedSceneConfigPath` instead. for the
-  same reason `pack <scene> --level` only takes the scene's own map's levels, so such a level
-  (`dung02_rdg012` on `dung02_rdg008`) can't be packed with its own spawn and LevelData. packing
-  such levels would put overlapping levels in one package, which the viewer would then need to show
-  one at a time again
-- the global variables that gates number and those MapConfig names stay separate controls (no name
-  table is known); map variables that aren't an interactive's property show as their MapConfig names
-  or numbers; Yinglung Pass's server-set outpost tier variables are separate controls, so all four
-  tiers show by default ([outpost tiers](game-data/scene-states.md#outpost-tiers)), and the
-  server-set gateway blockers (`007to009`, `008go010deco_v1d6`) show by default, at their highest
-  compared value ([variables](game-data/scene-states.md#variables)), as does the Snowy Forest
-  cabin's server-set `woodhouse` (its before-the-ritual look). gates on another map's variable never
-  load, so scenery a dungeon dresses an open-world level with (Typhoeus's after-ritual cabin) isn't
-  shown in any package
-  ([gates on another map's variable](game-data/scene-states.md#gates-on-another-maps-variable)).
-  variable-driven view states on DynamicStreaming entities
-  ([view states on dynamic entities](game-data/scene-states.md#view-states-on-dynamic-entities))
-  pose only by their first variable, and draw as saved for values their state machine doesn't test
-  and while unset, where the game keeps the starting state; old-version controllers (type 5),
-  trigger-driven ones (the lotus leaves) and the one a script sets by name draw as saved. whether
-  the empty model override alone keeps the game from loading the Wuling bridges' template drawbridge
-  is inferred from the data, not read in the model component
-- whether completing an outpost's `upgradeMissionId` raises its level at once or only unlocks the
-  raise is unverified; the viewer treats them as one, reading the mission as complete exactly above
-  the level that names it ([upgrade missions](game-data/scene-states.md#outpost-upgrade-missions))
-- scene states that scripts set by name (`SetOverrideSceneState`) and map02's sprayable sludge
-  surface ([sludge and miasma](game-data/scene-states.md#sludge-and-miasma)) aren't represented
-  (only its cores are drawn, under their blight control, whose two values don't tell an active core
-  from an inactive one); script-driven water levels are picked by hand: their controls list what
-  sets each fill but don't follow it; scripted environment volumes (blend mode 3) default off and
-  preview at full strength rather than following their script's factor; fills a script computes at
-  runtime aren't offered (`waterScriptActionsComputed`); a set amount is assumed to move the surface
-  rather than snap it; the shop, depot and terminal level → visual form mapping, and the
-  resource-node level's link to regional development, aren't recovered
-- script-group drivers are found from client scripts only: stages, properties and events the server
-  sets show as "server", and groups no client script names have none. groups swapped by trigger
-  volumes follow the camera only when nothing else sets them; groups also set by other events, and
-  volumes with tilted polylines or leave-only shapes, are picked by hand. the volume script is
-  assumed to be running, a camera that starts inside a volume is assumed to enter it, and the
-  player's capsule radius is ignored
-- interactives level scripts show and hide default to shown, since whether they start hidden isn't
-  known; show and hide targets that are a script's own slots or computed at runtime aren't followed
-  (counted as `scriptVisibilityUntraced` in the pack report). LevelData function areas that hide
-  entities by type while the player is inside aren't applied (listed in
-  `unsupported-interactives.json`)
-- story-state expressions and script relationships beyond what client data proves; event and server
-  conditions may never be recoverable
-- control labels still show internal identifiers or representative mesh names in many places
+- `ActivityControlComp`-only entities are ungated (every owner's component is empty,
+  [open](game-data/scene-states.md#open)).
+- **runtime-moved scenery** ([other runtime state](game-data/scene-states.md#other-runtime-state)):
+  draws as authored (water pipe rotations, bamboo puzzles, rune columns, script-moved/attached
+  entities, scripted factory buildings, conveyor motion, scripted water look overrides); LevelData
+  energy-point environment volumes unread.
+- **event placements** ([game-data](game-data/scene-states.md#event-placements)): photo spots share
+  one control per scene; other event placements recognised only via missions/dungeon scripts.
+- **doodads**: resource nodes ([doodad groups](game-data/scene-states.md#doodad-groups)) share one
+  level control per level (per-group LevelData source unread);
+  [graded doodads](game-data/scene-states.md#graded-doodads) (breakable crates) use one map-wide
+  development level (per-level overrides unread; rest-look claims keep template model).
+- **cross-map streaming levels**: facilities and `pack <scene> --level` only include levels
+  belonging to the scene's own map, dropping levels from other maps (`base01_lv003`/`indie_dg014` on
+  `base01_lv001`; `dung02_rdg012` on `dung02_rdg008`). selecting by
+  `defaultState.exportedSceneConfigPath` would require the viewer to separate overlapping levels.
+- **variables & dynamic view states**:
+  - numbered global variables and MapConfig-named ones stay separate controls (no name table);
+    non-interactive map variables show raw names/numbers.
+  - server-set variables stay separate or at default max: Yinglung Pass outpost tiers (all 4 show,
+    [outpost tiers](game-data/scene-states.md#outpost-tiers)), gateway blockers (`007to009`,
+    `008go010deco_v1d6`, [variables](game-data/scene-states.md#variables)), and Snowy Forest cabin
+    `woodhouse` (pre-ritual look).
+  - [cross-map variable gates](game-data/scene-states.md#gates-on-another-maps-variable) never load
+    (e.g. Typhoeus's after-ritual cabin).
+  - [dynamic view states](game-data/scene-states.md#view-states-on-dynamic-entities) pose by first
+    variable only and draw as saved for untested/unset values, type-5 controllers, trigger-driven
+    controllers (lotus leaves), and script-named states. Wuling bridges' empty-model-override
+    suppression is inferred.
+- **outpost upgrades** ([game-data](game-data/scene-states.md#outpost-upgrade-missions)): whether
+  `upgradeMissionId` raises the level immediately or only unlocks it is unverified (treated as one).
+- **scripted state & water**:
+  - unrepresented: `SetOverrideSceneState`, map02 sprayable sludge surface (only cores draw,
+    active/inactive indistinguishable;
+    [sludge and miasma](game-data/scene-states.md#sludge-and-miasma)), runtime-computed water fills
+    (`waterScriptActionsComputed`), and shop/depot/terminal/doodad form-to-level mappings.
+  - manual only: script-driven water levels (don't follow drivers; set amounts assumed to animate,
+    not snap) and scripted environment volumes (blend mode 3, default off, preview at full
+    strength).
+- **script groups**: drivers come from client scripts only (server-driven show as "server"; unnamed
+  groups have none). trigger-volume groups follow the camera only when nothing else sets them
+  (mixed-driver, tilted-polyline, and leave-only volumes are manual; assumes script running, fresh
+  camera enters, ignores player capsule radius).
+- **script visibility**: script-shown/hidden interactives default shown; script-slot and
+  runtime-computed targets untraced (`scriptVisibilityUntraced`). LevelData type-hiding function
+  areas unapplied (`unsupported-interactives.json`).
+- **unrecoverable conditions**: server/event conditions and script relationships beyond client data.
+- **labels**: many controls still display internal IDs or representative mesh names.
 
 ## renderer and performance
 
-- teleport points and named places as viewpoints: the game's fast-travel destinations and the place
-  names it shows aren't packed ([teleport points](game-data/world.md#teleport-points),
-  [named places](game-data/world.md#named-places))
-- mesh selection on the CPU is the largest frame cost (about half the frame over dense foliage), and
-  GPU-culled buckets still cost an encoded draw each
-  ([performance](viewer/performance.md#optimization-candidates))
-- shadow layers redraw whole on every new selection, without the game's tiled cache of its far map
-  or its per-layer small-caster cull ([lighting and post-processing](#lighting-and-post-processing),
-  [performance](viewer/performance.md#optimization-candidates))
-- geometry pools never shrink, so their spare capacity stays outside the stream budget
-  ([GPU resources](viewer/gpu-resources.md#buffers-and-pools))
-- the terrain's close-up blending and the timestamp queries' own overhead are unprofiled; large
-  regions at the default budget evict content during a flight
-- texture mips follow what the main pass samples ([mip feedback](viewer/streaming.md#mip-feedback)),
-  so a surface coming out from behind something, or seen first, is blurred for the moment its levels
-  take to load, where the game's CPU estimate has them loaded. glass, scene effects, shadow-only
-  casters and the parallax and layer slots still take their mips from the instance's screen size, as
-  if the texture spanned it once, as does everything on a device without room for the feedback
-  target. the viewer's one budget holds textures and meshes together, where the game budgets
-  textures alone
-- temporal antialiasing has no sharpening (the game sharpens by 0.3) and reprojects by depth and
-  camera alone without motion vectors, so moving content, particles and scrolling/transparent
-  effects reproject by the static scene behind ([frame](viewer/frame.md))
+- **viewpoints**: game [teleport points](game-data/world.md#teleport-points) and
+  [named places](game-data/world.md#named-places) are not packed.
+- **CPU selection**: mesh selection takes ~50% of frame time over dense foliage; GPU-culled buckets
+  still emit one encoded draw each ([performance](viewer/performance.md#optimization-candidates)).
+- **shadows**: layers redraw whole on selection changes (no tiled far-map cache or small-caster
+  cull, [performance](viewer/performance.md#optimization-candidates)).
+- **geometry pools**: never shrink, leaving spare capacity outside the stream budget
+  ([GPU resources](viewer/gpu-resources.md#buffers-and-pools)).
+- **profiling & budgets**: close-up terrain blending and timestamp-query overhead are unprofiled;
+  large regions evict content during flight at the default budget.
+- **texture mips** ([mip feedback](viewer/streaming.md#mip-feedback)): feedback-driven loading blurs
+  newly uncovered surfaces briefly (vs game's CPU estimate). glass, effects, shadow-only casters,
+  parallax/layer slots, and feedback-incapable devices fall back to instance screen size. textures
+  and meshes share one budget (game budgets textures alone).
+- **TAA** ([frame](viewer/frame.md)): no sharpening (game uses 0.3) and no motion vectors (moving
+  objects, particles, and scrolling/transparent effects reproject by static depth behind them).
 
 ## packaging
 
-- the entities phase (about 20 s on map02) and failed conversions and material loads aren't cached,
-  so a warm pack can still start workers; duplicate textures are compressed before they're merged
-  ([pack cache](extraction.md#pack-cache))
-- a mesh or material reached both by path hash (static entities) and by object (prefabs) gets two
-  table entries and converts twice ([asset conversion](extraction.md#asset-conversion-and-workers))
-- prefab LODGroups switch on each renderer's own bounds rather than the LODGroup's size and
-  reference point, and without its fade or the game's LOD bias
-- a max-texture-size option that drops leading levels, for a lite package: textures at native
-  resolution dominate package size ([textures](package-format.md#textures-tex)); texture formats
-  without a WebGPU equivalent don't convert ([texture](extraction.md#asset-classes))
-- instance blocks store full f32 rows; meshopt filters or quantized rows could roughly halve them
-  ([instance block](package-format.md#instance-block-inst-efin))
-- place global scenery by its own bounds instead of pulling its assets into `assets/common`
-  ([asset placement](package-format.md#asset-placement)); off-square edges produce sub-KB shard
-  archives that could merge into a neighbour
-- the tree's `geometricError` is a placeholder (`edge / 16`) that only orders requests
-  ([tile tree](package-format.md#tile-tree))
-- the terrain's cliff-index pages and cone maps aren't packed
-  ([terrain](game-data/terrain.md#tiles-and-placement))
-- port the game's path hash so lookups stop reverse-scanning the path-hash table
-  ([asset resolution](extraction.md#asset-resolution))
-- meshes: collision-only meshes, vertices in `m_CompressedMesh` and line and point topologies are
-  rejected; PPtrs into Unity's built-in resources resolve only for the Quad and Cube; prefabs
-  failing with a `FormatError` are stand-in cubes ([mesh](extraction.md#asset-classes),
-  [geometry blob](package-format.md#geometry-blob-mesh-efgm))
-- move the viewer's environment-agnostic package loading into `package-format` so packer tests read
-  packages through the viewer's code
+- **pack cache** ([extraction](extraction.md#pack-cache)): entities phase (~20 s on map02), failed
+  conversions, and material loads aren't cached; duplicate textures compress before deduplication.
+- **duplicate asset IDs** ([conversion](extraction.md#asset-conversion-and-workers)): assets reached
+  both by path hash (static) and object (prefab) convert and store twice.
+- **prefab LODGroups**: switch on per-renderer bounds rather than LODGroup size/reference point,
+  without cross-fade or game LOD bias.
+- **textures**: no `--max-texture-size` lite-package option
+  ([textures](package-format.md#textures-tex)); formats without WebGPU equivalents fail
+  ([asset classes](extraction.md#asset-classes)).
+- **instance blocks**: full f32 rows could shrink ~50% with meshopt filters or quantization
+  ([instance block](package-format.md#instance-block-inst-efin)).
+- **archive grouping**: global scenery pulls assets into `assets/common` instead of placing by
+  bounds ([asset placement](package-format.md#asset-placement)); off-square edges create sub-KB
+  shards.
+- **`geometricError`**: placeholder (`edge / 16`) used only for request ordering
+  ([tile tree](package-format.md#tile-tree)).
+- **terrain**: cliff-index pages and cone maps are not packed
+  ([terrain](game-data/terrain.md#tiles-and-placement)).
+- **path hashing**: port the game's hash to avoid reverse-scanning the path-hash table
+  ([asset resolution](extraction.md#asset-resolution)).
+- **meshes**: collision-only meshes, `m_CompressedMesh`, and line/point topologies are rejected;
+  built-in Unity PPtrs resolve only Quad and Cube; `FormatError` prefabs become stand-in cubes
+  ([mesh](extraction.md#asset-classes), [geometry blob](package-format.md#geometry-blob-mesh-efgm)).
+- **shared loader**: move environment-agnostic package loading into `package-format` so packer tests
+  exercise viewer code.
 
 ## open unknowns
 
-- the HLOD material/atlas mapping ([LOD and HLOD](game-data/world.md#lod-and-hlod))
-- per-controller meaning of progression bit 0 ("unbuilt" versus "level 1";
+- HLOD material/atlas mapping ([LOD and HLOD](game-data/world.md#lod-and-hlod))
+- per-controller meaning of progression bit 0 ("unbuilt" vs "level 1",
   [progressions](game-data/scene-states.md#progressions))
-- runtime: BC texture support in Safari, the texture-array layer limit on Apple GPUs
+- runtime: BC texture support in Safari; texture-array layer limit on Apple GPUs
 
 ## code follow-ups
 
-noticed while reading the code, none verified as a visible bug. paths are under `packages/`. delete
-an entry when it's done or ruled out.
+noticed during code reading; none verified as a visible bug. paths are under `packages/`. delete
+entries once resolved or ruled out.
 
 ### possible bugs
 
-- `formats/src/unity/animation-clip.ts`: `readClipActivity` doesn't check `m_ValueArrayDelta`
-  against the bindings' total as `readClipEndPose` does, and `readAclMotion` doesn't skip
-  `isPPtrCurve` bindings as `readClipMotion` does
-- `extractor/src/game/prefabs/animator-defaults.ts` `transitionHolds`: condition mode 5 (exit time)
-  holds, while a transition without conditions is treated as waiting on exit time and never taken
-- `extractor/src/game/dynamic/cabins.ts`: `cabinLevel` controls default to `levels[0]`, which
-  assumes the lowest level is 1 and is `undefined` when no field levels are read
-- `extractor/src/game/interactives/bridges.ts` `telescopicPieces`: the piece count is capped at 64
-  without a stated reason
-- `extractor/src/game/materials/surfaces/dithered.ts` drops the dither test for `_USE_MAIN2`
-  materials, though the game's depth pass has no `_USE_MAIN2` variant and still dithers
-- `extractor/src/game/effects/particle-system.ts`: a speed-modifier curve with drag and force fields
-  but no speed limit stands in, though the stepped path could play it
+- `formats/src/unity/animation-clip.ts`: `readClipActivity` skips the `m_ValueArrayDelta` total
+  check (`readClipEndPose` has it); `readAclMotion` doesn't skip `isPPtrCurve` bindings
+  (`readClipMotion` does).
+- `extractor/src/game/prefabs/animator-defaults.ts` `transitionHolds`: mode 5 (exit time) holds,
+  while conditionless transitions wait on exit time and are never taken.
+- `extractor/src/game/dynamic/cabins.ts`: `cabinLevel` defaults to `levels[0]` (assumes min level is
+  1; `undefined` if empty).
+- `extractor/src/game/interactives/bridges.ts` `telescopicPieces`: undocumented 64-piece cap.
+- `extractor/src/game/materials/surfaces/dithered.ts`: drops dither test for `_USE_MAIN2`, though
+  the game's depth pass still dithers.
+- `extractor/src/game/effects/particle-system.ts`: speed-modifier curve + drag + force fields
+  without speed limit stands in, though the stepped path supports it.
 - `extractor/src/game/materials/surfaces/surface-keywords.ts`: `LIT_KEYWORDS` omits
-  `_EMISSIVE_ANIM_SWEEP` although `describeLit` reads it (deliberate, to keep flagging the undrawn
-  band?), and lists `_NORMAL_MAP` for the foliage shaders, which nothing tests
-- `extractor/src/pack/tables/water.ts` `volumeSurface` hardcodes `meshNormals: false`, where
-  `surfaceEntry`'s rule gives `true` for a proxy surface (same result on a flat polygon)
-- `viewer/src/render/meshes/effect.wgsl` `fx_soft_body` divides by the look's frame count without a
-  guard against 0
-- `viewer/src/render/meshes/mesh.wgsl`: `Look.detail2.z` is the overlay scale on detail-mapped looks
-  and the premultiplied flag on transparent ones, safe only while no look is both
-- `viewer/src/looks/effects/effect-look.ts`: `EffectRow` entries are out of offset order
-- `extractor/src/game/interactives/template-data.ts`: the `state` lookup falls back from saved to
-  config to temporary properties, where [the `state` key](game-data/interactives.md) is described
-  from `saveProperties` alone. settle which the game does
+  `_EMISSIVE_ANIM_SWEEP` even though `describeLit` reads it (intentional to flag undrawn band?);
+  lists unused `_NORMAL_MAP` for foliage shaders.
+- `extractor/src/pack/tables/water.ts` `volumeSurface`: hardcodes `meshNormals: false` where
+  `surfaceEntry` gives `true` for proxy surfaces (equivalent on flat polygons).
+- `viewer/src/render/meshes/effect.wgsl` `fx_soft_body`: divides by frame count without guarding
+  against 0.
+- `viewer/src/render/meshes/mesh.wgsl`: `Look.detail2.z` doubles as detail overlay scale and
+  transparent premultiplied flag (safe only while mutually exclusive).
+- `viewer/src/looks/effects/effect-look.ts`: `EffectRow` entries are out of offset order.
+- `extractor/src/game/interactives/template-data.ts`: `state` lookup falls back saved → config →
+  temporary, whereas [interactives](game-data/interactives.md) describes `saveProperties` alone.
 
 ### duplication
 
-- extractor prefabs: the field-name probe copied into six `is…Type` functions (`adjust-length.ts`,
+- **extractor prefabs**: copied field-name probe in six `is…Type` functions (`adjust-length.ts`,
   `billboard.ts`, `emissive-override.ts`, `prefab-environment.ts`, `renderer-walk.ts`); `xyz` in
   `prefab-walk.ts` and `prefab-environment.ts`; identity matrices in `prefab.ts`,
-  `renderer-passes.ts` and `prefab-walk.ts`
-- extractor interactives: `toFloat` in `crane-tower.ts` and `curve-move.ts` against `atomFloat` in
-  `template-data.ts`; `craneTowerOf` re-implements `componentParams`' merge and `cranes.ts` the
-  `InteractiveRow.scaleOf` rule; `startState` and `entityProperties` each parse `templateVariant`;
-  `propertyAtomBits` and `templateAtoms` are near-duplicate walkers
-- extractor state and dynamic: the `plain` closure twice in `state/story.ts`; `levelCondition`
-  rebuilds what `maskLevels` computes; literals where constants exist (resource types 5/6/7 and
-  `compare: 0` in `dynamic-structures.ts`, `LOD_GROUP = 205` in `renderer-candidates.ts`)
-- extractor materials: the `_USE_MAIN2` check and `_MainTex2Color` read in both
-  `surfaces/dithered.ts` and `effects/dither-effect.ts`
-- extractor pack: `convertMesh` computes `order.map(vertexOf)` twice for a skinned mesh;
-  `objectHash` in `asset-ids.ts` against three inline copies; `assetNames` in `commands/world.ts`
-  looks an asset up twice
-- formats: the record guard in `level-interactives.ts`, `level-locks.ts` and `level-splines.ts`
-  against `isMemoryPackObject`; `expect`/`count`/`list`/`bool` helpers redefined three times in
-  `interactive-model.ts`; `present(VertexAttribute.BlendIndices)` called twice in `decodeMesh`;
-  `stream-area.test.ts` has its own FlatBuffer writer; `level-config.test.ts` holds a string pool
-  test
-- viewer: `fx_smoothstep` (`effect.wgsl`) against `hermite` (`mesh.wgsl`); the reflection march
-  duplicated between `water/ssr-trace.wgsl` and `fs_march` in `post/ssr.wgsl`
+  `renderer-passes.ts`, and `prefab-walk.ts`.
+- **extractor interactives**: `toFloat` (`crane-tower.ts`, `curve-move.ts`) vs `atomFloat`
+  (`template-data.ts`); `craneTowerOf` duplicates `componentParams` merge; `cranes.ts` duplicates
+  `InteractiveRow.scaleOf`; `startState` and `entityProperties` both parse `templateVariant`;
+  `propertyAtomBits` and `templateAtoms` are near-duplicates.
+- **extractor state & dynamic**: `plain` closure duplicated in `state/story.ts`; `levelCondition`
+  duplicates `maskLevels`; raw literals where constants exist (resource types 5/6/7, `compare: 0` in
+  `dynamic-structures.ts`; `LOD_GROUP = 205` in `renderer-candidates.ts`).
+- **extractor materials**: `_USE_MAIN2` check and `_MainTex2Color` read duplicated in
+  `surfaces/dithered.ts` and `effects/dither-effect.ts`.
+- **extractor pack**: `convertMesh` computes `order.map(vertexOf)` twice for skinned meshes;
+  `objectHash` (`asset-ids.ts`) has three inline copies; `assetNames` (`commands/world.ts`) looks up
+  assets twice.
+- **formats**: record guard in `level-interactives.ts`, `level-locks.ts`, `level-splines.ts` vs
+  `isMemoryPackObject`; `expect`/`count`/`list`/`bool` redefined 3× in `interactive-model.ts`;
+  `present(VertexAttribute.BlendIndices)` called twice in `decodeMesh`; `stream-area.test.ts` has
+  its own FlatBuffer writer; `level-config.test.ts` holds a string pool test.
+- **viewer**: `fx_smoothstep` (`effect.wgsl`) vs `hermite` (`mesh.wgsl`); reflection march
+  duplicated in `water/ssr-trace.wgsl` and `fs_march` (`post/ssr.wgsl`).
 
 ### CLI candidates
 
-- `world vars <scene>`: join AutoName, MapConfig, LevelData and DynamicStreaming variables
+- `world vars <scene>`: join AutoName, MapConfig, LevelData, and DynamicStreaming variables
 - `world scripts find <type>`: print level-script nodes of a type
 - `vfs table <name>`: dump a config table

@@ -1,734 +1,661 @@
 # materials
 
 the game's HGRP surface shaders: Lit and its optional layers, alpha testing, emission, foliage,
-glass, decals, matte paintings and erosion rock. a material's serialized state is in
-[assets.md](assets.md#material-and-shader), the light the surfaces receive in
-[lighting.md](lighting.md), and the `HGRP/Effect/*` shaders in [effects.md](effects.md).
+glass, decals, matte paintings, erosion rock, cloth, and vertex animation. see
+[assets.md](assets.md#material-and-shader) for serialized material state, [lighting.md](lighting.md)
+for lighting, and [effects.md](effects.md) for `HGRP/Effect/*` shaders.
 
 ## texture layouts
 
-the Lit families (`HGRP/Lit`, `HGRP/LitTransparent`, `HGRP/LitEffect`) and `HGRP/Foliage/Trunk` come
-in two texture layouts, picked by `_BaseTextureMapCount` (from the `_TWO_BASEMAP` keyword when the
-float is absent: 2 with it, 0 without). LitEffect declares a subset of Lit's properties plus
-dissolve and disturb effects; trunks declare no property Lit lacks:
+`HGRP/Lit`, `HGRP/LitTransparent`, `HGRP/LitEffect`, and `HGRP/Foliage/Trunk` support two texture
+layouts selected by `_BaseTextureMapCount` (when absent, `_TWO_BASEMAP` selects 2 and its absence
+selects 0). `LitEffect` declares a subset of Lit's properties plus dissolve and disturb; `Trunk`
+adds no properties over Lit.
 
-- **MRO layout** (0): a separate `_MROMap` holds metallic in R, roughness in G and occlusion in B,
-  and the normal map is stored `RAG` (x is R times A, as in DXT5nm).
-- **two-basemap layout** (1 or 2, most materials): the normal map holds the normal in RG, roughness
-  in B and occlusion in A. metallic is the base colour's alpha with 1, `_Metallic` with 2.
+| `_BaseTextureMapCount` | layout      | normal map                     | metallic / roughness / occlusion                |
+| ---------------------- | ----------- | ------------------------------ | ----------------------------------------------- |
+| 0                      | MRO         | `RAG` (`x = R · A`, DXT5nm)    | `_MROMap`: R metallic, G roughness, B occlusion |
+| 1                      | two-basemap | RG normal, B roughness, A occ. | metallic = base colour alpha                    |
+| 2 (most materials)     | two-basemap | RG normal, B roughness, A occ. | metallic = `_Metallic`                          |
 
-a decoded normal's x and y each snap to 0 below 0.012 in magnitude.
-
-foliage normal maps hold roughness in B the same way. roughness read from a map is remapped between
-`_RoughnessMin` and `_RoughnessMax`, which can be inverted (min 1, max 0, so B holds smoothness).
-the map's roughness and occlusion don't depend on the mesh's tangents, which only the bump uses: the
-steel display sculpture in Dijiang's hall (`M_prop_map01_zmdlife+1_005_01` on a mesh without
-tangents, metallic from the base alpha, range 1 to 0) is a satin metal at roughness about 0.7 from
-its map's B, not the mirror that `_RoughnessMax` alone would give.
+- decoded normal `x` and `y` snap to 0 when `|component| < 0.012`.
+- foliage normal maps store roughness in B the same way.
+- map roughness remaps between `_RoughnessMin` and `_RoughnessMax`. inverted ranges (`min = 1`,
+  `max = 0`) mean B stores smoothness.
+- roughness and occlusion from the normal map do not depend on mesh tangents (only bump mapping uses
+  tangents). for example, Dijiang's hall steel sculpture (`M_prop_map01_zmdlife+1_005_01`) has no
+  tangents, metallic in base alpha, and range 1..0, giving satin ~0.7 roughness from B.
 
 ## forward Lit
 
-`HGRP/LitForward` is Lit drawn in a forward pass instead of the GBuffer; across the scenes checked
-only the golden treasure chest's body uses it (`M_anm_com_treasurechest+1_001_02`, in
-`int_trchest_common_gorgeous_postmodel`). its surface inputs are Lit's: the texture layouts, base
-colour, `0.08 · _Specular` reflectance, and the emission mask, whose emission is also multiplied by
-`_EnableEmissiveMap`. with `_CUSTOM_IBL` its ambient specular comes from the material's own cubemap
-(`_CustomIBL`, the chest's a 128² BC6H environment) times `_CustomIBLIntensity`, in place of the
-scene's reflections, sampled at a mip from the roughness. its other variants (`_THIN_FILM`,
-`_PLANAR_REFLECTION`, `_LAYERBLEND_MASK`) aren't decoded.
+`HGRP/LitForward` renders Lit in a forward pass instead of the GBuffer. in surveyed scenes, only the
+golden treasure chest body uses it (`M_anm_com_treasurechest+1_001_02` in
+`int_trchest_common_gorgeous_postmodel`).
+
+- **surface inputs**: identical to Lit (texture layouts, base colour, `0.08 · _Specular`
+  reflectance, emission mask multiplied by `_EnableEmissiveMap`).
+- **`_CUSTOM_IBL`**: replaces scene reflections with `_CustomIBL` (128² BC6H cubemap on the chest) ×
+  `_CustomIBLIntensity`, sampled at a roughness-derived mip.
+- **undecoded variants**: `_THIN_FILM`, `_PLANAR_REFLECTION`, `_LAYERBLEND_MASK`.
 
 ## base colour
 
-the Lit, LitTransparent and foliage shaders start from the base colour map times the linearized
-`_BaseColor`, times `_BaseColorBrighterScale`, clamped to 1, then blend toward `_BaseColor` by
-`_BaseColorTintCover`. the tint matters: Dijiang's black floors and walls are a light grey map
-tinted by about 0.3. `HGRP/LitHLOD` ignores the tint.
+Lit, LitTransparent, and foliage shaders compute albedo as:
+
+```
+mix(saturate(baseMap · linear(_BaseColor) · _BaseColorBrighterScale), linear(_BaseColor), _BaseColorTintCover)
+```
+
+- `_BaseColorTintCover` is significant: Dijiang's black floors and walls use a light grey map tinted
+  by ~0.3.
+- `HGRP/LitHLOD` ignores `_BaseColorTintCover`.
 
 ## alpha testing
 
-alpha-tested HGRP Lit materials (`_ALPHATEST_ON`) test the alpha `_AlphaMaskChannel` picks against
-`_AlphaClipThreshold`: 0 for the base colour's, 1 for the normal map's. map01 has a couple dozen
-materials on channel 1, all in the two-basemap layout, where the base alpha is metallic; testing
-that instead cuts the Hub's white container walls down to their grime streaks.
+with `_ALPHATEST_ON`, HGRP Lit tests alpha against `_AlphaClipThreshold`. `_AlphaMaskChannel` picks
+the source:
+
+- `0`: base colour alpha
+- `1`: normal map alpha (~24 map01 materials, all two-basemap where base alpha is metallic, e.g. the
+  Hub's white container walls)
 
 ## emission
 
-HGRP Lit materials emit through one of their `_EMISSIVE_*` keywords. `_EmissiveColor` is an HDR
-colour, which Unity's HDR picker authors in linear space (`base × 2^intensity`), so it's used as
-stored, unlike the gamma-encoded LDR colours. the result is added to the lit colour without
-pre-exposure: the Hub's white ceiling panels store about 24, enough to read near-white with their
-grid still visible.
+HGRP Lit emits through `_EMISSIVE_*` keywords. `_EmissiveColor` is an HDR colour authored in linear
+space (`base × 2^intensity`) and used as stored. emission adds to lit colour without pre-exposure
+(the Hub's white ceiling panels store ~24).
 
-| keyword           | emission                                                                                |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| `_EMISSIVE_MAP`   | the colour times `_EmissiveMap`'s R channel, plus G, B and A as below                   |
-| `_EMISSIVE_MASK`  | the colour times a channel of the material's own maps, picked by `_EmissiveMaskChannel` |
-| `_EMISSIVE_NOMAP` | only ships with the sweep animation (`_EMISSIVE_ANIM_SWEEP`)                            |
+| keyword           | emission                                                         |
+| ----------------- | ---------------------------------------------------------------- |
+| `_EMISSIVE_MAP`   | `_EmissiveColor` × `_EmissiveMap.r`, plus G, B, A channels below |
+| `_EMISSIVE_MASK`  | `_EmissiveColor` × channel selected by `_EmissiveMaskChannel`    |
+| `_EMISSIVE_NOMAP` | ships only with `_EMISSIVE_ANIM_SWEEP`                           |
 
-with `_EMISSIVE_MAP`, Lit and LitEffect also add the map's G, B and A channels times
-`_EmissiveColorG`, `_EmissiveColorB` and `_EmissiveColorA` (HDR, as stored), all scaled by
-`_EmissiveType`; at 0 only R emits. the stripe rings round the cargo in Dijiang's central shaft
-(`M_fx_base01_lv001_ship_line_1123` and `_1125`, `HGRP/LitEffect`) set the type to 1 with red, green
-and blue colours, so they glow in their emissive map's own colour bands rather than its red channel
-alone.
-
-`_EmissiveSpeed` scrolls the emissive map's UVs (xy per tick of a shader clock whose source isn't
-traced); the stripe rings set it to (0, 0.1).
-
-`_EMISSIVE_ANIM` makes the emission pulse: each cycle it rises smoothly from
-`_EmissiveMinBrightness` to full and falls back, over the share of the cycle `_EmissiveAnimInterval`
-gives it. `_EmissiveAnimSpeed` sets the rate, `_EmissiveAnimRandom` offsets the phase and
-`_EmissiveColor`'s alpha sets how deep the pulse goes. the cycle runs on [the clock](#clock), so the
-white lamp cubes on Wuling's and Marker Stone's towers (`M_module_tylight+1_001_03`, speed 40) pulse
-about every 3 s. `_EnableEmissiveAnimFlicker` swaps the pulse for random on/off flicker, value noise
-over time hashed per object position; no map02 material sets it.
-
-`_EMISSIVE_ANIM_SWEEP` (about 90 map02 materials, among them the clearable rocks and the drones'
-targets) lights a band that sweeps up the object along its own y: each emission colour (the main one
-and G, B, A) is multiplied by `mix(1, band, alpha)`, so a colour with alpha 1 glows only inside the
-band and alpha 0 glows steadily. the band is `_EmissiveSweepWidth` wide, with
-`_EmissiveSweepFalloff` sharpening its edge, and moves at `_EmissiveSweepSpeed` from
-`_EmissiveSweepHeightOffset`, repeating every `_EmissiveSweepInterval`, phase-shifted per object by
-`_EmissiveSweepRandom`; inside it the strength follows the albedo's brightness by
-`_EmissiveSweepAlbedoScale` and a runtime per-draw factor. outside the band it is 0. Jingyu's
-clearable rock (`M_interactive_hongshan_obstaclerock+1_001_01`) keeps its red cracks lit (alpha 0)
-and sweeps a grey glow of 2.1 from its emissive map's G (alpha 1), which covers the whole rock.
-
-each draw also carries a runtime emission colour in its per-draw data, which replaces
-`_EmissiveColor` by its alpha. the static scenery's files store it as zero, and the client's known
-setters work on GameObject renderers (interactives' emissive configs, VFX-driven emission).
-
-one of those setters is the `AnimationProperties_Emissive` component, a VFX playable that starts
-playing when enabled and then writes its `emissiveColor` into that colour on each renderer it lists
-(`affectRenderers`), so a prefab can author its resting emission colour there instead of on the
-material. `_EmissiveColor`'s own alpha still sets the pulse or sweep depth. the water drone targets
-(`int_waterdrone_floating_target_postmodel`) keep a black `_EmissiveColor` on
-`M_anm_map02_machine+1_003_02` and glow green (0, 1, 0.17, alpha 1) from their emissive map's R
-through the component; their G channel only lights inside the sweep band. the component also writes
-`emissiveAlbedoColor`, an albedo tint: where the emission's strength (the remapped mask channel, or
-the emissive map's R) is at least 0.1, the albedo is multiplied by `mix(1, rgb, w)`, w its alpha
-(times `_EnableEmissiveAlbedo` in the emissive map variants; 0 on the targets). emission that
-follows the albedo (`_AlbedoAffectEmissive` 0) takes the tinted one. it also writes a breathing
-pulse (`breathFrequency`, `breathIntensity`; 0 on the targets). an interactive's view states can
-replace these fields with an emissive config
-([emission view states set](interactives.md#emission-view-states-set)). the white lamp cubes on
-Wuling's and Marker Stone's towers (`M_module_tylight+1_001_03`) don't take a colour from it: they
-emit white, and the green and red glow over them comes from one effect prefab per tower, placed
-always ([pull towards the camera](effects.md#vertex-offset-and-brightening)). Wuling's
-(`P_fxmap_map02_lv002_citywall_lighting_02`) emits a round glow and a 40 × 5 m horizontal streak at
-each lamp from a mesh of their positions, both teal (`_TintColor` 0.45, 0.84, 0.75), added; Marker
-Stone's (`P_fxmap_map_lv004_lamp_light_01`) draws red.
-
-the mask channel is 0 for no emission, 1 for the base colour's alpha, 2 for the normal map's B
-(two-basemap layout) or the base alpha (MRO layout), and 3 or more for the normal map's alpha
-(two-basemap) or the MRO map's alpha; the channel is remapped by `saturate((m − 0.05) / 0.9)`. the
-Hub's ceiling panels use mask channel 3. emission is multiplied by the albedo unless
-`_AlbedoAffectEmissive` is 1. `_IgnorePostExposure` emitters (nearly all) divide out the post
-exposure ([auto exposure](post-processing.md#auto-exposure)), so they keep their brightness however
-the exposure adapts.
+- **multi-channel `_EMISSIVE_MAP`**: Lit and LitEffect add `_EmissiveMap` G, B, A × HDR
+  `_EmissiveColorG`, `_EmissiveColorB`, `_EmissiveColorA` (as stored), scaled by `_EmissiveType`
+  (0 = R only). Dijiang's cargo shaft stripe rings (`M_fx_base01_lv001_ship_line_1123`, `_1125`,
+  `HGRP/LitEffect`) set `_EmissiveType` 1 with R, G, B colours.
+- **UV scroll**: `_EmissiveSpeed` scrolls emissive UVs (`xy` per tick of an untraced shader clock;
+  stripe rings use `(0, 0.1)`).
+- **`_EMISSIVE_ANIM`**: pulses smoothly from `_EmissiveMinBrightness` to 1 and back over
+  `_EmissiveAnimInterval` of each cycle. controlled by `_EmissiveAnimSpeed`, per-object phase
+  `_EmissiveAnimRandom`, and pulse depth `_EmissiveColor.a`, driven by [the clock](#clock) (e.g.
+  Wuling and Marker Stone tower lamp cubes `M_module_tylight+1_001_03` at speed 40 pulse every ~3
+  s). `_EnableEmissiveAnimFlicker` replaces the pulse with value-noise on/off flicker hashed per
+  object position (unused in map02).
+- **`_EMISSIVE_ANIM_SWEEP`** (~90 map02 materials, e.g. clearable rocks, drone targets): sweeps a
+  band up object-space y. each emission colour (main, G, B, A) multiplies by `mix(1, band, alpha)`
+  (`alpha = 1` glows only in band; `alpha = 0` glows steadily). parameters: width
+  `_EmissiveSweepWidth`, edge `_EmissiveSweepFalloff`, speed `_EmissiveSweepSpeed`, start offset
+  `_EmissiveSweepHeightOffset`, repeat `_EmissiveSweepInterval`, per-object phase
+  `_EmissiveSweepRandom`. inside the band, strength scales with albedo brightness via
+  `_EmissiveSweepAlbedoScale` and a per-draw runtime factor; outside, it is 0. Jingyu's clearable
+  rock (`M_interactive_hongshan_obstaclerock+1_001_01`) keeps red cracks lit (`alpha = 0`) and
+  sweeps a 2.1 grey glow from G (`alpha = 1`).
+- **per-draw emission**: each draw carries a runtime emission colour that replaces `_EmissiveColor`
+  by its alpha. static scenery stores 0; GameObject renderers set it from interactive configs or
+  VFX.
+- **`AnimationProperties_Emissive`**: a VFX playable that starts on enable and writes
+  `emissiveColor` to every renderer in `affectRenderers` (`_EmissiveColor.a` still sets pulse/sweep
+  depth). water drone targets (`int_waterdrone_floating_target_postmodel`,
+  `M_anm_map02_machine+1_003_02`) leave material `_EmissiveColor` black and emit green
+  `(0, 1, 0.17, 1)` on R through this component (G lights only in the sweep). it also writes:
+  - `emissiveAlbedoColor`: where emission strength (remapped mask or `_EmissiveMap.r`) ≥ 0.1,
+    multiplies albedo by `mix(1, rgb, alpha)` (× `_EnableEmissiveAlbedo` in map variants; 0 on
+    targets). albedo-following emission (`_AlbedoAffectEmissive` 0) uses the tinted albedo.
+  - `breathFrequency` and `breathIntensity` (0 on targets).
+  - interactive view states can replace these via an emissive config
+    ([emission view states set](interactives.md#emission-view-states-set)).
+- **tower lamps**: `M_module_tylight+1_001_03` cubes emit white; their coloured glow comes from one
+  effect prefab per tower ([pull towards the camera](effects.md#vertex-offset-and-brightening)).
+  Wuling (`P_fxmap_map02_lv002_citywall_lighting_02`) draws an additive teal (`_TintColor` 0.45,
+  0.84, 0.75) round glow and 40 × 5 m horizontal streak at each lamp; Marker Stone
+  (`P_fxmap_map_lv004_lamp_light_01`) draws red.
+- **mask channels (`_EmissiveMaskChannel`)**:
+  - `0`: none
+  - `1`: base colour alpha
+  - `2`: normal B (two-basemap) or base alpha (MRO)
+  - `≥ 3`: normal alpha (two-basemap) or MRO alpha (Hub ceiling panels use 3)
+  - remapped by `saturate((m − 0.05) / 0.9)`.
+- **albedo & exposure**: emission multiplies by albedo unless `_AlbedoAffectEmissive` is 1.
+  `_IgnorePostExposure` (nearly all emitters) divides out post exposure
+  ([auto exposure](post-processing.md#auto-exposure)).
 
 ## lit layers
 
-these optional Lit layers come from the game's shader for these keywords. each map samples UV set 0
-or 1 as a float of its own says: `_BaseUVSet` for the base colour, `_BasePbrMapUVSet` for the normal
-and MRO maps, `_DetailUVSet`, `_MaskUVSet` and `_EmissiveUVSet`. the slot's `m_UVSetIndex` stays 0
-on hundreds of materials whose maps sample UV set 1, such as Power Plateau's concrete walls, whose
-tri-channel mask spreads weathering streaks over UV set 1. the originium crystals' base colour and
-detail map tile ×5 over UV set 1.
+each Lit map selects UV set 0 or 1 via a dedicated float: `_BaseUVSet`, `_BasePbrMapUVSet` (normal
+and MRO), `_DetailUVSet`, `_MaskUVSet`, and `_EmissiveUVSet`. the texture slot's `m_UVSetIndex`
+stays 0 even when materials sample UV1 (e.g. Power Plateau concrete walls' weathering streaks on
+UV1; originium crystals' base and detail maps tiled ×5 on UV1).
 
-- **`_TRI_CHANNEL_MASK`** (~450 map01 materials, mostly rock): each channel of `_MaskMap` becomes a
-  weight `saturate(s/2 + mix(−s, 1, m + offset)) · _MaskAlbedo*.a`, with contrast `s` from
-  `_Mask*Scale` and the offset from `_Mask*Offset`. albedo, roughness and metallic then blend toward
-  `_MaskAlbedo*` (an LDR colour, linearized), `_MaskRoghness*` and `_MaskMetallic*`, B first and R
-  last. the originium crystals are grey rock tinted brown at strength 0.5 where R is set. the
-  `_TRI_CHANNEL_MASK_SWITCH_TEXTURE*` variants colour G and B from textures instead
-  (`_MaskAlbedoGTex` and `…BTex`, tiled by `_MaskAlbedoGUVTilling` and `…B…`, times
-  `_MaskAlbedoTintG` and `…B`, whose alpha is the strength). `_UseMaskRUVSetAndTilingScale` samples
-  the mask's R from `_MaskRUVSet` tiled by `_MaskRTilingScale`; no map01 material sets it.
-- **`_DETAIL_MAP`**: a weight from `_DetailMaskMode` (1, the detail's alpha, the base colour's
-  alpha, or the normal map's B or A) fades out with view depth between `_DetailFalloffStart` and
-  `…End`. the detail normal (`× _DetailNormalIntensity`) is reoriented onto the base normal.
-  `_DetailMode` 1 blends roughness toward the detail's B and multiplies occlusion by its alpha; mode
-  0 overlays `_DetailOverlayColor` where the detail's B is dark, and blends roughness toward its
-  alpha. both blends are scaled by `_DetailPBRIntensity`.
-- **`_PARALLAX_MAP`** (the originium crystals' glow): the view ray, in the geometric tangent frame,
-  steps `trunc(_ParallaxMarchNum)` times (at most 20) through `_ParallaxNoiseMap` (tiled by
-  `_ParallaxNoiseMapTilling`) as a height field `_ParallaxStrength` deep, and the hit is refined
-  between the last two steps. at the hit, `_ParallaxMap`'s G (tiled by `_ParallaxTilling`; both maps
-  ignore their `_ST`) picks between `_ParallaxColorDark` and the HDR `_ParallaxColor`, both times
-  `_ParallaxIntensity`. the result is emission: times the mask channel squared
-  (`_ParallaxMaskChannel`, numbered like the emission mask minus one), times `N·V` to the power
-  `floor(_ParallaxFresnelStrength)`, and times a pulse
-  `cos(_ParallaxAnimSpeed · T + _ParallaxAnimRandom · (x + y + z))` remapped to
-  `[_ParallaxMinBrightness, 1]`, where `T` is [the clock](#clock) and `x + y + z` is the object's
-  world position. with `_ParallaxCharPos` set, `_ParallaxBrightStrength` times a smoothstep from
-  `_ParallaxBrightOuterRadius` down to `…InnerRadius` of the distance to the player is added to the
-  pulse. map01's crystal materials use it, mostly with strength 20 within 3–25 m; one stores a glow
-  colour of only 0.75, so it glows almost only near the player. `_ParallaxIgnorePostExposure`
-  divides out the post exposure as emission does. the shader declares both maps' default black, and
-  many crystals leave the noise map empty (the campfires' crystal `M_interactive_campfire+1_003_02`,
-  the display crystal `M_iprop_map01_zmdmachine+1_009_02` and Dijiang's far crystal
-  `M_building_dijianghao+1_001_11`): the height is then 0 everywhere, the march runs its full depth,
-  and the pattern is read at that fixed offset.
-- **`_MATCAP`** (the campfires' crystal, a few Dijiang props): `_MatcapMap`, sampled at the
-  view-space normal's `xy · 0.5 + 0.5`, times `_MatcapMapStrength`, is added to the emission, not
-  tinted by the albedo. `_MatCapIgnorePostExposure` divides out the post exposure as emission does.
-- **`_LAYERBLEND_TOP`** (moss and sand on rock tops; ~220 map02 materials, a few dozen on map01): a
-  second material covers the surface by `saturate((up − _TopBlendThreshold) / _TopBlendSmoothness)`,
-  where `up` is the world Y of the vertex normal, blended toward the normal-mapped one by
-  `_TopBlendWithBumpMap`. with `_LayerBlendHeight`, the base's height and `_Layer1BaseMap`'s alpha,
-  each weighted by its coverage, compete within `_LayerBlendHeightTransition`. the layer's colour is
-  desaturated by `_Layer1Saturation`, tinted by `_Layer1TintColor`, brightened by
-  `_Layer1ColorBrighterScale`, and replaces the albedo (`_Layer1BaseColorBlendMode` 0) or adds to it
-  (1, times `_Layer1BaseColorAdditiveIntensity`). roughness blends toward `_Layer1BumpMap`'s B,
-  occlusion toward its A (by `_Layer1AOStrength`, or 1 with `_LayerAOType`), metallic toward
-  `_Layer1Metallic` or the layer's alpha (`_LayerMetallicType`), and the layer's normal (×
-  `_Layer1BumpScale`) is reoriented onto the base's by `_Layer1BaseNormalIntensity`. it applies
-  after the detail map and the tri-channel mask. both maps sample one coordinate picked by
-  `_LayerBlendUVType` (UV set 0, world XZ, or UV set 2), times `_Layer1Tilling` plus
-  `_Layer1Offset`, ignoring their `_ST`. no mesh map02 draws with a UV-set-2 layer has that set, and
-  the game reads a missing UV set as set 0 (an in-game shot of a Jingyu moss rock shows the moss
-  tiling over UV set 0; see [open](#open)). some all-moss rock materials have no base colour map, so
-  their base is white and the layer is all they show.
-- **`_LAYERBLEND_MASK`** (~200 map02 materials): the same layer, covering by a mask instead of
-  facing up: `_LayerBlendMaskMap`'s R, sampled untiled from UV set 0 (UV set 1 when
-  `_LayerBlendMaskUVType` is 0, whatever the slot's own set), or with `_LayerBlendMaskType` 1 to 4
-  the layer bump map's alpha, the base colour's alpha, the normal map's alpha, or 1.
-- **`_LAYERBLEND_MOSS`** (with either layer; the rabbit-hole resource mounds): shades the layer as
-  moss. with `f = 1 − N·V` of the blended normal and the raw coverage `c` (the mask, or the top
-  coverage before the height blend), the edge term
-  `e = saturate(1 − (c − _Layer1FuzzyEdgeShadowOffset)² / _Layer1FuzzyEdgeShadowRange)` darkens the
-  layer's colour by `_Layer1FuzzyEdgeShadowIntensity`; the colour is then scaled by
-  `mix(1 − _Layer1FuzzyCoreDarkness, 1, f^_Layer1FuzzyDarkPower)` and brightened towards the
-  silhouette by `_Layer1FuzzyEdgeBrightness` times twice its luma, by `f^_Layer1FuzzyBrightPower`
-  (both powers at least 0.1). the world normal tips down by `e · _Layer1FuzzyNormalStrength`.
+- **`_TRI_CHANNEL_MASK`** (~450 map01 materials, mostly rock): each `_MaskMap` channel produces
+  weight `saturate(s/2 + mix(−s, 1, m + offset)) · _MaskAlbedo*.a` (`s = _Mask*Scale`,
+  `offset = _Mask*Offset`). blends albedo toward linear `_MaskAlbedo*`, roughness toward
+  `_MaskRoghness*`, and metallic toward `_MaskMetallic*`, in order B → G → R (originium crystals
+  tint grey rock brown at 0.5 on R).
+  - `_TRI_CHANNEL_MASK_SWITCH_TEXTURE*`: sources G and B colours from `_MaskAlbedoGTex` / `…BTex`
+    (tiled by `_MaskAlbedoGUVTilling` / `…B…`) × `_MaskAlbedoTintG` / `…B` (alpha = strength).
+  - `_UseMaskRUVSetAndTilingScale`: reads R from `_MaskRUVSet` tiled by `_MaskRTilingScale` (unused
+    in map01).
+- **`_DETAIL_MAP`**: weight selected by `_DetailMaskMode` (1, detail alpha, base alpha, normal B, or
+  normal A) fades over view depth `_DetailFalloffStart`–`…End`. detail normal ×
+  `_DetailNormalIntensity` reorients onto the base normal.
+  - `_DetailMode` 1: blends roughness toward detail B; multiplies occlusion by detail A.
+  - `_DetailMode` 0: overlays `_DetailOverlayColor` where detail B is dark; blends roughness toward
+    detail A.
+  - both modes scale blends by `_DetailPBRIntensity`.
+- **`_PARALLAX_MAP`** (originium crystal glow):
+  - view ray in geometric tangent frame steps `trunc(_ParallaxMarchNum)` times (max 20) through
+    `_ParallaxNoiseMap` (tiled by `_ParallaxNoiseMapTilling`) at depth `_ParallaxStrength`, refining
+    between the last two steps.
+  - at hit, `_ParallaxMap.g` (tiled by `_ParallaxTilling`; both maps ignore `_ST`) blends
+    `_ParallaxColorDark` and HDR `_ParallaxColor`, × `_ParallaxIntensity`.
+  - emitted as `colour · mask² · (N·V)^floor(_ParallaxFresnelStrength) · pulse`:
+    - `mask` = channel from `_ParallaxMaskChannel` (emission mask numbering − 1).
+    - `pulse` = `cos(_ParallaxAnimSpeed · T + _ParallaxAnimRandom · (x + y + z))` remapped to
+      `[_ParallaxMinBrightness, 1]`, with `T` from [the clock](#clock) and `x + y + z` the object's
+      world position.
+    - with `_ParallaxCharPos`, adds
+      `_ParallaxBrightStrength · smoothstep(_ParallaxBrightOuterRadius, _ParallaxBrightInnerRadius, distToPlayer)`
+      to the pulse (map01 crystals mostly use strength 20 over 3–25 m; one stores glow 0.75 so it
+      glows mainly near the player).
+    - `_ParallaxIgnorePostExposure` divides out post exposure.
+  - both maps default to black. crystals without a noise map (campfire
+    `M_interactive_campfire+1_003_02`, display `M_iprop_map01_zmdmachine+1_009_02`, Dijiang far
+    `M_building_dijianghao+1_001_11`) see height 0 everywhere and read the pattern at full depth.
+- **`_MATCAP`** (campfire crystal, a few Dijiang props): adds `_MatcapMap` sampled at
+  `viewNormal.xy · 0.5 + 0.5`, × `_MatcapMapStrength`, to emission (not albedo-tinted).
+  `_MatCapIgnorePostExposure` divides out post exposure.
+- **`_LAYERBLEND_TOP`** (moss/sand on rock tops; ~220 map02, a few dozen map01):
+  - coverage `saturate((up − _TopBlendThreshold) / _TopBlendSmoothness)`, where `up` is world Y of
+    the vertex normal blended toward the normal-mapped normal by `_TopBlendWithBumpMap`.
+  - with `_LayerBlendHeight`, base height and `_Layer1BaseMap.a` (weighted by coverage) compete
+    within `_LayerBlendHeightTransition`.
+  - layer colour: desaturate by `_Layer1Saturation`, tint by `_Layer1TintColor`, brighten by
+    `_Layer1ColorBrighterScale`. replaces albedo (`_Layer1BaseColorBlendMode` 0) or adds to it (mode
+    1, × `_Layer1BaseColorAdditiveIntensity`).
+  - PBR: roughness → `_Layer1BumpMap.b`; occlusion → `_Layer1BumpMap.a` (by `_Layer1AOStrength`, or
+    1 with `_LayerAOType`); metallic → `_Layer1Metallic` or layer alpha (`_LayerMetallicType`);
+    layer normal (× `_Layer1BumpScale`) reoriented onto base normal by `_Layer1BaseNormalIntensity`.
+  - applies after detail map and tri-channel mask. both maps sample `_LayerBlendUVType` (UV0, world
+    XZ, or UV2) × `_Layer1Tilling + _Layer1Offset`, ignoring `_ST`. no map02 mesh using UV2 actually
+    has UV2; the game reads a missing UV2 as UV0 (seen on Jingyu moss rocks; see [open](#open)).
+    all-moss rocks without a base map have a white base.
+- **`_LAYERBLEND_MASK`** (~200 map02 materials): same layer, driven by a mask instead of `up`:
+  `_LayerBlendMaskMap.r` untiled from UV0 (or UV1 when `_LayerBlendMaskUVType` is 0, ignoring the
+  slot's UV set), or `_LayerBlendMaskType` 1–4 = layer bump alpha, base alpha, normal alpha, or 1.
+- **`_LAYERBLEND_MOSS`** (with either layer; rabbit-hole resource mounds): shades the layer as moss.
+  with `f = 1 − N·V` (blended normal) and raw coverage `c` (before height blend):
+  - edge `e = saturate(1 − (c − _Layer1FuzzyEdgeShadowOffset)² / _Layer1FuzzyEdgeShadowRange)`
+    darkens layer colour by `_Layer1FuzzyEdgeShadowIntensity`.
+  - colour scales by `mix(1 − _Layer1FuzzyCoreDarkness, 1, f^_Layer1FuzzyDarkPower)` and brightens
+    toward silhouettes by `_Layer1FuzzyEdgeBrightness · 2 · luma · f^_Layer1FuzzyBrightPower` (both
+    powers ≥ 0.1).
+  - world normal tips down by `e · _Layer1FuzzyNormalStrength`.
 
 ## foliage
 
-the game lights foliage with its own deferred model, fed by what each foliage shader writes into the
-GBuffer: a sun shadow term, the diffuse N·L, a transmission amount and a subsurface amount. per unit
-of the sun's illuminance, before the shadow map and cloud shadow:
+foliage uses a dedicated deferred lighting model fed by four GBuffer terms: sun shadow, diffuse
+`N·L`, transmission, and subsurface. per unit of sun illuminance (before shadow map and cloud
+shadow), all four terms multiply by the sun shadow term:
 
-- diffuse: albedo × the stored N·L / π, with no `(1 − F)`
-- specular: the usual GGX, times `mix(sat(n·v + 0.2) · sat(sat(v·l) + 0.5), 1, sat(v·l + 1))`, which
-  dims it only for views from behind the leaf
-- transmission: the albedo divided by its largest channel, × the transmission × `sat(0.5 − n·l)` × a
-  GGX lobe of α² = 0.36 about the direction to the sun (peaking for a viewer looking at the sun),
-  over π
-- wrap: albedo × `(sat(n·l + subsurface) − sat(n·l))` / π
-- all four are multiplied by the sun shadow term
+- **diffuse**: `albedo · storedNL / π` (no `1 − F`)
+- **specular**: GGX × `mix(sat(n·v + 0.2) · sat(sat(v·l) + 0.5), 1, sat(v·l + 1))` (dims only from
+  behind the leaf)
+- **transmission**:
+  `(albedo / max(albedo.r, albedo.g, albedo.b)) · transmission · sat(0.5 − n·l) · GGX(α² = 0.36, toward sun) / π`
+- **wrap**: `albedo · (sat(n·l + subsurface) − sat(n·l)) / π`
 
-[local lights](lighting.md#local-lights) light foliage through the same four terms, with the shading
-normal's N·L in place of the stored one and without the 1/π (matching local lights' units).
+[local lights](lighting.md#local-lights) evaluate the same four terms using the shading normal's
+`N·L` and omitting `1/π`.
 
-`HGRP/Foliage/Leaf` fills the inputs from its material and the mesh's vertex colours (R ambient
-occlusion, A height in the canopy):
+`HGRP/Foliage/Leaf` fills inputs from material properties and vertex colours (R = AO, A = canopy
+height):
 
-| input                                                        | effect                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_OcclusionShadow`                                           | sun shadow × `mix(1, R, _OcclusionShadow)`                                                                                                                                                                                             |
-| `_FakeDirectionalShadowStrength`, `…Pow`                     | sun shadow × `sat(1 − pow(n·d · 0.5 + 0.5, pow) · strength)` with `d` the sun's direction of travel: leaves facing away from the sun darken                                                                                            |
-| `_DiffuseUseVertexNormal`                                    | the diffuse N·L takes the mesh's vertex normal as stored (not turned towards the viewer) instead of the normal-mapped one                                                                                                              |
-| `_OcclusionStrength`                                         | material occlusion `mix(1, R, strength)`, on ambient only                                                                                                                                                                              |
-| `_Transmission`, `_TransmissionDistanceFade`                 | transmission × (1 − the normal map's alpha), faded out between 50 and 60 m from the object with the fade on                                                                                                                            |
-| `_SubsurfaceIntensity`                                       | the wrap amount                                                                                                                                                                                                                        |
-| `_AoAffect{Transmission,Subsurface}{Start,Range}`            | transmission and subsurface × a smoothstep of the material occlusion over the range                                                                                                                                                    |
-| `_CANOPY_COLOR_RAMP`: `_CanopyRamp{Color,Intensity,Range,…}` | albedo blends toward the colour (times the albedo, brightened, or covering it) by `smoothstep(range + transition, range, A)` × (1 − normal alpha) × intensity; `…StartAtTop` reads 1 − A                                               |
-| `_BLEND_COLOR`: `_BlendColor`, `_BlendNormal{Add,Power}`     | albedo × `mix(_BlendColor, _BaseColor, k)`, `k = sat(pow(sat(n.y + 0.5 + add), power) + 1 − sat((1 − normal alpha) · _BlendColor.a · 10))`; `_BlendWithVertexNormal` blends `n.y` from the normal-mapped normal to the vertex normal's |
-| `_Reflectance`                                               | F0 `0.08 · (0.5 + 0.75 · r)`, `r` quantized to 3 bits                                                                                                                                                                                  |
+| input                                                        | effect                                                                                                                                                                                             |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_OcclusionShadow`                                           | sun shadow × `mix(1, R, _OcclusionShadow)`                                                                                                                                                         |
+| `_FakeDirectionalShadowStrength`, `…Pow`                     | sun shadow × `sat(1 − pow(n·d · 0.5 + 0.5, pow) · strength)` (`d` = sun travel direction; darkens leaves facing away)                                                                              |
+| `_DiffuseUseVertexNormal`                                    | diffuse `N·L` uses stored vertex normal (not flipped toward viewer) instead of normal-mapped normal                                                                                                |
+| `_OcclusionStrength`                                         | material occlusion `mix(1, R, strength)` (ambient only)                                                                                                                                            |
+| `_Transmission`, `_TransmissionDistanceFade`                 | transmission × `(1 − normal.a)`, faded out over 50–60 m when fade is on                                                                                                                            |
+| `_SubsurfaceIntensity`                                       | wrap amount                                                                                                                                                                                        |
+| `_AoAffect{Transmission,Subsurface}{Start,Range}`            | scales transmission / subsurface by smoothstep of material occlusion over range                                                                                                                    |
+| `_CANOPY_COLOR_RAMP`: `_CanopyRamp{Color,Intensity,Range,…}` | blends albedo toward colour (multiplied, brightened, or covering) by `smoothstep(range + transition, range, A) · (1 − normal.a) · intensity`; `…StartAtTop` uses `1 − A`                           |
+| `_BLEND_COLOR`: `_BlendColor`, `_BlendNormal{Add,Power}`     | `albedo · mix(_BlendColor, _BaseColor, k)`, `k = sat(pow(sat(n.y + 0.5 + add), power) + 1 − sat((1 − normal.a) · _BlendColor.a · 10))`; `_BlendWithVertexNormal` blends `n.y` toward vertex normal |
+| `_Reflectance`                                               | F0 = `0.08 · (0.5 + 0.75 · r)`, `r` quantized to 3 bits                                                                                                                                            |
 
-a leaf's back faces keep the shading normal of the front unless `_TwoSidedNormal` is set, which
-turns it around. the trees' leaf cards carry normals that follow the canopy's shape rather than each
-card, so without it (the Jingyu cherry trees) a canopy shades as one rounded volume from every side;
-the fake directional shadow and the N·L above take that same unturned normal.
+- back faces keep the front shading normal unless `_TwoSidedNormal` is set. canopy leaf cards carry
+  canopy-shaped normals, so without `_TwoSidedNormal` (e.g. Jingyu cherry trees) the canopy shades
+  as one volume; fake directional shadow and `N·L` use that unturned normal.
+- `_BLEND_COLOR` tints blossoms (Marker Stone pear trees: near-white `_BaseColor`, pink
+  `_BlendColor`; thin low-normal-alpha petal areas turn pink unless facing up, thick parts take
+  `_BaseColor` twice). every shipped `_BLEND_COLOR` variant also sets `_NORMAL_MAP` and
+  `_ALPHATEST_ON`, never `_CANOPY_COLOR_RAMP`. this keeps Marker Stone pit cherry blossoms from
+  blowing out under 80–100 klx sun phases.
 
-`_BLEND_COLOR` is what colours blossoms: Marker Stone's pear trees have a near-white `_BaseColor`
-and a pink `_BlendColor`, so the thin parts of a petal (low normal alpha) turn pink except where
-they face up, and the thick parts are tinted by `_BaseColor` a second time. every shipped variant
-with it also has `_NORMAL_MAP` and `_ALPHATEST_ON`, and none has `_CANOPY_COLOR_RAMP`.
+`HGRP/Foliage/Grass` and `HGRP/Foliage/Grass Cardmesh Lod` fill the same GBuffer inputs. `h` is
+vertex height measured from a point tens of metres below the root (effectively object-space height
+across a blade):
 
-on the cherry trees of Marker Stone's pits, whose phases ship an 80–100 klx sun, this is what keeps
-the blossoms from blowing out.
+| input                                                       | effect                                                                                                            |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `_BendNormalUpward` (grass only)                            | blends normal map XY toward tangent `+Y` before `_NormalScale`; shading normal and `N·L` both use the bent normal |
+| `_TwoSidedNormal` (grass only)                              | back faces flip only the surface normal, keeping the bent normal pointing up                                      |
+| `_AoParams` (x, y, z)                                       | material occlusion `mix(z, 1, sat((h − x) · y))` (darker at root)                                                 |
+| `_DirParams` (x, y, z)                                      | sun mask `d = mix(z, 1, sat((h − x) · y))`                                                                        |
+| `_MaskOnDiffuse`, `_MaskOnTransmission` (grass only)        | diffuse/transmission masks = `d · mix(1, normal.a, …)`; sun shadow = `max(diff, trans)`; transmission × `1 −      | diff − trans | `   |
+| `_Transmission`                                             | transmission × 0.5                                                                                                |
+| `_SubsurfaceIntensity`                                      | wrap amount                                                                                                       |
+| `_USE_CAMERA_BASED_TILLING`: `_CameraBasedTillingIntensity` | shifts vertex by `h · intensity` m along camera up flattened onto ground (blades lean away from camera)           |
 
-`HGRP/Foliage/Grass` and its card LOD `HGRP/Foliage/Grass Cardmesh Lod` fill the same inputs. `h` is
-the vertex's height, measured from a point tens of metres below the root, which over a blade comes
-to the same as its object-space height:
+- both write reflectance `4/7`. the card LOD decodes its normal map differently and masks by B.
+- grass grids supply a per-instance colour ([world](world.md#foliage-grids)): the second parameter
+  vector's RGB covering albedo by its A.
 
-| input                                                       | effect                                                                                                                                                                          |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_BendNormalUpward` (grass only)                            | the normal map's XY blends toward tangent-space +Y, up the blade, before `_NormalScale` scales it; the shading normal and N·L both take the bent normal, so blades shade evenly |
-| `_TwoSidedNormal` (grass only)                              | back faces flip only the surface normal, so the bent normal still points up the blade                                                                                           |
-| `_AoParams` (x, y, z)                                       | material occlusion `mix(z, 1, sat((h − x) · y))`: darker at the root                                                                                                            |
-| `_DirParams` (x, y, z)                                      | a sun mask `d = mix(z, 1, sat((h − x) · y))`                                                                                                                                    |
-| `_MaskOnDiffuse`, `_MaskOnTransmission` (grass only)        | the diffuse and transmission masks are `d · mix(1, a, …)` with `a` the normal map's alpha; the sun shadow is their maximum and transmission × (1 − their difference)            |
-| `_Transmission`                                             | transmission × 0.5                                                                                                                                                              |
-| `_SubsurfaceIntensity`                                      | the wrap amount                                                                                                                                                                 |
-| `_USE_CAMERA_BASED_TILLING`: `_CameraBasedTillingIntensity` | each vertex moves `h` × intensity metres along the camera's up vector flattened onto the ground: blades lean away from the camera and cover more ground seen from above         |
+`HGRP/Foliage/Trunk` uses Lit's lighting and texture layout. with `_FOLIAGE_TRUNK`, vertex colours
+add:
 
-both write a reflectance of 4/7. the card LOD decodes its normal map differently and masks by its B.
-the grass grids also carry a per-instance colour ([world](world.md#foliage-grids)): the second
-parameter vector's RGB, covering the albedo by its A.
-
-`HGRP/Foliage/Trunk` is lit as Lit is, from Lit's texture layout. with `_FOLIAGE_TRUNK` its mesh's
-vertex colours add two things: the material occlusion is multiplied by
-`mix(1, R, _TrunkVertexAoStrength)`, which is all the occlusion a bark with `_OcclusionStrength` 0
-has, and with `_EnableTrunkRamp` the albedo blends toward `_TrunkRampColor` by `_TrunkRampIntensity`
-× the base map's alpha × `smoothstep(range + transition, range, A)` (`_TrunkRampRange`,
-`_TrunkRampTransitionRange`). the keyword also sways the trunk in the wind.
+- material occlusion × `mix(1, R, _TrunkVertexAoStrength)` (only occlusion when `_OcclusionStrength`
+  is 0)
+- `_EnableTrunkRamp`: blends albedo toward `_TrunkRampColor` by
+  `_TrunkRampIntensity · baseMap.a · smoothstep(range + transition, range, A)` (`_TrunkRampRange`,
+  `_TrunkRampTransitionRange`)
+- wind sway
 
 ### glowing foliage
 
-`HGRP/Foliage/Glow` is a static, opaque plant shader for glowing growths, such as Deep Dale Street's
-mushroom stalks (`M_bush_map02_glow+1_001_01`, near unity −43, 63, 89). it writes Lit's standard
-G-buffer from the two-basemap layout without its remaps: roughness is the normal map's B and
-occlusion its A as read, metallic is always 0 (`_Metallic` is ignored), and the albedo is
-`mix(saturate(base · _BaseColor), _BaseColor, _BaseColorTintCover)` without a brightening. the
-textures ignore their `_ST`. it always emits `_EmissiveColor` by the base colour's alpha, as Lit's
-`_EMISSIVE_MASK` does from that channel, weighted towards the albedo by `_EmissiveIgnoreAlbedo` and
-by the exposure by `_IgnorePostExposure`. like Lit it writes `_StencilRef`.
+`HGRP/Foliage/Glow` is a static, opaque shader for glowing growths (e.g. Deep Dale Street mushroom
+stalks `M_bush_map02_glow+1_001_01`, near unity −43, 63, 89).
 
-`_DISTORTION_FLOW` adds a flowing glow, not scaled by the exposure. on `_DistortionUVSet`'s UVs
-(mixing sets 0 and 1), with t the shader's `_VFXParams0.w` clock:
-
-- `n1 = _FoliageGlowNoise.r((uv · _DistortionFlowScale1 + (0, t · _DistortionFlowSpeed1)) / 4)`
-- `n2 = _FoliageGlowNoise.r(((2 n1 − 1) · _DistortionFlowWarp + uv · _DistortionFlowScale2 + (t, t) · _DistortionFlowSpeed2) / 4)`
-- the glow is
-  `_DistortionColor · albedo · max(1 + 10 · (luma(albedo) − _DistortionLuminanceBase), 0) · saturate((2 n2 − 1) · _DistortionFlowMultiplier + _DistortionFlowBias)`,
-  times `mix(1, vertex red, _VertexColorRControlDistortion)`, luma by Rec. 709's weights
-
-`_TERRAIN_BLEND` blends it into the terrain beneath as Lit's keyword does.
+- **GBuffer**: standard Lit GBuffer from two-basemap layout without remaps: roughness = normal B,
+  occlusion = normal A, metallic = 0 (`_Metallic` ignored), albedo =
+  `mix(saturate(base · _BaseColor), _BaseColor, _BaseColorTintCover)` (no brightening). textures
+  ignore `_ST`. writes `_StencilRef`.
+- **base emission**: always emits `_EmissiveColor` × base alpha (as `_EMISSIVE_MASK`), weighted
+  toward albedo by `_EmissiveIgnoreAlbedo` and exposure by `_IgnorePostExposure`.
+- **`_DISTORTION_FLOW`**: adds an exposure-independent flowing glow on `_DistortionUVSet` (blending
+  UV0 and UV1) with clock `t = _VFXParams0.w`:
+  - `n1 = _FoliageGlowNoise.r((uv · _DistortionFlowScale1 + (0, t · _DistortionFlowSpeed1)) / 4)`
+  - `n2 = _FoliageGlowNoise.r(((2·n1 − 1) · _DistortionFlowWarp + uv · _DistortionFlowScale2 + (t, t) · _DistortionFlowSpeed2) / 4)`
+  - `glow = _DistortionColor · albedo · max(1 + 10 · (luma(albedo) − _DistortionLuminanceBase), 0) · saturate((2·n2 − 1) · _DistortionFlowMultiplier + _DistortionFlowBias) · mix(1, vertexR, _VertexColorRControlDistortion)`
+    (Rec. 709 luma).
+- **`_TERRAIN_BLEND`**: blends into terrain beneath as in Lit.
 
 ## subsurface
 
-the deferred lighting has a third model beside the default and the foliage one, for surfaces that
-light scatters inside. a material with `_EnableSubsurface` set registers its `_SubsurfaceColor` (as
-stored) and `_SubsurfaceIndirect` in a table of up to 63 entries, and its G-buffer pass writes its
-entry's number; an unregistered material reads zeros. per pixel the scattered colour is
-`c = mix(1, hue, saturation) · v` from the colour's hue and saturation, with `v` its value times
-what the pass writes in the metallic channel, so the surface is never a metal: the albedo is all
-diffuse and F0 is 0.04. with `k = saturate(1 − v)`:
+deferred lighting has a third model alongside default and foliage for subsurface scattering. a
+material with `_EnableSubsurface` registers `_SubsurfaceColor` (as stored) and `_SubsurfaceIndirect`
+in a 63-entry table and writes its index to the GBuffer (unregistered materials read 0).
 
-- the sun, beside the default diffuse and specular, adds
-  `c · mix(t · mix(1, w^1.5 · 5/3, k) / 2π, 1, saturate(−V·L)^12 · mix(3, 0.1, k))`, where
-  `w = saturate(N·L · 2/3 + 1/3)` wraps the light past the terminator, `t` is what the pass writes
-  in the occlusion channel, and the second lobe shows the sun through the surface to a viewer facing
-  it
-- the ambient light takes `albedo + c · _SubsurfaceIndirect` as its diffuse colour
+per pixel, `c = mix(1, hue, saturation) · v`, where `v = value · gbufferMetallic` and
+`k = saturate(1 − v)`. the surface is non-metallic (all diffuse, F0 = 0.04):
 
-[VFXWaterDitherAlpha](effects.md#solid-effects) writes it under `_SUBSURFACE`, with `_Metallic` in
-the metallic channel and `t` 1. [VFXWater](effects.md#waterfalls)'s forward pass has the same two
-terms. the model's other branch, a table of up to 15 `HGSubsurfaceProfile`s with scatter and
-indirect lookup textures, isn't read, nor are its local-light pass or which other shaders write
-either branch (`HGRP/Lit` has `_SUBSURFACE*` keywords).
+- **sun**: adds `c · mix(t · mix(1, w^1.5 · 5/3, k) / 2π, 1, saturate(−V·L)^12 · mix(3, 0.1, k))`
+  beside default diffuse and specular, where `w = saturate(N·L · 2/3 + 1/3)` wraps past the
+  terminator and `t` is the GBuffer occlusion channel.
+- **ambient**: uses `albedo + c · _SubsurfaceIndirect` as diffuse colour.
+
+[VFXWaterDitherAlpha](effects.md#solid-effects) writes this model under `_SUBSURFACE` (`_Metallic`
+in metallic, `t = 1`). [VFXWater](effects.md#waterfalls)'s forward pass evaluates the same two
+terms. the second branch (up to 15 `HGSubsurfaceProfile`s with scatter/indirect lookup textures),
+the local-light pass, and other writers (`HGRP/Lit` has `_SUBSURFACE*` keywords) are not read.
 
 ## glass
 
-`HGRP/LitTransparent` is the glass shader (a dozen or so materials on map01: windows and glass walls
-such as the Originium Science Park offices). its materials alpha-blend (`_EnableAlphaBlend`, source
-alpha over one minus source alpha, queue 3000, no depth write) and use Lit's texture layouts; some
-set the source factor to one instead, which suggests premultiplied colour, unchecked against the
-shader. Fresnel opacity (`_UseFresnel`, `_FresnelAffectOpacity`) is off on every map01 material. the
-shader also declares screen refraction (`_IoR`, `_RefractionIntensity`, `_RefractThickness`,
-`_RefractTint`, `_RefractTex`, `_UseProbeRefraction`) and planar reflection
-(`_EnabledPlanarReflection`); how they shade isn't decompiled.
+`HGRP/LitTransparent` draws windows and glass walls (~12 map01 materials, e.g. Originium Science
+Park offices).
 
-the base variant (no keywords) writes straight colour: Lit's shading, fogged in the shader at the
-glass's own depth (height, atmosphere and volumetric fog), then the scene-effect grade
-(`_VFXParams1`). its opacity is `_BaseColorMap.a · _BaseColor.a` (times the vertex colour's red with
-`_Use_VerexTexColorAsOpacity`); the alpha channel blends `One, OneMinusSrcAlpha`. Dijiang's deck
-glass (`M_common_glass+1_001_03b`) is 180/255 opaque across its whole map, so 29% of what lies
-behind it shows through.
+- **state & layout**: alpha-blended (`_EnableAlphaBlend`, `SrcAlpha OneMinusSrcAlpha`, queue 3000,
+  no depth write), Lit texture layouts. some materials set `SrcBlend = One` (suggests premultiplied
+  colour; unchecked). Fresnel opacity (`_UseFresnel`, `_FresnelAffectOpacity`) is off on all map01
+  materials. screen refraction (`_IoR`, `_RefractionIntensity`, `_RefractThickness`, `_RefractTint`,
+  `_RefractTex`, `_UseProbeRefraction`) and planar reflection (`_EnabledPlanarReflection`) are not
+  decompiled.
+- **base variant (no keywords)**: Lit shading + fog at glass depth (height, atmosphere, volumetric)
+  - scene-effect grade (`_VFXParams1`). opacity = `_BaseColorMap.a · _BaseColor.a` (× vertex R with
+    `_Use_VerexTexColorAsOpacity`). alpha channel blends `One, OneMinusSrcAlpha`. Dijiang deck glass
+    (`M_common_glass+1_001_03b`) is 180/255 opaque (29% see-through).
 
 ### transparent draw order
 
-glass and effects share one list (the pass's full step order is under
-[blending](effects.md#blending)). the transparent pass copies the opaque scene into its own target,
-then draws decals, then every queue 2900–3400 renderer on PC (2900–3100 when low-resolution
-transparents are enabled; both the static ECS scenery and GameObject renderers such as prefab
-effects, whose shaders are all `LightMode` `ForwardOnly`) in one order: each side is sorted back to
-front (sorting layer, render queue, then distance, then renderer priority: the SRP list's
-`sortingCriteria` is 0x57, Unity's `CommonTransparent` plus `RendererPriority`) and the two sorted
-lists are merged by their keys, farther first. so an effect kilometres behind a window draws first
-and the window blends over it. within a sorting band a lower queue draws first however near it is:
-Qingbo Stockade's falls lay their VFXWater columns (queue 3001) over the VFXBaseV2 curtain sheets
-(3000) behind them from any distance. the sorting layer criterion covers a renderer's
-`m_SortingLayer` (the layer's place in the layer order) and then its `m_SortingOrder`, lower first;
-prefab effects use the order to stack parts that share a centre: the blue talosite's dark backing
-card (`glow01_andi`) is −4, its light column and ground glow −2, its upper glow line −1, and its
-shards and star icon 0, so the card always draws behind the icon. `_TransparentSortPriority` (±50)
-acts only through the material's render queue. at PC settings nothing renders transparents at half
-size, so the order holds there. what distance each side sorts by (bounds centre, most likely) isn't
-traced.
+glass and effects share one sorted draw list (full pass order in [blending](effects.md#blending)):
+
+1. copies opaque scene into its own target, then draws decals.
+2. draws queue 2900–3400 renderers on PC (2900–3100 if low-resolution transparents are enabled),
+   combining static ECS scenery and GameObject renderers (all `LightMode` `ForwardOnly`).
+3. each side sorts back-to-front with `sortingCriteria = 0x57`
+   (`CommonTransparent | RendererPriority`): sorting layer (`m_SortingLayer`, then `m_SortingOrder`,
+   lower first) → render queue → distance → renderer priority. the two sorted lists merge
+   farther-first.
+
+consequences:
+
+- a lower render queue always draws first regardless of distance (Qingbo Stockade falls draw
+  `VFXWater` at 3001 over `VFXBaseV2` at 3000).
+- prefabs stack co-located parts with `m_SortingOrder`: blue talosite sets `glow01_andi` −4, light
+  column and ground glow −2, upper glow line −1, shards and star icon 0.
+- `_TransparentSortPriority` (±50) acts only through the material's render queue.
+- PC settings never enable half-size transparents. the exact distance key (likely bounds centre) is
+  untraced.
 
 ## decals
 
-`HGRP/DecalLit` is the scenery's projected decal: moss, sand, stains, cracks and tyre tracks laid
-over floors and rocks (the green floor of Power Plateau's grass cave, map01_lv007 near unity −102,
-147, 524, is moss decals over grey concrete). each is a rect decal entity
-([world](world.md#initchunkdata-layout)): a box whose matrix maps a unit cube, the decal's material,
-and per placement a UV scale and offset, an RGBA8 colour and an intensity. the game draws the box
-into its GBuffer after the opaque scenery, overlapping decals in their `_DrawOrder`. each covered
-pixel finds the surface from depth, and only points inside the box take the decal, which projects
-down the box's y. the decal pass tests the stencil (reference 0, read mask 32, equal), which the
-scenery's GBuffer pass fills with each material's `_StencilRef` (`HGRP/Lit`, the foliage shaders and
-their card LODs; `HGRP/LitHLOD` writes 0 whatever its material says), so surfaces whose
-`_StencilRef` has bit 32 never take a decal. most foliage has it (map02's grass and leaves 33,
-trunks 32), so the blight's erosion decals (`M_rdecal_com_effect_erosion…`, whose base map is an
-iridescent oil-slick pattern) colour the ground and rocks of Sword Vault Dale but not the grass and
-trees on them. the compare is read from the pass's shared stencil state; its per-face states say
-always.
+`HGRP/DecalLit` projects moss, sand, stains, cracks, and tyre tracks onto floors and rocks (e.g.
+Power Plateau grass cave, map01_lv007 near unity −102, 147, 524).
 
-prefabs carry the same decals as `HGDecalProjector` components (1,213 in the install, on cutscene,
-dialogue and interactive prefabs and the Qingbo waterwheels): the GameObject's transform is the box
-(world rect decals' boxes are thin along y too), and the fields are the placement's, `m_UvTilling`
-and `m_UvOffset` the UV scale and offset, `m_BaseColor` and `m_BaseColorIntensity` the colour and
-intensity, `m_SectorAngle` the angle; a world carving decal stores the same values as Si's
-Painting's carved puzzle grid (`P_rdecal_com_marking_carving+1_003_01`), offset (1, 1) included.
-1,196 have `m_ShapeType` 0, the others 1 to 3; none has an `m_CustomMesh`. what the other shapes
-draw, and whether `m_LODScreenSizeMin` (0.02 on the puzzle grid) and `m_SortOrderOffset` (0 to 3)
-cull and order them, isn't read.
+- **world entities**: rect decal entities ([world](world.md#initchunkdata-layout)) store a unit-cube
+  matrix, material, UV scale/offset, RGBA8 colour, and intensity. drawn into the GBuffer after
+  opaque scenery in `_DrawOrder`, projecting down box y onto depth-reconstructed points inside the
+  box.
+- **stencil mask**: the decal pass tests stencil `Equal` against ref 0 with read mask 32 (from the
+  pass's shared stencil state; per-face states say always). GBuffer passes write `_StencilRef`
+  (`HGRP/Lit`, foliage, card LODs; `HGRP/LitHLOD` always writes 0). surfaces with bit 32 set (map02
+  grass/leaves 33, trunks 32) reject decals (e.g. Sword Vault Dale blight erosion decals
+  `M_rdecal_com_effect_erosion…` skip grass and trees).
+- **prefab decals**: `HGDecalProjector` (1,213 in install: cutscenes, dialogue, interactives, Qingbo
+  waterwheels) uses the GameObject transform as the box and `m_UvTilling`, `m_UvOffset`,
+  `m_BaseColor`, `m_BaseColorIntensity`, `m_SectorAngle` as placement fields (matching world carving
+  decals such as Si's Painting puzzle grid `P_rdecal_com_marking_carving+1_003_01`, offset
+  `(1, 1)`). 1,196 have `m_ShapeType` 0, the rest 1–3, none has `m_CustomMesh`. other shapes,
+  `m_LODScreenSizeMin` (0.02 on the puzzle grid), and `m_SortOrderOffset` (0–3) are unread.
 
-- UV: `(local.xz + 0.5) · scale + offset`, for `_BaseColorMap` and `_SampleTex1` (the PBR map:
-  normal RG, roughness B; with `_SampleTex1UVSet` it takes its own `_ST` of the box's UVs instead)
-- albedo: the placement's colour as stored (not gamma-decoded) × its intensity × the base map's RGB;
-  with `_BaseTexChannel` the base map is the PBR map and the colour stands alone
-- alpha: the base map's alpha × the colour's alpha × `_DecalOpacity`, and with `_NORMAL_ANGLE_BLEND`
-  × `sat(y · N)^_AngleBlendFallOff` with `y` the box's axis and `N` the surface's normal, so walls
-  the box reaches stay clean
-- roughness: `mix(_RoughnessMin, _RoughnessMax, B)`
-- normal: the PBR map's RG × `_NormalScale` in the box's frame (x tangent, y normal), or towards the
-  surface's by `_BlendSceneNormal`; the result blends from the surface's normal by `_AffectNormal`
-- metallic and occlusion: `_Metallic` or a channel of `_SampleTex1` by `_MetallicChannel` (2–5 pick
-  R–A), occlusion a channel by `_OcclusionChannel` (1–4) applied by `_OcclusionStrength`
+standard `HGRP/DecalLit` channels:
 
-each target blends by the alpha, and the material's colour masks pick what's written: `_ColorMask3`
-the albedo, `_ColorMask2` the normal (RG) and roughness (B), `_ColorMask1` metallic (R) and
-occlusion (G). the editor derives them from `_AffectNormal`, `_AffectRoughness` and the like; the
-moss writes albedo and roughness only. some decals write no albedo at all: they roughen or bump the
-surface beneath (Wuling City's terraces), or make it look wet.
+- **UV**: `(local.xz + 0.5) · scale + offset` for `_BaseColorMap` and `_SampleTex1` (PBR map: normal
+  RG, roughness B; with `_SampleTex1UVSet`, uses its own `_ST` on box UVs).
+- **albedo**: placement colour (as stored, not gamma-decoded) × intensity × base map RGB. with
+  `_BaseTexChannel`, the base map is the PBR map and the placement colour stands alone.
+- **alpha**: `base.a · colour.a · _DecalOpacity`. with `_NORMAL_ANGLE_BLEND`, ×
+  `sat(boxY · N)^_AngleBlendFallOff` so vertical walls stay clean.
+- **roughness**: `mix(_RoughnessMin, _RoughnessMax, B)`.
+- **normal**: PBR RG × `_NormalScale` in box frame (`x` tangent, `y` normal), blended toward surface
+  normal by `_BlendSceneNormal`, then blended onto surface normal by `_AffectNormal`.
+- **metallic & occlusion**: `_Metallic` or `_SampleTex1` channel (`_MetallicChannel` 2–5 = R–A);
+  occlusion from `_SampleTex1` channel (`_OcclusionChannel` 1–4) × `_OcclusionStrength`.
+- **write masks**: each GBuffer target blends by alpha, gated by `_ColorMask3` (albedo),
+  `_ColorMask2` (normal RG, roughness B), and `_ColorMask1` (metallic R, occlusion G), derived by
+  the editor from `_AffectNormal`, `_AffectRoughness`, etc. some decals write no albedo (e.g. Wuling
+  City terraces bump/roughen only).
 
-`_BLEND_EMISSIVE` decals also glow, as Deep Dale Street's purple patches do (dung02_rdg008 near
-unity 13, 92, −21). the GBuffer's emission target is always written, its RGB laid over by the same
-alpha, whatever the colour masks: `_EmissiveColor` × a channel picked by `_EmissiveChannel` (0–3
-`_SampleTex1`'s R–A, 4 the base map's alpha) × the albedo above, or 1 with `_AlbedoAffectEmissive`;
-under `_IgnorePostExposure` it's divided by the post exposure.
+special `HGRP/DecalLit` variants:
 
-`_BLEND_WATER_FLOW` is the wet rock beside waterfalls (Jingyu Valley's falls near unity −1075, 207,
-−1414). it writes only normal and roughness, from `_WaterNormalTex` sampled at world positions
-rather than the box's UVs:
-
-- the map is projected along x (at world zy) and along z (at world xy), each times its `_ST` scale,
-  and the two blend by the surface normal's squared x and z, normalized to sum to 1
-- two layers scroll down the world's y: UV scale `_UVMovement.z` with speed `.x`, and `.w` with `.y`
-  (in UVs per second); steep walls push both further by `steep · _NormalFactor`, where
-  `steep = (1 − |N.y|)^_AngleBlendFallOff2`
-- the four samples' normals (decoded like the PBR map's) sum, their xy times `_WaterNormalScale`,
-  into the box's or the surface's frame as above
-- roughness: `_WaterRoughness` × the mean of the first layer's two B samples. the shipped
-  `M_rdecal_common_water_flow+1_001_*` give about 0.01, a near mirror: the rock's look comes from
-  what the screen-space reflections find, since they march the G-buffer the decal wrote
-- alpha: the base map's alpha × the colour's alpha × `_DecalOpacity` × `steep`, so level ground
-  stays dry
-
-`_BLEND_SLUDGE_EROSION` is the blight's erosion creeping over built ground and up what stands on it
-(The Hub's deck, map02_lv002 near unity −784, 256, 13). it compiles alone or with `_COMPLETE_PBR`
-and `_NORMAL_ANGLE_BLEND`, and changes only the albedo and the alpha:
-
-- albedo: the surface normal's squared world components weigh three projections. `N.y²` takes the
-  albedo above; `N.x²` takes `_SludgeDecalTex` at the box's local zy and `N.z²` at its local xy,
-  each times the texture's `_ST` scale, untinted by the placement's colour. the weights follow the
-  world's axes while the positions are the box's, so they line up only on an unrotated box
-- alpha: the base map's alpha × `_SludgeDecalAlphaScale` ×
-  `sat(1 − local.y · _SludgeDecalHeightFalloff)` × the colour's alpha × `_DecalOpacity` (and the
-  angle fade), with `local.y` the height in the box from −0.5 to 0.5: the decal is whole below the
-  box's centre and gone `1 / falloff` above it. the sludge texture's alpha isn't read
-
-the sludge texture is read through a sampler of the pipeline's rather than its own; which one isn't
-traced.
-
-`_BLEND_WETNESS` is the puddle (Yinglung Pass's gate floor, map02_lv007 near unity −841, 261, 258;
-`M_rdecal_com_ground_puddle+1_002_03` and `…_04`). it compiles only with `_COMPLETE_PBR`, and splits
-the alpha in two: `a`, the base map's alpha × the colour's alpha, and `o = a · _DecalOpacity`.
-
-- normal and roughness lay over by `a`, so they don't fade with the opacity
-- metallic and occlusion lay over by `o`
-- albedo: the surface's × `(1 − _Wetness · a) · (1 − o)`, plus the decal's × `o`. the wetness
-  darkens what's beneath, and the decal's own colour shows only by its opacity
-
-the puddles have `_DecalOpacity` 0 and `_Wetness` 0.3: they colour nothing, darken the floor by up
-to 30% and replace its normal and roughness with their own smooth ones.
+- **`_BLEND_EMISSIVE`** (Deep Dale Street purple patches, dung02_rdg008 near unity 13, 92, −21):
+  always writes the GBuffer emission target (ignoring colour masks), blended by alpha:
+  `_EmissiveColor` × `_EmissiveChannel` (0–3 `_SampleTex1` R–A, 4 base alpha) × albedo (or 1 with
+  `_AlbedoAffectEmissive`). `_IgnorePostExposure` divides out post exposure.
+- **`_BLEND_WATER_FLOW`** (wet rock beside waterfalls, e.g. Jingyu Valley near unity −1075, 207,
+  −1414): writes normal and roughness only, sampling `_WaterNormalTex` in world space:
+  - projects along X (world `zy`) and Z (world `xy`), × `_ST` scale, blended by normalized `N.x²`
+    and `N.z²`.
+  - two layers scroll down world y: scale `_UVMovement.z` at speed `.x`, and `.w` at `.y` (UVs/s),
+    pushed further by `steep · _NormalFactor` (`steep = (1 − |N.y|)^_AngleBlendFallOff2`).
+  - four decoded normals sum, `xy × _WaterNormalScale`, into box or surface frame.
+  - roughness = `_WaterRoughness` × mean of layer 1's two B samples
+    (`M_rdecal_common_water_flow+1_001_*` ≈ 0.01 → near-mirror for SSR).
+  - alpha = `base.a · colour.a · _DecalOpacity · steep` (level ground stays dry).
+- **`_BLEND_SLUDGE_EROSION`** (blight erosion on built ground, e.g. Hub deck map02_lv002 near unity
+  −784, 256, 13; compiles alone or with `_COMPLETE_PBR` and `_NORMAL_ANGLE_BLEND`): alters albedo
+  and alpha only.
+  - albedo weights three projections by squared world normal: `N.y²` uses standard albedo; `N.x²`
+    and `N.z²` sample `_SludgeDecalTex` at local `zy` and `xy` × `_ST` (untinted). world weights
+    with local coordinates align only on unrotated boxes.
+  - alpha =
+    `base.a · _SludgeDecalAlphaScale · sat(1 − local.y · _SludgeDecalHeightFalloff) · colour.a · _DecalOpacity`
+    (× angle fade), `local.y ∈ [−0.5, 0.5]`. sludge alpha is unused; it reads via an untraced
+    pipeline sampler.
+- **`_BLEND_WETNESS`** (puddles, e.g. Yinglung Pass gate floor map02_lv007 near unity −841, 261,
+  258; `M_rdecal_com_ground_puddle+1_002_03`, `_04`; requires `_COMPLETE_PBR`): splits alpha into
+  `a = base.a · colour.a` and `o = a · _DecalOpacity`.
+  - normal and roughness blend by `a`; metallic and occlusion by `o`.
+  - albedo = `surface · (1 − _Wetness · a) · (1 − o) + decal · o`.
+  - puddles set `_DecalOpacity = 0` and `_Wetness = 0.3`: darken up to 30% and replace
+    normal/roughness without tinting.
 
 ### wetness decals
 
-`HGRP/WetnessDecal` wets what a rect decal box covers without colouring it: Qingbo's big waterwheel
-(map02_lv003 near unity −278, 293, −1404) carries a few dozen over its wheel and frame, where water
-runs (`M_fxmap_common_wateringtruck_wetnessdecal_01`, the only such material on map02). it writes no
-G-buffer target. the game draws it after the decals into the water wetness mask, the target the
-water proxies mark the ground around them in ([WaterProxy](water.md#waterproxy-and-waterdecal)),
-storing `1 − wetness` and keeping the smaller value where boxes overlap. its wetness at a point in
-the box:
+`HGRP/WetnessDecal` wets surfaces inside a rect decal box without colouring them (e.g. Qingbo's
+waterwheel, map02_lv003 near unity −278, 293, −1404; `M_fxmap_common_wateringtruck_wetnessdecal_01`,
+the only such material on map02). it writes no GBuffer target; drawn after decals into the water
+wetness mask ([WaterProxy](water.md#waterproxy-and-waterdecal)), storing `1 − wetness` with min
+blending.
 
-- the placement's alpha × `_OverallOpacity`, fading out linearly with the camera's distance to
-  `_DistanceFade` metres (300 on the waterwheel's)
-- with `_USE_MASK`, times the base map's red and a fade towards the box's faces. the projection axis
-  is the box axis the surface faces most: the geometric normal (from the depth's screen gradients)
-  in the box's frame, each component scaled by the box's size along it. the other two local
-  coordinates, plus 0.5, go through the placement's UV transform and then the map's `_ST`; the fade
-  is `saturate(1 − 2·|d| + _SoftBias · _UseSoftBlend)` with `d` the local coordinate along the axis.
-  the placement's colour isn't read
-
-the deferred lighting reads the mask (separate from [rain wetness](environment.md#wetness); active
-only while `_WaterWetnessMaskParam0.x` is above 1/2048, a global whose setter isn't traced) with the
-porosity Lit's G-buffer stores,
-`saturate(_PorosityFactorX · roughness + _PorosityFactorZ · metallic + _PorosityFactorY)`, or 0 with
-`_DisableVerticalFlow`. when the placement's `_m6 & 255 == 2`, the box bends into a sector by
-`_m5 / 12` degrees. with `w` the wetness, the albedo is multiplied by `1 − porosity · w²` and the
-roughness falls towards `min(1 − porosity · w, roughness)` by `w²`; the normal stays. Lit's defaults
-(0.2, 0.4 and 0, which the waterwheel's materials keep) darken a surface of roughness 0.7 to about
-46% and smooth it to 0.46 at full wetness.
+- **wetness**: `placement.a · _OverallOpacity` × linear fade out to `_DistanceFade` m (300 on the
+  waterwheel). placement colour is ignored.
+- **`_USE_MASK`**: multiplies by base map R and face fade
+  `saturate(1 − 2·|d| + _SoftBias · _UseSoftBlend)`, where `d` is the local coordinate along the
+  dominant box axis (geometric normal from depth screen gradients in box frame, scaled by box size).
+  the other two coords `+ 0.5` pass through placement UV then `_ST`.
+- **sector bend**: when placement `_m6 & 255 == 2`, the box bends into a sector by `_m5 / 12`
+  degrees.
+- **deferred lighting**: reads the mask (separate from [rain wetness](environment.md#wetness);
+  active when `_WaterWetnessMaskParam0.x > 1/2048`, setter untraced) using Lit GBuffer porosity
+  `saturate(_PorosityFactorX · roughness + _PorosityFactorZ · metallic + _PorosityFactorY)` (0 with
+  `_DisableVerticalFlow`). for wetness `w`:
+  - `albedo *= 1 − porosity · w²`
+  - `roughness = mix(roughness, min(1 − porosity · w, roughness), w²)`
+  - normal is unchanged. Lit defaults (0.2, 0.4, 0) darken roughness 0.7 to ~46% and smooth it to
+    0.46 at full wetness.
 
 ## matte paintings
 
-`HGRP/MattePainting` draws the painted mountain ranges on the horizon: a few alpha-tested ring
-segments, 600–1000 m from their origin and 1000 m tall, carrying one wide texture (map01's is
-4096×512). they're unlit: the colour is `_MainTex` times `_TintColor · _TintColorIntensity`, plus
-`_ExpIntensity` times whatever exceeds `_ExpThreshold`, in pre-exposed units unless
-`_IgnorePostExposure` is set. alpha is the texture's times `_TintColor.a · _TintColorAlpha`, clamped
-to 1 and tested against `_AlphaClipThreshold`. the shader has no shadow pass, so they don't cast
-shadows.
+`HGRP/MattePainting` draws unlit horizon mountain rings (600–1000 m radius, 1000 m tall, single wide
+texture such as map01's 4096×512).
+
+- **colour**: `_MainTex · _TintColor · _TintColorIntensity`, plus `_ExpIntensity` × amount above
+  `_ExpThreshold` (pre-exposed unless `_IgnorePostExposure` is set).
+- **alpha**: `saturate(tex.a · _TintColor.a · _TintColorAlpha)`, alpha-tested against
+  `_AlphaClipThreshold`.
+- **shadows**: none (no shadow pass).
 
 ## erosion
 
-`HGRP/Erosion` draws the dark blight rock that grows over the Originium Science Park and other map01
-areas. it has no base colour map; the colour comes from its other maps:
+`HGRP/Erosion` draws dark blight rock (Originium Science Park and map01). it has no base colour map;
+all maps sample UV0 and tile by `*Tilling` (ignoring `_ST`). metal, noise, and flow colours are HDR
+and used as stored.
 
-- `_MetalMixMap` R is 0 where the surface is metal. there the colour becomes `_MetallicColor`, the
-  roughness 0.01 and the metallic `_Metallic · (metal − _MetallicOffset)`; elsewhere it's
-  `_BaseColor`, with roughness `_Roughness` times the map's A, blended toward the detail map's alpha
-  by `_DetailRoughnessCover`. G is occlusion (by `_OcclusionStrength`) and B masks the flow band.
-- a noise layer: `_NoisePatternMap`, shifted by one parallax step `_NoiseStrength` deep, tinted by
-  `_NoisePatternTintColor` and the base normal map's alpha, scaled by `max(N·V, _NoiseMin)` and
-  faded out by distance over `_DistanceBlend` metres. it's added to the colour and, times
-  `_NoiseEmissiveStrength`, to emission.
-- a flow band: `_FlowRampMap` read along the object-space height (`× _FlowNormalTilling`, plus the
-  metal map's G `× _FlowNoiseStrength` and `_FlowSpeedOffset`, scrolling by `_FlowNormalSpeed` times
-  [the clock](#clock)), coloured `_FlowBottomColor` below the height `_FlowColorOffset` and
-  `_FlowTopColor` above it. it adds `_FlowColorStrength` of itself to the colour where the metal
-  map's B is set, `_FlowColorEmissiveStrength` to emission elsewhere, and lowers roughness by
-  `_FlowRoughness` times its brightness.
-- the base and detail normal maps (each with its own scale) are summed; metal flattens the bitangent
-  component.
+- **`_MetalMixMap`**:
+  - R = 0 (metal): colour `_MetallicColor`, roughness 0.01, metallic
+    `_Metallic · (metal − _MetallicOffset)`.
+  - elsewhere: colour `_BaseColor`, roughness `_Roughness · map.a` blended toward detail alpha by
+    `_DetailRoughnessCover`.
+  - G = occlusion (scaled by `_OcclusionStrength`); B = flow band mask.
+- **noise layer**: `_NoisePatternMap` shifted by one parallax step (`_NoiseStrength`), tinted by
+  `_NoisePatternTintColor` and base normal alpha, scaled by `max(N·V, _NoiseMin)` and faded over
+  `_DistanceBlend` m. adds to colour and (× `_NoiseEmissiveStrength`) emission.
+- **flow band**: `_FlowRampMap` sampled along object-space height
+  (`× _FlowNormalTilling + metalMap.g · _FlowNoiseStrength + _FlowSpeedOffset`, scrolling by
+  `_FlowNormalSpeed` on [the clock](#clock)). coloured `_FlowBottomColor` below `_FlowColorOffset`
+  and `_FlowTopColor` above. adds `_FlowColorStrength` to colour where `metalMap.b` is set,
+  `_FlowColorEmissiveStrength` to emission elsewhere, and lowers roughness by
+  `_FlowRoughness · brightness`.
+- **normals & depth blend**: base and detail normal maps sum (each with own scale); metal flattens
+  the bitangent. `_ObjectBlend*` blends softly against scene depth.
 
-every map samples UV set 0 and tiles by its own `*Tilling` property rather than its `_ST`. the
-metal, noise and flow colours are HDR and used as stored, like `_EmissiveColor`. the shader also
-blends softly into whatever lies behind (`_ObjectBlend*`, which reads the scene depth).
-
-`HGRP/ErosionDynamic` (animated, glowing) is used only by the `P_erosion_map01_dynamic…` prefabs,
-the erosion patches the player clears. their load gate shows them while a map variable is not 2,
-that is until their core is destroyed ([blight and its cores](scene-states.md#dynamic-load-gates)).
+`HGRP/ErosionDynamic` (animated, glowing) is used only by clearable erosion prefabs
+(`P_erosion_map01_dynamic…`), load-gated while their map variable ≠ 2
+([blight and its cores](scene-states.md#dynamic-load-gates)).
 
 ## swaying cloth
 
-`HGRP/Lit` materials with `_SIMPLE_VERTEXANIM` and `_SIMPLE_VERTEXANIM_CLOTH` (map02's kites, flags,
-canvases and logos; a couple dozen materials in the scenes surveyed) sway in the wind in the vertex
-stage of every pass. the offset is added in world space after the object-to-world transform, and
-only when `_SimpleVertexAnimationWindIntensity + _NoiseOffsetIntensity` is non-zero and the vertex
-colour's alpha `a` is. with `I` the intensity, `F` `_SimpleVertexAnimationWindFreq`, `S` the soft
-factor, `T` `_DirectionTendency`, `t` [the wind clock](environment.md#wind) and `x₀` the object's
-world X:
+`HGRP/Lit` with `_SIMPLE_VERTEXANIM` and `_SIMPLE_VERTEXANIM_CLOTH` (map02 kites, flags, canvases,
+logos) offsets vertices in world space in every pass after object-to-world. gated on
+`_SimpleVertexAnimationWindIntensity + _NoiseOffsetIntensity != 0` and vertex colour alpha `a != 0`.
 
-- `_Kite` non-zero: `s = sin(t · F + lerp(0, y · S − a · π, _Kite) + x₀) · y` with `y` the
-  object-space height, and amplitude `I · 0.05`
-- otherwise: `s = sin(t · F − z · S − a · 3.14 + x₀)` with `z` the vertex's world Z, and amplitude
-  `I · 0.5`
+with `I` = `_SimpleVertexAnimationWindIntensity`, `F` = `_SimpleVertexAnimationWindFreq`, `S` = soft
+factor, `T` = `_DirectionTendency`, `t` = [wind clock](environment.md#wind), and `x₀` = object world
+X:
 
-the offset is `direction · (s + 1 + T) · amplitude · a`, where `direction` is horizontal: the
-material's own (`cos, 0, sin` of `_MainDirectionAngle` in degrees, through truncated Taylor series)
-when `_Use_Custom_WindDir` is set, otherwise the wind's. the previous frame's offset, for motion
-vectors, uses the previous wind clock. a per-pass `_DisableAnimateVert` scales the offset by
-`1 − value`; what each pass sets it to isn't known. `_NoiseOffsetIntensity` enters only the gate in
-this variant.
+- **`_Kite` non-zero**: `s = sin(t · F + lerp(0, y · S − a · π, _Kite) + x₀) · y` (`y` =
+  object-space height), `amplitude = I · 0.05`.
+- **otherwise**: `s = sin(t · F − z · S − a · 3.14 + x₀)` (`z` = vertex world Z),
+  `amplitude = I · 0.5`.
 
-`_SIMPLE_VERTEXANIM_ROPE` is another branch of the same family, not described here, and
-`_SIMPLE_VERTEXANIM_PENDULUM` [swings](#swinging-pendulums). the [vertex offset](#vertex-offset) is
-a separate keyword, and a material with both adds the two offsets.
+`offset = direction · (s + 1 + T) · amplitude · a`, where `direction` is horizontal: `(cos, 0, sin)`
+of `_MainDirectionAngle` (degrees, truncated Taylor series) under `_Use_Custom_WindDir`, else the
+wind direction.
+
+- motion vectors evaluate the previous frame with the previous wind clock.
+- per-pass `_DisableAnimateVert` scales the offset by `1 − value` (per-pass values unknown).
+- `_NoiseOffsetIntensity` enters only the gate.
+- `_SIMPLE_VERTEXANIM_ROPE` is another branch (undocumented); `_SIMPLE_VERTEXANIM_PENDULUM`
+  [swings](#swinging-pendulums). [vertex offset](#vertex-offset) is independent and additive.
 
 ### swinging pendulums
 
-`HGRP/Lit` materials with `_SIMPLE_VERTEXANIM` and `_SIMPLE_VERTEXANIM_PENDULUM` (map02's wind
-chimes in Qingbo Stockade, `M_prop_map02_sfornament+1_001_01a` and `_03`, hanging lamps, a scepter
-and a logo; Valley IV's watchtower) turn each vertex about an anchor in the vertex stage of every
-pass, under the same gate as the sway. in world space, with `A` the object's origin (`_AnchorPoint`
-under `_Use_Custom_Anchor`), `x₀` its world X, `t` the wind clock, `I` and `F` as for the sway, and
-`(dx, 0, dz)` the sway's direction:
+`HGRP/Lit` with `_SIMPLE_VERTEXANIM` and `_SIMPLE_VERTEXANIM_PENDULUM` (Qingbo wind chimes
+`M_prop_map02_sfornament+1_001_01a` and `_03`, hanging lamps, scepter, logo, Valley IV watchtower)
+rotates each vertex in world space in every pass under the same gate.
 
-- the vertex turns about `normalize(−dz, −dx, dx)` by `sin(t · F + x₀) · I · 0.05` radians
-- then about world +Y by `sin(t · _SelfRotationSpeed + x₀) · _SelfRotationRange · π / 360` radians
-  (the shader's degree factor is π/180 to 1e-4, halved)
+around anchor `A` (object origin, or `_AnchorPoint` under `_Use_Custom_Anchor`), using `x₀`, `t`,
+`I`, `F`, and sway direction `(dx, 0, dz)`:
 
-both through truncated Taylor series for the sine and cosine. the offset from the vertex's position
-is scaled by `lerp(a · I · 0.5, 1, _Stability) · a`, `a` the vertex colour's alpha, and by the
-pass's `1 − _DisableAnimateVert` (read where the sway's is, at `+16` of the per-pass constants; the
-GBuffer variant leaves that block unnamed). the normal isn't turned.
-`_SIMPLE_VERTEXANIM_USE_GRAVITY` (the scepter) is a variant not described here. of the eight
-materials whose paths are known, none sets `_Use_Custom_Anchor`, every one swings (`I` 0.5 to 2.75),
-and the chimes turn about +Y by up to 4° at 18.8 radians per unit of the clock.
+1. rotate about `normalize(−dz, −dx, dx)` by `sin(t · F + x₀) · I · 0.05` rad.
+2. rotate about world `+Y` by `sin(t · _SelfRotationSpeed + x₀) · _SelfRotationRange · π / 360` rad
+   (degree factor `π / 180` to `1e-4`, halved).
+
+both rotations use truncated Taylor sin/cos. the resulting displacement scales by
+`lerp(a · I · 0.5, 1, _Stability) · a · (1 − _DisableAnimateVert)` (`a` = vertex alpha;
+`_DisableAnimateVert` sits at `+16` in per-pass constants, unnamed in GBuffer). normals are not
+rotated.
+
+- `_SIMPLE_VERTEXANIM_USE_GRAVITY` (scepter) is not described here.
+- across the 8 known materials, none sets `_Use_Custom_Anchor`, `I` spans 0.5–2.75, and chimes turn
+  up to 4° about `+Y` at 18.8 rad per clock unit.
 
 ### cloth simulation
 
-`_GPU_CLOTH` (map02's canvases, flags and banners, mostly alongside the sway's keywords) lets a draw
-take its vertices from a cloth simulation. the keyword alone changes nothing: the variant computes
-the sway as above, when the material has it, and adds it to the vertex either way, and replaces the
-object-space position only when a global switch is on and the draw's per-draw data names a slot in
-the simulation's skeleton buffer. the game fills that slot for entities that carry a cloth hash
-([InitChunkData component 60](world.md#initchunkdata-layout)); an entity without one, such as Sword
-Vault Dale's red banner `P_cloth_map02_sfcanvas+1_001_01` under the scaffold bridge, only sways,
-though the canvases beside it are simulated. some simulated cloths have no sway at all, so all their
-motion is the simulation's: `M_cloth_map02_sfcanvas+1_001_02`, the red emblem banners of Qingbo
-Stockade (five in cell −2, −11, each with a cloth hash), has `_GPU_CLOTH` and no
-`_SIMPLE_VERTEXANIM*`.
+`_GPU_CLOTH` (map02 canvases, flags, banners; mostly alongside sway keywords, though some such as
+Qingbo's red emblem banners `M_cloth_map02_sfcanvas+1_001_02` — 5 in cell −2, −11 — have no sway)
+lets a draw read positions from a cloth simulation.
 
-a simulated vertex is its rest position through a 3 × 4 matrix of the skeleton buffer, which holds
-this step's and the previous step's matrix per bone. the vertex colour picks the bone: R and G
-(× 255) are two bone indices blended by B, or `R · 256 + G` one index when the draw's data says its
-cloth has a single skeleton. the alpha stays the sway's weight.
-
-the simulation's input ships per 128 m cell as [cloth groups](world.md#cloth-groups): per cloth its
-iteration count, damping, wind factors and transform, and per node its rest position, normal and
-tangent, up to two anchors and eight neighbours with their rest distances. how the game steps it
-(its compute shaders `ClothSingleDispatchCS` and `ClothDataUploadCS`, a fixed 1/60 · 1.4 s step, up
-to four capsule colliders at the characters) isn't read.
+- sway still runs when enabled. object-space positions are replaced only if the global switch is on
+  and per-draw data names a skeleton buffer slot (filled for entities with a cloth hash,
+  [InitChunkData component 60](world.md#initchunkdata-layout); entities without one, e.g. Sword
+  Vault Dale's red banner `P_cloth_map02_sfcanvas+1_001_01`, only sway).
+- each simulated vertex transforms its rest position by a 3×4 matrix from the skeleton buffer
+  (stores current and previous step per bone). vertex colour selects bones: R and G (`× 255`) are
+  two indices blended by B, or `R · 256 + G` for single-skeleton cloths. alpha stays the sway
+  weight.
+- simulation inputs ship per 128 m cell as [cloth groups](world.md#cloth-groups) (iterations,
+  damping, wind factors, transform; per node: rest position/normal/tangent, ≤2 anchors, ≤8
+  neighbours with rest distances). compute shaders (`ClothSingleDispatchCS`, `ClothDataUploadCS`,
+  fixed `1/60 · 1.4 s` step, ≤4 character capsule colliders) are not read.
 
 ## vertex offset
 
-`HGRP/Lit` materials with `_USE_VERTOFFSET` (on map02 the red cloth ribbons hung from trees, as on
-Jingyu's cherry-tree islet, and the balloons' tubes, all alpha-tested and all with
-`_USE_VERTOFFSETMASK`) move each vertex by a scrolling noise texture in the vertex stage of every
-pass, the G-buffer, depth and shadow passes alike. like the [sway](#swaying-cloth) the offset is
-added in world space after skinning and the object-to-world transform:
+`HGRP/Lit` with `_USE_VERTOFFSET` (map02 tree cloth ribbons such as Jingyu's cherry-tree islet,
+balloon tubes; all alpha-tested with `_USE_VERTOFFSETMASK`) offsets vertices in world space in every
+pass (GBuffer, depth, shadow) after skinning and object-to-world:
 
-`offset = direction · _OffsetIntensity · (n · (1 + _Bi_Offset) − _Bi_Offset) · w · k`
+```
+offset = direction · _OffsetIntensity · (n · (1 + _Bi_Offset) − _Bi_Offset) · w · k
+```
 
-- `n` is `_OffsetTex`'s red at its top mip level, at
-  `uv · _OffsetTex_ST.xy + _OffsetTex_ST.zw + _OffsetSpeed.xy · t`. `uv` blends UV sets 0 and 1 by
-  `_OffsetUVSet` (0 or 1 on the materials seen) and `t` is the scroll clock below. `_Bi_Offset` 0
-  leaves `n` as it is, so the offset only runs one way; 1 remaps it to −1…1.
-- `direction` is `_OffsetDir.xyz`, not normalized, so its length scales the offset.
-  `_OffsetSwitchDir` picks its space: 1 takes it along the world's axes as it is, 2 takes the vertex
-  normal in its place, turned by the object's transform, and any other value turns `_OffsetDir` by
-  the object's transform (its rotation and scale).
-- `w` is the vertex colour's alpha when `_UseVertexColorMask` is positive, else 1.
-- `k` is `1 − p · (1 − m)` under `_USE_VERTOFFSETMASK` and 1 without it, with `p` =
-  `_OffsetMaskPower / 5` and `m` `_OffsetMaskTex`'s red, read like the offset texture through its
-  own `_ST` and `_OffsetMaskSpeed`, on the same UV set. at the authored power of 5 the mask scales
-  the offset directly.
+- `n`: `_OffsetTex.r` at mip 0, UV =
+  `uv · _OffsetTex_ST.xy + _OffsetTex_ST.zw + _OffsetSpeed.xy · t` (`uv` blends UV0 and UV1 by
+  `_OffsetUVSet`; `t` = gameplay clock below). `_Bi_Offset` 0 keeps `n` in `0..1`; 1 remaps to
+  `−1..1`.
+- `direction`: `_OffsetDir.xyz` (unnormalized, so length scales offset). `_OffsetSwitchDir`: 1 =
+  world space as-is, 2 = vertex normal transformed by object matrix, other = `_OffsetDir`
+  transformed by object matrix (rotation and scale).
+- `w`: vertex alpha when `_UseVertexColorMask > 0`, else 1.
+- `k`: `1 − (_OffsetMaskPower / 5) · (1 − m)` under `_USE_VERTOFFSETMASK` (else 1), `m` =
+  `_OffsetMaskTex.r` on the same UV set with its own `_ST` and `_OffsetMaskSpeed`. at power 5, `m`
+  scales directly.
 
-each texture is read with its own sampler; the four materials' textures all repeat. the per-pass
-`_DisableAnimateVert` scales this offset as it does the sway, and the previous frame's offset, for
-motion vectors, reads the previous frame's clock.
-
-the scroll clock is the fourth component of the pipeline's time parameters, which stock Unity leaves
-unused and the game fills with its [gameplay time](#clock). taken as seconds, `_OffsetSpeed` is UV
-tiles per second.
+both textures use their own samplers (all repeat on the 4 surveyed materials). `_DisableAnimateVert`
+scales the offset as in sway; motion vectors use the previous frame's clock. the scroll clock is the
+4th component of pipeline time ([gameplay time](#clock)), making `_OffsetSpeed` UV tiles/s.
 
 ## vertex animation textures
 
-`HGRP/Lit` plays a [bone animation](#bone-animation) from a matrix texture and two kinds of Houdini
-vertex animation, both from a `_PositionTexture` and a `_RotationTexture` sampled in the vertex
-stage of every pass, one texel column per piece or point and one row per frame. the frame and the
-row follow the [soft-body animation](effects.md#soft-body-animation) of the effect shaders. Jingyu's
-hanging ornaments use both: the cans and charms are rigid bodies and the strings they hang from soft
-ones, the two baked from one simulation, so a string's end stays on its can.
+`HGRP/Lit` supports [bone animation](#bone-animation) from a matrix texture and two Houdini VAT
+modes sampling `_PositionTexture` and `_RotationTexture` in every pass (one column per piece/point,
+one row per frame; frame and row math match [soft-body animation](effects.md#soft-body-animation)).
+Jingyu's hanging ornaments pair both from one simulation: rigid cans/charms and soft strings.
 
 ### rigid-body animation
 
-`HGRP/Lit` materials with `_VAT_RIGIDBODY` play a Houdini vertex animation that moves each piece of
-the mesh rigidly. on map02 they're the tin cans and charms hung on strings in Jingyu's market
-(`M_map02_sfornament_1_001_*`, one material per LOD), machine parts (`M_fx_zmdmachinevat_*`, one
-mesh played at five speeds by five materials), rocks and the Hongshan waterway's parts.
-`HGRP/LitEffect` has the keyword too (map02's falling cedar snow, floors and drones), with a vertex
-stage that isn't read here. the vertex stage of every pass reads, per vertex:
+`HGRP/Lit` with `_VAT_RIGIDBODY` moves mesh pieces rigidly (Jingyu cans/charms
+`M_map02_sfornament_1_001_*`, machine parts `M_fx_zmdmachinevat_*`, rocks, Hongshan waterway).
+`HGRP/LitEffect` also has the keyword (map02 cedar snow, floors, drones; vertex stage unread).
 
-- UV1, which finds the piece's texels: the column is `u · a` and the row
-  `1 − b · ((1 − v) + f / _frameCount)`, `a` and `b` the factors the
-  [soft-body animation](effects.md#soft-body-animation) takes from `_boundMinZ` and `_boundMaxX`
-- the piece's pivot, `(−UV2.x, UV3.x, 1 − UV3.y)`
-- the frame `f`, counted from 0 as the soft body counts it under `_B_autoPlayback`, else
-  `_displayFrame − 1` plus a per-draw value
+per vertex in every pass:
 
-there, `_PositionTexture` holds the piece's position (as it is under `_TextureFormat` 1, else a
-fraction between the `_boundMin*` and `_boundMax*`) and in its alpha times 4 which quaternion
-component `_RotationTexture` leaves out (0 w, 1 x, 2 y, 3 z, the last two negated with the rebuilt
-one), the other three being the rotation's (stored `q / 2 + 0.5` in 8-bit textures). the vertex
-moves to `position + s · rotate(q, rest − pivot)` in object space, before the object's transform,
-and its normal and tangent turn by `q`. `s` is `_globalPscaleMul`, times
-`_VATMaxPieceScale · (1 − fract(4 · alpha))` under `_pScaleInPosA`. two cases override it: on frame
-0 the vertex keeps its rest position unless `_B_animateFirstFrame` is set, and a vertex whose UV1 v
-is at most 0.1 collapses to the object's origin. of the 37 materials with the keyword whose asset
-paths are known (across the scenes checked, both shaders), all have RGBA half-float textures
-(`_TextureFormat` 1), none sets `_pScaleInPosA`, `_HoudiniVATInParticle` (UV sets and the frame from
-particle data) or `_BlendMeshNormalAndTangent` (the mesh's own normal kept), and all play on their
-own, at speeds from −8 to 9 and some with a `_gameTimeAtFirstFrame`. the cans' textures are
-point-sampled with repeat wrapping, and at frame 0's row the formula gives back the rest positions
-of their mesh (`s_map02_sfornament_1_001_05_lod0`, 19 texels wide over 160 frames at 30 a second) to
-within a millimetre. the frame isn't interpolated (`_B_interpolate` is off and the variant has no
-blend).
+- **texel**: UV1 gives column `u · a` and row `1 − b · ((1 − v) + f / _frameCount)` (`a`, `b` from
+  `_boundMinZ`, `_boundMaxX` as in [soft-body animation](effects.md#soft-body-animation)).
+- **pivot**: `(−UV2.x, UV3.x, 1 − UV3.y)`.
+- **frame `f`**: 0-based autoplay under `_B_autoPlayback`, else `_displayFrame − 1 + perDraw`.
+- **position & rotation**: `_PositionTexture` stores piece position (raw under `_TextureFormat` 1,
+  else normalized between `_boundMin*` and `_boundMax*`); `alpha · 4` selects which quaternion
+  component `_RotationTexture` omits (`0 = w, 1 = x, 2 = y, 3 = z`; last two negated with the
+  rebuilt component). 8-bit rotation textures store `q / 2 + 0.5`.
+- **transform**: object-space `position + s · rotate(q, rest − pivot)` before object-to-world;
+  normal and tangent rotate by `q`. `s = _globalPscaleMul`, multiplied by
+  `_VATMaxPieceScale · (1 − fract(4 · alpha))` under `_pScaleInPosA`.
+- **overrides**: frame 0 keeps rest position unless `_B_animateFirstFrame` is set; `UV1.v ≤ 0.1`
+  collapses to the object origin.
+
+across 37 known materials (both shaders): all use RGBA half-float (`_TextureFormat` 1); none sets
+`_pScaleInPosA`, `_HoudiniVATInParticle`, or `_BlendMeshNormalAndTangent`; all autoplay (speeds
+−8..9, some with `_gameTimeAtFirstFrame`); `_B_interpolate` is off (no frame blending). the cans
+(`s_map02_sfornament_1_001_05_lod0`, 19 texels × 160 frames @ 30 fps) are point-sampled with repeat
+wrapping and reproduce rest positions at frame 0 within 1 mm.
 
 ### soft-body animation
 
-`HGRP/Lit` materials with `_VAT_SOFTBODY` (on map02 only the strings of Jingyu's hanging ornaments,
-`M_map02_sfornament_1_001_*_soft_lod*`, separate meshes beside the cans) move each vertex on its
-own. the texel is found as for a rigid body, from UV1 and the frame, and the vertex moves to
-`rest + offset`, the offset read like a rigid piece's position. `_RotationTexture` holds a whole
-quaternion (`q / 2 + 0.5` in 8-bit textures), and the vertex's normal is `rotate(q, +y)` and its
-tangent `rotate(q, −x)`, in place of the mesh's own (`_BlendMeshNormalAndTangent` blends back to
-them; the strings leave it at 0, and the tangent's bitangent sign is then 0). there's no rest pose
-on frame 0, whose offsets are zero on the strings, and a vertex whose UV1 v is at most 0.1 collapses
-to the object's origin, as in a rigid body. the strings' textures hold a column per point (436 for
-`s_map02_sfornament_1_001_05_soft_lod0`) over the cans' 160 frames, and evaluated beside the cans
-their ends stay within a millimetre of the cans they're tied to while the cans swing up to 34 cm.
+`HGRP/Lit` with `_VAT_SOFTBODY` (map02: only Jingyu ornament strings
+`M_map02_sfornament_1_001_*_soft_lod*`) moves each vertex independently.
+
+- **position**: `rest + offset`, sampling `_PositionTexture` as in rigid-body VAT.
+- **frame**: `_RotationTexture` stores a full quaternion (`q / 2 + 0.5` in 8-bit). normal =
+  `rotate(q, +y)`, tangent = `rotate(q, −x)`, replacing mesh vectors (`_BlendMeshNormalAndTangent`
+  blends back; strings set 0, giving bitangent sign 0).
+- **overrides**: no frame-0 rest override (strings store zero offset at frame 0); `UV1.v ≤ 0.1`
+  collapses to origin.
+- example: `s_map02_sfornament_1_001_05_soft_lod0` (436 columns × 160 frames) keeps string ends
+  within 1 mm of cans swinging up to 34 cm.
 
 ### bone animation
 
-`HGRP/Lit` materials with `_COMMONVAT_BONE_1` to `_4` (on map02 only: the bundles of bamboo tubes
-and other ornaments hung in Qingbo Stockade, `M_vat_map02_sfornament+1_001_*`, and a chair,
-`M_vat_map02_chair+1_006_02`) skin the mesh in the vertex stage of every pass from `_CommonVATMap`,
-which holds one 3 × 4 matrix per bone and frame: a frame's row has three texels per bone, the
-matrix's rows, which move the object-space rest position, and whose 3 × 3 part turns the normal and
-tangent. a vertex blends the keyword's number of bones: their indices are UV2's components (8-bit
-signed, so `127 · u` is the bone), their weights UV3's, used as stored (the shader doesn't
-renormalize them). `_CommonVATMapParams` is the map's width and its frame count.
+`HGRP/Lit` with `_COMMONVAT_BONE_1` to `_4` (map02 only: Qingbo bamboo ornaments
+`M_vat_map02_sfornament+1_001_*`, chair `M_vat_map02_chair+1_006_02`) skins meshes in every pass
+from `_CommonVATMap`.
 
-the frame is `_TimeParameters.w · _CommonVATFPS` modulo the frame count under `_CommonVATAutoPlay`,
-otherwise `_CommonVATCurrentFrame` plus a per-draw value, and it's read at
-`v = 1 − (frame + 0.5) / frames`; the maps are point-sampled, so the animation steps from frame to
-frame. `_CommonVATBlendNormal` blends the turned normal back to the mesh's. all seven materials play
-on their own at 30 frames a second, with RGBA half-float maps (14 bones over 200 frames for
-`T_vat_map02_sfornament+1_001_06_VAT`) and no normal blend. on that map and its mesh
-(`S_vat_map02_sfornament+1_001_06_LOD0`, the only pair checked), the bone indices are whole, the
-matrices are rigid (orthonormal to within 5 · 10⁻⁴), and the weights sum to 1 but for a handful of
-vertices within 0.01 of it and one at 0.87.
+- **layout**: 3 texels per bone per frame row (a 3×4 matrix: moves object-space rest position, 3×3
+  rotates normal and tangent). `_CommonVATMapParams` stores width and frame count.
+- **skinning**: blends 1–4 bones per keyword. indices in UV2 (8-bit signed, `127 · u`), weights in
+  UV3 (unrenormalized).
+- **frame**: `_TimeParameters.w · _CommonVATFPS % frames` under `_CommonVATAutoPlay`, else
+  `_CommonVATCurrentFrame + perDraw`. sampled at `v = 1 − (frame + 0.5) / frames` (point-sampled,
+  stepping frame-to-frame). `_CommonVATBlendNormal` blends back to the mesh normal.
+- all 7 materials autoplay at 30 fps with RGBA half-float maps and no normal blend. the checked pair
+  (`T_vat_map02_sfornament+1_001_06_VAT` / `S_vat_map02_sfornament+1_001_06_LOD0`, 14 bones × 200
+  frames) has integer indices, rigid matrices (orthonormal within `5 · 10⁻⁴`), and weights summing
+  to 1 (a handful within 0.01, one at 0.87).
 
 ## clock
 
-the animated surface terms share one rate, `T` = seconds / 20: the emission pulse reads Unity's
-`_Time.x`, and the parallax glow's pulse and the erosion flow advance 0.05 × their speed per tick of
-the shader clock. the pipeline fills its global constants with `t` the render pipeline's time, which
-is Unity's `Time.time` in seconds: `_Time` is `(t / 20, t, 2t, g)` and `_TimeParameters`
-`(t, sin t, cos t, g)`, where `g` is a separate gameplay time the game sets, from an integer and
-1000 (taken as milliseconds made seconds; what sets it isn't traced). the vertex offset's scroll and
-the bone animation read `g`.
+animated surface terms share `T = seconds / 20` (`_Time.x`; parallax pulse and erosion flow advance
+`0.05 × speed` per tick). the pipeline populates:
+
+- `_Time = (t / 20, t, 2t, g)`
+- `_TimeParameters = (t, sin t, cos t, g)`
+
+`t` is Unity `Time.time` in seconds. `g` is a separate gameplay time derived from an integer divided
+by 1000 (assumed ms → s; setter untraced), read by vertex offset scroll and bone animation.
 
 ## open
 
-- what sets the [clock](#clock)'s gameplay time, and its units (assumed seconds); the clock that
+- what sets the [clock](#clock)'s gameplay time, its units (assumed seconds), and the clock that
   scrolls the emissive map
-- the detail map's channels per `_DetailMode` (roughness from B in mode 1, from the alpha in mode
-  0), unchecked against a shot
-- the layers' UV set 2 read as set 0, on the strength of map02's meshes and one in-game shot
-- whether anything sets a per-draw [emission](#emission) colour on static scenery; no drawn object
-  needs one
-- whether premultiplied [glass](#glass) multiplies its colour by its alpha, and how glass refracts
+- detail map channels per `_DetailMode` (roughness from B in mode 1, alpha in mode 0), unchecked
+  against a shot
+- layer UV set 2 read as set 0 (inferred from map02 meshes and one in-game shot)
+- whether anything sets a per-draw [emission](#emission) colour on static scenery (no drawn object
+  needs one)
+- whether premultiplied [glass](#glass) multiplies colour by alpha, and how glass refracts
 - what distance each side of the [transparent draw order](#transparent-draw-order) sorts by (bounds
-  centre is inferred, not traced)
-- what the game does with the bump on meshes without tangents
+  centre inferred, untraced)
+- how bump mapping behaves on meshes without tangents

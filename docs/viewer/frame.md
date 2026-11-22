@@ -2,144 +2,116 @@
 
 `encodeFrame`
 ([`render/frame/frame-graph.ts`](../../packages/viewer/src/render/frame/frame-graph.ts)) encodes one
-command buffer per frame from a `FrameContext` (camera, sizes, frame groups, frame index, clock and
-the settings in effect, which debug views turn the lit-only passes off in once per frame). the post
-chain runs in two halves around the passes over the composited scene (`encodeComposite`, then lit
-decals, water, the transparent pass and screen effects, then `encodeAfterScene`). passes in order:
+command buffer per frame from a `FrameContext` (camera, sizes, frame groups, frame index, clock, and
+effective settings, which debug views strip of lit-only passes once per frame). the post chain
+splits around composited-scene passes: `encodeComposite` → lit decals, water, transparent, screen
+effects → `encodeAfterScene`.
 
-| #   | pass                                                                      | when                                                                                                                                                                                                                                                      |
-| --- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `irradiance update 0–2` (compute)                                         | a clipmap level re-centred or got new cells ([`render/lighting/irradiance-volume.ts`](../../packages/viewer/src/render/lighting/irradiance-volume.ts))                                                                                                    |
-| 1b  | `skin` (compute)                                                          | an animated geometry is drawn and the clock moved it to another frame ([`render/meshes/skin-animation.ts`](../../packages/viewer/src/render/meshes/skin-animation.ts))                                                                                    |
-| 1c  | `depth pyramid`, `instance cull` (compute)                                | a new selection left rows to the GPU ([GPU culling](streaming.md#gpu-culling)); `depth pyramid` only with `occlusionCulling` on and a last frame to test against                                                                                          |
-| 2   | `shadow layer 0–3`                                                        | `shadows` on, a package loaded and `debugView` `lit`. layers 0–2: the casters or their fit changed since they were drawn, or `skin` ran. layer 3: its fit moved to another cell of its grid, or the casters changed and it was drawn 8 or more frames ago |
-| 2b  | `local light shadow`                                                      | `shadows` and `localLights` on, and a [shadow tile](lighting.md#local-light-shadows) waits to be drawn: one tile a frame                                                                                                                                  |
-| 3   | `volumetric fog` (compute)                                                | `heightFog` on, a package loaded, `lit`, and the environment's volumetric fog on ([`render/sky/volumetric-fog.ts`](../../packages/viewer/src/render/sky/volumetric-fog.ts))                                                                               |
-| 4   | `main`                                                                    | always (empty without a package)                                                                                                                                                                                                                          |
-| 4a  | `mip feedback` (compute)                                                  | a package loaded, the device has room for the feedback target, and a readback buffer is free ([mip feedback](streaming.md#mip-feedback))                                                                                                                  |
-| 4b  | `decal relight`                                                           | a package loaded                                                                                                                                                                                                                                          |
-| 5   | `transmittance lut`, `multiple scattering lut`                            | once per environment                                                                                                                                                                                                                                      |
-| 6   | `sky view lut`                                                            | `sky` on                                                                                                                                                                                                                                                  |
-| 7   | `ao depth`, `gtao`, `gtao blur`                                           | `ao` on, `lit`, and the environment has AO settings                                                                                                                                                                                                       |
-| 8   | `ssr march`, `ssr temporal`, `ssr downsample` ×n, `ssr resolve`           | `reflections` on, `lit`, and the environment has reflection settings; otherwise `ssr off` only clears the output ([`render/post/screen-space-reflections.ts`](../../packages/viewer/src/render/post/screen-space-reflections.ts))                         |
-| 9   | `celestial`                                                               | always; writes nothing with `sky` off or nothing beyond the atmosphere                                                                                                                                                                                    |
-| 9b  | `water depth`                                                             | always; draws the nearest water surface's depth when the `water` pass will run, else only clears it                                                                                                                                                       |
-| 10  | `composite`                                                               | always                                                                                                                                                                                                                                                    |
-| 10b | `lit decals`                                                              | lit decals that are laid over their surface are drawn ([decals](materials.md#decals))                                                                                                                                                                     |
-| 11  | scene copy, `water foam`, `water`                                         | `water` on, `lit`, and visible water surfaces; `water foam` only when foam effects are drawn                                                                                                                                                              |
-| 11a | `transparent`                                                             | glass or effects are drawn                                                                                                                                                                                                                                |
-| 11b | `effect multiply`, scene copy + `effect refract opaque`, `effect refract` | effects that multiply or refract the composited scene are drawn ([effects](effects.md#over-the-composited-scene))                                                                                                                                         |
-| 12  | `light shaft downsample`, `light shaft blur` ×n, `light shaft apply`      | `lit`, the environment has light shafts, and the sun is in front of the camera ([`render/post/light-shafts.ts`](../../packages/viewer/src/render/post/light-shafts.ts))                                                                                   |
-| 13  | `lens flare`                                                              | `lit`, the environment has a flare, and the sun is on screen (or the flare allows it off screen) ([`render/post/lens-flare.ts`](../../packages/viewer/src/render/post/lens-flare.ts))                                                                     |
-| 14  | `taa`                                                                     | always ([`render/post/temporal-aa.ts`](../../packages/viewer/src/render/post/temporal-aa.ts)); with `antialiasing` off it only scales to the output size                                                                                                  |
-| 15  | `auto exposure histogram` (compute)                                       | `autoExposure` on, `lit`, the profile meters, the view is changing or settling (or nothing is metered yet), and a readback buffer is free ([`render/post/auto-exposure.ts`](../../packages/viewer/src/render/post/auto-exposure.ts))                      |
-| 16  | `bloom down` ×n, `bloom up` ×n                                            | `bloom` on, `lit`, and a canvas large enough for the mip chain                                                                                                                                                                                            |
-| 17  | `tonemap`                                                                 | always, into the swapchain                                                                                                                                                                                                                                |
+| #   | pass                                                                      | when                                                                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `irradiance update 0–2` (compute)                                         | clipmap level re-centred or received new cells ([`render/lighting/irradiance-volume.ts`](../../packages/viewer/src/render/lighting/irradiance-volume.ts))                                                   |
+| 1b  | `skin` (compute)                                                          | animated geometry drawn and clock moved to another frame ([`render/meshes/skin-animation.ts`](../../packages/viewer/src/render/meshes/skin-animation.ts))                                                   |
+| 1c  | `depth pyramid`, `instance cull` (compute)                                | new selection left rows to GPU ([GPU culling](streaming.md#gpu-culling)); `depth pyramid` only with `occlusionCulling` on and a previous frame                                                              |
+| 2   | `shadow layer 0–3`                                                        | `shadows` on, package loaded, `debugView` `lit`. layers 0–2: casters/fit changed or `skin` ran. layer 3: fit moved to another grid cell, or casters changed and drawn ≥ 8 frames ago                        |
+| 2b  | `local light shadow`                                                      | `shadows` and `localLights` on, and a [shadow tile](lighting.md#local-light-shadows) waits (1 tile/frame)                                                                                                   |
+| 3   | `volumetric fog` (compute)                                                | `heightFog` on, package loaded, `lit`, environment volumetric fog on ([`render/sky/volumetric-fog.ts`](../../packages/viewer/src/render/sky/volumetric-fog.ts))                                             |
+| 4   | `main`                                                                    | always (empty without a package)                                                                                                                                                                            |
+| 4a  | `mip feedback` (compute)                                                  | package loaded, feedback target supported, readback buffer free ([mip feedback](streaming.md#mip-feedback))                                                                                                 |
+| 4b  | `decal relight`                                                           | package loaded                                                                                                                                                                                              |
+| 5   | `transmittance lut`, `multiple scattering lut`                            | once per environment                                                                                                                                                                                        |
+| 6   | `sky view lut`                                                            | `sky` on                                                                                                                                                                                                    |
+| 7   | `ao depth`, `gtao`, `gtao blur`                                           | `ao` on, `lit`, environment has AO settings                                                                                                                                                                 |
+| 8   | `ssr march`, `ssr temporal`, `ssr downsample` ×n, `ssr resolve`           | `reflections` on, `lit`, environment has reflection settings; else `ssr off` clears output ([`render/post/screen-space-reflections.ts`](../../packages/viewer/src/render/post/screen-space-reflections.ts)) |
+| 9   | `celestial`                                                               | always (no-op if `sky` off or nothing beyond atmosphere)                                                                                                                                                    |
+| 9b  | `water depth`                                                             | always (draws nearest water depth when `water` will run, else clears)                                                                                                                                       |
+| 10  | `composite`                                                               | always                                                                                                                                                                                                      |
+| 10b | `lit decals`                                                              | overlay lit decals drawn ([decals](materials.md#decals))                                                                                                                                                    |
+| 11  | scene copy, `water foam`, `water`                                         | `water` on, `lit`, visible water surfaces; `water foam` only when foam effects drawn                                                                                                                        |
+| 11a | `transparent`                                                             | glass or effects drawn                                                                                                                                                                                      |
+| 11b | `effect multiply`, scene copy + `effect refract opaque`, `effect refract` | multiply or refract effects drawn ([effects](effects.md#over-the-composited-scene))                                                                                                                         |
+| 12  | `light shaft downsample`, `light shaft blur` ×n, `light shaft apply`      | `lit`, environment has light shafts, sun in front of camera ([`render/post/light-shafts.ts`](../../packages/viewer/src/render/post/light-shafts.ts))                                                        |
+| 13  | `lens flare`                                                              | `lit`, environment has flare, sun on screen or allowed off screen ([`render/post/lens-flare.ts`](../../packages/viewer/src/render/post/lens-flare.ts))                                                      |
+| 14  | `taa`                                                                     | always ([`render/post/temporal-aa.ts`](../../packages/viewer/src/render/post/temporal-aa.ts)); with `antialiasing` off, only scales to output size                                                          |
+| 15  | `auto exposure histogram` (compute)                                       | `autoExposure` on, `lit`, profile meters, view changing/settling (or un-metered), readback buffer free ([`render/post/auto-exposure.ts`](../../packages/viewer/src/render/post/auto-exposure.ts))           |
+| 16  | `bloom down` ×n, `bloom up` ×n                                            | `bloom` on, `lit`, canvas large enough for mip chain                                                                                                                                                        |
+| 17  | `tonemap`                                                                 | always, into swapchain                                                                                                                                                                                      |
 
-passes up to the lens flare run at the render size, the canvas's device-pixel size times
-`renderScale` (clamped to [0.25, 1]); `taa` and everything after it run at the output (canvas) size.
-what each post pass computes is in [post-processing](post-processing.md) and
-[sky and fog](sky-and-fog.md).
+passes 1–13 run at render size (`devicePixels × clamp(renderScale, 0.25, 1)`); `taa` (14) onward run
+at output (canvas) size. see [post-processing](post-processing.md) and [sky and fog](sky-and-fog.md)
+for pass details.
 
-- **depth.** reversed-Z `depth32float`, cleared to 0 and tested with `greater`, with an infinite far
-  plane and a 0.25 m near plane; logarithmic depth is avoided because writing fragment depth
-  disables early-Z and, on tile-based GPUs, hidden-surface removal. where the GPU has the
-  `depth32float-stencil8` feature, depth carries a stencil, cleared to 0, which only effect
-  [portals](effects.md#portals) use; post passes sample the depth aspect alone
-  ([`render/frame/render-targets.ts`](../../packages/viewer/src/render/frame/render-targets.ts),
-  [`scene/camera.ts`](../../packages/viewer/src/scene/camera.ts)). everything renders
-  camera-relative: instance block origins are rebased to the eye on the CPU in f64 each frame, so
-  f32 precision holds at any distance.
-- **main pass.** one sample per pixel into radiance and its ambient part (`rgba16float`), plus what
-  lit surfaces hand the screen-space reflections: the sky reflection the radiance holds
-  (`rgba16float`) and the normal, roughness and hit weight packed in `rg32uint`, which fills
-  WebGPU's default 32 bytes per sample. where the device takes 36
-  (`maxColorAttachmentBytesPerSample`), a fifth `r32uint` target holds the meshes'
-  [mip feedback](streaming.md#mip-feedback); every main pass shader returns the one `Shaded` struct,
-  and a pipeline without that target drops the output. depth is stored for post. draw order: the
-  opaque meshes' depth and the alpha-tested meshes' cut-out depth, terrain, meshes (opaque, then
-  alpha-tested, both shading at equal depth, then opaque
-  [effects](effects.md#vfxbasev2-and-vfxdecal), then stencil-only portal masks), instance boxes, box
-  outlines (boxes larger than `outlineMetres`), terrain wireframe.
-- **decal relight pass.** lit decals that change only a surface's normal, roughness or occlusion add
-  the change in its light to the radiance, reading the depth, packed surface and ambient targets
+- **depth.** reversed-Z `depth32float` (clear 0, compare `greater`), 0.25 m near plane, infinite far
+  plane. avoids logarithmic depth so early-Z and tile-GPU HSR stay active. uses
+  `depth32float-stencil8` when supported (clear 0, used only by effect
+  [portals](effects.md#portals); post reads depth aspect only;
+  [`render/frame/render-targets.ts`](../../packages/viewer/src/render/frame/render-targets.ts),
+  [`scene/camera.ts`](../../packages/viewer/src/scene/camera.ts)). all rendering is camera-relative:
+  instance block origins rebase to the eye in f64 on the CPU each frame.
+- **main pass.** 1 sample/pixel into 4 targets (32 B/sample, WebGPU default): radiance
+  (`rgba16float`), ambient (`rgba16float`), sky reflection (`rgba16float`), and packed
+  normal/roughness/hit-weight (`rg32uint`). where `maxColorAttachmentBytesPerSample ≥ 36`, a 5th
+  `r32uint` target holds [mip feedback](streaming.md#mip-feedback) (shaders always return `Shaded`;
+  pipelines without the 5th target drop it). depth is stored for post. draw order: opaque mesh depth
+  → alpha-tested cut-out depth → terrain → opaque meshes (depth-equal) → alpha-tested meshes
+  (depth-equal) → opaque [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only portal masks →
+  instance boxes → box outlines (> `outlineMetres`) → terrain wireframe.
+- **decal relight pass.** normal/roughness/occlusion-only lit decals add lighting delta to radiance
+  using depth, packed surface, and ambient ([decals](materials.md#decals)).
+- **lit decal pass.** albedo-writing lit decals draw over the composited scene (no depth test,
+  reading main-pass depth) before water so water covers riverbed decals
   ([decals](materials.md#decals)).
-- **lit decal pass.** lit decals that write albedo are laid over the composited scene, testing no
-  depth and reading the main pass's, before the water draws, so water covers the decals on its bed
-  as it covers the bed ([decals](materials.md#decals)).
-- **transparent pass.** as in the game
-  ([transparent draw order](../game-data/materials.md#transparent-draw-order); the pass's steps are
-  under [blending](../game-data/effects.md#blending)), glass and alpha-blended effects draw after
-  the water, straight over the composited scene, far to near: testing the main pass's depth without
-  writing it (the stencil stays writable), each fogs its own colour at its own distance
-  ([`render/sky/fog.wgsl`](../../packages/viewer/src/render/sky/fog.wgsl), whose inputs the mesh
-  draw group carries) and blends it premultiplied over what's there, additive light with an opacity
-  of 0 ([blending](effects.md#blending)). the order is by instance: the selection keeps each
-  transparent row's distance to the camera and its draw's sort band (the prefab renderer's sorting
-  layer, then order, 0 for static scenery, then its material's render queue), sorts each bucket's
-  rows by band, then far to near, and the mesh renderer merges every draw of the pass into one list
-  of runs in that order (`mergeFarToNear` in
-  [`render/meshes/sorted-runs.ts`](../../packages/viewer/src/render/meshes/sorted-runs.ts)),
-  neighbouring instances of one draw sharing a call. draws that write the stencil go first, whole,
-  so the effects testing it see the whole mask.
-- **antialiasing** is temporal with upsampling, as in the game, which has no MSAA. the main pass's
-  projection is offset by a Halton (2, 3) subpixel jitter each frame (8 positions per cycle, more
-  when upsampling), and the post passes that reconstruct view rays undo it. `taa` reconstructs each
-  output pixel from the 3×3 render-size samples around it (a Gaussian fit to Blackman-Harris),
-  reprojects the previous output through the depth buffer and the previous camera only, with no
-  motion vectors, so moving content (particles, animated and spinning geometry, swaying cloth)
-  reprojects as if it stood still; samples it with Catmull-Rom, clips it to the neighbourhood's
-  colour box in YCoCg and blends in 10% of the new frame, less where upsampling leaves no sample
-  near the pixel. colours are weighted by `1 / (1 + luminance · exposure)` while filtering. two
-  output-size histories alternate. a cut (a new package, the first pose, a debug view or
-  antialiasing toggle) drops the history. below the output size, material textures sample with a mip
-  bias of `log2(renderScale)` (terrain layers by scaling their gradients), and selection, LOD and
-  texture streaming measure screen sizes in output pixels, so `renderScale` trades shading cost
-  only.
-- **shadows.** four depth layers, fitted, filtered and fed with off-screen casters as
-  [lighting](lighting.md#shadows) describes
-  ([`render/shadows/shadow-map.ts`](../../packages/viewer/src/render/shadows/shadow-map.ts)). each
-  layer's pass reuses this frame's main-pass selection and gets its own copy of the frame uniforms
-  with its view-projection. off-screen casters land in cast-only buckets, drawn first in each phase
-  so the shadow passes draw a prefix and the main pass skips it; only their alpha texture is
-  requested, they never draw as boxes, and their tiles never hold back the HLOD refinement of tiles
-  in view. each bucket's rows are grouped by the first layer they can cast into (within the layer's
-  radius across the light, and up to the caster reach towards the sun), so a layer draws a prefix of
-  each bucket: the three sharp cascades skip everything beyond their 80 m, and instances no layer
-  reaches don't draw into the shadow map at all. this cuts shadow draws by more than half at every
-  profiled pose. the depth-only stages (shadow casters, alpha-tested depth) bind only the vertex
-  streams they read: positions, plus the UV sets for alpha testing.
-- **animated geometries** ([package format](../package-format.md#geometry-blob-mesh-efgm)) are
-  skinned on the GPU before anything draws: each frame, for each drawn geometry whose vertices don't
-  hold the clock's frame yet, `skin` blends the two current frames' bone matrices, skins the bind
-  pose (kept in its own storage buffer with the weights and bones) and writes positions, normals and
-  tangents over the geometry's own vertex streams (an animated geometry stays out of the
-  [geometry pools](gpu-resources.md#buffers-and-pools)), in the formats every mesh pipeline already
-  reads, positions quantized to the animation's box. so the prepass, shading and shadow passes need
-  no variants, and every placement of a geometry shows the same frame of the viewer's clock. normals
-  and tangents turn by the blended matrix itself, as Unity's skinning turns them. a frame that skins
-  one redraws the sharp shadow layers, so with the clock stopped they stay as drawn.
-- **post** ([`render/post/post-process.ts`](../../packages/viewer/src/render/post/post-process.ts))
-  is fullscreen triangles with `auto` layouts
-  ([`gfx/fullscreen-pass.ts`](../../packages/viewer/src/gfx/fullscreen-pass.ts)), except the lens
-  flare's instanced quads and the water; `taa` and the screen-space reflections reproject their
-  histories through the previous camera
-  ([`render/post/camera-history.ts`](../../packages/viewer/src/render/post/camera-history.ts)).
-  composite adds the screen-space reflections ([lighting](lighting.md#screen-space-reflections)),
-  then applies AO, sky, atmosphere fog and height fog; `heightFog` and `atmosphereFog` change what
-  composite does, not which passes run. water draws over a copy of the composited scene so it can
-  refract and reflect it, before anything transparent, as the game lights its water first
+- **transparent pass.** matches the game's
+  [transparent draw order](../game-data/materials.md#transparent-draw-order) and
+  [blending](../game-data/effects.md#blending): glass and alpha-blended effects draw after water,
+  far to near, testing main-pass depth without writing it (stencil remains writable). each fogs
+  itself ([`render/sky/fog.wgsl`](../../packages/viewer/src/render/sky/fog.wgsl), inputs in mesh
+  draw group) and blends premultiplied (additive = opacity 0; [blending](effects.md#blending)).
+  sorted per instance by `(sortBand, far-to-near)` where `sortBand` =
+  `(sortingLayer, sortingOrder, renderQueue)` (0 for static scenery), merged across buckets by
+  `mergeFarToNear`
+  ([`render/meshes/sorted-runs.ts`](../../packages/viewer/src/render/meshes/sorted-runs.ts)) so
+  adjacent instances share draw calls. stencil-writing draws go first so stencil-testing effects see
+  the full mask.
+- **antialiasing.** temporal with upsampling (no MSAA, matching the game). Halton (2, 3) subpixel
+  jitter (8 positions/cycle, more when upsampling) offsets the main projection; post passes undo it
+  when reconstructing rays. `taa` reconstructs from a 3×3 render-size Gaussian fit to
+  Blackman-Harris, reprojects history via depth + previous camera (no motion vectors, so moving
+  particles/cloth/animated/spinning geometry reprojects as static) with Catmull-Rom, clips in YCoCg,
+  and blends 10% new frame (less when upsampling leaves no nearby sample), weighted by
+  `1 / (1 + luminance · exposure)`. alternates two output-size histories; cuts (new package, first
+  pose, debug view, or AA toggle) drop history. below output size, material textures use mip bias
+  `log2(renderScale)` (terrain scales gradients), while selection/LOD/streaming measure in output
+  pixels so `renderScale` trades shading cost only.
+- **shadows.** four depth layers ([lighting](lighting.md#shadows),
+  [`render/shadows/shadow-map.ts`](../../packages/viewer/src/render/shadows/shadow-map.ts)), reusing
+  main-pass selection with per-layer view-projection uniforms. off-screen casters go into cast-only
+  buckets drawn first in each phase (skipped by main pass); only their alpha texture streams, they
+  never draw boxes, and they never block HLOD refinement. bucket rows group by first reachable
+  shadow layer (within layer radius + caster reach toward sun) so each layer draws a prefix —
+  cutting shadow draws by > 50% at all profiled poses. depth-only stages bind only position (plus
+  UVs for alpha test).
+- **animated geometries** ([package format](../package-format.md#geometry-blob-mesh-efgm)). `skin`
+  blends the two current bone frames on the GPU, skins the bind pose (in its own storage buffer),
+  and overwrites the geometry's standalone vertex streams (positions quantized to animation box;
+  normals/tangents rotated by blended matrix, matching Unity). prepass, shading, and shadow
+  pipelines need no skinning variants; all instances share the viewer clock's frame. running `skin`
+  redraws the sharp shadow layers.
+- **post** ([`render/post/post-process.ts`](../../packages/viewer/src/render/post/post-process.ts)).
+  fullscreen triangles with `auto` layouts
+  ([`gfx/fullscreen-pass.ts`](../../packages/viewer/src/gfx/fullscreen-pass.ts)), except instanced
+  lens-flare quads and water; `taa` and SSR reproject via
+  [`render/post/camera-history.ts`](../../packages/viewer/src/render/post/camera-history.ts).
+  `composite` adds [SSR](lighting.md#screen-space-reflections), then applies AO, sky, atmosphere
+  fog, and height fog (`heightFog`/`atmosphereFog` only affect `composite`). water draws over a
+  scene copy for refraction/reflection
   ([`render/water/water-renderer.ts`](../../packages/viewer/src/render/water/water-renderer.ts),
-  [water](water.md)). its layout is explicit because it also binds the main pass's frame group for
-  the sun shadow, irradiance volume and sky reflection; its shader moves the post uniforms to group
-  3 ([`render/post/shader-source.ts`](../../packages/viewer/src/render/post/shader-source.ts)). WGSL
-  helpers that several shaders share (noise, colour conversions, luminance weights, the screen-space
-  projection, the octahedral codec, the reflection surface's packing, the Henyey–Greenstein phase,
-  normal-map texels) are in
-  [`render/shaders/common/`](../../packages/viewer/src/render/shaders/common/); TS constants a
-  shader reads are declared into its source with `wgslConst`
+  [water](water.md)), using an explicit layout that binds main-pass group 0 and moves post uniforms
+  to group 3
+  ([`render/post/shader-source.ts`](../../packages/viewer/src/render/post/shader-source.ts)). shared
+  WGSL helpers live in [`render/shaders/common/`](../../packages/viewer/src/render/shaders/common/);
+  TS constants inject via `wgslConst`
   ([`render/shaders/wgsl-const.ts`](../../packages/viewer/src/render/shaders/wgsl-const.ts)).
-- **debug views** (`albedo`, `normals`, `roughness`, `ambient`, `gaps` for surface-keyword gaps, and
-  `clouds` for the raw cloud panorama) show the main pass as it is: no shadows, local lights, cloud
-  shadows, exposure, tonemapping, fog, AO, reflections, bloom, light shafts, lens flare or water.
-  temporal antialiasing still applies.
+- **debug views** (`albedo`, `normals`, `roughness`, `ambient`, `gaps` for surface-keyword gaps,
+  `clouds` for raw cloud panorama). show the main pass directly: disables shadows, local lights,
+  cloud shadows, exposure, tonemapping, fog, AO, reflections, bloom, light shafts, lens flare, and
+  water. TAA still runs.

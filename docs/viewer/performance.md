@@ -1,217 +1,161 @@
 # performance
 
-how to measure is in [driving the viewer](../driving-the-viewer.md#profiling).
+measurement instructions are in [driving the viewer](../driving-the-viewer.md#profiling).
 
-- **redraw only when dirty.** the frame loop (`Viewer`'s `#tick`) renders when the camera moved, the
-  canvas resized, an option or scene value changed (`#dirty`), a water volume's level is moving, the
-  stream's `version` changed, a pipeline finished compiling, or `continuous` is on. showing the page
-  again also marks it dirty, because Firefox re-shows a hidden tab's last frame with red and blue
-  swapped until a new one is presented. after any of those it renders 32 more frames of the same
-  view (`SETTLE_FRAMES`) so the temporal antialiasing converges, unless `antialiasing` is off. it
-  also renders while the auto exposure is still moving (or waiting on its first histogram), but
-  meters new histograms only while the view changes or settles, so it eases to a fixed target and
-  stops even though water and particles change what it would meter every frame. only loading keeps
-  it rendering indefinitely; animated content (scrolling textures, water, clouds, particles,
-  drifting [flow noise](../game-data/sky-and-fog.md#flow-noise)) moves on the frames that render
-  anyway and stops when they do. it all reads one animation clock that advances by the frame time
-  only on rendered frames (and only with the `animate` option on), so it resumes where it stopped
-  instead of jumping by the time the view idled. frames that only settle or adapt reuse the last
-  selection, unless it drew particles or spinning or riding rows and `animate` is on, which are
-  re-evaluated so they keep moving until the view idles. it traverses without rendering while
-  streaming is in progress (`!stream.idle`) or a saturated stream may still raise its
-  [texture reduction](streaming.md#residency-and-budgets), and does nothing at all when the view is
-  still and streaming is idle. replaying the last traversal's requests on frames where nothing was
-  uploaded or evicted would save nothing: over several map02 teleports, every loading frame had
-  something new resident. the environment re-blends only when the eye, its settings or a fade
-  changed.
-- **stats** publish every 250 ms and notify subscribers only when the JSON differs, so the React
-  panels don't re-render on a still view. the environment at the camera has its own revision, bumped
-  only when its name or the applied volumes' phases and rounded weights change, which only the
-  settings panel's applied volumes and look legend follow: the blend changes on most frames while
-  the camera moves, and each re-render of the scene conditions panel took over 100 ms on map02. its
-  collapsed sections build nothing until opened (`LazyDetails`), which brought a re-render down to a
-  few tens of milliseconds there; it still re-renders when the camera moves into another level.
-- **culled in groups.** the mesh selection rejects groups of 32 rows by their bounds before testing
-  rows ([per-instance LOD](streaming.md#per-instance-lod)); on map02 this took about a fifth off its
-  time at dense views, where most rows walked are drawn.
-- **rows culled on the GPU.** groups whose LODs are resident hand their rows to a compute pass,
-  which writes the visible list and indirect draws ([GPU culling](streaming.md#gpu-culling)). at a
-  dense Jingyu view this took about a quarter off the frame, mostly by halving mesh selection. rows
-  in view hidden behind last frame's depth skip the main pass, which took about 5% off the GPU time
-  flying over Jingyu.
-- **the game's detail radius.** detail draws within 160 m (the `detailDistance` option's default,
-  the game's high preset) and HLOD clusters past it
-  ([instance selection](streaming.md#instance-selection)); a screen-space rule would draw detail
-  several times as far out. mesh selection scales with the rows in reach, and dense foliage near the
-  camera (a few hundred thousand rows in Jingyu) keeps it at about half the frame.
-- **capped particles replayed in steps of a lifetime.** an emitter whose cap turns emissions away
-  replays a few lifetimes of emissions when it first shows. a full system jumps to the moment its
-  first particle dies, and the live ones are counted with a heap of end times: some map02 effects
-  emit ten million a second capped at one particle, and walking them took hundreds of milliseconds,
-  the worst hitches when flying.
-- **one traversal, many passes.** selection runs once per frame; shadow layers reuse its buckets.
-  frames that reuse the last selection (settling the antialiasing, adapting the exposure) keep the
-  shadow layers from the frame that drew them, unless a layer's fit moved or pipelines were still
-  compiling.
-- **few draws.** terrain is one draw per pass. its patches are written in order of the first shadow
-  layer their bounds reach, as mesh rows are grouped, so each layer draws a prefix of them rather
-  than all; at the lv008 overview this cut each sharp layer's time to about a third. each mesh
-  bucket is one instanced `drawIndexed` over its slice of the visible list. depth-writing draws are
-  sorted by pipeline and geometry pool, then nearest first, which early depth testing rewards; the
-  rest by pipeline, pool, geometry and material, so runs share bindings
-  ([`render/meshes/draw-order.ts`](../../packages/viewer/src/render/meshes/draw-order.ts)). drawing
-  the depth-equal shading and the shadow layers of the depth-writing draws in binding order instead
-  doesn't shorten encoding on map02 and costs sorting time: neighbouring buckets rarely share a
-  geometry. pooled geometry ([GPU resources](gpu-resources.md)) does: draws from one pool share
-  vertex and index buffers instead of rebinding up to six vertex streams and the indices each, and
-  encoding got a third to a half shorter at map02 views of a few thousand draws.
-- **each pixel shades once.** a depth prepass draws the opaque meshes' positions alone (no fragment
-  work) before anything else; the terrain then skips what they cover, and the opaque meshes shade
-  with `depthCompare: 'equal'`. the prepass and the shading compute positions through the same
-  `@invariant` function, so their depths match exactly. on an RDNA 2 GPU at 2560×1600 this saved
-  roughly a seventh of the GPU time at dense views and cost next to nothing where little overlaps.
-- **early depth survives alpha testing.** a shader that may discard loses early depth and, on
-  tile-based GPUs, hidden-surface removal. opaque meshes use non-discarding pipelines, and shadow
-  pipelines for them have no fragment stage. alpha-tested meshes lay down cut-out depth in the
-  prepass, before the terrain, then shade with `depthCompare: 'equal'` and a non-discarding shader,
-  so overlapping leaf cards shade each pixel once and the terrain isn't shaded under them (at a
-  dense Jingyu view the main pass takes about a quarter less than with the cut-out depth after the
-  terrain). an alpha-tested material draws as opaque until the texture holding its alpha
-  ([alpha testing](../game-data/materials.md#alpha-testing)) has streamed, since there's no alpha to
-  test yet.
-- **no MSAA.** at 2560×1600 on an Apple M-series GPU, a dense Wuling City view took about three
-  times the GPU time with 4× MSAA as with temporal antialiasing (the `taa` pass is under 1 ms), and
-  render targets more than twice as large. `renderScale` 0.5 cut the same view's time to about a
-  third.
-- **reflections at half resolution**, as the game runs them at PC high quality
-  ([screen-space reflections](lighting.md#screen-space-reflections)).
-- **AO at half resolution.** `ao depth` reduces the depth once into half-resolution view depth; GTAO
-  marches that (keeping its scattered reads in cache) and the blur upsamples with depth weights.
-- **cached work.** the transmittance and multiple-scattering LUTs render once per environment;
-  irradiance clipmaps update only on re-centre or new cells; local lights are selected, binned and
-  uploaded only when the camera, render size or shown lights change, not on settle frames.
-- **textures stream what's sampled.** [mip feedback](streaming.md#mip-feedback) cut resident
-  textures at street-level and interior stops by a third to two thirds, downloads by a quarter to
-  two fifths, and map02 walk frame median/p95 from ~15/34 ms to 12/23 ms (eliminating >50 ms upload
-  stalls). the target costs 4 bytes/px; compute and readback overhead is unprofiled.
-- **large uploads staged.** data ≥ 128 KiB uses
-  [staged writes](gpu-resources.md#pipelines-and-uploads) instead of queue writes, avoiding 15–30 ms
-  main-thread stalls per MiB texture level.
-- **decode pipeline.** 64 queued jobs per [decode worker](loading.md#decode-workers-and-zstd)
-  (capped at 64 MiB awaiting upload) cut map02 teleport settle from 2.5 s to ~1 s and page load from
-  5 s to ~2 s; [multi-range requests](streaming.md#residency-and-budgets) halved request counts on a
-  map02 flight.
-- **particle integrals tabulated.** how far a velocity curve has carried a particle is read from a
-  table built once per curve ([motion](particles.md#motion)), and colours are read without
-  allocating.
-- **no per-frame allocation on hot paths.** selections (their arrays and the instance range, terrain
-  patch and surface objects in them), buckets and plane arrays are reused across frames, and texture
-  requests per bucket allocate nothing. the stream manager evicts from a set of its ready, unpinned
-  blobs rather than sweeping every blob it has seen, and reads each shard blob's byte range once.
+- **redraw only when dirty.** `Viewer.#tick` renders when the camera moved, canvas resized, an
+  option or scene value changed (`#dirty`), a water level is moving, stream `version` changed, a
+  pipeline compiled, tab visibility returned (works around a Firefox R/B swap bug on hidden tabs),
+  or `continuous` is on.
+  - renders 32 more frames (`SETTLE_FRAMES`) after any change so TAA converges (skipped if
+    `antialiasing` is off).
+  - keeps rendering while auto exposure adapts (or awaits its first histogram), but meters new
+    histograms only during changes/settling so water and particles don't prevent convergence.
+  - animated content (scrolling UVs, water, clouds, particles, drifting
+    [flow noise](../game-data/sky-and-fog.md#flow-noise)) reads one animation clock that advances
+    only on rendered frames with `animate` on, pausing cleanly when idle.
+  - settle/adapt frames reuse the last selection unless `animate` is on and particles or
+    spinning/riding rows are visible.
+  - traverses without rendering while `!stream.idle` or while a saturated stream may raise
+    [texture reduction](streaming.md#residency-and-budgets); does nothing when still and idle.
+  - environment re-blends only when eye, settings, or a fade changes.
+- **throttled stats and UI.** stats publish every 250 ms and notify subscribers only on JSON change.
+  environment UI tracks a separate revision (name, applied volume phases, rounded weights) used only
+  by the settings panel's applied volumes and look legend. scene conditions sections render lazily
+  when expanded (`LazyDetails`), cutting map02 re-renders from > 100 ms to a few tens of ms (still
+  re-renders on level change).
+- **group culling.** mesh selection rejects 32-row groups before testing individual rows
+  ([per-instance LOD](streaming.md#per-instance-lod)), cutting ~20% off dense map02 views.
+- **GPU culling and occlusion.** resident groups cull in compute and emit indirect draws
+  ([GPU culling](streaming.md#gpu-culling)), cutting ~25% off dense Jingyu frames (halving mesh
+  selection). last-frame depth-pyramid occlusion culling cuts ~5% GPU time flying over Jingyu.
+- **game detail radius.** detail draws within `detailDistance` (default 160 m, game's high preset)
+  and HLOD past it ([instance selection](streaming.md#instance-selection)); mesh selection scales
+  with rows in reach (a few hundred thousand foliage rows in Jingyu ≈ half the frame).
+- **capped particle replay.** full emitters jump directly to the earliest particle death time using
+  a min-heap of end times, avoiding hundreds-of-ms hitches on map02 effects emitting 10M/s capped at
+  1 particle.
+- **one traversal, many passes.** shadow layers reuse the frame's selection buckets. settle/adapt
+  frames keep cached shadow layers unless a fit moved or pipelines were compiling.
+- **few draws, pooled geometry.** terrain is 1 draw/pass, ordered by first reachable shadow layer
+  (cutting lv008 sharp shadow layer time to ~1/3). each mesh bucket is 1 instanced `drawIndexed`.
+  depth-writing draws sort by `(pipeline, pool, nearest-first)` for early-Z; others by
+  `(pipeline, pool, geometry, material)`
+  ([`render/meshes/draw-order.ts`](../../packages/viewer/src/render/meshes/draw-order.ts)).
+  [geometry pools](gpu-resources.md#buffers-and-pools) share vertex/index buffers, cutting encoding
+  by 33–50% on map02 views of a few thousand draws.
+- **depth prepass.** opaque meshes write depth only (no fragment shader), then terrain skips covered
+  pixels, then opaque meshes shade at `depthCompare: 'equal'` using the same `@invariant` position
+  function. saves ~1/7 GPU time on dense RDNA 2 2560×1600 views.
+- **early depth with alpha test.** opaque pipelines never discard (shadow pipelines have no fragment
+  stage). alpha-tested meshes write cut-out depth before terrain, then shade at
+  `depthCompare: 'equal'` without discarding, cutting main-pass time ~25% at dense Jingyu views.
+  alpha-tested materials draw opaque until their
+  [alpha texture](../game-data/materials.md#alpha-testing) streams in.
+- **no MSAA.** at 2560×1600 on Apple M-series, 4× MSAA cost ~3× the GPU time of TAA (< 1 ms) and
+  > 2× target memory. `renderScale` 0.5 cuts GPU time to ~1/3.
+- **half-resolution SSR and AO.** [SSR](lighting.md#screen-space-reflections) runs at half
+  resolution (matching PC high). `ao depth` downsamples depth once; GTAO marches half-res depth and
+  depth-aware blur upsamples.
+- **cached work.** transmittance and multiple-scattering LUTs render once per environment;
+  irradiance clipmaps update only on re-centre or new cells; local lights select/bin/upload only on
+  camera, size, or visibility changes.
+- **mip feedback.** [mip feedback](streaming.md#mip-feedback) cut resident textures at
+  street/interior stops by 33–67%, downloads by 25–40%, and map02 walk frame median/p95 from ~15/34
+  ms to 12/23 ms (eliminating > 50 ms upload stalls). target costs 4 B/px; compute/readback overhead
+  unprofiled.
+- **staged uploads.** uploads ≥ 128 KiB use [staged writes](gpu-resources.md#pipelines-and-uploads),
+  avoiding 15–30 ms/MiB main-thread stalls.
+- **decode and fetch pipeline.** 64 jobs/worker (64 MiB cap;
+  [decode workers](loading.md#decode-workers-and-zstd)) cut map02 teleport settle from 2.5 s to ~1 s
+  and page load from 5 s to ~2 s; [multi-range requests](streaming.md#residency-and-budgets) halved
+  flight request counts.
+- **tabulated particles.** velocity-curve integrals read from precomputed tables
+  ([motion](particles.md#motion)); colours evaluate without allocating.
+- **zero per-frame hot-path allocation.** selections, buckets, and plane arrays reuse storage across
+  frames; per-bucket texture requests allocate nothing. the stream manager evicts from a ready
+  unpinned set and reads each shard blob's byte range once.
 
-composite needs a separate HDR target: the next frame's reflections read it after the main pass
-rewrites radiance. the celestial pass reuses the sky reflection target after reflections finish.
+target reuse: `composite` needs its own HDR target so next frame's SSR can read it after `main`
+overwrites radiance; `celestial` reuses the sky reflection target after SSR finishes.
 
 ## baseline
 
-one run of map02 on RDNA 4 at 2560×1600, 2026-11-07, on a quiet machine. the figures are indicative
-of that machine, package and build, something to compare a new run against, not a specification:
+indicative numbers from map02 on RDNA 4 at 2560×1600 (not a specification).
 
-| measure                                                             | value         |
-| ------------------------------------------------------------------- | ------------- |
-| frame while flying (40 m/s, 40 m above ground), median/p95          | about 7/20 ms |
-| frame settled at Jingyu, Jingyu at ground level, the lv008 overview | 6–7 ms        |
-| GPU at those views                                                  | about 5 ms    |
-| `mesh select` at those views                                        | 3.5–4 ms      |
-| `encode`, `prepare`                                                 | under 1.5 ms  |
-| teleport to idle, page load to idle                                 | 3 s, 5 s      |
-| GPU pool bytes (geometry pools and their spare capacity included)   | about 800 MiB |
+**2026-11-07 (initial run)**:
 
-the hitches while flying (a few frame times long) are bursts of mesh selection and draw preparation,
-not uploads, instance block builds or material derivations.
+| measure                                                 | value     |
+| ------------------------------------------------------- | --------- |
+| flight (40 m/s, 40 m AGL), median/p95                   | ~7/20 ms  |
+| settled (Jingyu, Jingyu ground, lv008 overview)         | 6–7 ms    |
+| GPU at those views                                      | ~5 ms     |
+| `mesh select` at those views                            | 3.5–4 ms  |
+| `encode`, `prepare`                                     | < 1.5 ms  |
+| teleport to idle / page load to idle                    | 3 s / 5 s |
+| GPU pool bytes (including geometry pool spare capacity) | ~800 MiB  |
 
-walks at eye height through a level's streets and plazas, at 12 m/s, and crossings from level to
-level at 60–80 m/s and 40 m up, same machine and size, 2026-11-11, before
-[mip feedback](streaming.md#mip-feedback) (frame times with the frame rate uncapped, so the long
-tail includes [backpressure](../driving-the-viewer.md#profiling)):
+flight hitches are bursts of mesh selection and draw preparation, not uploads, instance-block
+builds, or material derivations.
 
-| route                                        | frame, median/p95 | `mesh select`, median | GPU    |
-| -------------------------------------------- | ----------------- | --------------------- | ------ |
-| Wuling City walk                             | 12/27 ms          | 6 ms                  | 7 ms   |
-| Jingyu Valley walk                           | 14/29 ms          | 7 ms                  | 8 ms   |
-| Qingbo Stockade walk                         | 11/25 ms          | 6 ms                  | 8 ms   |
-| Si's Painting walk                           | 5/14 ms           | 1.5 ms                | 5 ms   |
-| map02 crossing, eight levels                 | 17/34 ms          | 6 ms                  | 7 ms   |
-| map01 walks (Hub, Lodespring, Power Plateau) | 4–5/9–12 ms       | 1.5–2.5 ms            | 3–6 ms |
-| map01 crossing, six levels                   | 5/14 ms           | 2 ms                  | 5 ms   |
+**2026-11-11 walks (12 m/s, eye height) and crossings (60–80 m/s, 40 m AGL), uncapped frame rate
+(p95 includes [backpressure](../driving-the-viewer.md#profiling)):**
 
-with mip feedback, 2026-11-12, the same routes: Wuling City 12/24 ms, Jingyu Valley 12/23 ms, Qingbo
-Stockade 10/19 ms, Si's Painting 5/14 ms, the map02 crossing 16/34 ms, map01 unchanged within a
-millisecond; `mesh select` is what it was. every route still ends with the budget full, now partly
-of levels kept past their use, and a walk still downloads 1–3 GB: what a moving camera newly sees,
-which no one has broken down yet.
+| route                                        | pre-feedback median/p95 | with mip feedback (11-12) | `mesh select` | GPU    |
+| -------------------------------------------- | ----------------------- | ------------------------- | ------------- | ------ |
+| Wuling City walk                             | 12/27 ms                | 12/24 ms                  | 6 ms          | 7 ms   |
+| Jingyu Valley walk                           | 14/29 ms                | 12/23 ms                  | 7 ms          | 8 ms   |
+| Qingbo Stockade walk                         | 11/25 ms                | 10/19 ms                  | 6 ms          | 8 ms   |
+| Si's Painting walk                           | 5/14 ms                 | 5/14 ms                   | 1.5 ms        | 5 ms   |
+| map02 crossing (8 levels)                    | 17/34 ms                | 16/34 ms                  | 6 ms          | 7 ms   |
+| map01 walks (Hub, Lodespring, Power Plateau) | 4–5/9–12 ms             | unchanged (±1 ms)         | 1.5–2.5 ms    | 3–6 ms |
+| map01 crossing (6 levels)                    | 5/14 ms                 | unchanged (±1 ms)         | 2 ms          | 5 ms   |
 
-with a request carrying several reads and 64 decode jobs in hand per worker, 2026-11-14, the first
-table's run again (one run each, before and after, the same day): the page loads to idle in 2.2 s
-rather than 5.2, a teleport to the Jingyu or lv008 overview settles in 1.0 s rather than 2.6, and
-over the flight the frame's median/p95 goes from 6.9/18 ms to 6.3/16 ms, its requests from about
-18,000 to 8,000, and the 95th percentile of the wait from wanting a mesh to having it from 400 ms to
-110 ms (textures 340 to 140 ms). at a teleport meshes still wait longest, a median of about half a
-second against the textures' tenth: what bounds them now isn't looked into.
+**2026-11-14 (multi-range requests + 64 decode jobs/worker, same-day A/B on first table's run)**:
 
-map02's walks are bound by the CPU. in Wuling City's streets about a third of `mesh select` is
-placing particles (a few thousand live ones across about a hundred emitters), and the rest the
-per-segment bookkeeping of nine thousand or so row segments. every route ends with the stream budget
-full: on the Wuling City walk about 40% of the texture bytes and half the geometry bytes uploaded
-were of blobs evicted earlier in the walk, half of them within 7 s.
+- page load to idle: 5.2 s → 2.2 s; Jingyu / lv008 teleport to idle: 2.6 s → 1.0 s.
+- flight frame median/p95: 6.9/18 ms → 6.3/16 ms; requests: ~18,000 → 8,000.
+- p95 wait from want to ready: meshes 400 ms → 110 ms, textures 340 ms → 140 ms. at teleports,
+  meshes still wait longest (~0.5 s median vs ~0.1 s textures; cause uninvestigated).
 
-at 2560×1600 the allocations that don't stream take about 540 MiB before any content: the main
-targets 215 MiB, the post passes' 165 MiB, the sun's and the local lights' shadow maps 64 MiB each
-and the volumetric fog 21 MiB.
+**bottlenecks and static memory**:
+
+- map02 walks are CPU-bound: in Wuling City, ~1/3 of `mesh select` is placing particles (a few
+  thousand live across ~100 emitters) and the rest is per-segment bookkeeping (~9k segments).
+- every route ends with a full budget (1–3 GB downloaded per walk, uncategorized): on Wuling City
+  walk, ~40% of uploaded texture bytes and 50% of geometry bytes were re-uploads of evicted blobs
+  (half evicted < 7 s earlier).
+- non-streaming GPU allocations at 2560×1600 total ~540 MiB: main targets 215 MiB, post targets 165
+  MiB, sun shadow map 64 MiB, local-light shadow atlas 64 MiB, volumetric fog 21 MiB.
 
 ## optimization candidates
 
-what the game's settings say it does is in [quality settings](../game-data/quality-settings.md).
+see [quality settings](../game-data/quality-settings.md) for what the game toggles.
 
-- mesh selection is the largest CPU cost: picking LOD slots and making room in buckets on the GPU
-  (count, prefix sum, write) would leave the CPU one item per row group instead of per segment.
-- particles are placed on the CPU from their age alone, every frame, about a microsecond each. what
-  a particle starts with (its place in the shape, direction, start size, speed, rotation and colour,
-  and its random values) doesn't change over its life and could be kept per particle rather than
-  hashed and read again each frame; placing them in a worker or in compute would take them off the
-  frame altogether.
-- content evicted under a full budget is often wanted again seconds later (the baseline's walk
-  figures). keeping integrated texture levels half a mip level past the size that needs them cut
-  repeated texture uploads by a third on the Wuling City walk, but raised what's in use enough to
-  saturate the stream and start the texture reduction, so it wasn't kept. untried: evicting textures
-  before geometry (a seventh of the bytes, and the costlier to bring back), and a budget that
-  follows the device.
-- the local lights' shadow atlas is `depth32float` like the sun's map, 64 MiB; its tiles hold
-  perspective depth over a short range, so 16 bits need a near plane well away from the light.
-- GPU culling leaves the buckets it picked empty in draws the CPU still encodes. flying over Jingyu,
-  preparing and encoding draws took nearly half the CPU frame before geometry was pooled.
-- settle frames re-run the whole selection while particles or spinning or riding rows are in view;
-  giving emitters fixed row spans and moving rows bounds that hold their whole motion would let them
-  reuse it.
-- cache shadow layers across new selections when their fit and casters are unchanged. the game
-  doesn't cache its cascades on PC, but caches its far map in 200 m tiles and redraws only the ones
-  that changed, at most 8 a frame, where the viewer redraws the whole far layer when its casters or
-  fit change.
-- the game culls shadow casters below a size per layer (`CSMScreenSizeMin`, `ASMScreenSizeMin`),
-  where the viewer draws every caster into every layer from its first; how the game measures the
-  size isn't decoded, so check a candidate rule against an in-game shot of small props 30–80 m away
-  first.
-- the shadow map is `depth32float` with a reach of 1500 m towards the sun; the game uses 16-bit
-  depth. tightening each layer's depth range (the casters' bounds, or clamping casters to the near
-  plane with `depth-clip-control`) would make `depth16unorm` precise enough, halving the map (64 to
-  32 MiB) and the bandwidth of every shadow sample; the bias needs retuning.
-- the ambient and sky reflection targets are rgba16f each (16 bytes a pixel together, the
-  reflection's alpha unused); packing them into one `rg32uint` (shared-exponent or 11-11-10 colour)
-  would save about 32 MiB at 2560×1600 and the matching reads in composite and reflections. the
-  celestial pass, which reuses the reflection target, would need its own.
-- geometry pools never shrink, and the stream budget counts the ranges in them, not their spare
-  capacity ([geometry pools](gpu-resources.md)); compacting or shrinking pools once they're mostly
-  free would return it.
-- reduce the AO blur's reads by packing depth with AO or using `textureGather`.
-- profile terrain close-up blending; stochastic projection or fewer anisotropy taps may reduce cost.
-- measure timestamp-query overhead before limiting profiling to the stats panel.
+- **GPU LOD selection.** moving slot picking and bucket allocation to GPU (count, prefix sum, write)
+  would reduce CPU work from per-segment to per-row-group.
+- **particle caching / offload.** cache immutable per-particle start attributes instead of
+  re-hashing every frame (~1 µs/particle on CPU), or move placement to a worker or compute shader.
+- **eviction policy.** keeping integrated texture mips +0.5 level past use cut repeat uploads by 1/3
+  on Wuling walk but triggered saturation/reduction (reverted). untried: evict textures before
+  geometry (geometry is ~1/7 the bytes and costlier to reload), or size budget to the device.
+- **16-bit local-light shadow atlas.** currently `depth32float` (64 MiB); `depth16unorm` needs a
+  larger near plane for short-range perspective depth.
+- **empty GPU-culled draws.** segment-range picking leaves empty buckets the CPU still encodes.
+- **settle-frame selection reuse.** fixed row spans for emitters and swept bounds for moving rows
+  would let settle frames skip re-traversal.
+- **shadow caching.** cache cascades across selections when fit and casters match; tile the far
+  shadow layer (game caches 200 m tiles and redraws ≤ 8/frame instead of the whole layer).
+- **small shadow-caster culling.** game culls casters by `CSMScreenSizeMin` / `ASMScreenSizeMin`
+  (metric undecoded; verify against in-game shots at 30–80 m first).
+- **16-bit sun shadow map.** tighten depth range (caster bounds or `depth-clip-control` near-plane
+  clamping) to switch from `depth32float` (1500 m reach, 64 MiB) to `depth16unorm` (32 MiB, half
+  bandwidth; requires bias retuning).
+- **pack ambient + sky reflection.** combine both `rgba16float` targets (16 B/px, reflection alpha
+  unused) into one `rg32uint` (shared-exponent or 11-11-10) to save ~32 MiB at 2560×1600 and
+  matching reads (`celestial` would need its own target).
+- **geometry pool compaction.** compact or shrink pools when mostly free so unused capacity returns
+  to the device ([geometry pools](gpu-resources.md#buffers-and-pools)).
+- **AO blur reads.** pack depth with AO or use `textureGather`.
+- **terrain close-up blending.** profile stochastic projection or lower anisotropy.
+- **timestamp queries.** measure overhead before restricting queries to when the stats panel is
+  open.

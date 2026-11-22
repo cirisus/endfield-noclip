@@ -1,495 +1,421 @@
 # open-world water
 
-open-world water uses surface placements, per-surface `WaterConfig` assets and a scene-wide
-`Global_Water_Config`; gameplay [water volumes](#water-volumes) and [WaterDecal](#waterdecal) foam
-boxes draw through the same pipeline. for scene-state conditions see
-[scene-states.md](scene-states.md); the lighting the water shares with surfaces is in
-[lighting.md](lighting.md), and waterfall sheets are [effects](effects.md#waterfalls).
+open-world water combines surface placements, per-surface `WaterConfig` assets, and a scene-wide
+`Global_Water_Config`. gameplay [water volumes](#water-volumes) and [WaterDecal](#waterdecal) foam
+boxes render through the same pipeline. see [scene-states.md](scene-states.md) for scene states,
+[lighting.md](lighting.md) for shared lighting, and [effects.md](effects.md#waterfalls) for
+waterfall sheets.
 
-three sources join per surface: an InitChunkData row places it, the StreamingChunkData record with
-the same entity id binds its mesh and config, and a per-level object binds the scene's global
-config.
+three sources join per surface: an InitChunkData placement row, a StreamingChunkData record (same
+entity id) binding mesh and `WaterConfig`, and a per-level object binding `Global_Water_Config`.
 
 ## placements: InitChunkData component 30
 
-every water surface is an entity of a **Global** chunk (no cell chunk holds one in any shipped
-scene), so water is resident. the groups holding them have the bounds columns 0–5, a 24-byte column
-7 (see below), the name column 21 and component 30, whose rows are 104 bytes:
+all water surfaces live in **Global** chunks (never cell chunks), so water is always resident.
+groups carry bounds columns 0–5, 24-byte column 7 (generic render-object info: layer mask, flags,
+scene mask, art tag, squared sorting distance), name column 21, and 104-byte component 30:
 
-| offset | type   | field            | notes                                                                                        |
-| ------ | ------ | ---------------- | -------------------------------------------------------------------------------------------- |
-| 0      | u32    | render type mask | bits of the game's `HGWaterRenderType`: 1 proxy, 2 LOD (below)                               |
-| 4      | i32    | runtime mesh id  | always 0: filled in at load                                                                  |
-| 8      | f32×16 | object-to-world  | column-major, translation at floats 12–14, same convention as the renderer component         |
-| 72     | f32×4  | param0           | (material index, 0, 0, 0); the index is filled in at load from the bound config, so 0 here   |
-| 88     | f32×4  | param1           | (wetness offset (m), height layer 0–3, 1 to sort by distance, 1 to wet the ground around it) |
+| offset | type   | field            | notes                                                                              |
+| ------ | ------ | ---------------- | ---------------------------------------------------------------------------------- |
+| 0      | u32    | render type mask | `HGWaterRenderType` bits: 1 proxy, 2 LOD (below)                                   |
+| 4      | i32    | runtime mesh id  | always 0 (filled at load)                                                          |
+| 8      | f32×16 | object-to-world  | column-major, translation at floats 12–14                                          |
+| 72     | f32×4  | param0           | `(materialIndex, 0, 0, 0)`; filled at load from bound config                       |
+| 88     | f32×4  | param1           | `(wetnessOffset m, heightLayer 0–3, sortByDistance 0/1, wetSurroundingGround 0/1)` |
 
-in every shipped row the mask is nonzero, every value is finite and both bindings are present.
+every shipped row has a nonzero mask, finite values, and both bindings. map02's LOD surfaces are
+open water; proxy-only surfaces are mostly paddy-field pools. `wetnessOffset` raises the surface
+when darkening contacted ground.
 
-map02's LOD surfaces are its open water; the proxy-only ones are mostly paddy-field pools. the
-wetness offset raises the surface when the game darkens the ground it touches. the 24-byte column 7
-is the generic render-object info every renderable entity carries: layer mask, flags, scene mask, an
-art tag and a squared sorting distance.
-
-surfaces have no materials of their own: the render pipeline draws them all with its own
-`HGRP/WaterProxy` and `HGRP/WaterRendering` shaders, indexing the configs by material index.
+surfaces have no materials of their own: the pipeline draws them with `HGRP/WaterProxy` and
+`HGRP/WaterRendering`, indexing configs by `materialIndex`. level tag is `id >>> 27` (0 = shared
+across all levels). surfaces in scene-state-0 files always load; others load with any matching
+MapConfig scene state (e.g. map02 paddy-field pools).
 
 ### how surfaces are drawn
 
-every camera-visible surface is drawn into the water G-buffer as its own mesh, shaded around the
-mesh's normals. a **LOD** surface is also drawn top-down into the height layer `param1.y` names, and
-what that view sees near the camera is redrawn as a camera-centred grid displaced by the waves. the
-top-down pass writes the mesh's world normal (oct-encoded, `_WaterPrepassNormalTexture`), and the
-grid reads it back at each vertex, bending it by the wave displacement where there is any, so the
-grid too is shaded around the mesh's normals: a steep segment running down a falls stays steep
-either way. the grid draws first and writes 3 into the stencil; the mesh pass draws only where the
-stencil isn't 3. so near the camera an LOD surface shows the grid, and beyond the grid's reach (its
-exact extent isn't recovered, see [`Global_Water_Config`](#global_water_config)) its own mesh. both
-passes cull back faces, test depth LessEqual and write it, so only the nearest front face at a pixel
-is shaded. this is read off the passes' render states, not checked in game.
-
-the level tag is `id >>> 27` as for every entity; tag 0 is shared content shown with every level.
-
-a surface can appear in several chunk files under the same id. a surface found in an always-loaded
-file (scene state 0) is unconditional; otherwise it loads while any of its files' MapConfig scene
-states is active. map02's paddy-field pools are the main example of scene-state water.
+- **mesh pass**: every camera-visible surface draws into the water G-buffer using its own mesh
+  normals.
+- **LOD grid pass**: LOD surfaces also render top-down into the height layer named by `param1.y`,
+  writing oct-encoded world normals (`_WaterPrepassNormalTexture`). near the camera, a
+  camera-centred grid reads those normals and displaces vertices by waves, preserving steep mesh
+  slopes (e.g. falls).
+- **stencil split**: the grid draws first and writes stencil `3`; the mesh pass draws only where
+  stencil ≠ `3`, so near water uses the grid and far water uses the mesh (exact grid extent
+  unrecovered, see [`Global_Water_Config`](#global_water_config)).
+- **state (from pass states, unchecked in game)**: both passes cull back faces, depth-test
+  `LessEqual`, and write depth.
 
 ## bindings: StreamingChunkData
 
-the StreamingChunkData sibling of each chunk file (same name with `StreamingChunkData_`) holds a
-kind-2 record per surface id. its property table binds two u64 StringPathHash keys (property type
-15):
+the paired `StreamingChunkData_*` file holds a kind-2 record per surface id with u64 StringPathHash
+bindings (property type 15):
 
-| key          | binds                                                                                       |
-| ------------ | ------------------------------------------------------------------------------------------- |
-| `0xff000000` | surface mesh                                                                                |
-| `0xff010000` | surface `WaterConfig` MonoBehaviour                                                         |
-| `0x20000000` | the scene's `Global_Water_Config`, on a kind-1 object named `Water#<tag>_…` (one per level) |
+| key          | binds                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------- |
+| `0xff000000` | surface mesh                                                                            |
+| `0xff010000` | surface `WaterConfig` MonoBehaviour                                                     |
+| `0x20000000` | scene's `Global_Water_Config`, on a kind-1 object named `Water#<tag>_…` (one per level) |
 
-keys are `component << 24 | field << 16 | index`. the `0xff` component is archetype-specific: other
-entity archetypes reuse those keys for their own bindings (rect decals bind their material under
-`0xff010000`), so they are water bindings only on entities that carry component 30. `0x20` is the
-HGWaterGlobalConfig streaming component bit.
+keys encode `component << 24 | field << 16 | index`. component `0xff` is archetype-specific (e.g.
+rect decals bind materials on `0xff010000`), so these keys are water bindings only on entities with
+component 30. `0x20` is `HGWaterGlobalConfig`.
 
 ## surface meshes
 
-four kinds occur:
+| mesh                                                          | transform                                 | notes                                 |
+| ------------------------------------------------------------- | ----------------------------------------- | ------------------------------------- |
+| `com/water/models/s_waterquad.fbx`                            | scales 0.1 m quad to surface size         | 4 vertices, uv0                       |
+| pipeline `plane.fbx`                                          | scales 0.1 m Unity plane                  | 121 vertices; paddy fields            |
+| `<map>/water/water_<map>_pcgwater…_lod0.fbx`, `s_river_*.fbx` | mostly identity (authored in world space) | river meshes, uv0                     |
+| `<level>/Water/PolygonMeshes/S_polygon_water_*.asset`         | identity                                  | flat world-space polygons, **no UVs** |
 
-| mesh                                                          | transform                                    | notes                                 |
-| ------------------------------------------------------------- | -------------------------------------------- | ------------------------------------- |
-| `com/water/models/s_waterquad.fbx`                            | scales a 0.1 m quad up to the surface's size | 4 vertices, uv0                       |
-| the render pipeline's `plane.fbx`                             | scales a 0.1 m Unity plane                   | 121 vertices; paddy fields            |
-| `<map>/water/water_<map>_pcgwater…_lod0.fbx`, `s_river_*.fbx` | mostly identity: authored in world space     | river meshes, uv0                     |
-| `<level>/Water/PolygonMeshes/S_polygon_water_*.asset`         | identity                                     | flat world-space polygons, **no UVs** |
-
-the water shading works in world x, z, so positions are the only attribute it needs. some polygon
-meshes have triangles whose normals point down.
+shading operates in world `(x, z)`, so only positions are required. some polygon meshes contain
+downward-facing normals.
 
 ## surface `WaterConfig`
 
-a MonoBehaviour per look (`…/WaterData/WaterConfigs/Config_water_<Map>_<n>.asset`, plus the shared
-`Config_paddy_filed_water.asset`). field groups:
+one MonoBehaviour per water look (`…/WaterData/WaterConfigs/Config_water_<Map>_<n>.asset`, plus
+shared `Config_paddy_filed_water.asset`):
 
-- flow and waves: `useFlowMap`, `flowDirectionVector2`, `flowSpeed`, `flowFullCycle`,
+- **flow & waves**: `useFlowMap`, `flowDirectionVector2`, `flowSpeed`, `flowFullCycle`,
   `normalTilling`, `normalScale`, `smallWaveNormalType`, `largeWaveNormalType`,
   `largeWaveFlowSpeed`, `largeWaveNormalTilling`, `largeWaveNormalScale`, `flowFullCycleLarge`,
-  `largeWaveInvDir`, displacement scalers
-- optics: `waterRayleighScatteringMeter`, `waterRayleighAbsorptionMeter`,
+  `largeWaveInvDir`, displacement scalers.
+- **optics**: `waterRayleighScatteringMeter`, `waterRayleighAbsorptionMeter`,
   `waterRayleighAbsorptionMeter2`, `absorptionTint(2)`, `scatterTint`, `absorptionScale`,
   `scatterScale`, `safeFullAbsorpDistance`, `envLightIntensity`, `sceneColorEnvInfluence`,
-  `rayleighMieLerpFactor`, `distanceEdgeBlendFactor`
-- appearance: `roughness`, `specular`, `waterIOR` (a screen-space distortion strength, not an index
-  of refraction), `flowBaseColor`, `foam*`, `distanceFade`, `envLightSpecularIntensity`,
-  `punctualLightSpecularIntensity`, `emissiveStrength`
-- caustics: `causticTilling`, `causticOpacity`, `causticDistort`, `causticSpeed`,
-  `causticStartDepth`, `causticEndDepth`
-- character interaction (`interactive*`, `ripple*`)
+  `rayleighMieLerpFactor`, `distanceEdgeBlendFactor`.
+- **appearance**: `roughness`, `specular`, `waterIOR` (screen-space distortion strength, not
+  physical IOR), `flowBaseColor`, `foam*`, `distanceFade`, `envLightSpecularIntensity`,
+  `punctualLightSpecularIntensity`, `emissiveStrength`.
+- **caustics**: `causticTilling`, `causticOpacity`, `causticDistort`, `causticSpeed`,
+  `causticStartDepth`, `causticEndDepth`.
+- **interaction**: `interactive*`, `ripple*`.
 
-a surface's config is the asset its StreamingChunkData record binds. the config's `materialIndex`
-doesn't identify it: it is meant to index the global config's `hgWaterConfigs`, but the paddy config
-isn't in that list and its index collides with another config's. the game uploads each config into
-the shading's slot `materialIndex` (32 static slots) when its asset loads, listed or not, and
-surfaces find their config through that slot. so configs sharing an index overwrite each other, and
-wherever both are loaded every surface of either shades with the one loaded last.
+**slot collisions**: each surface binds its config via StreamingChunkData, not
+`Global_Water_Config.hgWaterConfigs` (which omits the paddy config, whose `materialIndex` collides
+with another config). at load, the game uploads each config into static slot `materialIndex` (32
+slots total); colliding indices overwrite each other so both shade with whichever loaded last.
 
 ## `Global_Water_Config`
 
-one per scene with water, at `…/<Map>/ReleaseData/WaterData/Global_Water_Config.asset`; every
-level's binding names the same asset.
+one per scene with water (`…/<Map>/ReleaseData/WaterData/Global_Water_Config.asset`), referenced by
+every level's `Water#<tag>_…` object:
 
-| field                                                                           | meaning                                                                                                                                                                                                                               |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sceneCenterOffset` {x, y}                                                      | world x, z the grid is centred on                                                                                                                                                                                                     |
-| `mapSize`                                                                       | edge of the square the global flow map and the sector grid cover, metres                                                                                                                                                              |
-| `sectorSize`                                                                    | edge of one sector, metres                                                                                                                                                                                                            |
-| `flowmapPrecision`                                                              | metres per texel of a sector flow tile                                                                                                                                                                                                |
-| `useSectorData`, `sectorDataPaths`, `sectorDataAssetHashes`, `sectorDataExists` | the sector grid, parallel arrays over every grid cell                                                                                                                                                                                 |
-| `hgWaterConfigs`                                                                | PPtrs to surface configs (incomplete, see above)                                                                                                                                                                                      |
-| `flowMap`                                                                       | 2D flow map over the whole grid, linear BC7, one mip                                                                                                                                                                                  |
-| `causticMap`                                                                    | caustic pattern, sRGB BC7                                                                                                                                                                                                             |
-| `rainMap`                                                                       | rain ripple map, linear BC7                                                                                                                                                                                                           |
-| `normalMapArray`                                                                | Texture2DArray of wave normals (two layers), linear BC7                                                                                                                                                                               |
-| `lodNum`, `meshNumPerLOD`, `meshSize`, `heightMap*`                             | the game's camera-centred grid that LOD surfaces are redrawn on, displaced by the waves by `waveVertexDisplacementScaler` (mostly 0 on map02; map02: 4 rings of 16² cells, 2 m); the top-down view bounding its reach isn't recovered |
+| field                                                                           | meaning                                                                                                                                                                |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sceneCenterOffset` `{x, y}`                                                    | world `(x, z)` grid centre                                                                                                                                             |
+| `mapSize`                                                                       | global flow map / sector grid edge length (m)                                                                                                                          |
+| `sectorSize`                                                                    | single sector edge length (m)                                                                                                                                          |
+| `flowmapPrecision`                                                              | metres per texel of sector flow tiles                                                                                                                                  |
+| `useSectorData`, `sectorDataPaths`, `sectorDataAssetHashes`, `sectorDataExists` | parallel arrays over sector grid cells                                                                                                                                 |
+| `hgWaterConfigs`                                                                | PPtrs to surface configs (incomplete, see above)                                                                                                                       |
+| `flowMap`                                                                       | global 2D flow map, linear BC7, 1 mip                                                                                                                                  |
+| `causticMap`                                                                    | caustic pattern, sRGB BC7                                                                                                                                              |
+| `rainMap`                                                                       | rain ripple map, linear BC7                                                                                                                                            |
+| `normalMapArray`                                                                | 2-layer wave normal `Texture2DArray`, linear BC7                                                                                                                       |
+| `lodNum`, `meshNumPerLOD`, `meshSize`, `heightMap*`                             | camera-centred LOD grid (map02: 4 rings of 16² × 2 m cells), displaced by `waveVertexDisplacementScaler` (mostly 0 on map02); top-down prepass view bounds unrecovered |
 
-a sector has data only where `sectorDataExists` is set. its `(x, z)` is in its path
-(`…/Sector/T_<x>_<z>.asset`), and its `sectorDataAssetHashes` entry is the StringPathHash key stored
-as a signed 64-bit integer. sector `(x, z)` covers world
-`[center.x + x·sectorSize, +sectorSize) × [center.z + z·sectorSize, +sectorSize)`, the game's own
-sector lookup. each sector MonoBehaviour's `waterSectorTexture0` is a flow tile (256², linear BC7,
-one mip) holding the global flow map's content at `flowmapPrecision`. the data flag doesn't promise
-a tile: some sector assets leave `waterSectorTexture0` empty (a handful of map01's sectors with
-data, a couple dozen of map02's). near the camera the game reads the flow (and most authored foam)
-from the sector tiles, blending to the global map at the edge of a 3 × 3 window of sectors; that
-lookup assumes 128 m sectors, map02's size.
+**sector tiles**: present where `sectorDataExists` is set. path `…/Sector/T_<x>_<z>.asset` gives
+`(x, z)`; `sectorDataAssetHashes` stores signed i64 StringPathHash keys. sector `(x, z)` spans
+`[center.x + x·sectorSize, +sectorSize) × [center.z + z·sectorSize, +sectorSize)`. each sector's
+`waterSectorTexture0` (256², linear BC7, 1 mip) stores flow at `flowmapPrecision`, though some
+flagged sectors leave it null (a handful on map01, ~2 dozen on map02). near the camera, the shader
+samples sector tiles and blends to `flowMap` at the edge of a 3×3 sector window (lookup assumes 128
+m sectors, map02's size).
 
 ## shading
 
-the game writes water's normal, roughness and foam into its own G-buffer before the screen-space
-reflections run, then lights it in one full-screen pass after the opaque scene, with the sun through
-its shadow maps, the [irradiance volume](irradiance.md) and the sky reflection. the normal the waves
-bend is the grid's or the mesh's ([how surfaces are drawn](#how-surfaces-are-drawn)).
+water writes normal, roughness, and foam to its own G-buffer before SSR, then shades in a
+full-screen pass after opaques using sun + shadows, [irradiance volume](irradiance.md), and sky/SSR
+reflections.
 
-- **flow**: the global map at `uv = (world.xz − center) / mapSize + 0.5` holds the direction in rg
-  (`· 2 − 1`, green negated so it points along −z), foam in b and the wave amplitude in a. without
-  `useFlowMap` the direction is `flowDirectionVector2`, encoded the same way. the amplitude scales
-  the waves unless `FlowmapOption` is 1, which makes the game read it as coverage; no map02 config
-  sets it.
-- **waves**: two layers from the normal array (rg the normal, a the small layer's foam shape), each
-  at its tiling, speed and cycle; `largeWaveInvDir` reverses the large layer. with a flow map each
-  cross-fades two phases that jump by a cycle-dependent offset; without one it scrolls continuously.
-  the array is sampled with mip bias `(0.5 − envSpecularDesaturation) · 10`. a fade
-  `1 − saturate(distance · saturate(1 − N·V) / distanceFade)` scales the small waves (also by N·V)
-  and the large ones down to `distanceNormalMinStrength`, so far water flattens into a mirror; the
-  layers combine by reoriented normal mapping around the mesh normal.
-- **roughness and foam**: roughness falls from the config's towards 0.01 as the fade rises (a mirror
-  near the camera) and moves to `foamRoughness` under foam. foam is the flow's b times the small
-  layer's shape over `foamShapeOffset`, times `foamOpacity`, fading out over `foamFadeDistance`; its
-  colour is `foamColorG` as authored. it takes the sun's diffuse light, a see-through glow when lit
-  from behind (`waterBaseColorSubsurfaceScaler`), the irradiance volume, and `emissiveStrength`.
-- **refraction**: the surface point is pushed sideways against the waves (their xz scaled by
-  `waterIOR`) by at most 0.5 m, less near the screen's edges and the camera, and the water looks at
-  the scene under the pushed point, unless that lies in front of the water. the column's view
-  direction then follows the refracted ray, and so does its thickness, except beyond about 20 m,
-  where water less than half a metre to a metre deep keeps the straight-through thickness.
-- **water column**, between the surface and the ground below (at most 50 m): it absorbs and scatters
-  with the per-metre coefficients, `waterRayleighAbsorptionMeter2` (shallow) blending toward
-  `waterRayleighAbsorptionMeter` (deep) as the thickness approaches `safeFullAbsorpDistance`. light
-  scattered towards the eye is integrated over the column, with each source's extinction lengthened
-  by its slant: `1 + 1.394 |V.y|` for the ambient and, as the game writes it, `1 + 20 |V.y|` for a
-  risen sun. sources are the irradiance volume (scaled by `envLightIntensity`) and the shadowed sun
-  through a phase mix that `rayleighMieLerpFactor` moves from a Henyey–Greenstein lobe (g 0.854) to
-  Rayleigh, with less sun let in at grazing incidence; the scene behind adds to both by
-  `sceneColorEnvInfluence`. the column takes the sun the way the atmosphere fog does, raw colour
-  times intensity. the sun's shadow is looked up 2 m off the surface along the waves' horizontal
-  tilt, which dapples it.
-- **caustics**: the caustic map, planar in world xz on the ground under the water, twice (the second
-  mirrored in z) and distorted by the waves, brighten the scene behind by the fog's sun ·
-  `causticOpacity` between `causticStartDepth` and `causticEndDepth` of thickness, fading out by 50
-  m of view depth.
-- **sun highlight**: GGX off a normal whose vertical part is scaled by `dirSpecNormalScaler`, which
-  widens the glitter path, times the sun's specular intensity, aimed at the nearest point of the
-  sun's disc, plus multiple scattering.
-- **reflection**: water is written into the inputs of the game's
-  [screen-space reflections](lighting.md#screen-space-reflections) and reflected through that same
-  pass: the reflected ray is stretched to the screen's edge, so it has no reach limit in metres,
-  with its edge and head-on fades. the sky reflection fills in (normalised the same way as on
-  surfaces, scaled by `envLightSpecularIntensity`) where the march finds nothing. the environment
-  BRDF weighs it, with f0 = 0.08 · `specular` and f90 = saturate(4 · `specular`).
-- **fog and composition**: the surface's own light (highlight, foam, reflection, column) is fogged
-  at the surface's distance; the scene behind, already fogged, shows through by the column's
-  transmittance, and the fog's in-scatter covers the rest. where the march hits, the colour then
-  leans towards the reflection by its weight times the column's opacity and the fog's transmittance,
-  so deep water mirrors its surroundings.
-- **shore**: `distanceEdgeBlendFactor` fades shallow water into what's under it; at a distance the
-  thickness counts less at grazing angles.
+- **flow**: global map at `uv = (world.xz − center) / mapSize + 0.5` stores direction in `rg`
+  (`· 2 − 1`, green negated → `−z`), foam in `b`, wave amplitude in `a`. without `useFlowMap`,
+  `flowDirectionVector2` uses the same encoding. `a` scales waves unless `FlowmapOption == 1`
+  (coverage; unused on map02).
+- **waves**: two normal-array layers (`rg` normal, `a` small-layer foam shape) with independent
+  tiling, speed, and cycle (`largeWaveInvDir` reverses large layer). with a flow map, each
+  cross-fades two cycle-offset phases; without one, scrolls continuously. sampled with mip bias
+  `(0.5 − envSpecularDesaturation) · 10`. fade
+  `1 − saturate(distance · saturate(1 − N·V) / distanceFade)` attenuates small waves (also `× N·V`)
+  and large waves down to `distanceNormalMinStrength`. layers combine via reoriented normal mapping
+  around the mesh/grid normal.
+- **roughness & foam**: roughness interpolates from config toward 0.01 as fade rises, and toward
+  `foamRoughness` under foam. foam = `flow.b × smallFoamShape / foamShapeOffset × foamOpacity`,
+  fading over `foamFadeDistance`, coloured by authored `foamColorG`. lit by diffuse sun, backlit
+  transmission (`waterBaseColorSubsurfaceScaler`), irradiance volume, and `emissiveStrength`.
+- **refraction**: offsets sample point laterally against waves (`xz × waterIOR`, max 0.5 m, reduced
+  near screen edges and camera) and reads scene behind unless it lies in front of the water. column
+  direction and thickness follow the refracted ray (beyond ~20 m, depths under ~0.5–1 m keep
+  straight-through thickness).
+- **water column (max 50 m)**: per-metre absorption blends `waterRayleighAbsorptionMeter2` (shallow)
+  → `waterRayleighAbsorptionMeter` (deep) toward `safeFullAbsorpDistance`. in-scattering integrates
+  over the column with slant-lengthened extinction (`1 + 1.394 |V.y|` ambient; `1 + 20 |V.y|` risen
+  sun). sources: irradiance volume (`× envLightIntensity`), shadowed sun (raw colour × intensity;
+  shadow sampled 2 m off surface along horizontal wave tilt for dappling; phase mixes
+  Henyey-Greenstein `g = 0.854` to Rayleigh via `rayleighMieLerpFactor`, attenuated at grazing
+  incidence), plus scene behind (`× sceneColorEnvInfluence`).
+- **caustics**: `causticMap` projected planar in world `xz` on underwater ground (twice, second
+  mirrored in `z`, wave-distorted), brightening scene behind by fog sun × `causticOpacity` between
+  `causticStartDepth` and `causticEndDepth`, fading out by 50 m view depth.
+- **sun highlight**: GGX using normal with vertical component scaled by `dirSpecNormalScaler`, aimed
+  at nearest point on sun disc, times sun specular intensity, plus multiple scattering.
+- **reflection**: runs through [screen-space reflections](lighting.md#screen-space-reflections) (ray
+  stretched to screen edge, no metre cap, with edge/head-on fades). misses fall back to sky
+  reflection (normalised as on opaque surfaces, scaled by `envLightSpecularIntensity`), weighted by
+  environment BRDF (`f0 = 0.08 · specular`, `f90 = saturate(4 · specular)`).
+- **fog & composition**: surface light (highlight, foam, reflection, column) fogs at surface
+  distance; already-fogged scene behind shows through column transmittance; fog in-scatter covers
+  the rest. on SSR hits, colour leans toward reflection by
+  `reflectionWeight × columnOpacity × fogTransmittance`.
+- **shore**: `distanceEdgeBlendFactor` fades shallow water into background; at distance, thickness
+  counts less at grazing angles.
 
 ## water volumes
 
-besides the surfaces above, levels place gameplay water whose surface moves: LevelData
-`waterVolumes` (and `riftVolumes`, same record). the scenes that have them: map02 (about 60 in the
-levels whose map is map02, about a fifth of them moved by scripts), Suiming, a race, three dungeons
-and the factory puzzle scenes. a volume holds:
+movable gameplay water lives in LevelData `waterVolumes` (and identical `riftVolumes`). present in
+map02 (~60 volumes, ~⅕ script-moved), Suiming, one race, three dungeons, and factory puzzle scenes
+(`blackbox_*`); absent in map01.
 
-| field                                                        | meaning                                                                                                     |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `id`                                                         | entity id; scripts and floaters name the volume by it                                                       |
-| `pivot`                                                      | the volume's floor; `pivot.y` is where its height counts from                                               |
-| `points`                                                     | the outline, world positions at `pivot.y`; the game triangulates it in x, z into a flat surface mesh        |
-| `heightMax`                                                  | metres from the pivot to a full volume                                                                      |
-| `amountCurrent`, `amountMax`                                 | the authored fill; the surface sits at `pivot.y + heightMax · amountCurrent / amountMax`                    |
-| `isInfinite`                                                 | the fill is a fraction scripts set directly (`WaterVolumeInfiniteSetHeight`) rather than an amount of water |
-| `fillSpeed`                                                  | fixed-speed moves: metres a second on an infinite volume, amount units a second on others (below)           |
-| `flowSpeed`, `flowDirection` (degrees)                       | the surface's flow                                                                                          |
-| `isUseLunaConfig`, `lunaConfigPathHash`                      | a surface `WaterConfig` drawn in place of its water type's (below)                                          |
-| `waterItemType`, `meshPathHash`                              | the liquid, which picks its surface prefab (below), and an optional prebuilt surface mesh                   |
-| `obbCenter`, `obbRotation`, `obbSize`                        | the volume's box, for gameplay (swimming, the danger area)                                                  |
-| `waterNameLangKey`, `isPrototype`, nav-mesh and audio fields | gameplay; `isPrototype` false makes a volume factory water ([below](#depletable-pools))                     |
+| field                                                      | meaning                                                                                   |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `id`                                                       | entity id referenced by scripts and floaters (`0` = static, builds no mesh)               |
+| `pivot`                                                    | volume floor (`pivot.y` = zero height)                                                    |
+| `points`                                                   | outline in world space at `pivot.y`; triangulated in `(x, z)` into a flat surface mesh    |
+| `heightMax`                                                | metres from pivot to full                                                                 |
+| `amountCurrent`, `amountMax`                               | authored fill; surface height = `pivot.y + heightMax · amountCurrent / amountMax`         |
+| `isInfinite`                                               | fill is a script-driven 0–1 fraction (`WaterVolumeInfiniteSetHeight`), not a fluid amount |
+| `fillSpeed`                                                | fixed-speed rate: m/s (infinite) or amount units/s (finite)                               |
+| `flowSpeed`, `flowDirection` (degrees)                     | surface flow                                                                              |
+| `isUseLunaConfig`, `lunaConfigPathHash`                    | overrides water type's `WaterConfig`                                                      |
+| `waterItemType`, `meshPathHash`                            | liquid type (selects surface prefab) and optional prebuilt surface mesh                   |
+| `obbCenter`, `obbRotation`, `obbSize`                      | gameplay OBB (swimming, hazard)                                                           |
+| `waterNameLangKey`, `isPrototype`, nav-mesh & audio fields | gameplay metadata; `isPrototype == false` marks [factory water](#depletable-pools)        |
 
-a volume with id 0 is static and builds no mesh. every other volume's surface is an instance of a
-surface prefab picked by its **water type**, the `FacItemSubType` that FactoryItemTable gives its
-`waterItemType` (`item_liquid_acid` 0, `item_liquid_sewage` 3, `item_liquid_water` 4, xiranite 7).
-`…/GameMech/WaterVolumeManagerConfig.prefab` maps it:
+**prefab & config resolution**: `waterItemType` maps via `FactoryItemTable` to `FacItemSubType`
+(`item_liquid_acid` 0, `item_liquid_sewage` 3, `item_liquid_water` 4, xiranite 7), then through
+`…/GameMech/WaterVolumeManagerConfig.prefab`:
 
-- `waterTypeToSurfaceDict` first remaps a type to the one whose surface it borrows (Plant2 13 →
-  Plant 2 on the current client)
-- `waterSurfaceSettingDict` then gives the type's `surfacePrefab`
-  (`…/GameMech/WaterVolumeSurface_<name>.prefab`: acid, dirty, clear, foliage, xiranite,
-  hyper_xiranite), an optional foam `decalPrefab` placed beside it, and per-level multipliers for
-  the flow cycles, large-wave scale and displacement
-- a type it doesn't list, or whose prefab is null, takes `waterSurfaceMissingFallback` (on map02 the
-  same prefab as water's)
+1. `waterTypeToSurfaceDict` remaps borrowed types (Plant2 13 → Plant 2).
+2. `waterSurfaceSettingDict` yields `surfacePrefab` (`…/GameMech/WaterVolumeSurface_<name>.prefab`:
+   acid, dirty, clear, foliage, xiranite, hyper_xiranite), optional foam `decalPrefab`, and
+   per-level flow-cycle / large-wave / displacement multipliers.
+3. unlisted or null entries fall back to `waterSurfaceMissingFallback` (water prefab on map02).
 
-a surface prefab is a MeshFilter, MeshCollider and an `HGWaterRendererV2` whose `waterConfig` names
-an ordinary surface `WaterConfig` (render type 1, proxy; wetness offset 0.25 m). the game fills the
-MeshFilter with the outline triangulated in x, z, or, when the volume's `meshPathHash` is set, with
-that mesh: the `…/Gameplay/Water/<item type>#<volume id>_WaterSurface.asset` files, the same outline
-triangulated ahead of time around the pivot (about half of map02's volumes). a volume that sets
-`isUseLunaConfig` swaps its own `lunaConfigPathHash` config in over the prefab's. most map02 volumes
-don't (sewage and acid among them). the surface moves vertically as the fill changes and is drawn by
-the water pipeline like any surface. a volume with a flow speed or a direction other than the
-default gets a config slot of its own with its flow applied; the default takes the type's shared
-slot.
+each surface prefab holds a `MeshFilter`, `MeshCollider`, and `HGWaterRendererV2` (proxy render type
+1, wetness offset 0.25 m, standard `WaterConfig`). mesh comes from `meshPathHash`
+(`…/Gameplay/Water/<itemType>#<volumeId>_WaterSurface.asset`, ~half of map02 volumes) or runtime
+`(x, z)` triangulation of `points`. `isUseLunaConfig` swaps in `lunaConfigPathHash` (most map02
+volumes leave it off). non-default flow speed/direction allocates a dedicated config slot; default
+shares the type's slot.
 
-level scripts move volumes:
+**script actions**:
 
-- `WaterVolumeInfiniteSetHeight` sets the fill (0–1). without `isSmooth` the surface jumps there;
-  with `isSmooth` and `isFixedSpeed` it moves linearly at the volume's fill speed and eases in over
-  the last metres; with `isSmooth` alone it eases over a time the game derives from the distance and
-  the fill speed (map02's switch drain, fill speed 50, takes about a second)
-- `WaterVolumeSetFillSpeed` changes the fill speed, so a script sets the speed and then moves the
-  surface
-- `WaterVolumeSetAmount`, `WaterVolumeTransfer(All)` set or move amounts; `…PauseHeightChange`
-  freezes a move
+- `WaterVolumeInfiniteSetHeight`: sets 0–1 fill — instant without `isSmooth`, linear at `fillSpeed`
+  with end-ease when `isSmooth + isFixedSpeed`, or timed ease derived from distance and `fillSpeed`
+  when `isSmooth` alone (e.g. map02 switch drain at speed 50 takes ~1 s).
+- `WaterVolumeSetFillSpeed`: updates `fillSpeed` before a move.
+- `WaterVolumeSetAmount`, `WaterVolumeTransfer(All)`: set or transfer finite amounts;
+  `…PauseHeightChange` freezes movement.
 
-what triggers the scripts varies: switches (map02's Marker Stone pit, a one-use
-`int_switch_wltech01`, 23400083108, whose script 23400083014 drains volume 23400080003 from full to
-half), quests, map variables and script stages. in Suiming (`indie_dg016`) a server-side clock
-drives a round: script 46300000013 reads the map variable `timer` (minutes since the round started)
-and lowers the pit (volume 46300000002, floor y 51.19, 110 m) in stages, each snapping to where the
-water should be at that minute and then receding to the stage's level at a fixed speed:
+**script examples**:
 
-| minutes | level (y)                  | speed (m/s) | takes |
-| ------- | -------------------------- | ----------- | ----- |
-| 0 → 2   | 0.50 → 0.37 (106.2 → 91.9) | 0.119       | 120 s |
-| 2 → 5   | 0.37 → 0.31 (85.3)         | 0.0367      | 180 s |
-| 5 → 8   | 0.31 → 0.13 (65.5)         | 0.11        | 180 s |
-| 8 → 11  | 0.13 → 0.07 (58.9)         | 0.0367      | 180 s |
+- **Marker Stone pit (map02)**: one-use switch `int_switch_wltech01` (`23400083108`) runs script
+  `23400083014`, draining volume `23400080003` from full to half.
+- **Suiming (`indie_dg016`)**: script `46300000013` reads server-driven map variable `timer`
+  (inferred 1 step = 1 minute from stage speeds) and lowers pit `46300000002` (floor `y = 51.19`,
+  height `110 m`) in stages (snapping to stage start, then receding at fixed speed):
 
-the lily-pad pool beside it (46300010001) recedes from 107 to 91 over the first few minutes, a
-server event drains the pit to 0.08 when the round is solved, and another resets every volume. that
-one minute is one `timer` step is inferred from the speeds, which cover each stage's drop in exactly
-a minute per step; the server sets `timer`.
+  | minutes | level (y)                  | speed (m/s) | takes |
+  | ------- | -------------------------- | ----------- | ----- |
+  | 0 → 2   | 0.50 → 0.37 (106.2 → 91.9) | 0.119       | 120 s |
+  | 2 → 5   | 0.37 → 0.31 (85.3)         | 0.0367      | 180 s |
+  | 5 → 8   | 0.31 → 0.13 (65.5)         | 0.11        | 180 s |
+  | 8 → 11  | 0.13 → 0.07 (58.9)         | 0.0367      | 180 s |
 
-the only waterfall code in the game is gameplay: interactives with component 168
-(`InteractiveWaterFallComponent`) spawn named waterfall and splash effects bound to a volume. the
-water pipeline has nothing waterfall-specific; scenery falls are [effects](effects.md#waterfalls)
+  the adjacent lily-pad pool (`46300010001`) recedes from `y = 107` to `91` over the first few
+  minutes; server events drain the pit to 0.08 on solve and reset all volumes.
+
+gameplay waterfalls use component 168 (`InteractiveWaterFallComponent`) to spawn named
+waterfall/splash effects bound to a volume; scenery waterfalls are [effects](effects.md#waterfalls)
 over river surfaces.
 
 ### depletable pools
 
-a volume with `isPrototype` false is **factory water**: every map02 volume and the factory puzzle
-scenes' (`blackbox_*`); the dungeons' script-only volumes are prototypes. the server's factory keeps
-a factory volume's liquid and amount, which replace the authored `amountCurrent` once it reports; a
-map reset puts only prototype volumes back at their authored amount. an infinite one ignores the
-server's amounts; a finite one is a pool the player empties with Fluid Pumps (`pump_1` for water,
-sewage, plant, xiranite and copper liquids, `pump_2` for acid too; one round a second, the amount
-per round not found) and fills with Fluid Supply Units, which refuse sewage, so a sewage pool only
-goes down. its amount stays within 0 and `amountMax`, the surface following it linearly; no client
-code refills a pool, and an empty pool's surface stays at its pivot (unchecked in game). its
-`fillSpeed` is in amount units a second, so a surface moves at `fillSpeed · heightMax / amountMax`
-metres a second, which animates each reported step (the pump paces the drain): 6 m/s in the Test
-Area's pits, 0.026 m/s in Wuling City's Tianjing Courtyard pond.
+volumes with `isPrototype == false` are **factory water** (all map02 and `blackbox_*` volumes);
+dungeon script-only volumes (`dung02_cdg004`, `dung02_cdg009`, `dung02_cdg013`, `indie_dg016`,
+`indie_race001`) are prototypes.
 
-a factory volume builds its surface once the server's factory has reported it, and a change to no
-liquid waits until the surface has finished sinking (both read from the client, unchecked in game).
+- **server state**: the factory server tracks liquid type and amount, overriding `amountCurrent` on
+  report (map reset restores only prototypes). infinite volumes ignore server amounts.
+- **pumping & filling**: finite pools drain via Fluid Pumps (`pump_1`: water, sewage, plant,
+  xiranite, copper; `pump_2`: also acid; 1 round/s, amount per round unlocated) and fill via Fluid
+  Supply Units (which reject sewage). no client code refills a pool; an empty pool's surface stays
+  at `pivot.y` (unchecked in game).
+- **animation**: surface moves at `fillSpeed · heightMax / amountMax` m/s (e.g. 6 m/s in Test Area
+  pits, 0.026 m/s in Wuling City's Tianjing Courtyard pond). client code builds the surface once
+  reported by the server and waits until sinking finishes before clearing liquid (unchecked in
+  game).
+- **child basins**: volumes with `parentId` match their parent's surface height, clamped to their
+  own `[pivot.y, pivot.y + heightMax]`.
+- **other transfers**:
+  - `int_water_volume_transferer(_short)` (component 82: `water_volume_from`, `water_volume_to`,
+    `is_do_once`, `progressLockCondition`): pours between volumes (fails if source empty, target
+    full, or liquids differ).
+  - `int_water_volume_switch` (component 83, `water_volume_inst_id`): Jingyu's two 0.5 m volumes
+    (`10100023001`, `10100033001`).
+  - scripts: `WaterVolumeSetAmount`, `WaterVolumeTransfer(All)` (map02 scripts only call
+    `WaterVolumeInfiniteSetHeight`).
+- **events**: changes fire `OnWaterVolumeChanged` (`water_volume`, `value_old`, `value_new`). only
+  two map02 scripts listen: Qingbo `23300000064` (after transferer `23300000037` empties
+  `23300000004` into `23300000005`, drops infinite `23300000001` to 0.2) and Sword Vault Dale rune
+  puzzle `25000060001`.
+- **unrelated**: `WaterProgressSync` and `int_switch_water_progress` (component 87) belong to
+  water-drone wheels despite colliding ids.
 
-a volume with a `parentId` follows its parent: its surface sits at the parent's, clamped between its
-own pivot and full (basins beside a pool).
-
-besides pumps and supply units, amounts move through:
-
-- `int_water_volume_transferer(_short)` interactives (component 82: `water_volume_from`,
-  `water_volume_to`, `is_do_once`, `progressLockCondition`), which pour one volume into another; the
-  server moves factory water. a transfer fails from an empty source, into a full target, and into a
-  target that holds another liquid
-- `int_water_volume_switch` interactives (component 83, `water_volume_inst_id`): Jingyu's two 0.5 m
-  volumes (10100023001, 10100033001)
-- scripts: `WaterVolumeSetAmount` and `WaterVolumeTransfer(All)`. none of map02's sets an amount;
-  its script moves are all `WaterVolumeInfiniteSetHeight` on infinite volumes
-
-each change raises the level event `OnWaterVolumeChanged` (`water_volume`, `value_old`,
-`value_new`). on map02 only Qingbo's script 23300000064 (after transferer 23300000037 empties
-23300000004 into 23300000005 once, it drops the infinite 23300000001 to 0.2) and Sword Vault Dale's
-rune puzzle script 25000060001 listen.
-
-map02's finite volumes:
+map02 finite volumes (all map02 acid volumes and all lv004/lv010 water volumes are infinite):
 
 | level             | volumes                                                  | role                                                                                                  |
 | ----------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | lv005 Test Area   | 23200010000 (Pool 1), 23200010003 (Pool 2), sewage       | pumped; pivots near −462, 251.4, −464 and −502, full at y 263.4; basins 23200010001, …004 follow them |
-| lv002 Wuling City | 22800060004, water                                       | the Tianjing Courtyard pond, pumped; pivot −797, 240.6, −530; 22800060019 and …020 follow it          |
-| lv002             | 22800060005 (0 of 1000, 28 m deep, under the pond)       | nothing found filling it                                                                              |
+| lv002 Wuling City | 22800060004, water                                       | Tianjing Courtyard pond, pumped; pivot −797, 240.6, −530; 22800060019 and …020 follow it              |
+| lv002             | 22800060005 (0 of 1000, 28 m deep, under pond)           | nothing found filling it                                                                              |
 | lv002             | 22800060002, 3, 6–11, 16 (near −830, 268–285, −690…−745) | terrace transferer puzzle, locked until `e5m3_q#3`                                                    |
 | lv002             | 22800330000, 1, 6, 7 (near −1465, 314–320, −165…−195)    | short-transferer puzzle (`e5m3_q#3`)                                                                  |
 | lv002             | 22800060012, …013, …017 (full)                           | no transferer or quest found                                                                          |
-| lv002             | 22800030000 (4 of 45, at −1229, 261.9, 135)              | guide script 22800090011 waits for 5 or more, poured in by a supply unit                              |
-| lv003 Qingbo      | 23300000003 (sewage, 800); 23300000004 → …005 (2000)     | no quest found; the once-only transferer above, after `e7m1`                                          |
+| lv002             | 22800030000 (4 of 45, at −1229, 261.9, 135)              | guide script 22800090011 waits for ≥ 5 poured by supply unit                                          |
+| lv003 Qingbo      | 23300000003 (sewage, 800); 23300000004 → …005 (2000)     | no quest found; once-only transferer above, after `e7m1`                                              |
 | lv001 Jingyu      | 10100030000–4                                            | transferer puzzles (`e5m1_q#4`, `e5m2_q#22`)                                                          |
 | lv006 Sword Vault | 25000060001, 3, 4, 5, 6 (near 330, 220–226, −1850…−1920) | rune-column short-transferer puzzle (`sm2l6m1_q#14`)                                                  |
 | lv008             | rift volumes (xiranite, 0 of 5000)                       | filled, not drained                                                                                   |
 
-every map02 acid volume is infinite, as is the water of lv004 and lv010. map01 has no volumes. the
-prototype volumes are those of dung02_cdg004, dung02_cdg009, dung02_cdg013, indie_dg016 and
-indie_race001.
+mission `CheckFluidVolume` conditions (`level, volume, operator, amount`):
 
-the `WaterProgressSync` script modules and `int_switch_water_progress` interactives are the water
-drones' wheel mechanic (component 87), unrelated to volumes although their ids collide with volume
-ids.
+| pool                                                            | quest                                                       |
+| --------------------------------------------------------------- | ----------------------------------------------------------- |
+| Tianjing Courtyard pond, Wuling City (22800060004, 40000, 35 m) | `gm02m10` "Treasure Beneath the Pond", q#2: `≤ 800`         |
+| Pool 1, Test Area (23200010000, sewage, 4000, 12 m)             | `gm02m14` "Divvy Up the Trouble", q#2 "Drain Pool 1": `< 1` |
 
-missions wait on pools through objective conditions (`CheckFluidVolume`: level, volume, operator,
-amount):
-
-| pool                                                            | quest                                                         |
-| --------------------------------------------------------------- | ------------------------------------------------------------- |
-| Tianjing Courtyard pond, Wuling City (22800060004, 40000, 35 m) | `gm02m10` "Treasure Beneath the Pond", q#2: at 800 or less    |
-| Pool 1, Test Area (23200010000, sewage, 4000, 12 m)             | `gm02m14` "Divvy Up the Trouble", q#2 "Drain Pool 1": under 1 |
-
-the pond's check is the fallback of q#2 "Connect the Fluid Pump to the pond", which otherwise
-completes when a fluid pump runs in the quest's area. the wait itself is q#3 "Wait for the pond's
-water to be drained", a server-evaluated condition that names no volume and carries the same
-threshold (progress at 800 or less). "Drain Pool 1" also completes on a dialog option or an
-interactive's state. their beds hold content that's always placed (the pond's gate, statue keys and
-chests, the Test Area pits' valve wheels), submerged until drained. nothing else switches with the
-drain: no scene state, script group, load gate or `OnWaterVolumeChanged` listener reads either pool.
-Pool 2 (23200010003) beside Pool 1 drains the same way, but no quest needs it.
+the pond's check is a fallback for q#2 ("Connect the Fluid Pump to the pond"); q#3 ("Wait for the
+pond's water to be drained") uses a server-evaluated `≤ 800` progress check naming no volume. "Drain
+Pool 1" can also complete via dialog or interactive state. submerged bed content (pond gate, statue
+keys, chests; Test Area valve wheels) is always placed — no scene state, script group, load gate, or
+`OnWaterVolumeChanged` listener depends on draining. Pool 2 (`23200010003`) drains identically
+without a quest.
 
 ### floaters
 
-interactives with component 39 (`BelongToWaterVolume`) ride a volume's surface: lily pads
-(`int_water_volume_floater*`), ice floes and art groups of lotus plants. their parameters:
+interactives with component 39 (`BelongToWaterVolume`) ride a volume's surface (lily pads
+`int_water_volume_floater*`, ice floes, lotus groups):
 
-| key               | meaning                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `water_volume`    | the volume's id                                                                       |
-| `lock_offset`     | x, z offset from the volume's surface position (the authored position less the pivot) |
-| `surface_offset`  | height above the surface once following it (absent, so 0, on the floaters seen)       |
-| `ground_distance` | not recovered; values near the pit floor's height suggest a lowest height             |
-| `is_locked`       | whether it starts locked to the surface                                               |
+| key               | meaning                                                              |
+| ----------------- | -------------------------------------------------------------------- |
+| `water_volume`    | volume id                                                            |
+| `lock_offset`     | `(x, z)` offset from volume pivot (`authoredPos − pivot`)            |
+| `surface_offset`  | height above surface when following (absent → 0 on checked floaters) |
+| `ground_distance` | unrecovered; values near pit floor suggest a minimum height          |
+| `is_locked`       | whether it starts locked to the surface                              |
 
-floaters are placed on the authored surface. once the water moves they follow it with an ease that
-lags more the further it moves. the floaters' own `surface_offset` (0) rather than their authored
-height (some sit up to 0.5 m above the surface) is then what keeps them above it.
+floaters start at their authored height (up to 0.5 m above the surface). once the water moves, they
+follow with distance-dependent lag using `surface_offset` (0) instead of their authored height.
 
 ## WaterProxy and WaterDecal
 
-no static InitChunkData renderer uses an `HGRP/WaterProxy` or `HGRP/WaterDecal` material; both
-arrive through prefab content, and WaterDecal boxes also through InitChunkData component 31
-([world](world.md#initchunkdata-layout)): entities without a renderer (347 on map02), each a
-172-byte `HGWaterDecalComponent` row holding a matrix and the box's `HGWaterDecalRenderer` values,
-its mesh (the render pipeline's cube) and material named in StreamingChunkData. the first
-`animParam` vector holds the renderer's tiling, speed, opacity and brightness and the second its
-displacement and tint (the shader's two per-draw vectors, below); most rows are neutral (all 1), the
-rest dim, slow, stop or tint their box: the one over Si's Painting's pool falls
-(`waterdecal_01#10_1115149`) has speed 0, brightness 0.535 and displacement 0.354. `HGRP/WaterProxy`
-has only the water pipeline's passes (top-down prepass, wetness mask, depth, the water G-buffer),
-none of which a scene renderer draws in the main view; a few map02 river meshes carry it
+no static InitChunkData renderer uses `HGRP/WaterProxy` or `HGRP/WaterDecal`; both arrive via
+prefabs, and WaterDecal boxes also via InitChunkData component 31
+([world.md](world.md#initchunkdata-layout)): 347 renderer-less entities on map02, each a 172-byte
+`HGWaterDecalComponent` row holding a matrix and two `animParam` vectors
+(`(tiling, speed, opacity, brightness)` and `(displacement, tint.rgb)`), with pipeline cube mesh and
+material in StreamingChunkData. most rows are neutral (all 1); others dim, slow, stop, or tint (e.g.
+Si's Painting pool falls `waterdecal_01#10_1115149`: speed 0, brightness 0.535, displacement 0.354).
+
+`HGRP/WaterProxy` contains only water-pipeline passes (top-down prepass, wetness mask, depth, water
+G-buffer) and never draws in the main scene pass; a few map02 river meshes carry it
 (`M_river_proxy_22`).
 
 ### WaterDecal
 
-WaterDecal boxes put foam on the pools and channels at the foot and lip of waterfalls: a `Cube`
-`MeshRenderer` with the material and an `HGWaterDecalRenderer` component beside it. they don't draw
-into the scene. after the water's G-buffer, the pipeline draws them (pass `WaterDecalDeferred`) into
-the water's 8-bit foam colour target (`R8G8B8A8_UNorm`, rgb the foam colour, a the config index),
-which the water lighting then lights as its foam: diffuse sun and ambient, transmission and
-`emissiveStrength` ([shading](#shading)). a box therefore shows only where water is, and the foam
-colour, its own and the boxes', saturates at 1.
+foam boxes placed at waterfall feet/lips (`Cube` `MeshRenderer` + `HGWaterDecalRenderer`). after the
+water G-buffer, pass `WaterDecalDeferred` draws them into the 8-bit foam target (`R8G8B8A8_UNorm`:
+`rgb` foam colour, `a` config index), which the water lighting pass then shades (diffuse
+sun/ambient, transmission, `emissiveStrength`; [shading](#shading)). boxes therefore appear only on
+water pixels, saturating at 1.
 
-per covered pixel, the box takes the water surface's depth (the water prepass's, which the pipeline
-binds just before), reconstructs the world position there and moves it into the box's frame:
+each fragment reconstructs world position from `depthWithWater` (copied as water depth) and
+transforms it into box-local space:
 
-- **UVs.** `local.xz + 0.5`, through `_UVScaleOffset`. each texture picks its source by a switch
-  (`_BaseColorSwitchUV`, `_DisturbSwitchUV`, `_MaskUVSet`, `_DissolveSwitchUV`): 0 those box UVs, 1
-  polar coordinates about their centre (the angle as a fraction of a turn, twice the distance), 2
-  the world's x and z over 10 m, 3 the mesh's UV0. fractional values blend between neighbours.
-- **distortion.** `_USE_DISTURB`: `_DisturbTex1`'s red (UVs scrolled by `_DisturbUVSpeed1.xy`, then
-  its `_ST`), remapped by `_Bi_Disturb`, times `_DisturbU/VIntensity1`, shifts the base, mask and
-  dissolve UVs by their `_…UseDisturb` fractions. its sample takes a mip bias from a material value
-  the shader's parameter table doesn't name.
-- **mip bias.** the base colour map is sampled with a bias of `floor(_MinMipLevel) + floor(_Bias)`
-  levels and the mask with `floor(_Bias)`; the bamboo raft's wake has `_Bias` 2.3.
-- **colour.** `_BaseColorMap` at its UVs through `_ST` (scaled by the placement's tiling), then
-  scrolled by `_BaseColorSpeed.xy` (times the placement's speed).
-  `a' = _UseAChannelAsAlpha ? a : 1`; colour `= _BaseColor + rgb · a' · _BaseColorTint` (`[HDR]`),
-  times `_MaskTex` (`_USE_MASK`; its UVs turned about 0.5 by `_MaskTexUVRotateMatrix`, then `_ST`,
-  then scrolled), and its alpha with `_UseMaskTexAsAlpha`. the output is that times `1 + a'`, the
-  edge fade, `_OverallOpacity`, and the placement's opacity, brightness and tint.
-- **dissolve.** `_USE_DISSOLVE`: `_DissolveTex`'s red at mip level `floor(_Bias)` (UVs scrolled,
-  then `_ST`) less `_DissolveScheduleOffset · 2.02 − 1.01`, as in VFXBaseV2, scales colour and
-  alpha, with `_DissolveEmissiveColor` on the edge.
-- **fades.** `_UseEdgeFade`: `saturate(1 − |abs(uv − 0.5) + _EdgeFadeRange.xy| · √2)`, radial, 0 at
-  the corners. `_USE_SOFTBLEND`: `saturate((saturate(water − face) + _SoftBias) / _SoftDistance)`,
-  both reversed-Z device depths, the face being the box's fragment. `_MeshType` ≠ 0 drops positions
-  outside the box; otherwise only the edge fade bounds it.
-- **blending.** fixed by the pass, not the material: premultiplied (One, OneMinusSrcAlpha) into rgb
-  alone, alpha `(1 + a') · (1 − _BlendMode)`; every map02 material is `_BlendMode` 1, adding its
-  foam. the pass also draws only where stencil bit 0 is set (compare Equal, reference 1), which the
-  water's passes set on its pixels ([how surfaces are drawn](#how-surfaces-are-drawn)). the box is
-  culled by `_CullMode` and depth-tested by `_ZTest` (4, LessEqual, for most; 5, Greater, with front
-  faces culled, for `M_fx_map02_lv001_waterfall_2105_05`; 8, Always, for the bamboo raft's wake
-  `M_fx_interactive_bambooraft_waterdecal_802`), and writes no depth. the depth it's tested against
-  is `depthWithWater`, the scene's depth with the water surfaces drawn into it, whose copy is also
-  the water depth it reads; the camera's own depth buffer holds the scene without water. on the
-  water pixels the stencil leaves it, that's the nearest surface's depth, so a box with front faces
-  culled and `_ZTest` 5 covers wherever the water lies in front of its back faces, however far the
-  bed drops below them.
+- **UVs**: `local.xz + 0.5` through `_UVScaleOffset`. switches (`_BaseColorSwitchUV`,
+  `_DisturbSwitchUV`, `_MaskUVSet`, `_DissolveSwitchUV`) select: `0` box UVs, `1` polar
+  (`angle / 2π`, `2 · radius`), `2` `world.xz / 10`, `3` mesh UV0 (fractional values blend
+  neighbours).
+- **distortion (`_USE_DISTURB`)**: `_DisturbTex1.r` (UV scrolled by `_DisturbUVSpeed1.xy`, then
+  `_ST`, remapped by `_Bi_Disturb`, scaled by `_DisturbU/VIntensity1`, plus an unnamed mip-bias
+  parameter) offsets base, mask, and dissolve UVs by their `_…UseDisturb` fractions.
+- **mip bias**: base map uses `floor(_MinMipLevel) + floor(_Bias)`; mask uses `floor(_Bias)` (bamboo
+  raft wake has `_Bias = 2.3`).
+- **colour**: `_BaseColorMap` (UVs scaled by `_ST` × placement tiling, scrolled by
+  `_BaseColorSpeed.xy` × placement speed). `a' = _UseAChannelAsAlpha ? a : 1`;
+  `colour = (_BaseColor + rgb · a' · _BaseColorTint) · mask` (`_USE_MASK`: UVs rotated about 0.5 by
+  `_MaskTexUVRotateMatrix`, `_ST`, scrolled; alpha applied if `_UseMaskTexAsAlpha`). final output
+  multiplies by `(1 + a')`, edge fade, `_OverallOpacity`, and placement opacity/brightness/tint.
+- **dissolve (`_USE_DISSOLVE`)**: `_DissolveTex.r` at mip `floor(_Bias)` (scrolled, then `_ST`)
+  minus `_DissolveScheduleOffset · 2.02 − 1.01` scales colour/alpha and adds
+  `_DissolveEmissiveColor` at the edge (same as VFXBaseV2).
+- **fades**: `_UseEdgeFade`: `saturate(1 − |abs(uv − 0.5) + _EdgeFadeRange.xy| · √2)` (0 at
+  corners). `_USE_SOFTBLEND`: `saturate((saturate(water − face) + _SoftBias) / _SoftDistance)`
+  (reversed-Z device depths). `_MeshType != 0` clips outside the box.
+- **render state**: fixed premultiplied blend `(One, OneMinusSrcAlpha)` into RGB only; alpha
+  `(1 + a') · (1 − _BlendMode)` (all map02 materials set `_BlendMode = 1`, additive foam). stencil
+  `Equal 1` on bit 0 (set by water passes). culled by `_CullMode`, depth-tested by `_ZTest` against
+  `depthWithWater` without writing depth (`4` LessEqual for most; `5` Greater + front-cull for
+  `M_fx_map02_lv001_waterfall_2105_05`, covering all water in front of back faces; `8` Always for
+  bamboo raft wake `M_fx_interactive_bambooraft_waterdecal_802`).
 
-the placement's `HGWaterDecalRenderer` holds `tilling`, `speed`, `opacity`, `brightness`,
-`tintColor` (the values above), `displacement` (the WaterDecalDisplacement pass, which writes a
-height into the LOD grid's top-down view), `useSH`, `anchorOffset`, `enableMovement`, `renderType`,
-`heightLayer`, `sortingOrder` and `waterStreamingType`. every map02 prefab's renderer has tiling,
-speed, opacity and brightness 1 and a white tint; only `displacement` and `enableMovement` vary.
+`HGWaterDecalRenderer` stores `tilling`, `speed`, `opacity`, `brightness`, `tintColor`,
+`displacement` (used by `WaterDecalDisplacement` into the LOD top-down height view), `useSH`,
+`anchorOffset`, `enableMovement`, `renderType`, `heightLayer`, `sortingOrder`, and
+`waterStreamingType`. all map02 prefab renderers use neutral tiling/speed/opacity/brightness (1) and
+white tint; only `displacement` and `enableMovement` vary.
 
-map02's prefab WaterDecal materials use `_BLEND_BASECOLOR` with `_USE_DISTURB` and `_USE_MASK`, plus
-`_USE_SOFTBLEND`, `_USE_DISSOLVE` or `_USE_WATER_EROSION`; the shader also has
-`_USE_SEQUENCE_FRAME`, `_USE_TWO_LAYER_FLOATING_MAP`, `_BLEND_BASECOLOR2` and `_USE_BUBBLE`
-variants.
+map02 prefab decals use `_BLEND_BASECOLOR`, `_USE_DISTURB`, `_USE_MASK`, plus `_USE_SOFTBLEND`,
+`_USE_DISSOLVE`, or `_USE_WATER_EROSION`. other shader variants: `_USE_SEQUENCE_FRAME`,
+`_USE_TWO_LAYER_FLOATING_MAP`, `_BLEND_BASECOLOR2`, `_USE_BUBBLE`.
 
 #### water erosion
 
-`_USE_WATER_EROSION` draws the red tide's flowing front over the foam. Wuling City's
-(`M_fxmap_waterdecal_03` on an 810 × 360 m sheet, `S_fx_chichao_2102_1`, in
-`p_fxmap_map02_lv002_shuiqingshi_03`, shown once The Breach (`e9m3`) is completed) is the only
-material with it. every texture reads the mesh's UV0 (`uv` below), and `t` is `_Time.y`:
+`_USE_WATER_EROSION` renders the red tide's flowing front over foam. used only by Wuling City's
+`M_fxmap_waterdecal_03` on an 810 × 360 m sheet (`S_fx_chichao_2102_1` in
+`p_fxmap_map02_lv002_shuiqingshi_03`, shown after The Breach `e9m3`). all textures sample mesh UV0
+(`uv`), `t = _Time.y`:
 
-- **noise.**
+- **noise**:
   `n = _FlowmapNoiseTex.r(uv · _ST + _FlowmapNoiseMovement.xy · t) · _FlowmapNoiseStrength`.
-- **flowmap.** `F = _FlowmapTex(uv · _ST, its u plus n · _FlowmapUVNoiseStrength)`, and the front
+- **flowmap**: `F = _FlowmapTex(uv · _ST + (n · _FlowmapUVNoiseStrength, 0))`; front
   `E = saturate(F · _FlowDistance + n + _FlowOffset)`.
-- **gradient.** `G = _FlowGradienteTex` at u
-  `saturate(saturate(uv.x · _FlowDistance + n + _FlowOffset) · _ST.x + _ST.z)`, v `uv.y · _ST.y` (no
-  v offset). the flowmap and the gradient are sampled with the pipeline's linear clamping sampler,
-  whatever their textures' wrap modes; the other textures with its linear repeating one.
-- **edge colours.** three layers, `L = _EdgeSharpColor · saturate(E.y − _EdgeSharp) · N · G.a` (and
-  `…2` from `E.z`, `…3` from `E.w`), where `N` is `saturate(_FlowGradientNoiseTex.rgb)` (`…2`, `…3`)
-  at `uv · _FlowGradientMovement.zw + _FlowGradientMovement.xy · t`, read three mip levels finer and
-  without the texture's `_ST`.
-- **colour.** the foam colour (after the mask) times `1 − |F.rgb|`, covered by the second layer by
-  `saturate(|L₂|)`, then the third, then the first, plus `G.rgb · _EdgeColor · F.r`; the output
-  takes `1 + a'`, the edge fade and the opacities as without the keyword. the variant has no
-  dissolve.
+- **gradient**: `G = _FlowGradienteTex` at
+  `u = saturate(saturate(uv.x · _FlowDistance + n + _FlowOffset) · _ST.x + _ST.z)`,
+  `v = uv.y · _ST.y` (no `v` offset). `F` and `G` always use linear clamp; other textures use linear
+  repeat.
+- **edge layers (1..3)**:
+  `L_i = _EdgeSharpColor_i · saturate(E.{y,z,w} − _EdgeSharp_i) · N_i · G.a`, where
+  `N_i = saturate(_FlowGradientNoiseTex_i.rgb)` at
+  `uv · _FlowGradientMovement_i.zw + _FlowGradientMovement_i.xy · t` (mip bias −3, ignores `_ST`).
+- **colour**: masked foam × `(1 − |F.rgb|)`, layered over by `L₂` (weight `saturate(|L₂|)`), then
+  `L₃`, then `L₁`, plus `G.rgb · _EdgeColor · F.r`, then `(1 + a')`, edge fade, and opacities as
+  usual (no dissolve).
 
-the material's distortion strengths are 0 and its mask is unset, so neither changes it. its flowmap
-`_ST` (15 × 1.29, offset −11.75) and gradient `_ST` (300 × 1, offset −297.4) put a single front
-across the sheet between about 0.78 and 0.85 of UV0's u; elsewhere the clamped textures hold their
-edge texels.
+`M_fxmap_waterdecal_03` sets distortion strengths to 0 and leaves mask unset; its flowmap `_ST`
+(`15 × 1.29`, offset `−11.75`) and gradient `_ST` (`300 × 1`, offset `−297.4`) place one front
+across `u ≈ 0.78–0.85`.
 
 ## open
 
-- clipmap LOD grid extent and top-down prepass view bounds (unrecovered)
+- clipmap LOD grid extent and top-down prepass view bounds (unrecovered).
 - [water volumes](#water-volumes): `ground_distance`, server starting amount vs authored amount on
-  depletable pools, whether an empty pool's surface still draws, and whether the timer step is
-  inferred accurately
-- [WaterDecal](#waterproxy-and-waterdecal): unnamed distortion texture mip-bias material value
+  depletable pools, whether an empty pool's surface still draws, and confirming the inferred
+  1-minute `timer` step.
+- [WaterDecal](#waterproxy-and-waterdecal): unnamed distortion texture mip-bias material parameter.
 - visual checks against in-game shots: Wuling falls grey-teal vs white, Test Area sewage/acid
-  opacity, Suiming lily pad depth at stage 1, and overlapping volume + placed surface draws
+  opacity, Suiming lily pad depth at stage 1, and overlapping volume + placed surface draws.
