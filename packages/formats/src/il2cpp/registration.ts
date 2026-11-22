@@ -72,13 +72,20 @@ export class Il2CppRuntime {
 		this.metadata = metadata;
 		this.#image = image;
 		const { view } = image;
-		const count = BigInt(metadata.typeDefinitionCount);
+		const dv = view.view;
+		const countLo = metadata.typeDefinitionCount >>> 0;
+		const countHi = Math.floor(metadata.typeDefinitionCount / 0x1_0000_0000);
 		const found: number[] = [];
 		for (const section of image.sections.filter(({ name }) => name === '.data' || name === '.rdata')) {
-			const end = section.rawOffset + section.rawSize - 128;
+			const end = Math.min(section.rawOffset + section.rawSize - 128, view.length - 24);
 			for (let at = section.rawOffset + 80; at < end; at += 8) {
 				// fieldOffsetsCount at +80 and typeDefinitionsSizesCount at +96 of the registration
-				if (view.u64(at) !== count || view.u64(at + 16) !== count) {
+				if (
+					dv.getUint32(at, true) !== countLo ||
+					dv.getUint32(at + 4, true) !== countHi ||
+					dv.getUint32(at + 16, true) !== countLo ||
+					dv.getUint32(at + 20, true) !== countHi
+				) {
 					continue;
 				}
 				const base = at - 80;
@@ -117,15 +124,6 @@ export class Il2CppRuntime {
 	}
 
 	/**
-	 * @param index a type table index
-	 * @returns the attribute flags of that type entry (field and parameter types carry their member's flags)
-	 */
-	typeAttributes(index: number): number {
-		const { view } = this.#image;
-		return view.u32(requireVaOffset(this.#image, view.u64(this.#types + index * 8)) + 8) & 0xffff;
-	}
-
-	/**
 	 * @param definition a type definition
 	 * @returns its fields, constants left out, with offsets for instance fields
 	 */
@@ -137,7 +135,7 @@ export class Il2CppRuntime {
 			const tableOffset = table === 0n ? 0 : requireVaOffset(this.#image, table);
 			for (let i = 0; i < definition.fieldCount; i++) {
 				const field = this.metadata.field(definition.fieldStart + i);
-				const attributes = this.typeAttributes(field.typeIndex);
+				const attributes = this.#typeAttributes(field.typeIndex);
 				if ((attributes & FIELD_LITERAL) !== 0) {
 					continue;
 				}
@@ -204,6 +202,11 @@ export class Il2CppRuntime {
 		}
 		this.#definitionNames.set(index, result);
 		return result;
+	}
+
+	#typeAttributes(index: number): number {
+		const { view } = this.#image;
+		return view.u32(requireVaOffset(this.#image, view.u64(this.#types + index * 8)) + 8) & 0xffff;
 	}
 
 	#typeAt(va: bigint): Il2CppTypeRef {

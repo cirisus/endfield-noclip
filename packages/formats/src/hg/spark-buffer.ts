@@ -5,7 +5,7 @@ import { ByteView } from '../binary/byte-view.ts';
 // docs/game-data/containers.md#sparkbuffer-config-tables).
 
 /** value type codes (the game's `SparkType`) */
-export const SparkType = {
+const SparkType = {
 	Bool: 0,
 	Byte: 1,
 	Int: 2,
@@ -19,25 +19,105 @@ export const SparkType = {
 	Map: 10,
 } as const;
 
+/** a decoded SparkBuffer bean or map */
+export type SparkBean = { [field: string]: SparkValue };
+
 /**
  * a decoded SparkBuffer value; enums decode to their numeric value, maps to objects keyed by their keys as
  * strings
  */
-export type SparkValue =
-	| boolean
-	| number
-	| bigint
-	| string
-	| null
-	| SparkValue[]
-	| { [field: string]: SparkValue };
+export type SparkValue = boolean | number | bigint | string | null | SparkValue[] | SparkBean;
 
 /**
  * @param value a decoded value
  * @returns whether it's a bean or a map (an object), not null, a scalar or an array
  */
-export const isSparkBean = (value: SparkValue | undefined): value is { [field: string]: SparkValue } =>
+export const isSparkBean = (value: SparkValue | undefined): value is SparkBean =>
 	value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * @param bean decoded bean
+ * @param field field name
+ * @returns the field as a string
+ * @throws {FormatError} if missing or not a string
+ */
+export const sparkString = (bean: SparkBean, field: string): string => {
+	const value = bean[field];
+	if (typeof value !== 'string') {
+		throw new FormatError(`spark field ${field} is not a string`);
+	}
+	return value;
+};
+
+/**
+ * @param bean decoded bean
+ * @param field field name
+ * @returns the field as a number
+ * @throws {FormatError} if missing or not a number
+ */
+export const sparkNumber = (bean: SparkBean, field: string): number => {
+	const value = bean[field];
+	if (typeof value !== 'number') {
+		throw new FormatError(`spark field ${field} is not a number`);
+	}
+	return value;
+};
+
+/**
+ * @param bean decoded bean
+ * @param field field name
+ * @returns the field as a bigint
+ * @throws {FormatError} if missing or not a bigint
+ */
+export const sparkBigInt = (bean: SparkBean, field: string): bigint => {
+	const value = bean[field];
+	if (typeof value !== 'bigint') {
+		throw new FormatError(`spark field ${field} is not a bigint`);
+	}
+	return value;
+};
+
+/**
+ * @param bean decoded bean
+ * @param field field name
+ * @returns the field as a boolean
+ * @throws {FormatError} if missing or not a boolean
+ */
+export const sparkBool = (bean: SparkBean, field: string): boolean => {
+	const value = bean[field];
+	if (typeof value !== 'boolean') {
+		throw new FormatError(`spark field ${field} is not a boolean`);
+	}
+	return value;
+};
+
+/**
+ * @param bean decoded bean
+ * @param field field name
+ * @returns the field as a nested bean or map
+ * @throws {FormatError} if missing or not a bean
+ */
+export const sparkBean = (bean: SparkBean, field: string): SparkBean => {
+	const value = bean[field];
+	if (!isSparkBean(value)) {
+		throw new FormatError(`spark field ${field} is not a bean`);
+	}
+	return value;
+};
+
+/**
+ * @param bean decoded bean
+ * @param field field name
+ * @returns the field as an array
+ * @throws {FormatError} if missing or not an array
+ */
+export const sparkArray = (bean: SparkBean, field: string): SparkValue[] => {
+	const value = bean[field];
+	if (!Array.isArray(value)) {
+		throw new FormatError(`spark field ${field} is not an array`);
+	}
+	return value;
+};
 
 /** a field's or element's type */
 interface TypeRef {
@@ -71,13 +151,11 @@ export interface SparkTable {
  */
 export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 	const view = new ByteView(bytes, 'spark');
-	const u32 = (at: number): number => view.u32(at);
-	const u8 = (at: number): number => view.u8(at);
-	const cString = (at: number): [string, number] => view.cString(at);
+	let pos = 0;
 
-	/** reads a type ref at `at`; returns it and the position after it */
-	const readRef = (at: number, where: string): [TypeRef, number] => {
-		const type = u8(at);
+	/** reads a type ref at `pos`, advancing `pos` past it */
+	const readRef = (where: string): TypeRef => {
+		const type = view.u8(pos++);
 		switch (type) {
 			case SparkType.Bool:
 			case SparkType.Byte:
@@ -86,21 +164,22 @@ export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 			case SparkType.Float:
 			case SparkType.Double:
 			case SparkType.String: {
-				return [{ type, typeHash: 0, key: null, element: null }, at + 1];
+				return { type, typeHash: 0, key: null, element: null };
 			}
 			case SparkType.Enum:
 			case SparkType.Bean: {
-				const p = align(at + 1, 4);
-				return [{ type, typeHash: u32(p), key: null, element: null }, p + 4];
+				pos = align(pos, 4);
+				const typeHash = view.u32(pos);
+				pos += 4;
+				return { type, typeHash, key: null, element: null };
 			}
 			case SparkType.Array: {
-				const [element, after] = readRef(at + 1, where);
-				return [{ type, typeHash: 0, key: null, element }, after];
+				return { type, typeHash: 0, key: null, element: readRef(where) };
 			}
 			case SparkType.Map: {
-				const [key, afterKey] = readRef(at + 1, `${where} key`);
-				const [element, after] = readRef(afterKey, `${where} value`);
-				return [{ type, typeHash: 0, key, element }, after];
+				const key = readRef(`${where} key`);
+				const element = readRef(`${where} value`);
+				return { type, typeHash: 0, key, element };
 			}
 			default: {
 				throw new FormatError(`unsupported spark type ${type} in ${where}`);
@@ -108,128 +187,146 @@ export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 		}
 	};
 
+	const readCString = (): string => {
+		const [value, end] = view.cString(pos);
+		pos = end;
+		return value;
+	};
+
 	const types = new Map<number, BeanType>();
 	{
-		let at = u32(0);
-		const count = u32(at);
-		at += 4;
+		pos = view.u32(0);
+		const count = view.u32(pos);
+		pos += 4;
 		for (let t = 0; t < count; t++) {
-			const kind = u8(at);
+			const kind = view.u8(pos++);
 			if (kind !== SparkType.Bean && kind !== SparkType.Enum) {
 				throw new FormatError(`unsupported spark type definition kind ${kind}`);
 			}
-			at = align(at + 1, 4);
-			const hash = u32(at);
-			const [name, afterName] = cString(at + 4);
-			at = align(afterName, 4);
-			const memberCount = u32(at);
-			at += 4;
+			pos = align(pos, 4);
+			const hash = view.u32(pos);
+			pos += 4;
+			const name = readCString();
+			pos = align(pos, 4);
+			const memberCount = view.u32(pos);
+			pos += 4;
 			if (kind === SparkType.Enum) {
 				// values are read as numbers, so the names aren't kept
 				for (let v = 0; v < memberCount; v++) {
-					at = align(cString(at)[1], 4) + 4;
+					pos = align(view.cString(pos)[1], 4) + 4;
 				}
 				continue;
 			}
 			const fields: BeanType['fields'] = [];
 			for (let f = 0; f < memberCount; f++) {
-				const [fieldName, afterField] = cString(at);
-				const [ref, afterRef] = readRef(afterField, `${name}.${fieldName}`);
-				at = afterRef;
+				const fieldName = readCString();
+				const ref = readRef(`${name}.${fieldName}`);
 				fields.push({ name: fieldName, ref });
 			}
 			types.set(hash, { name, fields });
 		}
 	}
 
-	const rootAt = u32(4);
-	const rootKind = u8(rootAt);
+	pos = view.u32(4);
+	const rootKind = view.u8(pos++);
 	if (rootKind !== SparkType.Map) {
 		throw new FormatError(`unsupported spark root kind ${rootKind}`);
 	}
-	const [name, afterName] = cString(rootAt + 1);
-	const [keyRef, afterKeyRef] = readRef(afterName, `${name} key`);
-	const [valueRef] = readRef(afterKeyRef, `${name} value`);
+	const name = readCString();
+	const keyRef = readRef(`${name} key`);
+	const valueRef = readRef(`${name} value`);
 
-	/** reads a value of type `ref` packed at or after `pos`; returns it and the position after it */
-	const read = (ref: TypeRef, pos: number): [SparkValue, number] => {
+	/** reads a value of type `ref` packed at or after `pos`, advancing `pos` past it */
+	const read = (ref: TypeRef): SparkValue => {
 		switch (ref.type) {
 			case SparkType.Bool: {
-				return [u8(pos) !== 0, pos + 1];
+				return view.u8(pos++) !== 0;
 			}
 			case SparkType.Byte: {
-				return [u8(pos), pos + 1];
+				return view.u8(pos++);
 			}
 			case SparkType.Float: {
 				const p = align(pos, 4);
-				return [view.f32(p), p + 4];
+				pos = p + 4;
+				return view.f32(p);
 			}
 			case SparkType.Double: {
 				const p = align(pos, 8);
-				return [view.f64(p), p + 8];
+				pos = p + 8;
+				return view.f64(p);
 			}
 			case SparkType.Int:
 			case SparkType.Enum: {
 				const p = align(pos, 4);
-				return [view.i32(p), p + 4];
+				pos = p + 4;
+				return view.i32(p);
 			}
 			case SparkType.Long: {
 				const p = align(pos, 8);
-				return [view.i64(p), p + 8];
+				pos = p + 8;
+				return view.i64(p);
 			}
 			case SparkType.String: {
 				const p = align(pos, 4);
-				const offset = u32(p);
-				return [offset === 0xffffffff ? null : cString(offset)[0], p + 4];
+				const offset = view.u32(p);
+				pos = p + 4;
+				return offset === 0xffffffff ? null : view.cString(offset)[0];
 			}
 			case SparkType.Bean: {
 				const p = align(pos, 4);
-				const offset = u32(p);
-				return [offset === 0xffffffff ? null : readBean(ref.typeHash, offset), p + 4];
+				const offset = view.u32(p);
+				if (offset === 0xffffffff) {
+					pos = p + 4;
+					return null;
+				}
+				const bean = readBean(ref.typeHash, offset);
+				pos = p + 4;
+				return bean;
 			}
 			case SparkType.Array: {
 				const p = align(pos, 4);
-				const offset = u32(p);
+				const offset = view.u32(p);
 				if (offset === 0xffffffff) {
-					return [null, p + 4];
+					pos = p + 4;
+					return null;
 				}
 				const items: SparkValue[] = [];
-				let q = offset + 4;
-				for (let i = 0, count = u32(offset); i < count; i++) {
-					const [item, next] = read(ref.element!, q);
-					items.push(item);
-					q = next;
+				const count = view.u32(offset);
+				pos = offset + 4;
+				for (let i = 0; i < count; i++) {
+					items.push(read(ref.element!));
 				}
-				return [items, p + 4];
+				pos = p + 4;
+				return items;
 			}
 			case SparkType.Map: {
 				const p = align(pos, 4);
-				const offset = u32(p);
+				const offset = view.u32(p);
 				if (offset === 0xffffffff) {
-					return [null, p + 4];
+					pos = p + 4;
+					return null;
 				}
-				const out: { [key: string]: SparkValue } = {};
+				const out: SparkBean = {};
 				for (const [key, value] of readMap(ref.key!, ref.element!, offset, 'nested map')) {
 					out[String(key)] = value;
 				}
-				return [out, p + 4];
+				pos = p + 4;
+				return out;
 			}
 			default: {
 				throw new FormatError(`unsupported spark value type ${ref.type}`);
 			}
 		}
 	};
-	const readBean = (hash: number, pos: number): { [field: string]: SparkValue } => {
+	const readBean = (hash: number, start: number): SparkBean => {
 		const type = types.get(hash);
 		if (type === undefined) {
 			throw new FormatError(`unknown spark bean hash ${hash.toString(16)}`);
 		}
-		const out: { [field: string]: SparkValue } = {};
-		let p = pos;
+		const out: SparkBean = {};
+		pos = start;
 		for (const field of type.fields) {
-			const [value, next] = read(field.ref, p);
-			out[field.name] = value;
-			p = next;
+			out[field.name] = read(field.ref);
 		}
 		return out;
 	};
@@ -249,26 +346,25 @@ export const parseSparkTable = (bytes: Uint8Array): SparkTable => {
 			throw new FormatError(`unsupported spark key type ${keyType.type} in ${where}`);
 		}
 		const entries: SparkTable['entries'] = [];
-		const slots = u32(data);
+		const slots = view.u32(data);
 		for (let s = 0; s < slots; s++) {
-			const offset = u32(data + 4 + s * 8);
-			const count = u32(data + 8 + s * 8);
-			let p = offset;
+			const offset = view.u32(data + 4 + s * 8);
+			const count = view.u32(data + 8 + s * 8);
+			pos = offset;
 			for (let i = 0; i < count; i++) {
-				const [key, afterKey] = read(keyType, p);
-				const [value, afterValue] = read(valueType, afterKey);
+				const key = read(keyType);
+				const value = read(valueType);
 				// the key type was checked above; this narrows the value for TypeScript
 				if (key === null || typeof key === 'object' || typeof key === 'boolean') {
 					throw new FormatError(`null spark key in ${where}`);
 				}
 				entries.push([key, value]);
-				p = afterValue;
 			}
 		}
 		return entries;
 	};
 
-	return { name, entries: readMap(keyRef, valueRef, u32(8), name) };
+	return { name, entries: readMap(keyRef, valueRef, view.u32(8), name) };
 };
 
 const align = (at: number, to: number): number => Math.ceil(at / to) * to;

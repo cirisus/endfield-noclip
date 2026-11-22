@@ -1,7 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { parseSparkTable, SparkType } from './spark-buffer.ts';
+import { FormatError } from '../binary/binary-reader.ts';
+
+import {
+	parseSparkTable,
+	sparkArray,
+	sparkBean,
+	sparkBigInt,
+	sparkBool,
+	sparkNumber,
+	sparkString,
+} from './spark-buffer.ts';
+
+const SparkType = {
+	Bool: 0,
+	Byte: 1,
+	Int: 2,
+	Long: 3,
+	Float: 4,
+	Double: 5,
+	Enum: 6,
+	String: 7,
+	Bean: 8,
+	Array: 9,
+	Map: 10,
+} as const;
 
 /** little byte-buffer builder with natural alignment */
 class Buffer {
@@ -307,4 +331,28 @@ test('decodes bool, byte, float and double fields with natural alignment', () =>
 
 test('rejects unsupported field types', () => {
 	assert.throws(() => parseSparkTable(buildBeanTable(42)), /unsupported spark type 42 in LevelDescData\.id/);
+});
+
+test('typed bean accessors validate and narrow field values', () => {
+	const bean = {
+		name: 'map02',
+		count: 3,
+		id: 42n,
+		active: true,
+		nested: { x: 1 },
+		items: [1, 2],
+	};
+	assert.equal(sparkString(bean, 'name'), 'map02');
+	assert.equal(sparkNumber(bean, 'count'), 3);
+	assert.equal(sparkBigInt(bean, 'id'), 42n);
+	assert.equal(sparkBool(bean, 'active'), true);
+	assert.deepEqual(sparkBean(bean, 'nested'), { x: 1 });
+	assert.deepEqual(sparkArray(bean, 'items'), [1, 2]);
+
+	assert.throws(() => sparkString(bean, 'count'), FormatError);
+	assert.throws(() => sparkNumber(bean, 'name'), FormatError);
+	assert.throws(() => sparkBigInt(bean, 'count'), FormatError);
+	assert.throws(() => sparkBool(bean, 'count'), FormatError);
+	assert.throws(() => sparkBean(bean, 'items'), FormatError);
+	assert.throws(() => sparkArray(bean, 'nested'), FormatError);
 });
