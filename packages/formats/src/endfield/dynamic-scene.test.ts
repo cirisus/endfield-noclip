@@ -4,8 +4,7 @@ import { test } from 'node:test';
 import { FormatError } from '../binary/binary-reader.ts';
 import { FlatBuffer } from '../binary/flatbuffer.ts';
 
-import { dynamicResourceSlice, readDynamicResources } from './dynamic-resources.ts';
-import { DynamicData, readDynamicEntities } from './dynamic-scene.ts';
+import { DynamicData, dynamicResourceSlice, readDynamicScene } from './dynamic-scene.ts';
 
 // #region synthetic FlatBuffer writer
 
@@ -224,7 +223,7 @@ const build = (
 };
 
 test('reads entity ids, controllers and resource groups', () => {
-	const [settlement, poi] = readDynamicEntities(build());
+	const [settlement, poi] = readDynamicScene(build()).entities;
 	assert.equal(settlement.grid, GRID);
 	assert.equal(settlement.uid, 10200000003n);
 	assert.equal(settlement.entityType, 16);
@@ -245,7 +244,7 @@ test('reads entity ids, controllers and resource groups', () => {
 });
 
 test('reads mission and loading variable gates; level-only variables are not gates', () => {
-	const [settlement, poi] = readDynamicEntities(build({ gates: { compare: 1 } }));
+	const [settlement, poi] = readDynamicScene(build({ gates: { compare: 1 } })).entities;
 	assert.deepEqual(settlement.gates, []);
 	assert.deepEqual(poi.gates, [
 		{
@@ -259,25 +258,31 @@ test('reads mission and loading variable gates; level-only variables are not gat
 		},
 		{ kind: 'globalVar', key: 79, compare: 1, value: 3, mapId: null },
 	]);
-	assert.throws(() => readDynamicEntities(build({ gates: { compare: 6 } })), /globalVar control/);
+	assert.throws(() => readDynamicScene(build({ gates: { compare: 6 } })), /globalVar control/);
 });
 
 test('rejects a ResourceComp whose Res slice is not a ResourceGroupWithStateDesc slice', () => {
-	assert.throws(() => readDynamicEntities(build({ resType: DynamicData.Model })), FormatError);
+	assert.throws(() => readDynamicScene(build({ resType: DynamicData.Model })), FormatError);
 });
 
 test('dynamic resources preserve both visibility gates and exact model/ECS references', () => {
-	const result = readDynamicResources(build());
+	const result = readDynamicScene(build());
 	assert.deepEqual(
 		result.entities.map((row) => row.states),
 		[[], [42]],
 	);
-	assert.deepEqual(result.entities[0].groupStates, [[], [42], []]);
+	assert.deepEqual(
+		result.entities[0].resourceGroups.map((g) => g.states),
+		[[], [42], []],
+	);
 	assert.deepEqual(
 		result.entities.map((row) => row.areas),
 		[[], [701]],
 	);
-	assert.deepEqual(result.entities[0].groupAreas, [[], [], [701]]);
+	assert.deepEqual(
+		result.entities[0].resourceGroups.map((g) => g.areas),
+		[[], [], [701]],
+	);
 	const grid = result.grids[0];
 	assert.equal(grid.models[0].pathHash, 0x123456789n);
 	assert.deepEqual(grid.models[0].position, [12.5, 0, 0]);
@@ -285,9 +290,9 @@ test('dynamic resources preserve both visibility gates and exact model/ECS refer
 	assert.deepEqual(grid.effects, [
 		{ pathHash: 0xabcdefn, position: [0, -7, 0], rotation: [0, 0, 0], scale: [2, 0, 0], lodGrids: [0, 0] },
 	]);
-	assert.throws(() => readDynamicResources(build({ effectCopy: 3 })), /effect row layout/);
+	assert.throws(() => readDynamicScene(build({ effectCopy: 3 })), /effect row layout/);
 	assert.equal(
-		dynamicResourceSlice(grid.models, result.entities[0].entity.resourceGroups[0].resources)[0],
+		dynamicResourceSlice(grid.models, result.entities[0].resourceGroups[0].resources)[0],
 		grid.models[0],
 	);
 	assert.throws(
@@ -302,20 +307,20 @@ test('dynamic visibility totals must match their owning grid', () => {
 	const grids = fb.vector(fb.root(), 3);
 	const roots = fb.vector(fb.tableAt(grids.start, 0), 33);
 	new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setInt32(roots.start + 36 + 20, 999, true);
-	assert.throws(() => readDynamicResources(bytes), /visibility span/);
+	assert.throws(() => readDynamicScene(bytes), /visibility span/);
 });
 
 test('script-controlled scenery retains its authored load default', () => {
 	assert.deepEqual(
-		readDynamicResources(build()).entities.map((e) => e.scriptDefaultLoad),
+		readDynamicScene(build()).entities.map((e) => e.scriptDefaultLoad),
 		[null, false],
 	);
-	assert.equal(readDynamicResources(build({ scriptDefault: 1 })).entities[1].scriptDefaultLoad, true);
-	assert.throws(() => readDynamicResources(build({ scriptDefault: 2 })), /script default load/);
+	assert.equal(readDynamicScene(build({ scriptDefault: 1 })).entities[1].scriptDefaultLoad, true);
+	assert.throws(() => readDynamicScene(build({ scriptDefault: 2 })), /script default load/);
 });
 
 test('reads an extra-scene slot: box, origin and quarter turns', () => {
-	const entities = readDynamicEntities(build({ slot: true }));
+	const entities = readDynamicScene(build({ slot: true })).entities;
 	assert.equal(entities.length, 3);
 	assert.deepEqual(entities[2].extraScene, {
 		min: [3, 7, 4],
@@ -327,7 +332,7 @@ test('reads an extra-scene slot: box, origin and quarter turns', () => {
 });
 
 test('reads the blight core an erosion root belongs to', () => {
-	const entities = readDynamicEntities(build({ erosion: true }));
+	const entities = readDynamicScene(build({ erosion: true })).entities;
 	assert.equal(entities.length, 3);
 	const position = [550.75, 96.4, -189.7].map(Math.fround);
 	assert.deepEqual(entities[2].erosionCore, { id: 3400020938n, position });
@@ -335,7 +340,7 @@ test('reads the blight core an erosion root belongs to', () => {
 });
 
 test('reads the sludge core a sludge patch belongs to', () => {
-	const entities = readDynamicEntities(build({ sludge: true }));
+	const entities = readDynamicScene(build({ sludge: true })).entities;
 	assert.equal(entities.length, 3);
 	const position = [-930.25, 247.2, 94.2].map(Math.fround);
 	assert.deepEqual(entities[2].sludgeCore, { id: 22800030023n, position });

@@ -74,8 +74,8 @@ unknown classes or malformed fields throw.
 
 `WorldIndex` exposes chunk suffixes as `ChunkFile.sceneState` and `ChunkFile.area` (`scene find`
 accepts `--scene-state` / `--area`).
-[dynamic-resources.ts](../../packages/formats/src/endfield/dynamic-resources.ts) reads visible-state
-lists (`states`, `groupStates`) and visible-area lists (`areas`, `groupAreas`); gating uses these
+[dynamic-scene.ts](../../packages/formats/src/endfield/dynamic-scene.ts) reads visible-state lists
+(`states`) and visible-area lists (`areas`) on entities and resource groups; gating uses these
 lists, never the resource group's `sceneState` field.
 
 [gated content](../game-data/scene-states.md#what-they-gate) follows one rule (union of chunk file

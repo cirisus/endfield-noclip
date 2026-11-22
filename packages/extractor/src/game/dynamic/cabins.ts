@@ -1,10 +1,11 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import {
-	readDynamicResources,
+	DynamicData,
+	readDynamicScene,
+	type DynamicEntity,
 	type DynamicModel,
-	type DynamicResourceEntity,
-} from '@endfield-noclip/formats/endfield/dynamic-resources';
-import { DynamicData, type ExtraSceneSlot } from '@endfield-noclip/formats/endfield/dynamic-scene';
+	type ExtraSceneSlot,
+} from '@endfield-noclip/formats/endfield/dynamic-scene';
 import { cellOf, levelOfCell, type LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { isObject } from '@endfield-noclip/formats/unity/values';
@@ -67,7 +68,7 @@ const findBoxes = async (
 	type: string,
 	models: readonly DynamicModel[],
 	rowOf: ReadonlyMap<string, number>,
-	entities: readonly DynamicResourceEntity[],
+	entities: readonly DynamicEntity[],
 ): Promise<Map<number, { shutter: string; field: number }>> => {
 	const shutters = new Map<bigint, Promise<string | null>>();
 	const shutterOf = (hash: bigint) =>
@@ -93,7 +94,7 @@ const findBoxes = async (
 		}),
 	);
 	const boxes = new Map<number, { shutter: string; field: number }>();
-	for (const { entity } of entities) {
+	for (const entity of entities) {
 		for (const { resources } of entity.resourceGroups) {
 			if (resources.type !== DynamicData.Model) {
 				continue;
@@ -143,20 +144,20 @@ export const loadCabins = async (
 		const models: DynamicModel[] = [];
 		/** row index of each model row, by `<grid>:<index>` */
 		const rowOf = new Map<string, number>();
-		const entities: DynamicResourceEntity[] = [];
+		const entities: DynamicEntity[] = [];
 		for (const name of names.filter((entry) =>
 			entry.startsWith(`Data/DynamicStreaming/PC/Extra/${scene}/fb_main_`),
 		)) {
 			// oxlint-disable-next-line no-await-in-loop -- a few small files
-			const resources = readDynamicResources(await read(VfsGroup.DynamicStreaming, name));
-			for (const grid of resources.grids) {
+			const decoded = readDynamicScene(await read(VfsGroup.DynamicStreaming, name));
+			for (const grid of decoded.grids) {
 				for (const [index, model] of grid.models.entries()) {
 					rowOf.set(`${grid.id}:${index}`, models.length);
 					models.push(model);
 				}
 				models.push(...grid.effects);
 			}
-			entities.push(...resources.entities);
+			entities.push(...decoded.entities);
 		}
 		if (models.length > 0) {
 			const xs = models.map((model) => model.position[0]);

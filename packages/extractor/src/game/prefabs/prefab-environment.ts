@@ -1,6 +1,6 @@
 /* oxlint-disable no-await-in-loop -- traverse in authored order with bounded bundle residency */
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
-import type { DynamicModel } from '@endfield-noclip/formats/endfield/dynamic-resources';
+import type { DynamicModel } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	EnvironmentVolumeType,
 	type EnvironmentVolume,

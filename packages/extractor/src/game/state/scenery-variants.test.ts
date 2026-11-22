@@ -21,6 +21,8 @@ const group = (index: number, logicState: number): DynamicResourceGroup => ({
 	logicState,
 	levelNum: 101,
 	factoryIndex: -1,
+	states: [],
+	areas: [],
 });
 
 const outpost: DynamicEntity = {
@@ -33,6 +35,9 @@ const outpost: DynamicEntity = {
 	variables: [],
 	viewState: null,
 	resourceGroups: [group(0, 0b00011), group(1, 0b00100), group(2, 0b11100), group(3, 0)],
+	states: [],
+	areas: [],
+	scriptDefaultLoad: null,
 	extraScene: null,
 	erosionCore: null,
 	sludgeCore: null,
@@ -48,6 +53,9 @@ const tree: DynamicEntity = {
 	variables: [],
 	viewState: null,
 	resourceGroups: [group(0, 0b01), group(1, 0b10)],
+	states: [],
+	areas: [],
+	scriptDefaultLoad: null,
 	extraScene: null,
 	erosionCore: null,
 	sludgeCore: null,

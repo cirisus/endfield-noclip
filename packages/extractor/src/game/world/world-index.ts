@@ -1,5 +1,5 @@
 import { type ChunkLight, readChunkLights } from '@endfield-noclip/formats/endfield/chunk-lights';
-import { readDynamicEntities, type DynamicEntity } from '@endfield-noclip/formats/endfield/dynamic-scene';
+import { readDynamicScene, type DynamicEntity } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	hasFoliageGrids,
 	readFoliageGrids,
@@ -680,8 +680,10 @@ export class WorldIndex {
 			const names = [...(await this.vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
 				.filter((name) => name.startsWith(prefix))
 				.toSorted();
-			const perFile = await mapPool(names, READ_CONCURRENCY, async (name) =>
-				readDynamicEntities(await this.#read(VfsGroup.DynamicStreaming, name)),
+			const perFile = await mapPool(
+				names,
+				READ_CONCURRENCY,
+				async (name) => readDynamicScene(await this.#read(VfsGroup.DynamicStreaming, name)).entities,
 			);
 			return perFile.flat();
 		});

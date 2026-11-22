@@ -1,4 +1,4 @@
-import type { DynamicModel } from '@endfield-noclip/formats/endfield/dynamic-resources';
+import type { DynamicModel } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { multiplyMatrices, quaternionUnityEuler } from '@endfield-noclip/formats/unity/transform';
 import type { RowPath } from '@endfield-noclip/package-format/instances';

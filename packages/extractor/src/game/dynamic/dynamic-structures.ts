@@ -2,19 +2,16 @@ import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { readChunkLights, type ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
 import {
 	dynamicResourceSlice,
-	readDynamicResources,
+	readDynamicScene,
+	type DynamicDataRef,
 	type DynamicEcs,
 	type DynamicEffect,
+	type DynamicEntity as DynamicSceneEntity,
+	type DynamicGate,
+	type DynamicGrid,
 	type DynamicModel,
-	type DynamicResourceEntity,
-	type DynamicResourceGrid,
-} from '@endfield-noclip/formats/endfield/dynamic-resources';
-import type {
-	DynamicDataRef,
-	DynamicEntity as DynamicSceneEntity,
-	DynamicGate,
-	DynamicVariable,
-	ExtraSceneSlot,
+	type DynamicVariable,
+	type ExtraSceneSlot,
 } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	parseDynamicChunk,
@@ -250,11 +247,11 @@ const blightControl = (id: string, position: readonly [number, number, number]):
  * @returns by blight patch, its link and control
  */
 const claimBlights = (
-	owners: readonly DynamicResourceEntity[],
+	owners: readonly DynamicSceneEntity[],
 	game: GameState,
 ): Map<DynamicSceneEntity, Blight> => {
 	const blights = new Map<DynamicSceneEntity, Blight>();
-	for (const { entity } of owners) {
+	for (const entity of owners) {
 		const link = blightLink(entity);
 		const condition = link === null ? null : gateCondition(link.gate);
 		if (link === null || condition?.kind !== 'mapVar') {
@@ -308,12 +305,12 @@ const READ_CONCURRENCY = 16;
 
 const drivenViewStates = async (
 	context: Pick<Context, 'vfs' | 'memoryPack'>,
-	owners: readonly DynamicResourceEntity[],
+	owners: readonly DynamicSceneEntity[],
 	blights: ReadonlyMap<DynamicSceneEntity, unknown>,
 ): Promise<Map<DynamicSceneEntity, DrivenViewStates>> => {
 	const candidates: { entity: DynamicSceneEntity; model: string; variable: DynamicVariable }[] = [];
 	const uniqueModels = new Set<string>();
-	for (const { entity } of owners) {
+	for (const entity of owners) {
 		const model = entity.viewState?.oldVersion === false ? entity.viewState.model : null;
 		const [variable] = entity.variables;
 		if (model === null || variable === undefined || blights.has(entity)) {
@@ -377,12 +374,12 @@ const levelCondition = (
 /** notes in the game state every condition the owners' load gates, view states and levels read */
 const noteOwnerConditions = (
 	game: GameState,
-	owners: readonly DynamicResourceEntity[],
+	owners: readonly DynamicSceneEntity[],
 	blights: ReadonlyMap<DynamicSceneEntity, Blight>,
 	driven: ReadonlyMap<DynamicSceneEntity, DrivenViewStates>,
 ): void => {
 	game.note(
-		owners.flatMap(({ entity }) => {
+		owners.flatMap((entity) => {
 			const blight = blights.get(entity)?.link.gate;
 			return entity.gates.filter((gate) => gate !== blight).map(gateCondition);
 		}),
@@ -391,7 +388,7 @@ const noteOwnerConditions = (
 		[...driven.values()].flatMap(({ variable, values }) => values.map((v) => variableIs(variable, v))),
 	);
 	game.note(
-		owners.flatMap(({ entity }) =>
+		owners.flatMap((entity) =>
 			mapDefined(entity.resourceGroups, (group) =>
 				group.logicState === 0 ? undefined : (levelCondition(entity, group.logicState, blights) ?? undefined),
 			),
@@ -428,16 +425,16 @@ class DynamicFiles {
 	 * @returns the resource grids by id and the resource owners, from the `fb_main` files in name order
 	 * @throws {FormatError} on a grid id two files share
 	 */
-	async readOwners(): Promise<{ grids: Map<number, DynamicResourceGrid>; owners: DynamicResourceEntity[] }> {
+	async readOwners(): Promise<{ grids: Map<number, DynamicGrid>; owners: DynamicSceneEntity[] }> {
 		const names = [...(await this.#vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
 			.filter((name) => name.startsWith(`${this.#prefix}fb_main_`))
 			.map((name) => name.slice(this.#prefix.length))
 			.toSorted();
 		const perFile = await mapPool(names, READ_CONCURRENCY, async (name) =>
-			readDynamicResources(await this.#read(name)),
+			readDynamicScene(await this.#read(name)),
 		);
-		const grids = new Map<number, DynamicResourceGrid>();
-		const owners: DynamicResourceEntity[] = [];
+		const grids = new Map<number, DynamicGrid>();
+		const owners: DynamicSceneEntity[] = [];
 		for (const decoded of perFile) {
 			for (const grid of decoded.grids) {
 				if (grids.has(grid.id)) {
@@ -555,7 +552,7 @@ type OwnerContext = Pick<Context, 'vfs' | 'memoryPack' | 'world' | 'resolver'>;
 interface OwnerScene {
 	game: GameState;
 	partition: LevelPartition | undefined;
-	grids: ReadonlyMap<number, DynamicResourceGrid>;
+	grids: ReadonlyMap<number, DynamicGrid>;
 	/** how many resource owners the scene has */
 	owners: number;
 	blights: ReadonlyMap<DynamicSceneEntity, Blight>;
@@ -597,8 +594,7 @@ class OwnerPass {
 	}
 
 	/** gates an owner's resource groups and places their rows */
-	async place(owner: DynamicResourceEntity): Promise<void> {
-		const { entity } = owner;
+	async place(entity: DynamicSceneEntity): Promise<void> {
 		const { game, partition, grids, blights } = this.#scene;
 		const ordinal = this.#ordinals.get(entity.grid) ?? 0;
 		this.#ordinals.set(entity.grid, ordinal + 1);
@@ -623,13 +619,13 @@ class OwnerPass {
 			gates = allOf(gates, [[{ control: blight.control.id, mask: 1 << BLIGHT_PRESENT }]]);
 			this.result.erosionCores.set(String(blight.link.core), gates);
 		}
-		for (const [i, group] of entity.resourceGroups.entries()) {
+		for (const group of entity.resourceGroups) {
 			const ref = group.resources;
 			if (ref.count === 0) {
 				continue;
 			}
 			const tag = partition?.levels.find((level) => level.idNum === group.levelNum)?.tag ?? 0;
-			const alternatives = this.#groupAlternatives(owner, { owned, index: i, tag, gates });
+			const alternatives = this.#groupAlternatives(entity, { owned, group, tag, gates });
 			const grid = grids.get(ref.grid);
 			if (!grid) {
 				throw new FormatError(`missing dynamic grid ${ref.grid}`);
@@ -658,16 +654,20 @@ class OwnerPass {
 	 *   logic-state bits by whatever sets them, and the owner's and group's scene states and stream areas
 	 */
 	#groupAlternatives(
-		owner: DynamicResourceEntity,
-		group: { owned: string; index: number; tag: number; gates: Alternatives },
+		entity: DynamicSceneEntity,
+		options: {
+			owned: string;
+			group: DynamicSceneEntity['resourceGroups'][number];
+			tag: number;
+			gates: Alternatives;
+		},
 	): Alternatives {
-		const { entity } = owner;
 		const { game, blights } = this.#scene;
-		const { logicState } = entity.resourceGroups[group.index];
-		let alternatives = group.gates;
-		if (owner.scriptDefaultLoad !== null) {
-			this.#addSwitch('script', scriptControl(group.owned), owner.scriptDefaultLoad);
-			alternatives = allOf(alternatives, [[{ control: scriptControl(group.owned), mask: 2 }]]);
+		const { logicState } = options.group;
+		let alternatives = options.gates;
+		if (entity.scriptDefaultLoad !== null) {
+			this.#addSwitch('script', scriptControl(options.owned), entity.scriptDefaultLoad);
+			alternatives = allOf(alternatives, [[{ control: scriptControl(options.owned), mask: 2 }]]);
 		}
 		if (logicState !== 0) {
 			const controller = entity.controllers[0];
@@ -678,19 +678,19 @@ class OwnerPass {
 				]);
 			} else if (entity.entityType === TREE_ENTITY) {
 				alternatives = allOf(alternatives, [
-					[{ control: this.#harvestControl(group.tag), mask: logicState }],
+					[{ control: this.#harvestControl(options.tag), mask: logicState }],
 				]);
 			} else if (level !== null) {
 				alternatives = allOf(alternatives, game.requirements(level));
 			} else if ((logicState & 1) === 0) {
-				const id = `logic:${group.owned}:${logicState}`;
+				const id = `logic:${options.owned}:${logicState}`;
 				this.#addSwitch('logic', id, false);
 				alternatives = allOf(alternatives, [[{ control: id, mask: 2 }]]);
 			}
 		}
 		// visible-state lists hold MapConfig scene state indices; the entity and the group each need one of
 		// theirs active
-		for (const states of [owner.states, owner.groupStates[group.index]]) {
+		for (const states of [entity.states, options.group.states]) {
 			if (states.length === 0) {
 				continue;
 			}
@@ -704,7 +704,7 @@ class OwnerPass {
 		}
 		// visible-area lists hold stream areas, shown while the camera is in a trigger zone listing one; area 0
 		// is shown everywhere
-		for (const areas of [owner.areas, owner.groupAreas[group.index]]) {
+		for (const areas of [entity.areas, options.group.areas]) {
 			if (areas.length === 0 || areas.includes(0)) {
 				continue;
 			}
@@ -765,7 +765,7 @@ class OwnerPass {
 		entity: DynamicSceneEntity,
 		rows: {
 			ref: DynamicDataRef;
-			grid: DynamicResourceGrid;
+			grid: DynamicGrid;
 			tag: number;
 			alternatives: Alternatives;
 			/** the owner's global id */

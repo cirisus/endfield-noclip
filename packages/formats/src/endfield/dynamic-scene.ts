@@ -22,6 +22,7 @@ export const DynamicData = {
 	GlobalVarControlComp: 26,
 	SettlementControlComp: 27,
 	FactoryRegionControlComp: 28,
+	ScriptControlComp: 29,
 	ResourceComp: 30,
 	ErosionRootComp: 34,
 	ModelViewStateControllerNewComp: 35,
@@ -40,6 +41,36 @@ export interface DynamicDataRef {
 	count: number;
 }
 
+/** a stored dynamic model placement; Euler angles are in Unity's degrees */
+export interface DynamicModel {
+	pathHash: bigint;
+	position: [number, number, number];
+	rotation: [number, number, number];
+	scale: [number, number, number];
+}
+
+/** a stored dynamic effect placement */
+export interface DynamicEffect extends DynamicModel {
+	/** the grid ids its LOD proxy follows: a near grid, then a far grid */
+	lodGrids: [near: number, far: number];
+}
+
+/** one component-group ordinal in a paired dynamic ECS chunk */
+export interface DynamicEcs {
+	chunk: number;
+	index: number;
+	sceneIndex: number;
+}
+
+/** a main-file grid's geometry payloads */
+export interface DynamicGrid {
+	id: number;
+	models: DynamicModel[];
+	/** effect prefab placements, stored apart from models */
+	effects: DynamicEffect[];
+	ecs: DynamicEcs[];
+}
+
 /** a set of resources an entity shows in some of its logic states */
 export interface DynamicResourceGroup {
 	resources: DynamicDataRef;
@@ -52,6 +83,10 @@ export interface DynamicResourceGroup {
 	/** LevelConfig idNum of the level the group belongs to */
 	levelNum: number;
 	factoryIndex: number;
+	/** MapConfig scene state indices, any of which shows the group; empty for any state */
+	states: number[];
+	/** stream area ids, any of which shows the group; area 0 is shown everywhere */
+	areas: number[];
 }
 
 /** what drives an entity's logic state */
@@ -129,12 +164,24 @@ export interface DynamicEntity {
 	/** the entity's view-state controller, or `null` without one */
 	viewState: DynamicViewState | null;
 	resourceGroups: DynamicResourceGroup[];
+	/** MapConfig scene state indices, any of which shows the entity; empty for any state */
+	states: number[];
+	/** stream area ids, any of which shows the entity; area 0 is shown everywhere */
+	areas: number[];
+	/** null without script control; false means scripts must explicitly enable the entity */
+	scriptDefaultLoad: boolean | null;
 	/** an `ExtraSceneSlot`'s slot, where a separately stored scene (a Dijiang cabin) is placed; `null` otherwise */
 	extraScene: ExtraSceneSlot | null;
 	/** the blight core whose blight this entity is, `null` for other entities */
 	erosionCore: ErosionCoreLink | null;
 	/** the erosion sludge core whose sludge this entity is, `null` for other entities */
 	sludgeCore: SludgeCoreLink | null;
+}
+
+/** decoded grids and entities of one `fb_main_*` file */
+export interface DynamicScene {
+	grids: DynamicGrid[];
+	entities: DynamicEntity[];
 }
 
 /** the blight core an erosion root belongs to */
@@ -170,7 +217,11 @@ const Slot = {
 	RootGrids: 3,
 	RootStrings: 4,
 	GridUniqueId: 0,
+	Integers: 3,
 	DataIndex: 5,
+	Models: 7,
+	Effects: 8,
+	Ecs: 9,
 	ResourceGroupWithStateDesc: 12,
 	MissionCondition: 16,
 	IdComp: 17,
@@ -178,6 +229,7 @@ const Slot = {
 	GlobalVarControlComp: 28,
 	SettlementControlComp: 29,
 	FactoryRegionControlComp: 30,
+	ScriptControlComp: 31,
 	ResourceComp: 32,
 	RootComp: 33,
 	ErosionRootComp: 36,
@@ -191,6 +243,9 @@ const Slot = {
 /** record strides, in bytes */
 const Width = {
 	DataIndex: 16,
+	Model: 96,
+	Effect: 144,
+	Ecs: 36,
 	ResourceGroupWithStateDesc: 88,
 	MissionCondition: 16,
 	IdComp: 16,
@@ -198,6 +253,7 @@ const Width = {
 	GlobalVarControlComp: 40,
 	SettlementControlComp: 20,
 	FactoryRegionControlComp: 8,
+	ScriptControlComp: 4,
 	ResourceComp: 132,
 	RootComp: 84,
 	MapVarControlComp: 48,
@@ -209,12 +265,13 @@ const Width = {
 } as const;
 
 /**
- * @param bytes an `fb_main_*` file
- * @returns every entity of every grid, in storage order
- * @throws {FormatError} if a component reference points outside its vector or a ResourceComp's Res slice is
- *   not typed as ResourceGroupWithStateDesc (a layout change)
+ * reads entities, visibility gates, and geometry payloads from a DynamicStreaming main file in one pass
+ *
+ * @param bytes verified, uncompressed `fb_main_*` bytes
+ * @returns grids and entities in stored order
+ * @throws {FormatError} if a component reference, visibility span, or row layout is invalid
  */
-export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
+export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 	const fb = new FlatBuffer(bytes);
 	const root = fb.root();
 	const strings = fb.vector(root, Slot.RootStrings);
@@ -230,12 +287,14 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 		index: fb.i32(at + 12),
 		count: fb.i32(at + 16),
 	});
+	const vec3 = (at: number): [number, number, number] => [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8)];
 
+	const grids: DynamicGrid[] = [];
 	const entities: DynamicEntity[] = [];
-	const grids = fb.vector(root, Slot.RootGrids);
+	const gridVector = fb.vector(root, Slot.RootGrids);
 	const gridTables = new Map<number, number>();
-	for (let g = 0; g < grids.length; g++) {
-		const grid = fb.tableAt(grids.start, g);
+	for (let g = 0; g < gridVector.length; g++) {
+		const grid = fb.tableAt(gridVector.start, g);
 		const uniqueIdAt = fb.field(grid, Slot.GridUniqueId);
 		const gridId = uniqueIdAt === undefined ? 0 : fb.u32(uniqueIdAt);
 		if (gridTables.has(gridId)) {
@@ -273,12 +332,68 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 	};
 
 	for (const [gridId, grid] of gridTables) {
+		const integers = fb.vector(grid, Slot.Integers);
+		const visibility = (at: number): number[] => {
+			const invalid = fb.u8(at);
+			const index = fb.i32(at + 12);
+			const count = fb.i32(at + 16);
+			if (
+				invalid > 1 ||
+				Boolean(invalid) === Boolean(count) ||
+				fb.i32(at + 20) !== integers.length ||
+				fb.i32(at + 4) !== 49 ||
+				fb.u32(at + 8) !== gridId ||
+				index < 0 ||
+				count < 0 ||
+				index + count > integers.length
+			) {
+				throw new FormatError(`invalid dynamic visibility span in grid ${gridId}`);
+			}
+			return Array.from({ length: count }, (_, n) => fb.i32(integers.start + (index + n) * 4));
+		};
+
+		const models = fb.vector(grid, Slot.Models);
+		const effects = fb.vector(grid, Slot.Effects);
+		const ecs = fb.vector(grid, Slot.Ecs);
+		grids.push({
+			id: gridId,
+			models: Array.from({ length: models.length }, (_, n) => {
+				const at = models.start + n * Width.Model;
+				return {
+					pathHash: fb.u64(at + 64),
+					position: vec3(at + 16),
+					rotation: vec3(at + 28),
+					scale: vec3(at + 40),
+				};
+			}),
+			effects: Array.from({ length: effects.length }, (_, n) => {
+				const at = effects.start + n * Width.Effect;
+				const position = vec3(at + 12);
+				// each row repeats its position at +116, which confirms the stride
+				if (vec3(at + 116).some((value, axis) => value !== position[axis])) {
+					throw new FormatError(`unexpected dynamic effect row layout in grid ${gridId}`);
+				}
+				return {
+					pathHash: fb.u64(at + 48),
+					position,
+					rotation: vec3(at + 24),
+					scale: vec3(at + 36),
+					lodGrids: [fb.u32(at + 56), fb.u32(at + 60)],
+				};
+			}),
+			ecs: Array.from({ length: ecs.length }, (_, n) => {
+				const at = ecs.start + n * Width.Ecs;
+				return { chunk: fb.i32(at), index: fb.i32(at + 4), sceneIndex: fb.i32(at + 32) };
+			}),
+		});
+
 		const vectors = {
 			dataIndex: fb.vector(grid, Slot.DataIndex),
 			groups: fb.vector(grid, Slot.ResourceGroupWithStateDesc),
 			ids: fb.vector(grid, Slot.IdComp),
 			settlements: fb.vector(grid, Slot.SettlementControlComp),
 			regions: fb.vector(grid, Slot.FactoryRegionControlComp),
+			scripts: fb.vector(grid, Slot.ScriptControlComp),
 			resources: fb.vector(grid, Slot.ResourceComp),
 			roots: fb.vector(grid, Slot.RootComp),
 			pois: fb.vector(grid, Slot.PoiControlComp),
@@ -303,6 +418,9 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 				variables: [],
 				viewState: null,
 				resourceGroups: [],
+				states: visibility(at + 36),
+				areas: visibility(at + 60),
+				scriptDefaultLoad: null,
 				extraScene: null,
 				erosionCore: null,
 				sludgeCore: null,
@@ -415,15 +533,10 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 							Width.ExtraSceneComp,
 							'ExtraSceneComp',
 						);
-						const vec3 = (offset: number): [number, number, number] => [
-							fb.f32(s + offset),
-							fb.f32(s + offset + 4),
-							fb.f32(s + offset + 8),
-						];
 						entity.extraScene = {
-							min: vec3(0),
-							max: vec3(12),
-							position: vec3(24),
+							min: vec3(s),
+							max: vec3(s + 12),
+							position: vec3(s + 24),
 							direction: fb.u32(s + 36),
 						};
 						break;
@@ -469,6 +582,14 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 						entity.controllers.push({ kind: 'poi', poiId: rootString(fb.i32(s)), domainType: fb.i32(s + 4) });
 						break;
 					}
+					case DynamicData.ScriptControlComp: {
+						const value = fb.i32(row(vectors.scripts, index, Width.ScriptControlComp, 'ScriptControlComp'));
+						if (value !== 0 && value !== 1) {
+							throw new FormatError(`invalid script default load ${value}`);
+						}
+						entity.scriptDefaultLoad = value === 1;
+						break;
+					}
 					case DynamicData.ResourceComp: {
 						const res = dataRef(row(vectors.resources, index, Width.ResourceComp, 'ResourceComp'));
 						if (res.count > 0 && res.type !== DynamicData.ResourceGroupWithStateDesc) {
@@ -487,6 +608,8 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 								logicState: fb.u32(desc + 28),
 								levelNum: fb.i32(desc + 32),
 								factoryIndex: fb.i32(desc + 36),
+								states: visibility(desc + 40),
+								areas: visibility(desc + 64),
 							});
 						}
 						break;
@@ -496,5 +619,20 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 			entities.push(entity);
 		}
 	}
-	return entities;
+	return { grids, entities };
+};
+
+/**
+ * resolves a bounds-checked typed resource slice
+ *
+ * @param rows the selected grid's model, effect or ECS vector
+ * @param ref resource-group reference to that vector
+ * @returns the referenced rows
+ * @throws {FormatError} if the slice lies outside the vector
+ */
+export const dynamicResourceSlice = <T>(rows: readonly T[], ref: DynamicDataRef): T[] => {
+	if (ref.index < 0 || ref.count < 0 || ref.index + ref.count > rows.length) {
+		throw new FormatError(`dynamic resource slice outside grid ${ref.grid}`);
+	}
+	return rows.slice(ref.index, ref.index + ref.count);
 };

@@ -91,11 +91,10 @@ component kind means adding one reader, step, or candidate source.
 ## dynamic structures
 
 the [fb_main grids](../game-data/assets.md#fb_main-grids) reader
-([dynamic-scene.ts](../../packages/formats/src/endfield/dynamic-scene.ts),
-[dynamic-resources.ts](../../packages/formats/src/endfield/dynamic-resources.ts)) validates every
-slice and throws on layout mismatches instead of truncating. it checks effect rows' repeated
-position (+116) to confirm stride, and `parseDynamicChunk` decodes ECS `fb_init`/`fb_streaming`
-pairs with the InitChunkData group decoder.
+([dynamic-scene.ts](../../packages/formats/src/endfield/dynamic-scene.ts)) validates every slice and
+throws on layout mismatches instead of truncating. it checks effect rows' repeated position (+116)
+to confirm stride, and `parseDynamicChunk` decodes ECS `fb_init`/`fb_streaming` pairs with the
+InitChunkData group decoder.
 
 for each model or effect row ([payloads](../game-data/assets.md#payloads)), the packer resolves the
 prefab and places its renderers under the row's TRS. prefab renderers, prefab lights, and stand-ins
