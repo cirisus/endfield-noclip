@@ -218,14 +218,11 @@ export const readDynamicEntities = (bytes: Uint8Array): DynamicEntity[] => {
 	const fb = new FlatBuffer(bytes);
 	const root = fb.root();
 	const strings = fb.vector(root, Slot.RootStrings);
-	const decoder = new TextDecoder();
 	const rootString = (index: number): string => {
 		if (index < 0 || index >= strings.length) {
 			throw new FormatError(`root string ${index} outside ${strings.length}`);
 		}
-		const at = fb.deref(strings.start + index * 4);
-		const length = fb.u32(at);
-		return decoder.decode(bytes.subarray(at + 4, at + 4 + length));
+		return fb.stringAt(fb.deref(strings.start + index * 4));
 	};
 	const dataRef = (at: number): DynamicDataRef => ({
 		type: fb.i32(at + 4),

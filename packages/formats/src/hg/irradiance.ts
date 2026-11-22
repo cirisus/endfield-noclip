@@ -102,14 +102,14 @@ export const parseIrradianceIndex = (data: Uint8Array): IrradianceIndex => {
 		}
 		return count;
 	};
-	const utf16 = (): string => {
+	const readUtf16 = (): string => {
 		const length = r.u32();
 		if (length % 2 !== 0) {
 			throw new FormatError('irradiance index: odd UTF-16 byte length');
 		}
-		return new TextDecoder('utf-16le', { fatal: true }).decode(r.bytesView(length));
+		return utf16.decode(r.bytesView(length));
 	};
-	const sceneStates = Array.from({ length: countOf(4) }, utf16);
+	const sceneStates = Array.from({ length: countOf(4) }, readUtf16);
 	const stateGroups = Array.from({ length: countOf(8) }, () => {
 		const hash = r.u32();
 		const members = Array.from({ length: countOf(4) }, () => r.u32());
@@ -125,7 +125,7 @@ export const parseIrradianceIndex = (data: Uint8Array): IrradianceIndex => {
 	) {
 		throw new FormatError('irradiance index: invalid scene-state hashes');
 	}
-	const files = Array.from({ length: countOf(4) }, utf16);
+	const files = Array.from({ length: countOf(4) }, readUtf16);
 	if (files.length === 0 || new Set(files).size !== files.length) {
 		throw new FormatError('irradiance index: empty or duplicate payload filenames');
 	}
@@ -247,3 +247,5 @@ export const parseIrradianceRegion = (data: Uint8Array): IrradianceRegion => {
  * (docs/game-data/irradiance.md#cells-and-probes)
  */
 export type IrradianceCell = Uint8Array;
+
+const utf16 = new TextDecoder('utf-16le', { fatal: true });

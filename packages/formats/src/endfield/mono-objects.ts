@@ -105,8 +105,7 @@ export const readMonoObjects = (init: Uint8Array, streaming: Uint8Array | null):
 			throw new FormatError(`object ${i}: init id ${row.id} pairs with streaming id ${pair.id}`);
 		}
 		const { fb } = initRows;
-		const nameAt = fb.field(row.table, 0);
-		const name = nameAt === undefined ? '' : textDecoder.decode(fb.byteVector(row.table, 0));
+		const name = fb.stringField(row.table, 0);
 		const components = readComponents(fb, row.table);
 		if (pair !== undefined && streamRows !== null) {
 			for (const extra of readComponents(streamRows.fb, pair.table)) {
@@ -269,19 +268,18 @@ const readValue = (fb: FlatBuffer, code: number, at: number): MonoValue => {
 		case ValueCode.String: {
 			return {
 				type: 'string',
-				value: fb.field(at, 0) === undefined ? '' : textDecoder.decode(fb.byteVector(at, 0)),
+				value: fb.stringField(at, 0),
 			};
 		}
 		case ValueCode.Blob: {
 			// a table holding a table holding the bytes; empty structs leave the inner fields out
-			const innerAt = fb.field(at, 0);
-			if (innerAt === undefined) {
+			const inner = fb.tableField(at, 0);
+			if (inner === undefined) {
 				return { type: 'blob', value: new Uint8Array(0) };
 			}
-			const inner = fb.deref(innerAt);
 			return {
 				type: 'blob',
-				value: fb.field(inner, 0) === undefined ? new Uint8Array(0) : fb.byteVector(inner, 0),
+				value: fb.byteVector(inner, 0),
 			};
 		}
 		default: {
@@ -289,5 +287,3 @@ const readValue = (fb: FlatBuffer, code: number, at: number): MonoValue => {
 		}
 	}
 };
-
-const textDecoder = new TextDecoder('utf-8');

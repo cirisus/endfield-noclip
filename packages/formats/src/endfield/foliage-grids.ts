@@ -97,7 +97,7 @@ export const readFoliageGrids = (init: Uint8Array, streaming: Uint8Array): Folia
 		if (pair.id !== row.id) {
 			throw new FormatError(`object ${i}: init id ${row.id} pairs with streaming id ${pair.id}`);
 		}
-		const name = new TextDecoder().decode(initRows.fb.byteVector(row.table, 0));
+		const name = initRows.fb.stringField(row.table, 0);
 		const props = propertyMap(initRows, row.table, row.id);
 		const batches = readBatches(propertyMap(streamRows, pair.table, row.id), row.id);
 		grids.push({

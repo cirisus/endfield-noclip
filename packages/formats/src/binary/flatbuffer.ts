@@ -66,4 +66,22 @@ export class FlatBuffer extends ByteView {
 		const { start, length } = this.vector(table, slot);
 		return this.subarray(start, length);
 	}
+
+	/** @returns the table referenced by slot `slot`, or `undefined` if absent */
+	tableField(table: number, slot: number): number | undefined {
+		const at = this.field(table, slot);
+		return at === undefined ? undefined : this.deref(at);
+	}
+
+	/** @returns the FlatBuffers string (`u32 length ‖ UTF-8`) starting at `at` */
+	stringAt(at: number): string {
+		const length = this.u32(at);
+		return this.utf8(at + 4, length);
+	}
+
+	/** @returns the UTF-8 string stored in slot `slot`, or `''` if absent */
+	stringField(table: number, slot: number): string {
+		const at = this.field(table, slot);
+		return at === undefined ? '' : this.stringAt(this.deref(at));
+	}
 }

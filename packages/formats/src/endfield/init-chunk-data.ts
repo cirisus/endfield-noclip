@@ -342,7 +342,7 @@ const parseChunk = (fb: FlatBuffer, idsFb: FlatBuffer): InitChunk => {
 			objects.push({
 				id: fb.u32(ids.start + i * 4),
 				kind: fb.u8(kinds.start + i),
-				name: textDecoder.decode(fb.byteVector(row, 0)),
+				name: fb.stringField(row, 0),
 				layer: layerAt === undefined ? StreamingLayer.Default : fb.u8(layerAt),
 			});
 		}

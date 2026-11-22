@@ -7,7 +7,7 @@ import { FormatError } from './binary-reader.ts';
  */
 export class ByteView {
 	readonly bytes: Uint8Array;
-	readonly #view: DataView;
+	readonly view: DataView;
 	readonly #label: string;
 
 	/**
@@ -16,7 +16,7 @@ export class ByteView {
 	 */
 	constructor(bytes: Uint8Array, label: string) {
 		this.bytes = bytes;
-		this.#view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 		this.#label = label;
 	}
 
@@ -31,43 +31,53 @@ export class ByteView {
 
 	u16(at: number): number {
 		this.check(at, 2);
-		return this.#view.getUint16(at, true);
+		return this.view.getUint16(at, true);
+	}
+
+	i16(at: number): number {
+		this.check(at, 2);
+		return this.view.getInt16(at, true);
 	}
 
 	u32(at: number): number {
 		this.check(at, 4);
-		return this.#view.getUint32(at, true);
+		return this.view.getUint32(at, true);
 	}
 
 	i32(at: number): number {
 		this.check(at, 4);
-		return this.#view.getInt32(at, true);
+		return this.view.getInt32(at, true);
 	}
 
 	u64(at: number): bigint {
 		this.check(at, 8);
-		return this.#view.getBigUint64(at, true);
+		return this.view.getBigUint64(at, true);
 	}
 
 	i64(at: number): bigint {
 		this.check(at, 8);
-		return this.#view.getBigInt64(at, true);
+		return this.view.getBigInt64(at, true);
 	}
 
 	f32(at: number): number {
 		this.check(at, 4);
-		return this.#view.getFloat32(at, true);
+		return this.view.getFloat32(at, true);
 	}
 
 	f64(at: number): number {
 		this.check(at, 8);
-		return this.#view.getFloat64(at, true);
+		return this.view.getFloat64(at, true);
 	}
 
 	/** @returns a view (not a copy) of `size` bytes at `at` */
 	subarray(at: number, size: number): Uint8Array {
 		this.check(at, size);
 		return this.bytes.subarray(at, at + size);
+	}
+
+	/** @returns `size` bytes at `at` decoded as UTF-8 */
+	utf8(at: number, size: number): string {
+		return utf8.decode(this.subarray(at, size));
 	}
 
 	/** reads a NUL-terminated UTF-8 string; returns it and the offset after the terminator */

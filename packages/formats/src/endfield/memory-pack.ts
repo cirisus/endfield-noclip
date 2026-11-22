@@ -276,7 +276,7 @@ const readAttributeArguments = (
 				for (let i = 0; i < length; i++) {
 					chars.push(reader.byte());
 				}
-				return new TextDecoder().decode(new Uint8Array(chars));
+				return utf8.decode(new Uint8Array(chars));
 			}
 			case 0x1d: {
 				const length = reader.compressedI32();
@@ -772,7 +772,7 @@ export class MemoryPackReader {
 			return null;
 		}
 		const at = this.#advance(length);
-		return new TextDecoder().decode(this.#bytes.subarray(at, at + length));
+		return utf8.decode(this.#bytes.subarray(at, at + length));
 	}
 
 	#advance(size: number): number {
@@ -800,3 +800,5 @@ export class MemoryPackReader {
 		return this.#view.getFloat32(this.#advance(4), true);
 	}
 }
+
+const utf8 = new TextDecoder('utf-8');
