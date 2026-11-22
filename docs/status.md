@@ -285,9 +285,7 @@ packs or renders correctly.
   other than 4, 5 or 8, and erosion alongside a dissolve, a distortion or a mask texture, show as
   [unsupported](viewer/materials.md#unsupported-materials) (none of map02's), and the Wuling falls'
   foam and Wuling City's red tide ([erosion](game-data/water.md#water-erosion), its clamped samplers
-  approximated) are unchecked against an in-game shot; map02's static boxes (InitChunkData component
-  31, [world](game-data/world.md#initchunkdata-layout)) aren't packed, counted in
-  `debug/skipped-entities.json`; other fluid types are unverified
+  approximated) are unchecked against an in-game shot; other fluid types are unverified
 - water volumes ([viewer](viewer/water.md#water-volumes)): volumes without a `WaterConfig` of their
   own draw with their water type's surface prefab config, but without its foam decal or per-level
   multipliers ([game data](game-data/water.md#water-volumes)); moves are linear; floaters keep their
