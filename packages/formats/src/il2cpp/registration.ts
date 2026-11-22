@@ -1,7 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { type PeImage, requireVaOffset, vaToOffset } from '../binary/pe.ts';
 
 import type { Il2CppMetadata, TypeDefinition } from './metadata.ts';
-import type { PeImage } from './pe.ts';
 
 // the binary half of IL2CPP type information: the metadata registration in GameAssembly holds the type table
 // (`Il2CppType` records that metadata indices point into) and the field offsets. it's found by its counts, the
@@ -70,22 +70,23 @@ export class Il2CppRuntime {
 	constructor(metadata: Il2CppMetadata, image: PeImage) {
 		this.metadata = metadata;
 		this.#image = image;
+		const { view } = image;
 		const count = BigInt(metadata.typeDefinitionCount);
 		const found: number[] = [];
 		for (const section of image.sections.filter(({ name }) => name === '.data' || name === '.rdata')) {
 			const end = section.rawOffset + section.rawSize - 128;
 			for (let at = section.rawOffset + 80; at < end; at += 8) {
 				// fieldOffsetsCount at +80 and typeDefinitionsSizesCount at +96 of the registration
-				if (image.u64At(at) !== count || image.u64At(at + 16) !== count) {
+				if (view.u64(at) !== count || view.u64(at + 16) !== count) {
 					continue;
 				}
 				const base = at - 80;
-				const typeCount = image.i64At(base + 48);
+				const typeCount = view.i64(base + 48);
 				if (
 					typeCount > 0n &&
 					typeCount < 10_000_000n &&
-					image.offsetOf(image.u64At(base + 56)) !== undefined &&
-					image.offsetOf(image.u64At(base + 88)) !== undefined
+					vaToOffset(image, view.u64(base + 56)) !== undefined &&
+					vaToOffset(image, view.u64(base + 88)) !== undefined
 				) {
 					found.push(base);
 				}
@@ -95,9 +96,9 @@ export class Il2CppRuntime {
 			throw new FormatError(`found ${found.length} IL2CPP metadata registrations, expected one`);
 		}
 		const [registration] = found;
-		this.#typeCount = Number(image.i64At(registration + 48));
-		this.#types = image.at(image.u64At(registration + 56));
-		this.#fieldOffsets = image.at(image.u64At(registration + 88));
+		this.#typeCount = Number(view.i64(registration + 48));
+		this.#types = requireVaOffset(image, view.u64(registration + 56));
+		this.#fieldOffsets = requireVaOffset(image, view.u64(registration + 88));
 	}
 
 	/**
@@ -110,7 +111,7 @@ export class Il2CppRuntime {
 			if (!Number.isInteger(index) || index < 0 || index >= this.#typeCount) {
 				throw new FormatError(`type index ${index} outside ${this.#typeCount}`);
 			}
-			return this.#typeAt(this.#image.u64At(this.#types + index * 8));
+			return this.#typeAt(this.#image.view.u64(this.#types + index * 8));
 		});
 	}
 
@@ -119,7 +120,8 @@ export class Il2CppRuntime {
 	 * @returns the attribute flags of that type entry (field and parameter types carry their member's flags)
 	 */
 	typeAttributes(index: number): number {
-		return this.#image.u32At(this.#image.at(this.#image.u64At(this.#types + index * 8)) + 8) & 0xffff;
+		const { view } = this.#image;
+		return view.u32(requireVaOffset(this.#image, view.u64(this.#types + index * 8)) + 8) & 0xffff;
 	}
 
 	/**
@@ -127,8 +129,9 @@ export class Il2CppRuntime {
 	 * @returns its fields, constants left out, with offsets for instance fields
 	 */
 	fields(definition: TypeDefinition): ResolvedField[] {
+		const { view } = this.#image;
 		const fields: ResolvedField[] = [];
-		const table = this.#image.u64At(this.#fieldOffsets + definition.index * 8);
+		const table = view.u64(this.#fieldOffsets + definition.index * 8);
 		for (let i = 0; i < definition.fieldCount; i++) {
 			const field = this.metadata.field(definition.fieldStart + i);
 			const attributes = this.typeAttributes(field.typeIndex);
@@ -136,7 +139,7 @@ export class Il2CppRuntime {
 				continue;
 			}
 			const isStatic = (attributes & FIELD_STATIC) !== 0;
-			let offset = table === 0n ? 0 : this.#image.i32At(this.#image.at(table) + i * 4);
+			let offset = table === 0n ? 0 : view.i32(requireVaOffset(this.#image, table) + i * 4);
 			// instance offsets count the object header, which a value type doesn't have
 			if (definition.valueType && !isStatic) {
 				offset -= 16;
@@ -200,9 +203,10 @@ export class Il2CppRuntime {
 	}
 
 	#typeAt(va: bigint): Il2CppTypeRef {
-		const at = this.#image.at(va);
-		const data = this.#image.u64At(at);
-		const kind = (this.#image.u32At(at + 8) >>> 16) & 0xff;
+		const { view } = this.#image;
+		const at = requireVaOffset(this.#image, va);
+		const data = view.u64(at);
+		const kind = (view.u32(at + 8) >>> 16) & 0xff;
 		const primitive = PRIMITIVES.get(kind);
 		if (primitive !== undefined) {
 			return { kind: 'primitive', name: primitive };
@@ -214,29 +218,29 @@ export class Il2CppRuntime {
 			}
 			case 0x15: {
 				// Il2CppGenericClass: the definition's type, then the class instantiation
-				const generic = this.#image.at(data);
-				const definition = this.#typeAt(this.#image.u64At(generic));
+				const generic = requireVaOffset(this.#image, data);
+				const definition = this.#typeAt(view.u64(generic));
 				if (definition.kind !== 'definition') {
 					throw new FormatError('generic instance of a non-definition type');
 				}
-				const instance = this.#image.at(this.#image.u64At(generic + 8));
-				const argc = Number(this.#image.i64At(instance));
-				const argv = this.#image.at(this.#image.u64At(instance + 8));
+				const instance = requireVaOffset(this.#image, view.u64(generic + 8));
+				const argc = Number(view.i64(instance));
+				const argv = requireVaOffset(this.#image, view.u64(instance + 8));
 				return {
 					kind: 'generic',
 					definition: definition.definition,
-					args: Array.from({ length: argc }, (_, i) => this.#typeAt(this.#image.u64At(argv + i * 8))),
+					args: Array.from({ length: argc }, (_, i) => this.#typeAt(view.u64(argv + i * 8))),
 				};
 			}
 			case 0x1d: {
 				return { kind: 'array', element: this.#typeAt(data), rank: 1 };
 			}
 			case 0x14: {
-				const array = this.#image.at(data);
+				const array = requireVaOffset(this.#image, data);
 				return {
 					kind: 'array',
-					element: this.#typeAt(this.#image.u64At(array)),
-					rank: this.#image.u8At(array + 8),
+					element: this.#typeAt(view.u64(array)),
+					rank: view.u8(array + 8),
 				};
 			}
 			case 0x0f: {

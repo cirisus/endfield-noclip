@@ -1,4 +1,5 @@
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 
 // IL2CPP `global-metadata.dat`, version 29: names and shapes of the managed types (type, field, property, method
 // and parameter definitions, custom attribute data). the types those definitions name are indices into the
@@ -76,12 +77,10 @@ export interface MethodDefinition {
 export class Il2CppMetadata {
 	readonly version: number;
 	readonly typeDefinitionCount: number;
-	readonly #bytes: Uint8Array;
-	readonly #view: DataView;
+	readonly #view: ByteView;
 	readonly #tables: { offset: number; size: number }[];
 	readonly #typeRow: number;
 	readonly #extra: number;
-	readonly #decoder = new TextDecoder();
 	readonly #strings = new Map<number, string>();
 	#attributeRanges: Map<string, { start: number; end: number }> | undefined;
 
@@ -90,18 +89,17 @@ export class Il2CppMetadata {
 	 * @throws {FormatError} if it isn't version 29 metadata or its type table has an unknown row size
 	 */
 	constructor(bytes: Uint8Array) {
-		this.#bytes = bytes;
-		this.#view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-		if (bytes.length < 272 || this.#view.getUint32(0, true) !== SANITY) {
+		this.#view = new ByteView(bytes, 'IL2CPP metadata');
+		if (bytes.length < 272 || this.#view.u32(0) !== SANITY) {
 			throw new FormatError('not IL2CPP metadata');
 		}
-		this.version = this.#view.getInt32(4, true);
+		this.version = this.#view.i32(4);
 		if (this.version !== 29) {
 			throw new FormatError(`IL2CPP metadata version ${this.version}; only 29 is read`);
 		}
 		this.#tables = Array.from({ length: 32 }, (_, i) => ({
-			offset: this.#view.getUint32(8 + i * 8, true),
-			size: this.#view.getInt32(12 + i * 8, true),
+			offset: this.#view.u32(8 + i * 8),
+			size: this.#view.i32(12 + i * 8),
 		}));
 		const typeBytes = this.#tables[Table.TypeDefinitions].size;
 		// 88 bytes is the standard row; 92 has one extra int32
@@ -120,12 +118,7 @@ export class Il2CppMetadata {
 	 */
 	string(index: number): string {
 		return this.#strings.getOrInsertComputed(index, () => {
-			const start = this.#tables[Table.String].offset + index;
-			let end = start;
-			while (this.#bytes[end] !== 0) {
-				end++;
-			}
-			return this.#decoder.decode(this.#bytes.subarray(start, end));
+			return this.#view.cString(this.#tables[Table.String].offset + index)[0];
 		});
 	}
 
@@ -136,9 +129,9 @@ export class Il2CppMetadata {
 	 */
 	typeDefinition(index: number): TypeDefinition {
 		const at = this.#row(Table.TypeDefinitions, this.#typeRow, index);
-		const i32 = (offset: number) => this.#view.getInt32(at + offset, true);
-		const u16 = (offset: number) => this.#view.getUint16(at + 64 + this.#extra + offset, true);
-		const bitfield = this.#view.getUint32(at + 80 + this.#extra, true);
+		const i32 = (offset: number) => this.#view.i32(at + offset);
+		const u16 = (offset: number) => this.#view.u16(at + 64 + this.#extra + offset);
+		const bitfield = this.#view.u32(at + 80 + this.#extra);
 		return {
 			index,
 			name: this.string(i32(0)),
@@ -156,7 +149,7 @@ export class Il2CppMetadata {
 			fieldCount: u16(4),
 			valueType: (bitfield & 1) !== 0,
 			enumType: (bitfield & 2) !== 0,
-			token: this.#view.getUint32(at + 84 + this.#extra, true),
+			token: this.#view.u32(at + 84 + this.#extra),
 		};
 	}
 
@@ -164,9 +157,9 @@ export class Il2CppMetadata {
 	field(index: number): FieldDefinition {
 		const at = this.#row(Table.Fields, 12, index);
 		return {
-			name: this.string(this.#view.getUint32(at, true)),
-			typeIndex: this.#view.getInt32(at + 4, true),
-			token: this.#view.getUint32(at + 8, true),
+			name: this.string(this.#view.u32(at)),
+			typeIndex: this.#view.i32(at + 4),
+			token: this.#view.u32(at + 8),
 		};
 	}
 
@@ -174,9 +167,9 @@ export class Il2CppMetadata {
 	property(index: number): PropertyDefinition {
 		const at = this.#row(Table.Properties, 20, index);
 		return {
-			name: this.string(this.#view.getUint32(at, true)),
-			get: this.#view.getInt32(at + 4, true),
-			set: this.#view.getInt32(at + 8, true),
+			name: this.string(this.#view.u32(at)),
+			get: this.#view.i32(at + 4),
+			set: this.#view.i32(at + 8),
 		};
 	}
 
@@ -184,17 +177,17 @@ export class Il2CppMetadata {
 	method(index: number): MethodDefinition {
 		const at = this.#row(Table.Methods, 32, index);
 		return {
-			name: this.string(this.#view.getUint32(at, true)),
-			declaringType: this.#view.getInt32(at + 4, true),
-			returnType: this.#view.getInt32(at + 8, true),
-			parameterStart: this.#view.getInt32(at + 12, true),
-			parameterCount: this.#view.getUint16(at + 30, true),
+			name: this.string(this.#view.u32(at)),
+			declaringType: this.#view.i32(at + 4),
+			returnType: this.#view.i32(at + 8),
+			parameterStart: this.#view.i32(at + 12),
+			parameterCount: this.#view.u16(at + 30),
 		};
 	}
 
 	/** @returns a parameter's type table index */
 	parameterType(index: number): number {
-		return this.#view.getInt32(this.#row(Table.Parameters, 12, index) + 8, true);
+		return this.#view.i32(this.#row(Table.Parameters, 12, index) + 8);
 	}
 
 	/**
@@ -212,7 +205,7 @@ export class Il2CppMetadata {
 			return undefined;
 		}
 		const base = this.#tables[Table.AttributeData].offset;
-		return new AttributeReader(this.#bytes.subarray(base + range.start, base + range.end));
+		return new AttributeReader(this.#view.subarray(base + range.start, range.end - range.start));
 	}
 
 	#images:
@@ -223,10 +216,10 @@ export class Il2CppMetadata {
 		this.#images ??= Array.from({ length: this.#tables[Table.Images].size / 40 }, (_, i) => {
 			const at = this.#tables[Table.Images].offset + i * 40;
 			return {
-				typeStart: this.#view.getInt32(at + 8, true),
-				typeCount: this.#view.getUint32(at + 12, true),
-				attributeStart: this.#view.getInt32(at + 32, true),
-				attributeCount: this.#view.getUint32(at + 36, true),
+				typeStart: this.#view.i32(at + 8),
+				typeCount: this.#view.u32(at + 12),
+				attributeStart: this.#view.i32(at + 32),
+				attributeCount: this.#view.u32(at + 36),
 			};
 		});
 		return this.#images;
@@ -246,9 +239,9 @@ export class Il2CppMetadata {
 		for (const [image, { attributeStart, attributeCount }] of this.#imageList().entries()) {
 			for (let i = attributeStart; i < attributeStart + attributeCount; i++) {
 				const at = offset + i * 8;
-				const end = i + 1 < count ? this.#view.getUint32(at + 12, true) : dataSize;
-				ranges.set(`${image}:${this.#view.getUint32(at, true)}`, {
-					start: this.#view.getUint32(at + 4, true),
+				const end = i + 1 < count ? this.#view.u32(at + 12) : dataSize;
+				ranges.set(`${image}:${this.#view.u32(at)}`, {
+					start: this.#view.u32(at + 4),
 					end,
 				});
 			}

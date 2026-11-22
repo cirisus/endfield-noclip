@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import { parsePe } from '@endfield-noclip/formats/binary/pe';
 import { MemoryPackReader, MemoryPackSchema } from '@endfield-noclip/formats/endfield/memory-pack';
 import { Il2CppMetadata } from '@endfield-noclip/formats/il2cpp/metadata';
-import { PeImage } from '@endfield-noclip/formats/il2cpp/pe';
 import { Il2CppRuntime } from '@endfield-noclip/formats/il2cpp/registration';
 
 import { decodeKeys, DEFAULT_CONFIG_PATH, loadConfig, type Keys, type LocalConfig } from './config.ts';
@@ -45,7 +45,7 @@ const loadMemoryPack = async (gameData: string, world: WorldIndex): Promise<Memo
 		readFile(join(gameData, '..', 'GameAssembly.dll')),
 		world.stringPool(),
 	]);
-	const schema = new MemoryPackSchema(new Il2CppRuntime(new Il2CppMetadata(metadata), new PeImage(image)));
+	const schema = new MemoryPackSchema(new Il2CppRuntime(new Il2CppMetadata(metadata), parsePe(image)));
 	return new MemoryPackReader(schema, (id) => {
 		try {
 			return pool.get(id);

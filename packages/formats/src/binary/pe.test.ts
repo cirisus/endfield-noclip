@@ -10,6 +10,8 @@ import {
 	offsetToRva,
 	parsePe,
 	type PeSection,
+	requireVaOffset,
+	vaToOffset,
 } from './pe.ts';
 
 /** builds a minimal PE32+ image with the given sections, enough for the parser and the scanners */
@@ -70,6 +72,21 @@ describe('parsePe', () => {
 		assert.equal(image.sections.length, 1);
 		assert.equal(image.sections[0].name, '.data');
 		assert.equal(offsetToRva(image, image.sections[0].rawOffset), 0x1000);
+	});
+
+	it('maps virtual addresses to file offsets within raw section data', () => {
+		const body = new Uint8Array(0x20);
+		new DataView(body.buffer).setBigUint64(0x10, 0x1234n, true);
+		const raw = buildPe(0x1_8000_0000n, [{ name: '.data', rva: 0x2000, characteristics: 0xc000_0040, body }]);
+		// widen virtualSize beyond rawSize to verify uninitialized tail is rejected
+		new DataView(raw.buffer).setUint32(0x80 + 24 + 240 + 8, 0x300, true);
+		const image = parsePe(raw);
+		const offset = vaToOffset(image, 0x1_8000_2010n);
+		assert.equal(offset, image.sections[0].rawOffset + 0x10);
+		assert.equal(image.view.u64(offset), 0x1234n);
+		assert.equal(vaToOffset(image, 0x1_8000_2020n), undefined);
+		assert.equal(vaToOffset(image, 0x1_7fff_ffffn), undefined);
+		assert.throws(() => requireVaOffset(image, 0x1_8000_2020n), FormatError);
 	});
 
 	it('rejects non-PE input', () => {

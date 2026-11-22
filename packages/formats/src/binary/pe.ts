@@ -4,6 +4,7 @@
  */
 
 import { FormatError } from './binary-reader.ts';
+import { ByteView } from './byte-view.ts';
 
 /** one PE section header */
 export interface PeSection {
@@ -21,6 +22,7 @@ export interface PeSection {
 /** a parsed PE image, retaining the backing bytes */
 export interface PeImage {
 	data: Uint8Array;
+	view: ByteView;
 	imageBase: bigint;
 	sections: PeSection[];
 }
@@ -36,40 +38,41 @@ const IMAGE_SCN_MEM_WRITE = 0x8000_0000;
  * @throws {FormatError} if the file isn't a PE32+ image
  */
 export const parsePe = (data: Uint8Array): PeImage => {
-	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-	if (data[0] !== 0x4d || data[1] !== 0x5a) {
+	const view = new ByteView(data, 'PE');
+	if (data.length < 0x40 || view.u16(0) !== 0x5a4d) {
 		throw new FormatError('not a PE file (no MZ signature)');
 	}
-	const peOffset = view.getUint32(0x3c, true);
-	if (view.getUint32(peOffset, true) !== 0x0000_4550) {
+	const peOffset = view.u32(0x3c);
+	if (view.u32(peOffset) !== 0x0000_4550) {
 		throw new FormatError('bad PE signature');
 	}
-	const sectionCount = view.getUint16(peOffset + 6, true);
-	const optionalSize = view.getUint16(peOffset + 20, true);
+	const sectionCount = view.u16(peOffset + 6);
+	const optionalSize = view.u16(peOffset + 20);
 	const optional = peOffset + 24;
-	if (view.getUint16(optional, true) !== 0x020b) {
+	if (view.u16(optional) !== 0x020b) {
 		throw new FormatError('not a PE32+ (64-bit) image');
 	}
-	const imageBase = view.getBigUint64(optional + 24, true);
+	const imageBase = view.u64(optional + 24);
 
 	const sections: PeSection[] = [];
 	const table = optional + optionalSize;
 	for (let i = 0; i < sectionCount; i++) {
 		const base = table + 40 * i;
+		view.check(base, 40);
 		let name = '';
 		for (let j = 0; j < 8 && data[base + j] !== 0; j++) {
 			name += String.fromCharCode(data[base + j]);
 		}
 		sections.push({
 			name,
-			virtualSize: view.getUint32(base + 8, true),
-			virtualAddress: view.getUint32(base + 12, true),
-			rawSize: view.getUint32(base + 16, true),
-			rawOffset: view.getUint32(base + 20, true),
-			characteristics: view.getUint32(base + 36, true),
+			virtualSize: view.u32(base + 8),
+			virtualAddress: view.u32(base + 12),
+			rawSize: view.u32(base + 16),
+			rawOffset: view.u32(base + 20),
+			characteristics: view.u32(base + 36),
 		});
 	}
-	return { data, imageBase, sections };
+	return { data, view, imageBase, sections };
 };
 
 /** @returns the sections that hold initialized, non-code data (where constants live) */
@@ -103,6 +106,40 @@ export const offsetToRva = (image: PeImage, fileOffset: number): number | undefi
 		}
 	}
 	return undefined;
+};
+
+/**
+ * @param image parsed image
+ * @param va virtual address
+ * @returns its file offset, or `undefined` if no section's initialized raw data holds it
+ */
+export const vaToOffset = (image: PeImage, va: bigint): number | undefined => {
+	const rva = va - image.imageBase;
+	if (rva < 0n || rva > 0xffffffffn) {
+		return undefined;
+	}
+	const address = Number(rva);
+	for (const section of image.sections) {
+		const size = Math.min(section.rawSize, section.virtualSize);
+		if (address >= section.virtualAddress && address < section.virtualAddress + size) {
+			return section.rawOffset + (address - section.virtualAddress);
+		}
+	}
+	return undefined;
+};
+
+/**
+ * @param image parsed image
+ * @param va virtual address
+ * @returns the file offset
+ * @throws {FormatError} if no section's initialized raw data holds `va`
+ */
+export const requireVaOffset = (image: PeImage, va: bigint): number => {
+	const offset = vaToOffset(image, va);
+	if (offset === undefined) {
+		throw new FormatError(`address 0x${va.toString(16)} is outside the image's data`);
+	}
+	return offset;
 };
 
 /**
