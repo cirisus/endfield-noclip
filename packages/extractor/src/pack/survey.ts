@@ -24,6 +24,7 @@ export interface ScenePlacementSurvey extends ScenePlacementSources {
  * @param context install readers
  * @param scene streaming scene id
  * @param level optional LevelConfig id to restrict interactive placement decoding to one level
+ * @param options.includeEcs whether to decode dynamic ECS entity/light chunks (default `true`)
  * @returns every placement source of the scene (or level)
  * @throws {Error} what the packer's setup and placement sources throw
  */
@@ -31,10 +32,11 @@ export const surveyPlacements = async (
 	context: Context,
 	scene: string,
 	level: string | null = null,
+	options?: { includeEcs?: boolean },
 ): Promise<ScenePlacementSurvey> => {
 	const index = await indexScene(context, { scene, level, bounds: null }, { terrain: false, hlod: false });
 	const content = await PackContent.create(context.world, index, () => {});
-	return { scene: index, content, ...(await collectPlacementSources(context, content)) };
+	return { scene: index, content, ...(await collectPlacementSources(context, content, options)) };
 };
 
 /**

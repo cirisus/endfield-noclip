@@ -165,11 +165,12 @@ const isVolumeTypeNodes = (nodes: readonly { level: number; name: string }[] | u
 const isVolumeType = (ref: ObjectRef): boolean => isVolumeTypeNodes(ref.info.type?.nodes);
 
 /**
- * fast pre-check: a prefab whose SerializedFile declares no `HGEnvironmentVolume` type and references no
- * external files cannot contain an environment volume
+ * fast pre-check: a prefab's GameObject and MonoBehaviour components are serialized in its own
+ * SerializedFile, so one whose type table declares no `HGEnvironmentVolume` cannot contain an environment
+ * volume
  */
 const fileMayHaveVolumes = (root: ObjectRef): boolean =>
-	root.file.file.externals.length > 0 || root.file.file.types.some((type) => isVolumeTypeNodes(type.nodes));
+	root.file.file.types.some((type) => isVolumeTypeNodes(type.nodes));
 
 /**
  * reads the enabled environment volumes of a prefab's active GameObjects. box volumes take the GameObject's

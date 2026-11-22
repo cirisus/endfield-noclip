@@ -472,9 +472,10 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	}
 	const { kinds, limit } = options;
 	const needsSurvey = SURVEY_KINDS.some((k) => kinds.has(k));
+	const surveyOptions = { includeEcs: kinds.has('dynamic') };
 	const surveyPromise =
 		needsSurvey && (options.near !== undefined || !kinds.has('static'))
-			? surveyPlacements(context, scene).catch(errorText)
+			? surveyPlacements(context, scene, null, surveyOptions).catch(errorText)
 			: null;
 	const [partition, pathOf, standIns, manifest] = await Promise.all([
 		world.partition(scene),
@@ -522,7 +523,7 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	const survey =
 		rows.full || !needsSurvey
 			? null
-			: await (surveyPromise ?? surveyPlacements(context, scene).catch(errorText));
+			: await (surveyPromise ?? surveyPlacements(context, scene, null, surveyOptions).catch(errorText));
 	if (typeof survey === 'string') {
 		console.error(`${SURVEY_KINDS.filter((k) => kinds.has(k)).join(', ')}: not searched: ${survey}`);
 	} else if (survey !== null) {
@@ -1096,7 +1097,7 @@ const showEnvironment = async (
 		chunkFilter = (file) => file.cell === null || singleLevel.cells.has(cellKey(file.cell.x, file.cell.z));
 	}
 	const [survey, chunkVolumes, pathOf, names, resolver] = await Promise.all([
-		surveyPlacements(context, scene.mapId, singleLevel?.id ?? null),
+		surveyPlacements(context, scene.mapId, singleLevel?.id ?? null, { includeEcs: false }),
 		loadSceneVolumes(world, scene.mapId, chunkFilter),
 		world.pathLookup(),
 		world.names(),

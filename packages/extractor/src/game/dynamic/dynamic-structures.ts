@@ -141,6 +141,8 @@ export interface DynamicStructures {
  * @param scene streaming scene id
  * @param partition level ownership, when available
  * @param game the scene's game state; the load gates' conditions are noted in it and read its controls
+ * @param options.includeEcs whether to decode ECS entity/light chunks (default `true`); pass `false` when
+ *   only placed prefabs and controls are needed
  * @returns ECS renderers and prefab placements, deduplicated by their stored resource references
  * @throws {FormatError} if a selected resource has no grid, chunk or group
  */
@@ -149,6 +151,7 @@ export const loadDynamicStructures = async (
 	scene: string,
 	partition: LevelPartition | undefined,
 	game: GameState,
+	options?: { includeEcs?: boolean },
 ): Promise<DynamicStructures> => {
 	const files = new DynamicFiles(context.vfs, scene);
 	const { grids, owners } = await files.readOwners();
@@ -161,7 +164,11 @@ export const loadDynamicStructures = async (
 		// oxlint-disable-next-line no-await-in-loop -- owners in order; poses are cached per model and value
 		await pass.place(owner);
 	}
-	return pass.finish(await files.readEcsGroups(pass.ecsGroups, pass.result.counts));
+	const decoded =
+		options?.includeEcs === false
+			? { entities: new Map<number, DynamicEntity>(), lights: new Map() }
+			: await files.readEcsGroups(pass.ecsGroups, pass.result.counts);
+	return pass.finish(decoded);
 };
 
 // #region blight

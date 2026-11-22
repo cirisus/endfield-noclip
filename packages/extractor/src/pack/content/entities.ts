@@ -107,14 +107,16 @@ export interface ScenePlacementSources {
  *
  * @param context install readers
  * @param content the pack's content, after the static chunks; controls, rows and counts are added
+ * @param options.includeEcs whether to decode dynamic ECS entity/light chunks (default `true`)
  * @returns the sources and the prefabs they place
  */
 export const collectPlacementSources = async (
 	context: Context,
 	content: PackContent,
+	options?: { includeEcs?: boolean },
 ): Promise<ScenePlacementSources> => {
 	const { scene, controls } = content;
-	const dynamic = await loadDynamicStructures(context, scene.id, scene.partition, scene.game);
+	const dynamic = await loadDynamicStructures(context, scene.id, scene.partition, scene.game, options);
 	for (const [key, count] of Object.entries(dynamic.counts)) {
 		content.count(`dynamic_${key}`, count);
 	}

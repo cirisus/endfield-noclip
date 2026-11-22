@@ -14,6 +14,11 @@ import { objectKey, type AssetResolver, type ObjectRef } from '../assets/assets.
 
 /** the form fields of a doodad-group centre's postmodel script, for group levels 1 to 4 */
 const FORM_FIELDS = ['doodadFormOne', 'doodadFormTwo', 'doodadFormThree', 'doodadFormFour'];
+const FORM_FIELD_SET = new Set(FORM_FIELDS);
+
+/** whether a SerializedFile type declares any doodad-shell form field */
+const isShellTypeNodes = (nodes: readonly { level: number; name: string }[] | undefined): boolean =>
+	nodes?.some((node) => node.level === 1 && FORM_FIELD_SET.has(node.name)) ?? false;
 
 /** a doodad-group centre's postmodel: a shell that loads one form model per group level into a slot */
 export interface DoodadShell {
@@ -34,6 +39,9 @@ export const readDoodadShell = async (
 	resolver: AssetResolver,
 	root: ObjectRef,
 ): Promise<DoodadShell | null> => {
+	if (!root.file.file.types.some((type) => isShellTypeNodes(type.nodes))) {
+		return null;
+	}
 	const data = await resolver.read(root);
 	let rootTransform: ObjectRef | null = null;
 	let shell: { ref: ObjectRef; data: TypeTreeObject } | null = null;
@@ -49,6 +57,9 @@ export const readDoodadShell = async (
 				break;
 			}
 			case UnityClass.MonoBehaviour: {
+				if (!isShellTypeNodes(ref.info.type?.nodes)) {
+					break;
+				}
 				// oxlint-disable-next-line no-await-in-loop -- as above
 				const value = await resolver.read(ref);
 				// form postmodels carry the same script with every form empty
