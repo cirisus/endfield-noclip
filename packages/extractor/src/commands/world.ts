@@ -958,7 +958,7 @@ const showEnvironment = async (context: Context, target: string): Promise<void> 
 	const singleLevel = levels.length === 1 && scene.levels.length > 1 ? levels[0] : null;
 	const levelTags = singleLevel === null ? null : new Set([0, singleLevel.tag]);
 	const [survey, chunkVolumes, pathOf, names, resolver] = await Promise.all([
-		surveyPlacements(context, scene.mapId),
+		surveyPlacements(context, scene.mapId, singleLevel?.id ?? null),
 		loadSceneVolumes(
 			world,
 			scene.mapId,

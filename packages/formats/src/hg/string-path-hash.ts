@@ -181,6 +181,97 @@ export class StringPathHashTable {
 	}
 
 	/**
+	 * finds every distinct hash stored under `path`, matched case-insensitively, without decoding non-matching
+	 * strings
+	 *
+	 * @param path asset path (caller normalizes path separators)
+	 * @returns distinct hashes in slot order
+	 * @throws {FormatError} if the table references data outside the file
+	 */
+	hashesOf(path: string): bigint[] {
+		const wanted = path.toLowerCase();
+		const len = wanted.length;
+		const byteLength = len * 2;
+		const wantedCodes = new Uint16Array(len);
+		let ascii = true;
+		for (let i = 0; i < len; i++) {
+			const code = wanted.charCodeAt(i);
+			wantedCodes[i] = code;
+			if (code >= 0x80) {
+				ascii = false;
+			}
+		}
+		const bytes = this.#view.bytes;
+		const dv = this.#dataView;
+		const stringsOffset = this.#stringsOffset;
+		const fileLen = this.#view.length;
+		const hashes: bigint[] = [];
+
+		const checkBucket = (bucket: number, at: number): void => {
+			if (ascii) {
+				const start = at + 4;
+				if (start + byteLength + 2 > fileLen) {
+					throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+				}
+				// scan from the end: asset paths share long prefixes, so mismatches fail almost immediately
+				for (let i = len - 1; i >= 0; i--) {
+					const p = start + i * 2;
+					let code = bytes[p] | (bytes[p + 1] << 8);
+					if (code >= 65 && code <= 90) {
+						code += 32;
+					} else if (code >= 0x80) {
+						// non-ASCII candidate can't match a pure-ASCII wanted string (unless exotic case-folding)
+						if (this.#view.lengthPrefixedUtf16(at).toLowerCase() !== wanted) {
+							return;
+						}
+						break;
+					}
+					if (code !== wantedCodes[i]) {
+						return;
+					}
+				}
+			} else if (this.#view.lengthPrefixedUtf16(at).toLowerCase() !== wanted) {
+				return;
+			}
+			const hash = dv.getBigUint64(bucket + 4, true);
+			if (!hashes.includes(hash)) {
+				hashes.push(hash);
+			}
+		};
+
+		if (this.#byLength === undefined && this.#lengthScans === 0) {
+			this.#lengthScans++;
+			for (let s = 0; s < this.count; s++) {
+				const slotAt = SLOTS_START + s * 8;
+				const offset = dv.getUint32(slotAt, true);
+				const count = dv.getUint32(slotAt + 4, true);
+				if (count === 0) {
+					continue;
+				}
+				if (offset + count * BUCKET_SIZE > fileLen) {
+					throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+				}
+				for (let i = 0; i < count; i++) {
+					const bucket = offset + i * BUCKET_SIZE;
+					const at = stringsOffset + dv.getUint32(bucket + 12, true);
+					if (at + 4 > fileLen) {
+						throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+					}
+					if (dv.getUint32(at, true) === byteLength) {
+						checkBucket(bucket, at);
+					}
+				}
+			}
+			return hashes;
+		}
+		for (const bucket of this.#bucketsByLength().get(byteLength) ?? []) {
+			const at = stringsOffset + dv.getUint32(bucket + 12, true);
+			checkBucket(bucket, at);
+		}
+		return hashes;
+	}
+
+	/**
 	 * one pass over every bucket on first indexed use, so each later scan for a path visits only the buckets
 	 * whose path has its length (a few bytes per bucket)
 	 *

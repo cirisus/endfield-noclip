@@ -123,6 +123,25 @@ test('matchEntries yields only matching paths', () => {
 	);
 });
 
+test('hashesOf matches case-insensitively on both first scan and indexed lookups', () => {
+	const table = new StringPathHashTable(
+		build([
+			[10n, 'Assets/Foo/Bar.prefab'],
+			[20n, 'Assets/Foo/Baz.prefab'],
+			[30n, 'assets/foo/bar.prefab'],
+			[40n, 'Assets/Café/Test.mat'],
+		]),
+	);
+	assert.deepEqual(
+		table.hashesOf('assets/foo/bar.prefab').toSorted((a, b) => Number(a - b)),
+		[10n, 30n],
+	);
+	// second lookup uses the length index
+	assert.deepEqual(table.hashesOf('ASSETS/FOO/BAZ.PREFAB'), [20n]);
+	assert.deepEqual(table.hashesOf('assets/café/test.mat'), [40n]);
+	assert.deepEqual(table.hashesOf('assets/foo/missing.prefab'), []);
+});
+
 test('reports buckets outside the file as format errors', () => {
 	const bytes = build([[1n, 'x']]);
 	new DataView(bytes.buffer).setUint32(8, 0xffff, true);

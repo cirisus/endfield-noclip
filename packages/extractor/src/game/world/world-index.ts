@@ -194,9 +194,8 @@ export class WorldIndex {
 		return this.#hashes.getOrInsertComputed(wanted, async () => {
 			const hashes: bigint[] = [];
 			for (const table of [await this.pathHash(), await this.initPathHash()]) {
-				// only strings of the right length are decoded; the tables keep the authoring case
-				for (const [hash, candidate] of table.entriesWithByteLength(wanted.length * 2)) {
-					if (candidate.toLowerCase() === wanted && !hashes.includes(hash)) {
+				for (const hash of table.hashesOf(wanted)) {
+					if (!hashes.includes(hash)) {
 						hashes.push(hash);
 					}
 				}
