@@ -84,4 +84,40 @@ export class FlatBuffer extends ByteView {
 		const at = this.field(table, slot);
 		return at === undefined ? '' : this.stringAt(this.deref(at));
 	}
+
+	/** @returns the boolean stored in slot `slot`, or `false` if absent */
+	boolField(table: number, slot: number): boolean {
+		const at = this.field(table, slot);
+		return at !== undefined && this.u8(at) !== 0;
+	}
+
+	/** @returns the unsigned 8-bit integer stored in slot `slot`, or `0` if absent */
+	u8Field(table: number, slot: number): number {
+		const at = this.field(table, slot);
+		return at === undefined ? 0 : this.u8(at);
+	}
+
+	/** @returns the signed 32-bit integer stored in slot `slot`, or `0` if absent */
+	i32Field(table: number, slot: number): number {
+		const at = this.field(table, slot);
+		return at === undefined ? 0 : this.i32(at);
+	}
+
+	/** @returns the unsigned 32-bit integer stored in slot `slot`, or `0` if absent */
+	u32Field(table: number, slot: number): number {
+		const at = this.field(table, slot);
+		return at === undefined ? 0 : this.u32(at);
+	}
+
+	/** @returns the 32-bit float stored in slot `slot`, or `0` if absent */
+	f32Field(table: number, slot: number): number {
+		const at = this.field(table, slot);
+		return at === undefined ? 0 : this.f32(at);
+	}
+
+	/** @returns the unsigned 64-bit integer stored in slot `slot`, or `0n` if absent */
+	u64Field(table: number, slot: number): bigint {
+		const at = this.field(table, slot);
+		return at === undefined ? 0n : this.u64(at);
+	}
 }

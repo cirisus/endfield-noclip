@@ -1,7 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { ByteView } from '../binary/byte-view.ts';
 
-import { hashSlot } from './hash-slots.ts';
+import { hashSlot, readLengthPrefixedUtf16 } from './hash-slots.ts';
 
 // `Data/ExtendData/Main/StringPathHash.bin` (ExtendData group) and
 // `Data/ExtendData/Initial/InitStringPathHash.bin` (InitialExtendData group): stored hash table from 64-bit
@@ -53,7 +53,7 @@ export class StringPathHashTable {
 		for (let i = 0; i < slot.count; i++) {
 			const bucket = slot.offset + i * BUCKET_SIZE;
 			if (view.u64(bucket + 4) === hash) {
-				const path = view.lengthPrefixedUtf16(stringsOffset + view.u32(bucket + 12));
+				const path = readLengthPrefixedUtf16(view, stringsOffset + view.u32(bucket + 12));
 				if (!found.includes(path)) {
 					found.push(path);
 				}
@@ -84,7 +84,7 @@ export class StringPathHashTable {
 		const dv = view.view;
 		const stringsOffset = this.#stringsOffset;
 		for (const bucket of this.#buckets()) {
-			const path = view.lengthPrefixedUtf16(stringsOffset + dv.getUint32(bucket + 12, true));
+			const path = readLengthPrefixedUtf16(view, stringsOffset + dv.getUint32(bucket + 12, true));
 			if (predicate === undefined || predicate(path)) {
 				yield [dv.getBigUint64(bucket + 4, true), path];
 			}
@@ -131,7 +131,7 @@ export class StringPathHashTable {
 						code += 32;
 					} else if (code >= 0x80) {
 						// non-ASCII candidate can't match a pure-ASCII wanted string (unless exotic case-folding)
-						if (view.lengthPrefixedUtf16(at).toLowerCase() !== wanted) {
+						if (readLengthPrefixedUtf16(view, at).toLowerCase() !== wanted) {
 							return;
 						}
 						break;
@@ -140,7 +140,7 @@ export class StringPathHashTable {
 						return;
 					}
 				}
-			} else if (view.lengthPrefixedUtf16(at).toLowerCase() !== wanted) {
+			} else if (readLengthPrefixedUtf16(view, at).toLowerCase() !== wanted) {
 				return;
 			}
 			const hash = dv.getBigUint64(bucket + 4, true);

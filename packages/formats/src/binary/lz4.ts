@@ -12,7 +12,7 @@ import { FormatError } from './binary-reader.ts';
  * @throws {FormatError} if the stream is malformed or the output size differs
  */
 export const decodeLz4Block = (src: Uint8Array, decompressedSize: number): Uint8Array => {
-	return decodeStandard(src, decompressedSize);
+	return decodeBlock(src, decompressedSize, false);
 };
 
 /**
@@ -23,7 +23,7 @@ export const decodeLz4Block = (src: Uint8Array, decompressedSize: number): Uint8
  * @see decodeLz4Block for parameters and errors
  */
 export const decodeInvertedLz4Block = (src: Uint8Array, decompressedSize: number): Uint8Array => {
-	return decodeInverted(src, decompressedSize);
+	return decodeBlock(src, decompressedSize, true);
 };
 
 /** limits for {@link decodeInvertedLz4Prefix} */
@@ -92,7 +92,7 @@ export const decodeInvertedLz4Prefix = (src: Uint8Array, limits: Lz4PrefixLimits
 	return Uint8Array.from(out);
 };
 
-const decodeStandard = (src: Uint8Array, size: number): Uint8Array => {
+const decodeBlock = (src: Uint8Array, size: number, inverted: boolean): Uint8Array => {
 	const out = new Uint8Array(size);
 	const srcLength = src.length;
 	let s = 0;
@@ -100,90 +100,8 @@ const decodeStandard = (src: Uint8Array, size: number): Uint8Array => {
 
 	while (s < srcLength) {
 		const token = src[s++];
-		let literalLength = token >> 4;
-		let matchLength = token & 15;
-
-		if (literalLength === 15) {
-			let byte: number;
-			do {
-				if (s >= srcLength) {
-					throw new FormatError('lz4: truncated literal length');
-				}
-				byte = src[s++];
-				literalLength += byte;
-			} while (byte === 255);
-		}
-
-		if (s + literalLength > srcLength || d + literalLength > size) {
-			throw new FormatError('lz4: literal run overflows');
-		}
-		if (literalLength < 32) {
-			const end = d + literalLength;
-			while (d < end) {
-				out[d++] = src[s++];
-			}
-		} else {
-			out.set(src.subarray(s, s + literalLength), d);
-			s += literalLength;
-			d += literalLength;
-		}
-
-		if (s >= srcLength) {
-			break;
-		}
-		if (s + 2 > srcLength) {
-			throw new FormatError('lz4: truncated match offset');
-		}
-
-		const offset = src[s] | (src[s + 1] << 8);
-		s += 2;
-		if (offset === 0 || offset > d) {
-			throw new FormatError(`lz4: invalid match offset ${offset} at output ${d}`);
-		}
-
-		if (matchLength === 15) {
-			let byte: number;
-			do {
-				if (s >= srcLength) {
-					throw new FormatError('lz4: truncated match length');
-				}
-				byte = src[s++];
-				matchLength += byte;
-			} while (byte === 255);
-		}
-		matchLength += 4;
-
-		if (d + matchLength > size) {
-			throw new FormatError('lz4: match overflows output');
-		}
-		let from = d - offset;
-		if (offset >= matchLength && matchLength >= 32) {
-			out.copyWithin(d, from, from + matchLength);
-			d += matchLength;
-		} else {
-			const end = d + matchLength;
-			while (d < end) {
-				out[d++] = out[from++];
-			}
-		}
-	}
-
-	if (d !== size) {
-		throw new FormatError(`lz4: decoded ${d} bytes, expected ${size}`);
-	}
-	return out;
-};
-
-const decodeInverted = (src: Uint8Array, size: number): Uint8Array => {
-	const out = new Uint8Array(size);
-	const srcLength = src.length;
-	let s = 0;
-	let d = 0;
-
-	while (s < srcLength) {
-		const token = src[s++];
-		let literalLength = (token & 0b11) | ((token >> 2) & 0b1100);
-		let matchLength = ((token >> 2) & 0b11) | ((token >> 4) & 0b1100);
+		let literalLength = inverted ? (token & 0b11) | ((token >> 2) & 0b1100) : token >> 4;
+		let matchLength = inverted ? ((token >> 2) & 0b11) | ((token >> 4) & 0b1100) : token & 15;
 
 		if (literalLength === 15) {
 			let byte: number;
@@ -218,7 +136,7 @@ const decodeInverted = (src: Uint8Array, size: number): Uint8Array => {
 			throw new FormatError('lz4: truncated match offset');
 		}
 
-		const offset = (src[s] << 8) | src[s + 1];
+		const offset = inverted ? (src[s] << 8) | src[s + 1] : src[s] | (src[s + 1] << 8);
 		s += 2;
 		if (offset === 0 || offset > d) {
 			throw new FormatError(`lz4: invalid match offset ${offset} at output ${d}`);

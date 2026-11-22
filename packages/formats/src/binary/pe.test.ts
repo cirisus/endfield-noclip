@@ -7,7 +7,6 @@ import {
 	bytesEqual,
 	dataSections,
 	findBytePermutations,
-	offsetToRva,
 	parsePe,
 	type PeSection,
 	requireVaOffset,
@@ -71,7 +70,6 @@ describe('parsePe', () => {
 		assert.equal(image.imageBase, 0x1_8000_0000n);
 		assert.equal(image.sections.length, 1);
 		assert.equal(image.sections[0].name, '.data');
-		assert.equal(offsetToRva(image, image.sections[0].rawOffset), 0x1000);
 	});
 
 	it('maps virtual addresses to file offsets within raw section data', () => {

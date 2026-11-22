@@ -1,7 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { ByteView } from '../binary/byte-view.ts';
 
-import { hashSlot } from './hash-slots.ts';
+import { hashSlot, readLengthPrefixedUtf16 } from './hash-slots.ts';
 
 // `Data/Bundles/Windows/manifest.hgmmap` (BundleManifest group; layout in docs/game-data/assets.md#lookup-tables).
 // layout and field names per Variante/endfield_research_kit (MIT, `scripts/game_data/bundle_manifest{,_native}.py`
@@ -226,7 +226,7 @@ export class BundleManifest {
 	}
 
 	#string(offset: number): string {
-		return this.#view.lengthPrefixedUtf16(this.#data + offset);
+		return readLengthPrefixedUtf16(this.#view, this.#data + offset);
 	}
 
 	#list(offset: number): number[] {

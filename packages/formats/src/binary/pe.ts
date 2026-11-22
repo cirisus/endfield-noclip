@@ -96,20 +96,6 @@ export const isWritable = (section: PeSection): boolean => {
 
 /**
  * @param image parsed image
- * @param fileOffset byte offset within the file
- * @returns the containing section's rva, or `undefined` if the offset is outside every section
- */
-export const offsetToRva = (image: PeImage, fileOffset: number): number | undefined => {
-	for (const section of image.sections) {
-		if (fileOffset >= section.rawOffset && fileOffset < section.rawOffset + section.rawSize) {
-			return section.virtualAddress + (fileOffset - section.rawOffset);
-		}
-	}
-	return undefined;
-};
-
-/**
- * @param image parsed image
  * @param va virtual address
  * @returns its file offset, or `undefined` if no section's initialized raw data holds it
  */

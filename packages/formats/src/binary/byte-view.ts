@@ -29,6 +29,11 @@ export class ByteView {
 		return this.bytes[at];
 	}
 
+	i8(at: number): number {
+		this.check(at, 1);
+		return this.view.getInt8(at);
+	}
+
 	u16(at: number): number {
 		this.check(at, 2);
 		return this.view.getUint16(at, true);
@@ -59,6 +64,24 @@ export class ByteView {
 		return this.view.getBigInt64(at, true);
 	}
 
+	/**
+	 * reads a signed 64-bit integer that must fit in a JS number
+	 *
+	 * @throws {FormatError} if the value exceeds `Number.MAX_SAFE_INTEGER`
+	 */
+	i64Number(at: number): number {
+		this.check(at, 8);
+		const lo = this.view.getUint32(at, true);
+		const hi = this.view.getInt32(at + 4, true);
+		if (hi < 0x20_0000 && (hi > -0x20_0000 || (hi === -0x20_0000 && lo !== 0))) {
+			return hi * 0x1_0000_0000 + lo;
+		}
+		const value = this.view.getBigInt64(at, true);
+		throw new FormatError(
+			`${this.#label} 64-bit value ${value} at 0x${at.toString(16)} isn't a safe integer`,
+		);
+	}
+
 	f32(at: number): number {
 		this.check(at, 4);
 		return this.view.getFloat32(at, true);
@@ -67,6 +90,27 @@ export class ByteView {
 	f64(at: number): number {
 		this.check(at, 8);
 		return this.view.getFloat64(at, true);
+	}
+
+	/** @returns three consecutive little-endian floats at `at` */
+	vec3(at: number): [number, number, number] {
+		this.check(at, 12);
+		return [
+			this.view.getFloat32(at, true),
+			this.view.getFloat32(at + 4, true),
+			this.view.getFloat32(at + 8, true),
+		];
+	}
+
+	/** @returns four consecutive little-endian floats at `at` */
+	vec4(at: number): [number, number, number, number] {
+		this.check(at, 16);
+		return [
+			this.view.getFloat32(at, true),
+			this.view.getFloat32(at + 4, true),
+			this.view.getFloat32(at + 8, true),
+			this.view.getFloat32(at + 12, true),
+		];
 	}
 
 	/** @returns a view (not a copy) of `size` bytes at `at` */
@@ -90,16 +134,6 @@ export class ByteView {
 		return [utf8.decode(this.bytes.subarray(at, end)), end + 1];
 	}
 
-	/** reads `u32 byteLength ‖ UTF-16LE ‖ u16 0` */
-	lengthPrefixedUtf16(at: number): string {
-		const byteLength = this.u32(at);
-		if (byteLength % 2 !== 0) {
-			throw new FormatError(`${this.#label} string at ${at} has an odd byte length ${byteLength}`);
-		}
-		this.check(at + 4, byteLength + 2);
-		return utf16.decode(this.bytes.subarray(at + 4, at + 4 + byteLength));
-	}
-
 	/** @throws {FormatError} if `[at, at + size)` isn't inside the buffer */
 	check(at: number, size: number): void {
 		if (!(at >= 0 && size >= 0 && at + size <= this.bytes.byteLength)) {
@@ -108,5 +142,4 @@ export class ByteView {
 	}
 }
 
-const utf8 = new TextDecoder('utf-8');
-const utf16 = new TextDecoder('utf-16le');
+const utf8 = new TextDecoder('utf-8', { fatal: true });

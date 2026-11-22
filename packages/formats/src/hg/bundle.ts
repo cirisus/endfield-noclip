@@ -220,7 +220,7 @@ export const parseBundleDirectory = (
 	const r = new BinaryReader(info, { littleEndian: false });
 	const blocks: BundleBlock[] = [];
 	{
-		const encoded = bswap32((readU32Le(r) ^ 0x8a7bf723) >>> 0);
+		const encoded = bswap32((r.u32Le() ^ 0x8a7bf723) >>> 0);
 		const lo = encoded & 0xffff;
 		const hi = encoded >>> 16;
 		const count = (ror32((((lo ^ hi) << 16) | lo) >>> 0, 18) ^ 0x91ce0a4f) >>> 0;
@@ -248,7 +248,7 @@ export const parseBundleDirectory = (
 
 	const nodes: BundleNode[] = [];
 	{
-		const encoded = bswap32((readU32Le(r) ^ 0x5de50a6b) >>> 0);
+		const encoded = bswap32((r.u32Le() ^ 0x5de50a6b) >>> 0);
 		const lo = encoded & 0xffff;
 		const hi = encoded >>> 16;
 		const count = (ror32((((lo ^ hi) << 16) | lo) >>> 0, 18) ^ 0xe4c1d9f2) >>> 0;
@@ -286,13 +286,6 @@ export const parseBundleDirectory = (
 		}
 	}
 	return { header, blocks, nodes };
-};
-
-const readU32Le = (r: BinaryReader): number => {
-	r.littleEndian = true;
-	const value = r.u32();
-	r.littleEndian = false;
-	return value;
 };
 
 /** node names are NUL-terminated, capped at 64 bytes, and XORed with `index ^ 0x97` */

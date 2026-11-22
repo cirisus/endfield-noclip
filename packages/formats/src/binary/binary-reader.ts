@@ -88,6 +88,11 @@ export class BinaryReader {
 		return this.view.getUint32(this.#claim(4), this.littleEndian);
 	}
 
+	/** reads an unsigned 32-bit little-endian integer regardless of {@link littleEndian} */
+	u32Le(): number {
+		return this.view.getUint32(this.#claim(4), true);
+	}
+
 	i32(): number {
 		return this.view.getInt32(this.#claim(4), this.littleEndian);
 	}
