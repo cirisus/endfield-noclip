@@ -88,11 +88,15 @@ const READ_CONCURRENCY = 16;
  * @returns the scene's selectable variants
  */
 export const loadSceneryVariants = async (world: WorldIndex, scene: string): Promise<SceneryVariants> => {
-	const names = await world.names();
-	const partition = await world.partition(scene);
-	const table = await world.streamAreas(scene);
+	const [names, partition, table, chunkFiles, progressions] = await Promise.all([
+		world.names(),
+		world.partition(scene),
+		world.streamAreas(scene),
+		world.chunkFiles(),
+		loadProgressions(world, scene),
+	]);
 
-	const areaFiles = groupByDefined(await world.chunkFiles(), (file) =>
+	const areaFiles = groupByDefined(chunkFiles, (file) =>
 		file.scene === scene && file.area !== 0 ? file.area : undefined,
 	);
 	const allFiles = [...areaFiles.values()].flat();
@@ -126,7 +130,7 @@ export const loadSceneryVariants = async (world: WorldIndex, scene: string): Pro
 		});
 	}
 
-	return { scene, areas, progressions: await loadProgressions(world, scene) };
+	return { scene, areas, progressions };
 };
 
 /**
@@ -135,11 +139,13 @@ export const loadSceneryVariants = async (world: WorldIndex, scene: string): Pro
  * @returns the scene's progression controllers with their levels named, sorted by kind then key
  */
 export const loadProgressions = async (world: WorldIndex, scene: string): Promise<SceneProgression[]> => {
-	const names = await world.names();
-	const byIdNum = new Map(
-		[...(await world.levelConfigs()).values()].map((config) => [config.idNum, config.id]),
-	);
-	return summarizeProgressions(await world.dynamicEntities(scene)).map((summary) => {
+	const [names, levelConfigs, dynamicEntities] = await Promise.all([
+		world.names(),
+		world.levelConfigs(),
+		world.dynamicEntities(scene),
+	]);
+	const byIdNum = new Map([...levelConfigs.values()].map((config) => [config.idNum, config.id]));
+	return summarizeProgressions(dynamicEntities).map((summary) => {
 		const levelId = summary.levelNum === null ? null : (byIdNum.get(summary.levelNum) ?? null);
 		return labelProgression(summary, levelId, (levelId && names.get(levelId)) ?? null);
 	});

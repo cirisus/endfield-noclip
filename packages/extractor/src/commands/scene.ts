@@ -52,8 +52,15 @@ import {
 	type PlacementKind,
 } from '../game/placements.ts';
 import { sourceVisibility } from '../game/state/chunk-sources.ts';
-import { defaultSceneStates, sceneStateControl } from '../game/state/scene-conditions.ts';
+import { GameState } from '../game/state/game-state.ts';
+import {
+	defaultSceneStates,
+	loadMapVariables,
+	loadSceneStates,
+	sceneStateControl,
+} from '../game/state/scene-conditions.ts';
 import { loadSceneryVariants } from '../game/state/scenery-variants.ts';
+import { loadUpgradeLinks } from '../game/state/settlement-upgrades.ts';
 import { stripMarkup } from '../game/state/story.ts';
 import { readSceneWater } from '../game/water/water-source.ts';
 import { readWaterVolumes } from '../game/water/water-volumes.ts';
@@ -1255,12 +1262,16 @@ const showEnvironmentAt = async (
 };
 
 const showControls = async (context: Context, scene: string, json: boolean): Promise<void> => {
-	const [variants, survey] = await Promise.all([
-		loadSceneryVariants(context.world, scene),
-		surveyPlacements(context, scene).catch(() => null),
+	const { world } = context;
+	const [variants, states, links, variables] = await Promise.all([
+		loadSceneryVariants(world, scene),
+		loadSceneStates(world, scene),
+		loadUpgradeLinks(context, scene),
+		loadMapVariables(world, scene),
 	]);
-	const states = survey?.scene.sceneStates ?? [];
-	const enabled = survey === null ? new Set<number>() : defaultSceneStates(states, survey.scene.game);
+	const game = new GameState({ links, variables });
+	game.note(mapDefined(states, ({ condition }) => condition ?? undefined));
+	const enabled = defaultSceneStates(states, game);
 	if (json) {
 		console.log(
 			JSON.stringify(
@@ -1270,7 +1281,7 @@ const showControls = async (context: Context, scene: string, json: boolean): Pro
 						control: sceneStateControl(index),
 						name,
 						defaultOn: enabled.has(index),
-						rule: condition === null ? null : ruleText(survey!.scene.game.describe(condition)),
+						rule: condition === null ? null : ruleText(game.describe(condition)),
 					})),
 				},
 				null,
@@ -1284,7 +1295,7 @@ const showControls = async (context: Context, scene: string, json: boolean): Pro
 		for (const { index, name, condition } of states) {
 			console.log(
 				`  ${enabled.has(index) ? 'on ' : 'off'} ${sceneStateControl(index).padEnd(14)} ${name}: ${
-					condition === null ? 'only set by name' : ruleText(survey!.scene.game.describe(condition))
+					condition === null ? 'only set by name' : ruleText(game.describe(condition))
 				}`,
 			);
 		}
