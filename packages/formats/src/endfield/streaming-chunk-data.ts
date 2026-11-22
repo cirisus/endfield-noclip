@@ -1,7 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 
 import { ChunkObjectKind } from './init-chunk-data.ts';
-import { readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
+import { type ChunkRows, readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
 
 // resource bindings of streamed objects (`StreamingChunkData_*`, sibling of `InitChunkData_*`; layout in
 // docs/game-data/world.md#streamingchunkdata). row readings follow Variante/endfield_research_kit (MIT,
@@ -72,7 +72,7 @@ const HLOD_LINK_KEY = 0xff000000;
  * @returns every object's property bindings, in file order
  * @throws {FormatError} on any framing mismatch
  */
-export const parseStreamingChunk = (data: Uint8Array): StreamingChunk => {
+export const parseStreamingChunk = (data: Uint8Array | ChunkRows): StreamingChunk => {
 	const { fb, version, rows } = readChunkRows(data);
 	const records = rows.map(({ id, tag, table }): StreamingRecord => {
 		const properties: StreamingProperty[] = [];

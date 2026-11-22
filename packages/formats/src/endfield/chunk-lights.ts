@@ -2,7 +2,7 @@ import { FormatError } from '../binary/binary-reader.ts';
 
 import { groupColumn, type InitChunk } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
-import { readChunkRows, readPropertyTable } from './mono-objects.ts';
+import { type ChunkRows, readChunkRows, readPropertyTable } from './mono-objects.ts';
 
 // local lights among the InitChunkData component-group entities (tag-2 rows, `init-chunk-data.ts`). their
 // group columns 42 and 63 are zero-filled in the file; the values sit in the entity's own root row, whose slot 3
@@ -112,7 +112,7 @@ const SETTINGS_SIZE = 448;
  * @returns the lights in row order
  * @throws {FormatError} if a light's row has no property table or its blobs don't have the known sizes
  */
-export const readChunkLights = (data: Uint8Array, chunk: InitChunk): ChunkLight[] => {
+export const readChunkLights = (data: Uint8Array | ChunkRows, chunk: InitChunk): ChunkLight[] => {
 	const lightIds = new Set<number>();
 	for (const group of chunk.groups) {
 		if (LIGHT_COLUMNS.every((id) => groupColumn(group, id) !== undefined)) {

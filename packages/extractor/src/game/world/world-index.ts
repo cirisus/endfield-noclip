@@ -22,6 +22,7 @@ import {
 } from '@endfield-noclip/formats/endfield/level-partition';
 import { parseMapConfig, type MapConfig } from '@endfield-noclip/formats/endfield/map-config';
 import { parseMissionRuntime, type MissionRuntime } from '@endfield-noclip/formats/endfield/mission-runtime';
+import { type ChunkRows, readChunkRows } from '@endfield-noclip/formats/endfield/mono-objects';
 import { parseStreamAreas, type StreamAreaTable } from '@endfield-noclip/formats/endfield/stream-area';
 import {
 	assetProperty,
@@ -449,32 +450,34 @@ export class WorldIndex {
 	}> {
 		const data = await this.readInitPayload(file);
 		const chunk = parseInitChunk(data);
-		const lights = readChunkLights(data, chunk);
+		const initRows = readChunkRows(data);
+		const lights = readChunkLights(initRows, chunk);
 		const entities = indexEntities(chunk, file, partition);
-		const foliaged = hasFoliageGrids(data);
+		const foliaged = hasFoliageGrids(initRows);
 		const decals = entities.some((entity) => entity.decal !== null || entity.waterDecal !== null);
 		// clusters load on the HLOD layers; the links of their children, in the cell files, aren't read
 		const hlodLayers = new Set(
 			entities.filter((entity) => isHlodLayer(entity.layer)).map((entity) => entity.id),
 		);
-		let streaming: Uint8Array | null = null;
+		let streamRows: ChunkRows | null = null;
 		if (foliaged || decals || hlodLayers.size > 0) {
-			streaming = await this.readStreamingPayload(file);
+			const streaming = await this.readStreamingPayload(file);
 			if (streaming === null) {
 				throw new Error(
 					`${file.name} has foliage grids, decals or HLOD-layer entities but no StreamingChunkData`,
 				);
 			}
+			streamRows = readChunkRows(streaming);
 		}
-		const foliage = foliaged && streaming !== null ? readFoliageGrids(data, streaming) : [];
+		const foliage = foliaged && streamRows !== null ? readFoliageGrids(initRows, streamRows) : [];
 		const decalMaterials = new Map<number, bigint>();
 		const waterDecalMeshes = new Map<number, bigint>();
 		const waterDecals = new Set(
 			entities.filter((entity) => entity.waterDecal !== null).map((entity) => entity.id),
 		);
 		const hlodClusters = new Map<number, HlodLink>();
-		if ((decals || hlodLayers.size > 0) && streaming !== null) {
-			for (const record of parseStreamingChunk(streaming).records) {
+		if ((decals || hlodLayers.size > 0) && streamRows !== null) {
+			for (const record of parseStreamingChunk(streamRows).records) {
 				const material = assetProperty(record, DECAL_MATERIAL_KEY);
 				if (material !== undefined) {
 					decalMaterials.set(record.id, material);

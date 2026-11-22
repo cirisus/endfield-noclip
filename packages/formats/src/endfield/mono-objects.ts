@@ -61,6 +61,13 @@ export interface ChunkRow {
 	table: number;
 }
 
+/** parsed header and union rows of an InitChunkData or StreamingChunkData FlatBuffer */
+export interface ChunkRows {
+	fb: FlatBuffer;
+	version: number;
+	rows: ChunkRow[];
+}
+
 // #endregion
 
 /** value type codes of {@link MonoValue}s */
@@ -88,7 +95,10 @@ export const ValueCode = {
  * @returns the objects in row order
  * @throws {FormatError} if the files disagree on the object list or a value doesn't frame
  */
-export const readMonoObjects = (init: Uint8Array, streaming: Uint8Array | null): MonoObject[] => {
+export const readMonoObjects = (
+	init: Uint8Array | ChunkRows,
+	streaming: Uint8Array | ChunkRows | null,
+): MonoObject[] => {
 	const initRows = readChunkRows(init);
 	const streamRows = streaming === null ? null : readChunkRows(streaming);
 	if (streamRows !== null && streamRows.rows.length !== initRows.rows.length) {
@@ -131,7 +141,7 @@ export const readMonoObjects = (init: Uint8Array, streaming: Uint8Array | null):
  *   {@link readMonoObjects}
  * @throws {FormatError} if the root doesn't frame
  */
-export const hasMonoComponents = (init: Uint8Array, mask: bigint): boolean => {
+export const hasMonoComponents = (init: Uint8Array | ChunkRows, mask: bigint): boolean => {
 	const { fb, rows } = readChunkRows(init);
 	return rows.some((row) => {
 		if (row.tag !== ChunkObjectKind.Mono) {
@@ -161,13 +171,18 @@ export const monoField = (component: MonoComponent, field: number): MonoValue | 
 };
 
 /**
- * reads the root of an InitChunkData or StreamingChunkData FlatBuffer (the two share it)
+ * reads the root of an InitChunkData or StreamingChunkData FlatBuffer (the two share it). already-parsed
+ * {@link ChunkRows} are returned as is so callers reading several views from one chunk parse the header
+ * once.
  *
- * @param data the file after `unpackHgPayload`
+ * @param data the file after `unpackHgPayload`, or an already-parsed result
  * @returns the reader, root version and the union rows
  * @throws {FormatError} if the root isn't the 8-slot chunk root of a known version
  */
-export const readChunkRows = (data: Uint8Array): { fb: FlatBuffer; version: number; rows: ChunkRow[] } => {
+export const readChunkRows = (data: Uint8Array | ChunkRows): ChunkRows => {
+	if (!(data instanceof Uint8Array)) {
+		return data;
+	}
 	const fb = new FlatBuffer(data);
 	const root = fb.root();
 	if (fb.fieldCount(root) !== 8) {

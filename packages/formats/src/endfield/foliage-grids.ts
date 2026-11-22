@@ -5,7 +5,7 @@ import type { Aabb } from '../unity/values.ts';
 
 import { ChunkObjectKind, Component, type RendererDraw, type StaticRenderer } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
-import { readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
+import { type ChunkRows, readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
 
 // scattered foliage: grass and tree grids among a chunk's tag-3 proxy objects, serialized as whole ECS
 // archetypes in the row's keyed property table (layout in docs/game-data/world.md#foliage-grids).
@@ -67,7 +67,7 @@ const DRAW_INFO_SIZE = 24;
  * @returns whether the chunk has a grass or tree grid; cheaper than {@link readFoliageGrids}
  * @throws {FormatError} if the root doesn't frame
  */
-export const hasFoliageGrids = (init: Uint8Array): boolean => {
+export const hasFoliageGrids = (init: Uint8Array | ChunkRows): boolean => {
 	const { fb, rows } = readChunkRows(init);
 	return rows.some((row) => gridType(fb, row) !== null);
 };
@@ -76,12 +76,15 @@ export const hasFoliageGrids = (init: Uint8Array): boolean => {
  * reads a chunk's grass and tree grids. a grid that spans files appears in each under the same id; callers
  * dedupe across files.
  *
- * @param init an InitChunkData FlatBuffer (after `unpackHgPayload`)
+ * @param init an InitChunkData FlatBuffer (after `unpackHgPayload`) or parsed rows
  * @param streaming its StreamingChunkData sibling, which holds the grids' batch tables
  * @returns the grids in row order, each with its clusters in file order
  * @throws {FormatError} if the two files disagree on the objects, or a grid's tables or columns don't frame
  */
-export const readFoliageGrids = (init: Uint8Array, streaming: Uint8Array): FoliageGrid[] => {
+export const readFoliageGrids = (
+	init: Uint8Array | ChunkRows,
+	streaming: Uint8Array | ChunkRows,
+): FoliageGrid[] => {
 	const initRows = readChunkRows(init);
 	const streamRows = readChunkRows(streaming);
 	if (streamRows.rows.length !== initRows.rows.length) {
