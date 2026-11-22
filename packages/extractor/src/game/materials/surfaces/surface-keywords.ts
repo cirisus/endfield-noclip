@@ -5,6 +5,8 @@
 
 import type { MaterialReader } from '../material-values.ts';
 
+import { rigidBodyOf } from './rigid-body.ts';
+
 /** keywords every surface reads: the alpha test and both emission sources */
 const SURFACE_KEYWORDS = ['_ALPHATEST_ON', '_EMISSIVE_MAP', '_EMISSIVE_MASK'];
 
@@ -37,6 +39,8 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 			'_GPU_CLOTH',
 			'_USE_VERTOFFSET',
 			'_USE_VERTOFFSETMASK',
+			// baked into the meshes it draws (`rigidBodySkin`); the cases `rigidBodyOf` doesn't play are gaps
+			'_VAT_RIGIDBODY',
 		],
 		'HGRP/LitEffect': LIT_KEYWORDS,
 		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
@@ -103,6 +107,10 @@ export const surfaceGaps = (reader: MaterialReader): string[] => {
 				gaps.push(property);
 			}
 		}
+	}
+	const rigidBody = shader === 'HGRP/Lit' ? rigidBodyOf(reader) : null;
+	if (rigidBody !== null && 'kind' in rigidBody) {
+		gaps.push('_VAT_RIGIDBODY');
 	}
 	return gaps;
 };

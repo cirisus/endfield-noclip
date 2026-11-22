@@ -113,6 +113,19 @@ swaying material on an animated mesh keeps still. the game's
 [cloth simulation](../game-data/materials.md#cloth-simulation) isn't run: a simulated entity draws
 its mesh at rest, with the sway alone, and `pack` counts those entities (`clothSimulated`).
 
+## rigid-body animation
+
+[rigid-body animation](../game-data/materials.md#rigid-body-animation) isn't drawn by the surface:
+the packer bakes it into the meshes its materials draw as a
+[skeletal animation](../package-format.md#geometry-blob-mesh-efgm), one bone per piece
+([extraction](../extraction.md#asset-classes)), which the viewer plays like any animated geometry.
+so the surface reads nothing of it, and the keyword is a gap only for the cases `rigidBodyOf`
+doesn't play (a frame set per draw, particle data, the mesh's normals kept, no rotation texture).
+the baked loop runs on the animation clock, its frames interpolated where the game steps them, and
+every placement plays in step, as the game's do on one clock. a mesh drawn with two different
+animations (map02's machine parts, one mesh at five speeds) holds still, as does one on a posed or
+animated renderer; `debug/assets.json` says which (`unanimated`).
+
 ## vertex offset
 
 the [vertex offset](../game-data/materials.md#vertex-offset) is the surface's `vertexOffset`

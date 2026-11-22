@@ -22,6 +22,7 @@ import {
 import { placedWaterFoam } from '../../game/materials/effects/water-foam.ts';
 import {
 	describeMaterial,
+	materialRigidBody,
 	materialSway,
 	materialVertexOffset,
 } from '../../game/materials/material-describe.ts';
@@ -52,6 +53,7 @@ import {
 import type { OffsetReach, SwayReach } from './geometry.ts';
 import { surfaceMotion } from './material-motion.ts';
 import { convertMaterial, ShaderTable } from './materials.ts';
+import type { RigidBodyBake } from './rigid-body-skin.ts';
 
 // converting the assets the packer referenced (by the ids `AssetIds` handed out) reads materials first (they
 // decide which meshes need tangents and which textures are used), then meshes, then textures, then describes
@@ -144,9 +146,10 @@ export interface AssetConversion {
 	debug: {
 		/**
 		 * `tangentUvs`: when normal-mapped materials drawing the mesh read their normal maps on different uv
-		 * sets, those sets ascending; its tangents follow the first, so the others shade with wrong tangents
+		 * sets, those sets ascending; its tangents follow the first, so the others shade with wrong tangents.
+		 * `unanimated`: why a mesh drawn with a rigid-body animation holds still
 		 */
-		geometries: (AssetDebug & { tangentUvs?: number[] })[];
+		geometries: (AssetDebug & { tangentUvs?: number[]; unanimated?: string })[];
 		materials: MaterialDebug[];
 		/**
 		 * by texture object, in first-use order; `id` is its texture-table entry, `approximations` the settings
@@ -203,7 +206,7 @@ export const convertAssets = async (input: AssetConversionInput): Promise<AssetC
 		group.map(({ ref, place }) => textureUses.use(locatedObject(ref), place)),
 	);
 	timer.end('materials');
-	const geometries = await convertGeometries(input, jobs, meshNeeds(input, materials));
+	const geometries = await convertGeometries(input, jobs, meshNeeds(input, materials, textureUses));
 	timer.end('geometry');
 	const textures = await convertTextures(input, jobs, textureUses.objects);
 	// slots referenced textures by object; point them at the deduplicated entries
@@ -543,15 +546,24 @@ interface MeshNeeds {
 	sway: (SwayReach | null)[];
 	/** the farthest any material's vertex offset moves it, `null` without one */
 	offset: (OffsetReach | null)[];
+	/** the rigid-body animation its materials play, `null` without one or when they disagree on it */
+	rigidBody: (RigidBodyBake | null)[];
+	/** why a mesh drawn with rigid-body animations isn't baked with one, by mesh */
+	unanimated: Map<number, string>;
 }
 
 /**
  * a mesh gets tangents when any draw of it uses a normal-mapped material, for the lowest uv set any of them
  * reads its normal map on; a mesh any swaying material draws carries sway weights, and bounds that hold the
  * farthest sway; a mesh any material offsets by a texture gets bounds that hold the farthest offset, and the
- * weights when one is weighted by them
+ * weights when one is weighted by them. a mesh drawn with a rigid-body animation is baked with it, on the
+ * submeshes it's drawn on, when all its draws agree on one
  */
-const meshNeeds = (input: AssetConversionInput, materials: LoadedMaterials): MeshNeeds => {
+const meshNeeds = (
+	input: AssetConversionInput,
+	materials: LoadedMaterials,
+	textures: TextureUses,
+): MeshNeeds => {
 	const count = input.geometries.length;
 	const tangentUvs = Array.from({ length: count }, () => new Set<number>());
 	const sway: (SwayReach | null)[] = Array.from({ length: count }, () => null);
@@ -601,11 +613,61 @@ const meshNeeds = (input: AssetConversionInput, materials: LoadedMaterials): Mes
 			}
 		}
 	}
+	const { rigidBody, unanimated } = rigidBodyNeeds(input, materials, textures);
 	return {
 		tangentUvs,
 		tangentUv: tangentUvs.map((uvs) => (uvs.size === 0 ? null : Math.min(...uvs))),
 		sway,
 		offset,
+		rigidBody,
+		unanimated,
+	};
+};
+
+/** each mesh's rigid-body animation (see {@link meshNeeds}) */
+const rigidBodyNeeds = (
+	input: AssetConversionInput,
+	materials: LoadedMaterials,
+	textures: TextureUses,
+): Pick<MeshNeeds, 'rigidBody' | 'unanimated'> => {
+	const animations = materials.converted.map((material) =>
+		material === null ? null : materialRigidBody(material, materials.shaders.shaders[material.shader]),
+	);
+	const found = new Map<number, { key: string; bake: RigidBodyBake }>();
+	const unanimated = new Map<number, string>();
+	for (const chain of input.chains) {
+		for (const draw of chain.draws) {
+			const animation = draw.material === null ? null : (animations[draw.material] ?? null);
+			if (animation === null || unanimated.has(draw.geometry)) {
+				continue;
+			}
+			const { position, rotation, ...values } = animation;
+			const bake: RigidBodyBake = {
+				...values,
+				position: textures.objects[position].locator,
+				rotation: textures.objects[rotation].locator,
+				submeshes: [draw.submesh],
+			};
+			const key = JSON.stringify({ ...bake, submeshes: [] }, (_key, value: unknown) =>
+				typeof value === 'bigint' ? value.toString() : value,
+			);
+			const held = found.get(draw.geometry);
+			if (held === undefined) {
+				found.set(draw.geometry, { key, bake });
+			} else if (held.key !== key) {
+				found.delete(draw.geometry);
+				unanimated.set(draw.geometry, 'a mesh drawn with different rigid-body animations');
+			} else if (!held.bake.submeshes.includes(draw.submesh)) {
+				held.bake.submeshes.push(draw.submesh);
+			}
+		}
+	}
+	return {
+		rigidBody: input.geometries.map((_asset, id) => {
+			const bake = found.get(id)?.bake ?? null;
+			return bake === null ? null : { ...bake, submeshes: bake.submeshes.toSorted((a, b) => a - b) };
+		}),
+		unanimated,
 	};
 };
 
@@ -641,6 +703,7 @@ const convertGeometries = async (
 				tangentUv: needs.tangentUv[id],
 				sway: needs.sway[id],
 				offset: needs.offset[id],
+				rigidBody: needs.rigidBody[id],
 				zstdLevel: input.geometryZstdLevel,
 			}),
 		(result, _asset, id) => {
@@ -657,10 +720,12 @@ const convertGeometries = async (
 			);
 			entries.push({ status: 'ready', blob, ...result.entry });
 			const uvs = needs.tangentUvs[id];
+			const unanimated = result.unanimated ?? needs.unanimated.get(id);
 			debug.push({
 				object: result.object,
 				name: result.name,
 				error: null,
+				...(unanimated === undefined ? {} : { unanimated }),
 				...(uvs.size > 1 && result.entry.tangentUv !== null
 					? { tangentUvs: [...uvs].toSorted((a, b) => a - b) }
 					: {}),

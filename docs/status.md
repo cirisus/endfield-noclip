@@ -198,10 +198,16 @@ packs or renders correctly.
   by the viewer's [gaps view](viewer/materials.md#gaps), which doesn't cover effects, terrain, water
   or per-entity gaps, on map02: `_MACRO_NORMAL_MAP` (about 90 materials), `_SUBSURFACE*`, `_FAKE*`
   (glints, cracks, dust, volume, refraction), interior parallax and mapping, `_ZWRITE_OFF`, and
-  vertex animation other than `HGRP/Lit`'s [swaying cloth](viewer/materials.md#swaying-cloth) and
-  [vertex offset](viewer/materials.md#vertex-offset) (`_SIMPLE_VERTEXANIM_PENDULUM`, `…_ROPE`,
-  `HGRP/LitTransparent`'s cloth, `_VAT_*`, `_COMMONVAT_*`, `_MOVING_BAMBOO`). the cloth sway is
-  unchecked against an in-game shot
+  vertex animation other than `HGRP/Lit`'s [swaying cloth](viewer/materials.md#swaying-cloth),
+  [vertex offset](viewer/materials.md#vertex-offset) and
+  [rigid-body animation](viewer/materials.md#rigid-body-animation) (`_SIMPLE_VERTEXANIM_PENDULUM`,
+  `…_ROPE`, `HGRP/LitTransparent`'s cloth, `_VAT_SOFTBODY` on Lit (the strings Jingyu's hanging cans
+  hang from), `HGRP/LitEffect`'s `_VAT_RIGIDBODY`, `_COMMONVAT_*`, `_MOVING_BAMBOO`). the cloth sway
+  is unchecked against an in-game shot
+- [rigid-body animation](viewer/materials.md#rigid-body-animation) is baked per mesh, so a mesh
+  drawn with different animations holds still (map02's `s_zmdmachinevat_lod*`, played by five
+  materials at different speeds, and one Hongshan waterway mesh); its frames are interpolated where
+  the game steps them, and it's unchecked against an in-game shot
 - the [cloth simulation](game-data/materials.md#cloth-simulation) isn't run: entities with a cloth
   hash (canvases, flags; counted by `pack` as `clothSimulated`) draw their mesh at rest with the
   sway alone. its input, the [cloth groups](game-data/world.md#cloth-groups), is located but has no
@@ -593,8 +599,9 @@ packs or renders correctly.
   their saved pose. of the [decoration animator](game-data/animation.md#decoration-animators) values
   level scripts set, only those set on script start (constant or by one saved property) are read;
   `PlayDecorationAnimation` and values set by quest, custom or volume events aren't, and a saved
-  property's default (set, as in a finished save) is assumed. vertex-animation-texture meshes
-  (`_vat`, e.g. floating rocks) draw their rest pose
+  property's default (set, as in a finished save) is assumed. vertex-animation-texture meshes other
+  than [rigid-body](viewer/materials.md#rigid-body-animation) ones (`_vat`, e.g. floating rocks)
+  draw their rest pose
 - [spinning scenery](game-data/animation.md#spinning-scenery) (Qingbo's other waterwheels, the
   originium hub frames) turns from its stored pose at the viewer clock's zero rather than at the
   game's clock phase, and how the native systems turn it is inferred from the data, not read.

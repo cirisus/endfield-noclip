@@ -11,7 +11,7 @@ import { type MaterialReader, unsupported } from '../material-values.ts';
  * the factor a Houdini VAT bound encodes in its digits, as the shader computes it in f32: `1 + x − ceil(x)`
  * for `x = 10 · bound`, which is 1 for the bounds seen
  */
-const vatPadding = (bound: number): number => {
+export const vatPadding = (bound: number): number => {
 	const x = Math.fround(Math.fround(bound) * 10);
 	return Math.fround(Math.fround(1 - Math.ceil(x)) + x);
 };

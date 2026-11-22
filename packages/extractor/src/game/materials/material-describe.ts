@@ -38,6 +38,7 @@ import { describeLitDecal } from './surfaces/lit-decal.ts';
 import { swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
 import { describeLit } from './surfaces/lit.ts';
 import { describeMattePainting } from './surfaces/matte-painting.ts';
+import { rigidBodyOf, type RigidBodyAnimation } from './surfaces/rigid-body.ts';
 import { describeWetnessDecal } from './surfaces/wetness-decal.ts';
 
 /**
@@ -119,6 +120,25 @@ const UNDRAWN_SHADERS = new Set(['HGRP/Effect/VFXReflectionPass']);
  */
 export const materialSway = (material: MaterialValues, shader: ShaderEntry): LitSway | null =>
 	shader.name === 'HGRP/Lit' && material.blend !== 'additive' ? swayOf(readerOf(material, shader)) : null;
+
+/**
+ * the rigid-body animation the meshes a material draws are baked with, before the surfaces are described
+ *
+ * @param material a converted material
+ * @param shader its shader's entry
+ * @returns its animation, `null` without one or for one the viewer doesn't play (its surface lists the
+ *   keyword as a gap)
+ */
+export const materialRigidBody = (
+	material: MaterialValues,
+	shader: ShaderEntry,
+): RigidBodyAnimation | null => {
+	if (shader.name !== 'HGRP/Lit') {
+		return null;
+	}
+	const animation = rigidBodyOf(readerOf(material, shader));
+	return animation === null || 'kind' in animation ? null : animation;
+};
 
 /**
  * the vertex offset a material's surface will carry, for converting the meshes it draws before the surfaces

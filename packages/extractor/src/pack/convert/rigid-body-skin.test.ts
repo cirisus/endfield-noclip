@@ -1,0 +1,177 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import {
+	type DecodedMesh,
+	type MeshAttribute,
+	MeshTopology,
+	VertexAttributeFormat,
+} from '@endfield-noclip/formats/unity/mesh';
+
+import { type RigidBodyBake, rigidBodySkin, type VatTexels } from './rigid-body-skin.ts';
+
+const attribute = (dimension: number, values: number[]): MeshAttribute => ({
+	dimension,
+	format: VertexAttributeFormat.Float32,
+	data: Float32Array.from(values),
+});
+
+const bounds = {
+	center: [0, 0, 0] as [number, number, number],
+	extents: [1, 1, 1] as [number, number, number],
+};
+
+// submesh 0, drawn with the animation: a triangle (piece 1, pivot (0.5, 0.25, 0.75)) and a triangle whose UV1
+// v is 0.05 (collapsed). submesh 1, drawn without it: one more triangle
+const mesh: DecodedMesh = {
+	name: 'pieces',
+	vertexCount: 9,
+	channels: [],
+	positions: Float32Array.from([
+		0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0, 3, 0, 0, 2, 1, 0, 5, 0, 0, 6, 0, 0, 5, 1, 0,
+	]),
+	normals: null,
+	packedNormals: null,
+	tangents: null,
+	colors: null,
+	uvs: [
+		null,
+		// UV1: column 0.25 of a two-texel-wide texture; rows from the top, as Houdini lays them out
+		attribute(
+			2,
+			[0.25, 0.875, 0.25, 0.875, 0.25, 0.875, 0.75, 0.05, 0.75, 0.05, 0.75, 0.05, 0, 0, 0, 0, 0, 0],
+		),
+		// UV2.x and UV3 hold the pivot as (−x) and (y, 1 − z)
+		attribute(2, [-0.5, 0, -0.5, 0, -0.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+		attribute(2, [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+		null,
+		null,
+		null,
+		null,
+	],
+	indices: Uint16Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8]),
+	submeshes: [
+		{
+			firstIndex: 0,
+			indexCount: 6,
+			topology: MeshTopology.Triangles,
+			baseVertex: 0,
+			firstVertex: 0,
+			vertexCount: 6,
+			bounds,
+		},
+		{
+			firstIndex: 6,
+			indexCount: 3,
+			topology: MeshTopology.Triangles,
+			baseVertex: 0,
+			firstVertex: 6,
+			vertexCount: 3,
+			bounds,
+		},
+	],
+	bounds,
+	skin: null,
+};
+
+// four frames, two texels wide: piece 1's column moves by (frame, 0, 0) and turns about z by 30° a frame;
+// the position's alpha of 0.75 names w as the component the rotation texture leaves out
+const position: VatTexels = { width: 2, height: 4, texels: new Float32Array(32) };
+const rotation: VatTexels = { width: 2, height: 4, texels: new Float32Array(32) };
+for (let row = 0; row < 4; row++) {
+	// frame f sits at row 3 − f, since rows are read from v = 1 down
+	const frame = 3 - row;
+	const half = ((frame * 30) / 2) * (Math.PI / 180);
+	position.texels.set([frame, 0, 0, 0.0], row * 8);
+	rotation.texels.set([0, 0, Math.sin(half), 0], row * 8);
+}
+
+const bake: RigidBodyBake = {
+	position: { bundleIndex: 0, file: '', pathId: 0n },
+	rotation: { bundleIndex: 0, file: '', pathId: 0n },
+	submeshes: [0],
+	frameCount: 4,
+	cycleRate: 30 / (4 - 0.01),
+	cycleStart: 0,
+	animateFirstFrame: false,
+	uScale: 1,
+	vScale: 1,
+	min: [0, 0, 0],
+	range: [1, 1, 1],
+	hdr: true,
+	scale: 1,
+	maxPieceScale: null,
+};
+
+/** the shader's own vertex stage for a vertex of piece 1 at a frame (`docs/game-data/materials.md`) */
+const shaderPosition = (vertex: number, frame: number): number[] => {
+	const p = [...mesh.positions.subarray(vertex * 3, vertex * 3 + 3)];
+	const half = ((frame * 30) / 2) * (Math.PI / 180);
+	const q = [0, 0, Math.sin(half)];
+	const w = Math.sqrt(1 - q[2] * q[2]);
+	const v = [p[0] - 0.5, p[1] - 0.25, p[2] - 0.75];
+	const cross = (a: number[], b: number[]) => [
+		a[1] * b[2] - a[2] * b[1],
+		a[2] * b[0] - a[0] * b[2],
+		a[0] * b[1] - a[1] * b[0],
+	];
+	const inner = cross(q, v).map((value, i) => value + v[i] * w);
+	return cross(q, inner).map((value, i) => value * 2 + v[i] + [frame, 0, 0][i]);
+};
+
+/** a vertex skinned by the baked frame */
+const bakedPosition = (
+	baked: { mesh: DecodedMesh; motion: { boneCount: number; matrices: Float32Array } },
+	vertex: number,
+	frame: number,
+): number[] => {
+	const bone = baked.mesh.skin!.indices!.data[vertex];
+	const m = baked.motion.matrices.subarray((frame * baked.motion.boneCount + bone) * 12);
+	const [x, y, z] = mesh.positions.subarray(vertex * 3, vertex * 3 + 3);
+	return [0, 1, 2].map((row) => m[row * 4] * x + m[row * 4 + 1] * y + m[row * 4 + 2] * z + m[row * 4 + 3]);
+};
+
+describe('rigid-body animation', () => {
+	it('moves each piece as the shader does, holds the rest pose on frame 0 and other submeshes still', () => {
+		const baked = rigidBodySkin(mesh, bake, position, rotation);
+		assert.ok(!('reason' in baked));
+		// still, piece 1 and the collapsed piece
+		assert.equal(baked.motion.boneCount, 3);
+		assert.ok(Math.abs(baked.motion.frameRate - (30 * 4) / 3.99) < 1e-9);
+		for (const frame of [1, 2, 3]) {
+			for (const vertex of [0, 1, 2]) {
+				const expected = shaderPosition(vertex, frame);
+				bakedPosition(baked, vertex, frame).forEach((value, i) =>
+					assert.ok(Math.abs(value - expected[i]) < 1e-5),
+				);
+			}
+		}
+		for (const vertex of [0, 1, 2, 6, 7, 8]) {
+			assert.deepEqual(bakedPosition(baked, vertex, 0), [
+				...mesh.positions.subarray(vertex * 3, vertex * 3 + 3),
+			]);
+		}
+		// vertices whose UV1 v is at most 0.1 sit at the origin, even at rest
+		for (const frame of [0, 2]) {
+			assert.deepEqual(bakedPosition(baked, 4, frame), [0, 0, 0]);
+		}
+	});
+
+	it('plays a negative rate backwards', () => {
+		const baked = rigidBodySkin(
+			mesh,
+			{ ...bake, cycleRate: -bake.cycleRate, animateFirstFrame: true },
+			position,
+			rotation,
+		);
+		assert.ok(!('reason' in baked));
+		// the baked frames show the game's 3, 2, 1, 0
+		const expected = shaderPosition(1, 3);
+		bakedPosition(baked, 1, 0).forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-5));
+	});
+
+	it("can't bake a mesh without the pivot's UV sets", () => {
+		const baked = rigidBodySkin({ ...mesh, uvs: [null, mesh.uvs[1], null] }, bake, position, rotation);
+		assert.ok('reason' in baked);
+	});
+});

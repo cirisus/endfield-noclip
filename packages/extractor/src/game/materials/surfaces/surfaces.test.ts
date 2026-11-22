@@ -6,6 +6,7 @@ import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 import { describeMaterial } from '../material-describe.ts';
 import { type MaterialValues, readerOf, type ShaderEntry } from '../material-values.ts';
 
+import { rigidBodyOf } from './rigid-body.ts';
 import { keywordsNotDrawn, surfaceGaps } from './surface-keywords.ts';
 
 /** a shader entry declaring only the overrides' properties */
@@ -1089,5 +1090,51 @@ describe('the Lit model', () => {
 		// effect describers turn what they can't draw unsupported instead
 		const effect = shaderEntry({ name: 'HGRP/Effect/VFXBaseV2', family: 'vfxBase' });
 		assert.deepEqual(gaps(['_USE_DISSOLVE'], on, effect), []);
+	});
+});
+
+describe('rigid-body animation', () => {
+	const shader = shaderEntry({ name: 'HGRP/Lit', family: 'lit' });
+	const slot = (texture: number) => ({
+		texture,
+		uv: 0,
+		scale: [1, 1] as [number, number],
+		offset: [0, 0] as [number, number],
+	});
+	// M_map02_sfornament_1_001_05_lod0, the tin cans hanging in Jingyu's market
+	const cans = values({
+		keywords: ['_TWO_BASEMAP', '_VAT_RIGIDBODY'],
+		slots: { _PositionTexture: slot(4), _RotationTexture: slot(5) },
+		floats: {
+			_B_autoPlayback: 1,
+			_B_animateFirstFrame: 0,
+			_TextureFormat: 1,
+			_frameCount: 160,
+			_houdiniFPS: 30,
+			_playbackSpeed: 1,
+			_gameTimeAtFirstFrame: 0,
+			_globalPscaleMul: 1,
+			_pScaleInPosA: 0,
+			_boundMaxX: 1.4,
+			_boundMinZ: -0.5,
+		},
+	});
+
+	it('reads the loop, the bounds’ padding and the HDR textures', () => {
+		const animation = rigidBodyOf(readerOf(cans, shader));
+		assert.ok(animation !== null && !('kind' in animation));
+		assert.equal(animation.frameCount, 160);
+		assert.ok(Math.abs(animation.cycleRate - 30 / 159.99) < 1e-9);
+		assert.ok(Math.abs(animation.vScale - 1) < 1e-6);
+		assert.equal(animation.uScale, 1);
+		assert.deepEqual([animation.min, animation.range, animation.hdr], [[0, 0, 0], [1, 1, 1], true]);
+		assert.deepEqual(surfaceGaps(readerOf(cans, shader)), []);
+	});
+
+	it('leaves a frame set per draw as a gap', () => {
+		const held = { ...cans, floats: { ...cans.floats, _B_autoPlayback: 0 } };
+		const animation = rigidBodyOf(readerOf(held, shader));
+		assert.ok(animation !== null && 'kind' in animation);
+		assert.deepEqual(surfaceGaps(readerOf(held, shader)), ['_VAT_RIGIDBODY']);
 	});
 });

@@ -9,6 +9,7 @@ import type { AssetRef, ObjectLocator } from '../../game/assets/assets.ts';
 import type { BlobMeta } from '../store/blob-file.ts';
 
 import type { OffsetReach, SwayReach } from './geometry.ts';
+import type { RigidBodyBake } from './rigid-body-skin.ts';
 import type { ConvertedTexture } from './textures.ts';
 
 // mesh and texture conversion is CPU-bound (LZ4, meshopt, zstd, SHA-256), so it runs on worker threads
@@ -37,6 +38,8 @@ export type ConvertJob =
 			sway: SwayReach | null;
 			/** the farthest vertex offset of the materials drawing it, `null` without one; see `convertMesh` */
 			offset: OffsetReach | null;
+			/** the rigid-body animation its materials play, `null` without one; see `rigidBodySkin` */
+			rigidBody: RigidBodyBake | null;
 			zstdLevel: number;
 	  }
 	| { kind: 'texture'; locator: ObjectLocator; zstdLevel: number };
@@ -51,6 +54,8 @@ export type ConvertOutput =
 			entry: Omit<ReadyGeometry, 'status' | 'blob'>;
 			gpuBytes: number;
 			blob: BlobMeta;
+			/** why the rigid-body animation the job asked for wasn't baked, which leaves the mesh still */
+			unanimated?: string;
 	  }
 	| {
 			kind: 'texture';

@@ -7,12 +7,13 @@ import { parentPort, workerData } from 'node:worker_threads';
  * @module
  */
 
+import type { DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { bakeSkinPose } from '@endfield-noclip/formats/unity/skin-pose';
 
 import { errorText } from '../../errors.ts';
 import { loadMesh, loadTexture } from '../../game/assets/asset-decode.ts';
-import { AssetResolver, objectKey, recordBundleReads } from '../../game/assets/assets.ts';
+import { AssetResolver, type ObjectLocator, objectKey, recordBundleReads } from '../../game/assets/assets.ts';
 import { sharedBundleManifest } from '../../hg/bundles.ts';
 import { Vfs } from '../../hg/vfs.ts';
 import { zstdSync } from '../../zstd.ts';
@@ -27,6 +28,7 @@ import type {
 	WorkerRequest,
 } from './convert-pool.ts';
 import { convertMesh, geometryReady, rigidSkin } from './geometry.ts';
+import { type RigidBodyBake, rigidBodySkin, type VatTexels, vatTexels } from './rigid-body-skin.ts';
 import { syntheticMesh, syntheticMeshKey } from './synthetic-mesh.ts';
 import { convertTexture } from './textures.ts';
 
@@ -54,6 +56,17 @@ const convert = async (job: ConvertJob): Promise<ConvertResult> => {
 	return { ...result, sources };
 };
 
+/** @returns a VAT texture's texels */
+const loadVatTexels = async ({ bundleIndex, file, pathId }: ObjectLocator): Promise<VatTexels> =>
+	vatTexels(await loadTexture(resolver, await resolver.objectIn(bundleIndex, file, pathId)));
+
+/** bakes a mesh's rigid-body animation from its textures */
+const bakeRigidBody = async (
+	mesh: DecodedMesh,
+	bake: RigidBodyBake,
+): Promise<ReturnType<typeof rigidBodySkin>> =>
+	rigidBodySkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
+
 const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
 	switch (job.kind) {
 		case 'geometry': {
@@ -77,13 +90,28 @@ const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
 			// an animated mesh stays in its bind space; a posed one is baked into its pose
 			const { pose, motion } = job.asset;
 			let source = pose ? bakeSkinPose(mesh, pose) : mesh;
+			let skin = motion?.skin;
+			let unanimated: string | undefined;
 			if (motion?.kind === 'rigid') {
 				source = rigidSkin(source);
+			}
+			if (job.rigidBody !== null) {
+				// a renderer's own animation or pose and a VAT's would compound; the renderer's is kept
+				const baked =
+					pose !== undefined || motion !== undefined
+						? { reason: 'a rigid-body animation on a posed or animated renderer' }
+						: await bakeRigidBody(source, job.rigidBody);
+				if ('reason' in baked) {
+					unanimated = baked.reason;
+				} else {
+					source = baked.mesh;
+					skin = baked.motion;
+				}
 			}
 			const converted = convertMesh(source, job.tangentUv, {
 				sway: job.sway ?? undefined,
 				offset: job.offset ?? undefined,
-				motion: motion?.skin,
+				motion: skin,
 			});
 			return {
 				kind: 'geometry',
@@ -92,6 +120,7 @@ const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
 				entry: converted.entry,
 				gpuBytes: converted.gpuBytes,
 				blob: await store(converted.blob, job.zstdLevel),
+				...(unanimated === undefined ? {} : { unanimated }),
 			};
 		}
 		case 'texture': {

@@ -601,6 +601,43 @@ the scroll clock is the fourth component of the pipeline's time parameters, whic
 unused. what the game writes there isn't traced: it's assumed to be seconds, so `_OffsetSpeed` is UV
 tiles per second.
 
+## rigid-body animation
+
+`HGRP/Lit` materials with `_VAT_RIGIDBODY` play a Houdini vertex animation that moves each piece of
+the mesh rigidly. on map02 they're the tin cans and charms hung on strings in Jingyu's market
+(`M_map02_sfornament_1_001_*`, one material per LOD), machine parts (`M_fx_zmdmachinevat_*`, one
+mesh played at five speeds by five materials), rocks and the Hongshan waterway's parts.
+`HGRP/LitEffect` has the keyword too (map02's falling cedar snow, floors and drones), with a vertex
+stage that isn't read here. the vertex stage of every pass reads, per vertex:
+
+- UV1, which finds the piece's texels: the column is `u · a` and the row
+  `1 − b · ((1 − v) + f / _frameCount)`, `a` and `b` the factors the
+  [soft-body animation](effects.md#soft-body-animation) takes from `_boundMinZ` and `_boundMaxX`
+- the piece's pivot, `(−UV2.x, UV3.x, 1 − UV3.y)`
+- the frame `f`, counted from 0 as the soft body counts it under `_B_autoPlayback`, else
+  `_displayFrame − 1` plus a per-draw value
+
+there, `_PositionTexture` holds the piece's position (as it is under `_TextureFormat` 1, else a
+fraction between the `_boundMin*` and `_boundMax*`) and in its alpha times 4 which quaternion
+component `_RotationTexture` leaves out (0 w, 1 x, 2 y, 3 z, the last two negated with the rebuilt
+one), the other three being the rotation's (stored `q / 2 + 0.5` in 8-bit textures). the vertex
+moves to `position + s · rotate(q, rest − pivot)` in object space, before the object's transform,
+and its normal and tangent turn by `q`. `s` is `_globalPscaleMul`, times
+`_VATMaxPieceScale · (1 − fract(4 · alpha))` under `_pScaleInPosA`. two cases override it: on frame
+0 the vertex keeps its rest position unless `_B_animateFirstFrame` is set, and a vertex whose UV1 v
+is at most 0.1 collapses to the object's origin. of the 37 materials with the keyword whose asset
+paths are known (across every packed scene, both shaders), all have RGBA half-float textures
+(`_TextureFormat` 1), none sets `_pScaleInPosA`, `_HoudiniVATInParticle` (UV sets and the frame from
+particle data) or `_BlendMeshNormalAndTangent` (the mesh's own normal kept), and all play on their
+own, at speeds from −8 to 9 and some with a `_gameTimeAtFirstFrame`. the cans' textures are
+point-sampled with repeat wrapping, and at frame 0's row the formula gives back the rest positions
+of their mesh (`s_map02_sfornament_1_001_05_lod0`, 19 texels wide over 160 frames at 30 a second) to
+within a millimetre. the frame isn't interpolated (`_B_interpolate` is off and the variant has no
+blend).
+
+the strings the cans hang from are separate meshes (`…_soft_lod*`) whose materials use Lit's
+`_VAT_SOFTBODY`, which isn't read here.
+
 ## clock
 
 the animated surface terms share one rate, `T` = seconds / 20: the emission pulse reads Unity's
