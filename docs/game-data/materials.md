@@ -598,17 +598,17 @@ each texture is read with its own sampler; the four materials' textures all repe
 motion vectors, reads the previous frame's clock.
 
 the scroll clock is the fourth component of the pipeline's time parameters, which stock Unity leaves
-unused. what the game writes there isn't traced: it's assumed to be seconds, so `_OffsetSpeed` is UV
+unused and the game fills with its [gameplay time](#clock). taken as seconds, `_OffsetSpeed` is UV
 tiles per second.
 
 ## vertex animation textures
 
-`HGRP/Lit` plays two kinds of Houdini vertex animation, both from a `_PositionTexture` and a
-`_RotationTexture` sampled in the vertex stage of every pass, one texel column per piece or point
-and one row per frame. the frame and the row follow the
-[soft-body animation](effects.md#soft-body-animation) of the effect shaders. Jingyu's hanging
-ornaments use both: the cans and charms are rigid bodies and the strings they hang from soft ones,
-the two baked from one simulation, so a string's end stays on its can.
+`HGRP/Lit` plays a [bone animation](#bone-animation) from a matrix texture and two kinds of Houdini
+vertex animation, both from a `_PositionTexture` and a `_RotationTexture` sampled in the vertex
+stage of every pass, one texel column per piece or point and one row per frame. the frame and the
+row follow the [soft-body animation](effects.md#soft-body-animation) of the effect shaders. Jingyu's
+hanging ornaments use both: the cans and charms are rigid bodies and the strings they hang from soft
+ones, the two baked from one simulation, so a string's end stays on its can.
 
 ### rigid-body animation
 
@@ -658,17 +658,40 @@ to the object's origin, as in a rigid body. the strings' textures hold a column 
 `s_map02_sfornament_1_001_05_soft_lod0`) over the cans' 160 frames, and evaluated beside the cans
 their ends stay within a millimetre of the cans they're tied to while the cans swing up to 34 cm.
 
+### bone animation
+
+`HGRP/Lit` materials with `_COMMONVAT_BONE_1` to `_4` (on map02 only: the bundles of bamboo tubes
+and other ornaments hung in Qingbo Stockade, `M_vat_map02_sfornament+1_001_*`, and a chair,
+`M_vat_map02_chair+1_006_02`) skin the mesh in the vertex stage of every pass from `_CommonVATMap`,
+which holds one 3 × 4 matrix per bone and frame: a frame's row has three texels per bone, the
+matrix's rows, which move the object-space rest position, and whose 3 × 3 part turns the normal and
+tangent. a vertex blends the keyword's number of bones: their indices are UV2's components (8-bit
+signed, so `127 · u` is the bone), their weights UV3's, used as stored (the shader doesn't
+renormalize them). `_CommonVATMapParams` is the map's width and its frame count.
+
+the frame is `_TimeParameters.w · _CommonVATFPS` modulo the frame count under `_CommonVATAutoPlay`,
+otherwise `_CommonVATCurrentFrame` plus a per-draw value, and it's read at
+`v = 1 − (frame + 0.5) / frames`; the maps are point-sampled, so the animation steps from frame to
+frame. `_CommonVATBlendNormal` blends the turned normal back to the mesh's. all seven materials play
+on their own at 30 frames a second, with RGBA half-float maps (14 bones over 200 frames for
+`T_vat_map02_sfornament+1_001_06_VAT`) and no normal blend. there, the bone indices are whole, the
+matrices are rigid (orthonormal to within 5 · 10⁻⁴), and the weights sum to 1 but for a handful of
+vertices within 0.01 of it and one at 0.87.
+
 ## clock
 
 the animated surface terms share one rate, `T` = seconds / 20: the emission pulse reads Unity's
-`_Time.x`, which Unity defines as seconds since startup / 20, and the parallax glow's pulse and the
-erosion flow advance 0.05 × their speed per tick of the shader clock. that HGRP keeps Unity's
-`_Time` and that its clock ticks in seconds are assumed.
+`_Time.x`, and the parallax glow's pulse and the erosion flow advance 0.05 × their speed per tick of
+the shader clock. the pipeline fills its global constants with `t` the render pipeline's time, which
+is Unity's `Time.time` in seconds: `_Time` is `(t / 20, t, 2t, g)` and `_TimeParameters`
+`(t, sin t, cos t, g)`, where `g` is a separate gameplay time the game sets, from an integer and
+1000 (taken as milliseconds made seconds; what sets it isn't traced). the vertex offset's scroll and
+the bone animation read `g`.
 
 ## open
 
-- the [clock](#clock)'s rate, and the clock that scrolls the emissive map
-- what the [vertex offset](#vertex-offset)'s scroll clock holds (assumed seconds)
+- what sets the [clock](#clock)'s gameplay time, and its units (assumed seconds); the clock that
+  scrolls the emissive map
 - the detail map's channels per `_DetailMode` (roughness from B in mode 1, from the alpha in mode
   0), unchecked against a shot
 - the layers' UV set 2 read as set 0, on the strength of map02's meshes and one in-game shot

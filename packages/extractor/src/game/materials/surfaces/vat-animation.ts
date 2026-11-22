@@ -4,10 +4,13 @@ import { softBodyHdr, vatPadding } from '../effects/soft-body.ts';
 import { type MaterialReader, unsupported } from '../material-values.ts';
 
 /**
- * `HGRP/Lit`'s Houdini vertex animations (`docs/game-data/materials.md#vertex-animation-textures`), which
- * move the mesh by a position and a rotation texture
+ * `HGRP/Lit`'s vertex animations (`docs/game-data/materials.md#vertex-animation-textures`): Houdini's, which
+ * move the mesh by a position and a rotation texture, or a bone animation stored as matrices
  */
-export interface VatAnimation {
+export type VatAnimation = HoudiniVat | BoneVat;
+
+/** a Houdini vertex animation, read from a position and a rotation texture */
+export interface HoudiniVat {
 	/**
 	 * `rigid` (`_VAT_RIGIDBODY`): each piece of the mesh moves rigidly about its pivot. `soft`
 	 * (`_VAT_SOFTBODY`): each vertex moves by its own offset, and its normal and tangent are the rotation's
@@ -48,8 +51,42 @@ export interface VatAnimation {
 	maxPieceScale: number | null;
 }
 
-/** the keywords of {@link VatAnimation}'s bodies */
+/**
+ * a bone animation (`_COMMONVAT_BONE_*`): each frame's row of the map holds every bone's 3 × 4 matrix, which
+ * the vertices blend by their weights
+ */
+export interface BoneVat {
+	body: 'bone';
+	/** `_CommonVATMap`'s texture (an id of the material's slots) */
+	map: number;
+	/** the bones the map holds, a third of its width (`_CommonVATMapParams.x`) */
+	boneCount: number;
+	/** `_CommonVATMapParams.y`, the map's rows */
+	frameCount: number;
+	/** `_CommonVATFPS`, frames per second of the gameplay clock */
+	frameRate: number;
+	/** the bones each vertex blends, 1 to 4 from the keyword */
+	influences: number;
+}
+
+/** the keywords of {@link HoudiniVat}'s bodies */
 export const VAT_KEYWORDS = { rigid: '_VAT_RIGIDBODY', soft: '_VAT_SOFTBODY' } as const;
+
+/** the keywords of {@link BoneVat}, by the bones each vertex blends */
+export const BONE_VAT_KEYWORDS = [
+	'_COMMONVAT_BONE_1',
+	'_COMMONVAT_BONE_2',
+	'_COMMONVAT_BONE_3',
+	'_COMMONVAT_BONE_4',
+] as const;
+
+/**
+ * @param reader an `HGRP/Lit` material's properties
+ * @returns the vertex animation keyword it enables, `null` without one
+ */
+export const vatKeyword = (reader: MaterialReader): string | null =>
+	[VAT_KEYWORDS.rigid, VAT_KEYWORDS.soft, ...BONE_VAT_KEYWORDS].find((keyword) => reader.has(keyword)) ??
+	null;
 
 /**
  * @param reader an `HGRP/Lit` material's properties
@@ -58,7 +95,11 @@ export const VAT_KEYWORDS = { rigid: '_VAT_RIGIDBODY', soft: '_VAT_SOFTBODY' } a
  */
 export const vatOf = (reader: MaterialReader): VatAnimation | UnsupportedSurface | null => {
 	const { float, has, slot } = reader;
-	let body: VatAnimation['body'];
+	const influences = BONE_VAT_KEYWORDS.findIndex((keyword) => has(keyword)) + 1;
+	if (influences > 0) {
+		return boneVatOf(reader, influences);
+	}
+	let body: HoudiniVat['body'];
 	if (has(VAT_KEYWORDS.rigid)) {
 		body = 'rigid';
 	} else if (has(VAT_KEYWORDS.soft)) {
@@ -85,7 +126,7 @@ export const vatOf = (reader: MaterialReader): VatAnimation | UnsupportedSurface
 		return unsupported(`${name} without its position or rotation texture`);
 	}
 	const frameCount = Math.max(Math.round(float('_frameCount', 0)), 1);
-	const min: VatAnimation['min'] = [float('_boundMinX', 0), float('_boundMinY', 0), float('_boundMinZ', 0)];
+	const min: HoudiniVat['min'] = [float('_boundMinX', 0), float('_boundMinY', 0), float('_boundMinZ', 0)];
 	const max = [float('_boundMaxX', 0), float('_boundMaxY', 0), float('_boundMaxZ', 0)];
 	const hdr = softBodyHdr(reader);
 	const rigid = body === 'rigid';
@@ -104,5 +145,38 @@ export const vatOf = (reader: MaterialReader): VatAnimation | UnsupportedSurface
 		hdr,
 		scale: rigid ? float('_globalPscaleMul', 1) : 1,
 		maxPieceScale: rigid && float('_pScaleInPosA', 0) !== 0 ? float('_VATMaxPieceScale', 1) : null,
+	};
+};
+
+/**
+ * @param reader an `HGRP/Lit` material with a `_COMMONVAT_BONE_*` keyword
+ * @param influences the bones each vertex blends
+ * @returns its bone animation, or `unsupported` for the cases the viewer doesn't play
+ */
+const boneVatOf = (reader: MaterialReader, influences: number): BoneVat | UnsupportedSurface => {
+	const { float, slot } = reader;
+	if (float('_CommonVATAutoPlay', 0) <= 0.5) {
+		return unsupported('a bone animation whose frame is set per draw');
+	}
+	if (float('_CommonVATBlendNormal', 0) !== 0) {
+		return unsupported('a bone animation that blends back to the mesh normals');
+	}
+	const map = slot('_CommonVATMap');
+	const params = reader.colorOrVector('_CommonVATMapParams');
+	if (map === undefined || params === undefined) {
+		return unsupported('a bone animation without its map');
+	}
+	const boneCount = Math.floor(params[0] / 3);
+	const frameCount = Math.round(params[1]);
+	if (boneCount < 1 || frameCount < 1) {
+		return unsupported('a bone animation with an empty map');
+	}
+	return {
+		body: 'bone',
+		map: map.texture,
+		boneCount,
+		frameCount,
+		frameRate: float('_CommonVATFPS', 0),
+		influences,
 	};
 };

@@ -1,7 +1,8 @@
 /**
- * bakes `_VAT_RIGIDBODY`'s Houdini animation (`docs/game-data/materials.md#rigid-body-animation`) into a
- * skeletal one: each piece of the mesh becomes a bone, whose matrix at every frame is the rigid transform the
- * shader reads from the position and rotation textures
+ * bakes `HGRP/Lit`'s vertex animations (`docs/game-data/materials.md#vertex-animation-textures`) into
+ * skeletal ones: each piece or point of a Houdini animation becomes a bone, whose matrix at every frame is
+ * the transform the shader reads from the position and rotation textures, and a bone animation's map already
+ * holds its bones' matrices
  */
 
 import { VkFormat } from '@endfield-noclip/formats/binary/ktx2';
@@ -9,13 +10,23 @@ import { type DecodedMesh, VertexAttributeFormat } from '@endfield-noclip/format
 import type { DecodedTexture } from '@endfield-noclip/formats/unity/texture';
 
 import type { ObjectLocator } from '../../game/assets/assets.ts';
-import type { VatAnimation } from '../../game/materials/surfaces/vat-animation.ts';
+import type { BoneVat, HoudiniVat } from '../../game/materials/surfaces/vat-animation.ts';
 import type { SkinMotion } from '../../game/prefabs/prefab.ts';
 
-/** a {@link VatAnimation} as the conversion worker reads it */
-export interface VatBake extends Omit<VatAnimation, 'position' | 'rotation'> {
+/** a vertex animation as the conversion worker reads it */
+export type VatBake = HoudiniBake | BoneBake;
+
+/** a {@link HoudiniVat} as the conversion worker reads it */
+export interface HoudiniBake extends Omit<HoudiniVat, 'position' | 'rotation'> {
 	position: ObjectLocator;
 	rotation: ObjectLocator;
+	/** the submeshes drawn with the animation; the others hold still */
+	submeshes: number[];
+}
+
+/** a {@link BoneVat} as the conversion worker reads it */
+export interface BoneBake extends Omit<BoneVat, 'map'> {
+	map: ObjectLocator;
 	/** the submeshes drawn with the animation; the others hold still */
 	submeshes: number[];
 }
@@ -61,6 +72,28 @@ export const vatTexels = (texture: DecodedTexture): VatTexels => {
 	return { width: texture.width, height: texture.height, texels };
 };
 
+/** the bake's result: the skinned mesh and its motion, or why it can't be baked */
+type VatSkinned = { mesh: DecodedMesh; motion: SkinMotion } | { reason: string };
+
+/**
+ * @param mesh the mesh the animation's materials draw
+ * @param submeshes the submeshes drawn with the animation
+ * @returns per vertex, 1 where one of those submeshes uses it
+ */
+const movingVertices = (mesh: DecodedMesh, submeshes: readonly number[]): Uint8Array => {
+	const moving = new Uint8Array(mesh.vertexCount);
+	for (const index of submeshes) {
+		const submesh = mesh.submeshes[index];
+		if (submesh === undefined) {
+			continue;
+		}
+		for (let i = submesh.firstIndex; i < submesh.firstIndex + submesh.indexCount; i++) {
+			moving[mesh.indices[i] + submesh.baseVertex] = 1;
+		}
+	}
+	return moving;
+};
+
 /**
  * @param mesh the mesh the animation's materials draw
  * @param bake the animation, with the submeshes it moves
@@ -73,10 +106,10 @@ export const vatTexels = (texture: DecodedTexture): VatTexels => {
  */
 export const vatSkin = (
 	mesh: DecodedMesh,
-	bake: VatBake,
+	bake: HoudiniBake,
 	position: VatTexels,
 	rotation: VatTexels,
-): { mesh: DecodedMesh; motion: SkinMotion } | { reason: string } => {
+): VatSkinned => {
 	const soft = bake.body === 'soft';
 	const lookup = mesh.uvs[1];
 	const pivotX = mesh.uvs[2];
@@ -89,16 +122,7 @@ export const vatSkin = (
 	}
 	// the shader's per-vertex inputs: UV1 finds the piece's texels; a rigid piece's pivot is in UV2.x and UV3,
 	// a soft body's point moves from its rest position
-	const moving = new Uint8Array(mesh.vertexCount);
-	for (const index of bake.submeshes) {
-		const submesh = mesh.submeshes[index];
-		if (submesh === undefined) {
-			continue;
-		}
-		for (let i = submesh.firstIndex; i < submesh.firstIndex + submesh.indexCount; i++) {
-			moving[mesh.indices[i] + submesh.baseVertex] = 1;
-		}
-	}
+	const moving = movingVertices(mesh, bake.submeshes);
 	const pieces: { u: number; v: number; pivot: [number, number, number] }[] = [];
 	const pieceOf = new Map<string, number>();
 	const bones = new Float32Array(mesh.vertexCount);
@@ -228,6 +252,70 @@ export const vatSkin = (
 			},
 		},
 		motion: { boneCount, frameCount, frameRate, matrices },
+	};
+};
+
+/**
+ * @param mesh the mesh the animation's materials draw
+ * @param bake the bone animation, with the submeshes it moves
+ * @param map its map, a row of 3 × 4 matrices per frame (three texels per bone, its rows)
+ * @returns a copy of the mesh skinned to the map's bones (bone 0 added to hold the other submeshes still) and
+ *   the motion that plays them, or the reason it can't be baked. the vertices' weights are normalized when
+ *   packed, where the game blends them as stored
+ */
+export const boneVatSkin = (mesh: DecodedMesh, bake: BoneBake, map: VatTexels): VatSkinned => {
+	const bones = mesh.uvs[2];
+	const weights = mesh.uvs[3];
+	const n = bake.influences;
+	if (bones == null || weights == null || bones.dimension < n || weights.dimension < n) {
+		return { reason: `a bone-animated mesh without ${n} bones and weights in UV sets 2 and 3` };
+	}
+	if (map.width < bake.boneCount * 3 || map.height < bake.frameCount) {
+		return { reason: 'a bone animation whose map is smaller than its bones and frames' };
+	}
+	const moving = movingVertices(mesh, bake.submeshes);
+	const boneCount = bake.boneCount + 1;
+	const indices = new Float32Array(mesh.vertexCount * n);
+	const blend = new Float32Array(mesh.vertexCount * n);
+	for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
+		if (moving[vertex] === 0) {
+			blend[vertex * n] = 1;
+			continue;
+		}
+		for (let k = 0; k < n; k++) {
+			// 8-bit signed bone indices, read back as index / 127; the shader's column is 3 · (127 · u − 0.1) + 0.5
+			// texels in, so a point sample lands on the index's first texel
+			const bone = Math.round(bones.data[vertex * bones.dimension + k] * 127);
+			const weight = weights.data[vertex * weights.dimension + k];
+			if (weight !== 0 && (bone < 0 || bone >= bake.boneCount)) {
+				return { reason: `a bone-animated mesh naming bone ${bone} of ${bake.boneCount}` };
+			}
+			indices[vertex * n + k] = weight === 0 ? 0 : bone + 1;
+			blend[vertex * n + k] = weight;
+		}
+	}
+	const matrices = new Float32Array(bake.frameCount * boneCount * 12);
+	for (let frame = 0; frame < bake.frameCount; frame++) {
+		// frame f is read at v = 1 − (f + 0.5) / frames, the map's row from the top
+		const row = bake.frameCount - 1 - frame;
+		matrices.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], frame * boneCount * 12);
+		const start = row * map.width * 4;
+		matrices.set(map.texels.subarray(start, start + bake.boneCount * 12), (frame * boneCount + 1) * 12);
+	}
+	return {
+		mesh: {
+			...mesh,
+			skin: {
+				bonesPerVertex: n,
+				bindPoseCount: boneCount,
+				boneNameHashCount: 0,
+				hasBlendWeights: true,
+				hasBlendIndices: true,
+				weights: { dimension: n, format: VertexAttributeFormat.Float32, data: blend },
+				indices: { dimension: n, format: VertexAttributeFormat.Float32, data: indices },
+			},
+		},
+		motion: { boneCount, frameCount: bake.frameCount, frameRate: bake.frameRate || 1, matrices },
 	};
 };
 

@@ -302,12 +302,13 @@ weights in position W and grows its bounds, and a mesh any material offsets by a
 farthest of their offsets ([swaying geometry](package-format.md#geometry-blob-mesh-efgm)). a mesh
 drawn with a [vertex animation texture](game-data/materials.md#vertex-animation-textures) is baked
 into a skeletal one ([vat-skin.ts](../packages/extractor/src/pack/convert/vat-skin.ts)): the worker
-reads the animation's two textures and makes a bone of each rigid piece (each distinct UV1 and
-pivot) or soft point (each distinct UV1 and rest position) on the submeshes drawn with it, bone 0
-holding the rest still, gives a soft body's moving vertices the +y normals and −x tangents its bones
-turn, and samples the game's frame at the middle of each baked frame, so a negative speed plays the
-loop backwards. a mesh whose draws disagree on the animation, or that a renderer poses or animates,
-stays still with the reason in `debug/assets.json` (`unanimated`).
+reads the animation's textures and makes a bone of each rigid piece (each distinct UV1 and pivot) or
+soft point (each distinct UV1 and rest position) on the submeshes drawn with it, or copies a bone
+animation's matrices with the vertices' bones and weights from UV2 and UV3, bone 0 holding the rest
+still, gives a soft body's moving vertices the +y normals and −x tangents its bones turn, and
+samples the game's frame at the middle of each baked frame, so a negative speed plays the loop
+backwards. a mesh whose draws disagree on the animation, or that a renderer poses or animates, stays
+still with the reason in `debug/assets.json` (`unanimated`).
 
 **skin pose.** [skin-pose.ts](../packages/formats/src/unity/skin-pose.ts) bakes linear blend
 skinning into a new static mesh: positions, normals, tangents and bounds move into the space of the

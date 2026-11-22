@@ -1122,7 +1122,7 @@ describe('rigid-body animation', () => {
 
 	it('reads the loop, the bounds’ padding and the HDR textures', () => {
 		const animation = vatOf(readerOf(cans, shader));
-		assert.ok(animation !== null && !('kind' in animation));
+		assert.ok(animation !== null && !('kind' in animation) && animation.body === 'rigid');
 		assert.equal(animation.frameCount, 160);
 		assert.ok(Math.abs(animation.cycleRate - 30 / 159.99) < 1e-9);
 		assert.ok(Math.abs(animation.vScale - 1) < 1e-6);
@@ -1136,5 +1136,33 @@ describe('rigid-body animation', () => {
 		const animation = vatOf(readerOf(held, shader));
 		assert.ok(animation !== null && 'kind' in animation);
 		assert.deepEqual(surfaceGaps(readerOf(held, shader)), ['_VAT_RIGIDBODY']);
+	});
+});
+
+describe('bone animation', () => {
+	const shader = shaderEntry({ name: 'HGRP/Lit', family: 'lit' });
+	// M_vat_map02_sfornament+1_001_06, the bundles of bamboo tubes hung in Qingbo Stockade
+	const tubes = values({
+		keywords: ['_COMMONVAT_BONE_4', '_TWO_BASEMAP'],
+		slots: { _CommonVATMap: { texture: 3, uv: 0, scale: [1, 1], offset: [0, 0] } },
+		floats: { _CommonVATAutoPlay: 1, _CommonVATBlendNormal: 0, _CommonVATFPS: 30 },
+		colors: { _CommonVATMapParams: [42, 200, 0, 0] },
+	});
+
+	it('reads the bones, frames and influences', () => {
+		assert.deepEqual(vatOf(readerOf(tubes, shader)), {
+			body: 'bone',
+			map: 3,
+			boneCount: 14,
+			frameCount: 200,
+			frameRate: 30,
+			influences: 4,
+		});
+		assert.deepEqual(surfaceGaps(readerOf(tubes, shader)), []);
+	});
+
+	it('leaves a frame set per draw as a gap', () => {
+		const held = { ...tubes, floats: { ...tubes.floats, _CommonVATAutoPlay: 0 } };
+		assert.deepEqual(surfaceGaps(readerOf(held, shader)), ['_COMMONVAT_BONE_4']);
 	});
 });

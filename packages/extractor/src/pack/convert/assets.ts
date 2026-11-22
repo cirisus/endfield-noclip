@@ -147,7 +147,7 @@ export interface AssetConversion {
 		/**
 		 * `tangentUvs`: when normal-mapped materials drawing the mesh read their normal maps on different uv
 		 * sets, those sets ascending; its tangents follow the first, so the others shade with wrong tangents.
-		 * `unanimated`: why a mesh drawn with a rigid-body animation holds still
+		 * `unanimated`: why a mesh drawn with a vertex animation holds still
 		 */
 		geometries: (AssetDebug & { tangentUvs?: number[]; unanimated?: string })[];
 		materials: MaterialDebug[];
@@ -603,9 +603,9 @@ interface MeshNeeds {
 	sway: (SwayReach | null)[];
 	/** the farthest any material's vertex offset moves it, `null` without one */
 	offset: (OffsetReach | null)[];
-	/** the rigid-body animation its materials play, `null` without one or when they disagree on it */
+	/** the vertex animation its materials play, `null` without one or when they disagree on it */
 	vat: (VatBake | null)[];
-	/** why a mesh drawn with rigid-body animations isn't baked with one, by mesh */
+	/** why a mesh drawn with vertex animations isn't baked with one, by mesh */
 	unanimated: Map<number, string>;
 }
 
@@ -613,7 +613,7 @@ interface MeshNeeds {
  * a mesh gets tangents when any draw of it uses a normal-mapped material, for the lowest uv set any of them
  * reads its normal map on; a mesh any swaying material draws carries sway weights, and bounds that hold the
  * farthest sway; a mesh any material offsets by a texture gets bounds that hold the farthest offset, and the
- * weights when one is weighted by them. a mesh drawn with a rigid-body animation is baked with it, on the
+ * weights when one is weighted by them. a mesh drawn with a vertex animation is baked with it, on the
  * submeshes it's drawn on, when all its draws agree on one
  */
 const meshNeeds = (
@@ -681,7 +681,7 @@ const meshNeeds = (
 	};
 };
 
-/** each mesh's rigid-body animation (see {@link meshNeeds}) */
+/** each mesh's vertex animation (see {@link meshNeeds}) */
 const vatNeeds = (
 	input: AssetConversionInput,
 	materials: LoadedMaterials,
@@ -698,13 +698,19 @@ const vatNeeds = (
 			if (animation === null || unanimated.has(draw.geometry)) {
 				continue;
 			}
-			const { position, rotation, ...values } = animation;
-			const bake: VatBake = {
-				...values,
-				position: textures.objects[position].locator,
-				rotation: textures.objects[rotation].locator,
-				submeshes: [draw.submesh],
-			};
+			let bake: VatBake;
+			if (animation.body === 'bone') {
+				const { map, ...values } = animation;
+				bake = { ...values, map: textures.objects[map].locator, submeshes: [draw.submesh] };
+			} else {
+				const { position, rotation, ...values } = animation;
+				bake = {
+					...values,
+					position: textures.objects[position].locator,
+					rotation: textures.objects[rotation].locator,
+					submeshes: [draw.submesh],
+				};
+			}
 			const key = JSON.stringify({ ...bake, submeshes: [] }, (_key, value: unknown) =>
 				typeof value === 'bigint' ? value.toString() : value,
 			);

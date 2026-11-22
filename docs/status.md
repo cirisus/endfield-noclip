@@ -202,8 +202,7 @@ packs or renders correctly.
   [vertex offset](viewer/materials.md#vertex-offset) and
   [vertex animation textures](viewer/materials.md#vertex-animation-textures)
   (`_SIMPLE_VERTEXANIM_PENDULUM`, `…_ROPE`, `HGRP/LitTransparent`'s cloth, `HGRP/LitEffect`'s
-  `_VAT_RIGIDBODY`, `_COMMONVAT_*`, `_MOVING_BAMBOO`). the cloth sway is unchecked against an
-  in-game shot
+  `_VAT_RIGIDBODY`, `_MOVING_BAMBOO`). the cloth sway is unchecked against an in-game shot
 - [vertex animation textures](viewer/materials.md#vertex-animation-textures) are baked per mesh, so
   a mesh drawn with different animations holds still (map02's `s_zmdmachinevat_lod*`, played by five
   materials at different speeds, and one Hongshan waterway mesh); its frames are interpolated where

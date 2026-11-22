@@ -5,7 +5,7 @@
 
 import type { MaterialReader } from '../material-values.ts';
 
-import { VAT_KEYWORDS, vatOf } from './vat-animation.ts';
+import { vatKeyword, vatOf } from './vat-animation.ts';
 
 /** keywords every surface reads: the alpha test and both emission sources */
 const SURFACE_KEYWORDS = ['_ALPHATEST_ON', '_EMISSIVE_MAP', '_EMISSIVE_MASK'];
@@ -39,9 +39,13 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 			'_GPU_CLOTH',
 			'_USE_VERTOFFSET',
 			'_USE_VERTOFFSETMASK',
-			// baked into the meshes they draw (`vatSkin`); the cases `vatOf` doesn't play are gaps
+			// baked into the meshes they draw (`vatSkin`, `boneVatSkin`); the cases `vatOf` doesn't play are gaps
 			'_VAT_RIGIDBODY',
 			'_VAT_SOFTBODY',
+			'_COMMONVAT_BONE_1',
+			'_COMMONVAT_BONE_2',
+			'_COMMONVAT_BONE_3',
+			'_COMMONVAT_BONE_4',
 		],
 		'HGRP/LitEffect': LIT_KEYWORDS,
 		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
@@ -110,8 +114,9 @@ export const surfaceGaps = (reader: MaterialReader): string[] => {
 		}
 	}
 	const vat = shader === 'HGRP/Lit' ? vatOf(reader) : null;
-	if (vat !== null && 'kind' in vat) {
-		gaps.push(reader.has(VAT_KEYWORDS.rigid) ? VAT_KEYWORDS.rigid : VAT_KEYWORDS.soft);
+	const keyword = vat !== null && 'kind' in vat ? vatKeyword(reader) : null;
+	if (keyword !== null) {
+		gaps.push(keyword);
 	}
 	return gaps;
 };

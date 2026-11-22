@@ -8,7 +8,7 @@ import {
 	VertexAttributeFormat,
 } from '@endfield-noclip/formats/unity/mesh';
 
-import { type VatBake, vatSkin, type VatTexels } from './vat-skin.ts';
+import { type BoneBake, boneVatSkin, type HoudiniBake, vatSkin, type VatTexels } from './vat-skin.ts';
 
 const attribute = (dimension: number, values: number[]): MeshAttribute => ({
 	dimension,
@@ -86,7 +86,7 @@ for (let row = 0; row < 4; row++) {
 	rotation.texels.set([0, 0, Math.sin(half), 0], row * 8);
 }
 
-const bake: VatBake = {
+const bake: HoudiniBake = {
 	body: 'rigid',
 	position: { bundleIndex: 0, file: '', pathId: 0n },
 	rotation: { bundleIndex: 0, file: '', pathId: 0n },
@@ -206,6 +206,76 @@ describe('vertex animation', () => {
 
 	it("can't bake a mesh without the pivot's UV sets", () => {
 		const baked = vatSkin({ ...mesh, uvs: [null, mesh.uvs[1], null] }, bake, position, rotation);
+		assert.ok('reason' in baked);
+	});
+});
+
+describe('bone animation', () => {
+	// two bones over three frames: bone 0 moves by (frame, 0, 0), bone 1 by (0, frame, 0). vertex 0 follows
+	// bone 0, vertex 1 blends both halves, vertex 2 (submesh 1) holds still
+	const map: VatTexels = { width: 6, height: 3, texels: new Float32Array(6 * 3 * 4) };
+	for (let frame = 0; frame < 3; frame++) {
+		// frame f is the row at v = 1 − (f + 0.5) / 3, counted from the top
+		const row = 2 - frame;
+		map.texels.set([1, 0, 0, frame, 0, 1, 0, 0, 0, 0, 1, 0], row * 24);
+		map.texels.set([1, 0, 0, 0, 0, 1, 0, frame, 0, 0, 1, 0], row * 24 + 12);
+	}
+	const tubes: DecodedMesh = {
+		...mesh,
+		vertexCount: 3,
+		positions: Float32Array.from([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+		uvs: [
+			null,
+			null,
+			// bone indices as 8-bit signed values, index / 127
+			attribute(2, [0, 0, 0, 1 / 127, 0, 0]),
+			attribute(2, [1, 0, 0.5, 0.5, 0, 0]),
+			null,
+			null,
+			null,
+			null,
+		],
+		indices: Uint16Array.from([0, 1, 0, 2, 2, 2]),
+		submeshes: [
+			{ ...mesh.submeshes[0], firstIndex: 0, indexCount: 3 },
+			{ ...mesh.submeshes[1], firstIndex: 3, indexCount: 3 },
+		],
+	};
+	const bones: BoneBake = {
+		body: 'bone',
+		map: { bundleIndex: 0, file: '', pathId: 0n },
+		boneCount: 2,
+		frameCount: 3,
+		frameRate: 30,
+		influences: 2,
+		submeshes: [0],
+	};
+
+	it("blends the map's matrices by the vertices' weights, the other submeshes still", () => {
+		const baked = boneVatSkin(tubes, bones, map);
+		assert.ok(!('reason' in baked));
+		assert.deepEqual([baked.motion.boneCount, baked.motion.frameCount, baked.motion.frameRate], [3, 3, 30]);
+		const skinned = (vertex: number, frame: number): number[] => {
+			const { indices, weights } = baked.mesh.skin!;
+			const out = [0, 0, 0];
+			for (let k = 0; k < 2; k++) {
+				const m = baked.motion.matrices.subarray((frame * 3 + indices!.data[vertex * 2 + k]) * 12);
+				const [x, y, z] = tubes.positions.subarray(vertex * 3, vertex * 3 + 3);
+				for (let row = 0; row < 3; row++) {
+					out[row] +=
+						weights!.data[vertex * 2 + k] *
+						(m[row * 4] * x + m[row * 4 + 1] * y + m[row * 4 + 2] * z + m[row * 4 + 3]);
+				}
+			}
+			return out;
+		};
+		assert.deepEqual(skinned(0, 2), [2, 0, 0]);
+		assert.deepEqual(skinned(1, 2), [2, 2, 1]);
+		assert.deepEqual(skinned(2, 2), [2, 2, 2]);
+	});
+
+	it("can't bake a mesh naming a bone the map doesn't hold", () => {
+		const baked = boneVatSkin(tubes, { ...bones, boneCount: 1 }, map);
 		assert.ok('reason' in baked);
 	});
 });

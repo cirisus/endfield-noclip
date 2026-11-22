@@ -28,9 +28,9 @@ import type {
 	WorkerRequest,
 } from './convert-pool.ts';
 import { convertMesh, geometryReady, rigidSkin } from './geometry.ts';
-import { type VatBake, vatSkin, type VatTexels, vatTexels } from './vat-skin.ts';
 import { syntheticMesh, syntheticMeshKey } from './synthetic-mesh.ts';
 import { convertTexture } from './textures.ts';
+import { boneVatSkin, type VatBake, vatSkin, type VatTexels, vatTexels } from './vat-skin.ts';
 
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- set by ConvertPool
 const data = workerData as ConvertWorkerData;
@@ -60,16 +60,16 @@ const convert = async (job: ConvertJob): Promise<ConvertResult> => {
 const loadVatTexels = async ({ bundleIndex, file, pathId }: ObjectLocator): Promise<VatTexels> =>
 	vatTexels(await loadTexture(resolver, await resolver.objectIn(bundleIndex, file, pathId)));
 
-/** bakes a mesh's rigid-body animation from its textures */
-const bakeVat = async (
-	mesh: DecodedMesh,
-	bake: VatBake,
-): Promise<ReturnType<typeof vatSkin>> => {
+/** bakes a mesh's vertex animation from its textures */
+const bakeVat = async (mesh: DecodedMesh, bake: VatBake): Promise<ReturnType<typeof vatSkin>> => {
 	// an animation that can't be read leaves the mesh still rather than failing it
 	try {
+		if (bake.body === 'bone') {
+			return boneVatSkin(mesh, bake, await loadVatTexels(bake.map));
+		}
 		return vatSkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
 	} catch (error) {
-		return { reason: `a rigid-body animation whose textures can't be read: ${errorText(error)}` };
+		return { reason: `a vertex animation whose textures can't be read: ${errorText(error)}` };
 	}
 };
 
@@ -105,7 +105,7 @@ const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
 				// a renderer's own animation or pose and a VAT's would compound; the renderer's is kept
 				const baked =
 					pose !== undefined || motion !== undefined
-						? { reason: 'a rigid-body animation on a posed or animated renderer' }
+						? { reason: 'a vertex animation on a posed or animated renderer' }
 						: await bakeVat(source, job.vat);
 				if ('reason' in baked) {
 					unanimated = baked.reason;
