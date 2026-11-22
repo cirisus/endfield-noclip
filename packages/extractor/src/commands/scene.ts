@@ -472,17 +472,22 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	}
 	const { kinds, limit } = options;
 	const needsSurvey = SURVEY_KINDS.some((k) => kinds.has(k));
-	const surveyOptions = { includeEcs: kinds.has('dynamic') };
-	const surveyPromise =
-		needsSurvey && (options.near !== undefined || !kinds.has('static'))
-			? surveyPlacements(context, scene, null, surveyOptions).catch(errorText)
-			: null;
 	const [partition, pathOf, standIns, manifest] = await Promise.all([
 		world.partition(scene),
 		world.pathLookup(),
 		loadStandIns(scene),
 		needsSurvey ? world.manifest() : undefined,
 	]);
+	const nearLevels =
+		options.near === undefined || partition === undefined
+			? null
+			: levelsNear(partition, options.near, options.radius);
+	const scopedLevel = nearLevels !== null && nearLevels.length === 1 ? nearLevels[0].id : null;
+	const surveyOptions = { includeEcs: kinds.has('dynamic') };
+	const surveyPromise =
+		needsSurvey && (options.near !== undefined || !kinds.has('static'))
+			? surveyPlacements(context, scene, scopedLevel, surveyOptions).catch(errorText)
+			: null;
 	let loadedManifest = manifest;
 	const names: AssetNames = {
 		pathOf,
@@ -505,7 +510,7 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	const scanAll = options.near !== undefined;
 	const lightPromise = scanAll && kinds.has('light') ? lightCandidates(world, scene, options, lookups) : null;
 	const waterPromise =
-		scanAll && kinds.has('water') ? waterCandidates(context, scene, options, lookups) : null;
+		scanAll && kinds.has('water') ? waterCandidates(context, scene, scopedLevel, options, lookups) : null;
 	const envPromise = scanAll && kinds.has('env') ? envCandidates(context, scene, options, lookups) : null;
 
 	if (kinds.has('static')) {
@@ -523,7 +528,8 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	const survey =
 		rows.full || !needsSurvey
 			? null
-			: await (surveyPromise ?? surveyPlacements(context, scene, null, surveyOptions).catch(errorText));
+			: await (surveyPromise ??
+					surveyPlacements(context, scene, scopedLevel, surveyOptions).catch(errorText));
 	if (typeof survey === 'string') {
 		console.error(`${SURVEY_KINDS.filter((k) => kinds.has(k)).join(', ')}: not searched: ${survey}`);
 	} else if (survey !== null) {
@@ -545,7 +551,8 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	}
 
 	if (!rows.full && kinds.has('water')) {
-		for (const candidate of await (waterPromise ?? waterCandidates(context, scene, options, lookups))) {
+		for (const candidate of await (waterPromise ??
+			waterCandidates(context, scene, scopedLevel, options, lookups))) {
 			rows.add(candidate);
 			if (rows.full) {
 				break;
@@ -590,6 +597,29 @@ const drawLabels = (entity: ChunkEntity, { pathOf }: AssetNames): string[] =>
 		pathOf(draw.meshHash) ?? hashText(draw.meshHash),
 		pathOf(draw.materialHash) ?? hashText(draw.materialHash),
 	]) ?? [];
+
+/** levels owning any cell within `reach` cells of `point` */
+const levelsNear = (
+	partition: LevelPartition,
+	point: readonly number[],
+	radius: number | undefined,
+): LevelPartition['levels'] => {
+	const cx = Math.floor(point[0] / CELL_SIZE);
+	const cz = Math.floor(point[2] / CELL_SIZE);
+	const reach = radius === undefined ? 1 : Math.ceil(radius / CELL_SIZE) + 1;
+	const matched = new Set<LevelPartition['levels'][number]>();
+	for (let dx = -reach; dx <= reach; dx++) {
+		for (let dz = -reach; dz <= reach; dz++) {
+			const key = cellKey(cx + dx, cz + dz);
+			for (const level of partition.levels) {
+				if (level.cells.has(key)) {
+					matched.add(level);
+				}
+			}
+		}
+	}
+	return [...matched];
+};
 
 const nearCellFilter = (
 	near: readonly number[] | undefined,
@@ -858,6 +888,7 @@ const lightCandidates = async (
 const waterCandidates = async (
 	context: Context,
 	scene: string,
+	level: string | null,
 	options: Pick<FindOptions, 'near' | 'radius'>,
 	lookups: FindLookups,
 ): Promise<FoundCandidate[]> => {
@@ -865,7 +896,7 @@ const waterCandidates = async (
 	const { names, partition } = lookups;
 	const [{ surfaces }, { volumes }] = await Promise.all([
 		readSceneWater(world, scene, nearCellFilter(options.near, options.radius), { includeGlobals: false }),
-		readWaterVolumes(context, scene, null, partition).catch(() => ({ volumes: [], unsupported: [] })),
+		readWaterVolumes(context, scene, level, partition).catch(() => ({ volumes: [], unsupported: [] })),
 	]);
 	const out: FoundCandidate[] = [];
 	for (const surface of surfaces) {
@@ -1089,7 +1120,17 @@ const showEnvironment = async (
 		levels = [found.level];
 	}
 	const singleLevel = levels.length === 1 && scene.levels.length > 1 ? levels[0] : null;
-	const levelTags = singleLevel === null ? null : new Set([0, singleLevel.tag]);
+	const nearLevels = at !== undefined && singleLevel === null ? levelsNear(scene, at, undefined) : [];
+	let levelTags: Set<number> | null = null;
+	let surveyLevel: string | null = singleLevel?.id ?? null;
+	if (singleLevel !== null) {
+		levelTags = new Set([0, singleLevel.tag]);
+	} else if (nearLevels.length > 0) {
+		levelTags = new Set([0, ...nearLevels.map((level) => level.tag)]);
+		if (nearLevels.length === 1) {
+			surveyLevel = nearLevels[0].id;
+		}
+	}
 	let chunkFilter: ((file: ChunkFile) => boolean) | undefined;
 	if (at !== undefined) {
 		chunkFilter = nearCellFilter(at, undefined);
@@ -1097,7 +1138,7 @@ const showEnvironment = async (
 		chunkFilter = (file) => file.cell === null || singleLevel.cells.has(cellKey(file.cell.x, file.cell.z));
 	}
 	const [survey, chunkVolumes, pathOf, names, resolver] = await Promise.all([
-		surveyPlacements(context, scene.mapId, singleLevel?.id ?? null, { includeEcs: false }),
+		surveyPlacements(context, scene.mapId, surveyLevel, { includeEcs: false }),
 		loadSceneVolumes(world, scene.mapId, chunkFilter),
 		world.pathLookup(),
 		world.names(),
