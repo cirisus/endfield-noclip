@@ -41,6 +41,7 @@ const sheet: WaterSheetSurface = {
 	vertexColor: true,
 	additive: false,
 	useLighting: 1,
+	farShadowOnly: false,
 	randomUv: 0,
 	disturbBias: 0,
 	disturb: [0, 0],
@@ -91,6 +92,13 @@ test('a water sheet lays out its frames, motion vectors and normals, and keeps i
 	// no vertex motion, whose switch shares the stack's row
 	assert.equal(look.params[EffectRow.offsetMode], VertexMotion.None);
 	assert.equal(look.params[EffectRow.soft], 3);
+	assert.equal(look.params[WaterSheetRow.misc + 2], 0);
+});
+
+test('a sheet shadowed from the far map alone says so', () => {
+	// Si's Painting's ink falls (`M_fxmap_map02_lv010_waterflow_white_03_fj_01_asm`)
+	const [look] = materialLooks({ entries: [described({ ...sheet, farShadowOnly: true })] });
+	assert.equal(look.params[WaterSheetRow.misc + 2], 1);
 });
 
 test('a soft-body sheet binds its rotation and position textures for the vertex stage alone', () => {

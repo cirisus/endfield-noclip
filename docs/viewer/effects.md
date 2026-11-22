@@ -207,7 +207,9 @@ add their light. the [post-exposure division](../game-data/effects.md#waterfalls
 unlit share only, since on the lit share it darkens sheets in dark places, such as Jingyu's cave
 falls, far below the game's. the normal map's frame comes from the UVs' screen derivatives rather
 than mesh tangents. `VFX_WATER_SIMPLE_LIGHT` sheets are lit the full way, and textures on UV sets
-other than 0 are unsupported.
+other than 0 are unsupported. a sheet with `WaterSheetSurface.farShadowOnly` takes the sun's shadow
+from the far layer alone (`sun_visibility_far` in `frame.wgsl`). both kinds take the surfaces'
+shadow lookup, not the sheet's own four-tap cascade filter and half-metre normal offset.
 
 a sheet's [soft body](../game-data/effects.md#soft-body-animation) (`WaterSheetSurface.softBody`)
 moves through the stack's vertex path: the position texture in slot 6 (`setSoftBodySlot`), and the

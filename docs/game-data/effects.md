@@ -578,6 +578,10 @@ of falling water are `HGRP/Effect/VFXWater` meshes (about 1800 placements on map
   (`_Roughness`, f0 `0.08 · _Specular`, `· _DirSpecularStrength`, divided by the opacity so it
   survives premultiplication) and the subsurface colour through a wrap lobe plus a see-through lobe
   towards the sun, the light that makes falls glow against a low sun.
+- **sun shadow.** the sheet is shadowed at half a metre along its normal from the sharp cascades
+  (four taps), or, with the material's `_directional_shadow_asm_only` above 0, from the cached far
+  map alone, tent-filtered. Si's Painting's ink falls set it (`*_asm` materials), so the sun coming
+  through the cave mouth lights them in soft patches rather than the cascades' sharp slivers.
 - **output.** under `_IgnorePostExposure` the colour, lit share included, is divided by the post
   exposure. `_BlendMode` 1 adds the sheet to what lies behind, as VFXBaseV2's does.
 

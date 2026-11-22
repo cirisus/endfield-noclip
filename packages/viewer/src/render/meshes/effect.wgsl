@@ -1152,8 +1152,15 @@ fn water_sheet(in: EffectOut, front: bool, dx: vec2f, dy: vec2f, rel_dx: vec3f, 
 	let wrap = saturate(dot(n, l) * (2.0 / 3.0) + 1.0 / 3.0);
 	let through = mix(mix(1.0, wrap * sqrt(wrap) * (5.0 / 3.0), k) / (2.0 * PI), 1.0,
 		pow(saturate(-dot(v, l)), 12.0) * mix(3.0, 0.1, k));
+	// `_directional_shadow_asm_only`: the game shadows the sheet from its cached far map alone
+	var visibility: vec3f;
+	if (fx_row(id, WS_MISC).z > 0.5) {
+		visibility = sun_visibility_far(in.rel, n);
+	} else {
+		visibility = sun_visibility(in.rel, n, in.position.xy);
+	}
 	let sun = (specular * n_dot_l + subsurface * through + lit * n_dot_l) * frame.sun_color.rgb * (frame.sun.w / PI) *
-		sun_visibility(in.rel, n, in.position.xy);
+		visibility;
 	let shaded = indirect + unlit + sun;
 
 	// `_BlendMode` 1 adds the layer rather than blending it over

@@ -238,6 +238,24 @@ fn sun_visibility(rel: vec3f, normal: vec3f, px: vec2f) -> vec3f {
 	if (frame.shadow_look.y < 0.99) {
 		shadow = mix(sun_shadow(rel, normal, px) * cloud_shadow(rel), frame.shadow_look.z, frame.shadow_look.y);
 	}
+	return sun_look(shadow);
+}
+
+// `sun_visibility` with the shadow taken from the coarse far layer alone, for materials the game shadows from its
+// cached map only
+fn sun_visibility_far(rel: vec3f, normal: vec3f) -> vec3f {
+	if (frame.shadow_fade.w < 0.5) {
+		return vec3f(cloud_shadow(rel));
+	}
+	var shadow = frame.shadow_look.z;
+	if (frame.shadow_look.y < 0.99) {
+		shadow = mix(far_shadow(rel, normal) * cloud_shadow(rel), frame.shadow_look.z, frame.shadow_look.y);
+	}
+	return sun_look(shadow);
+}
+
+// the environment's shadow strength and penumbra ramp applied to the sun's shadowed share
+fn sun_look(shadow: f32) -> vec3f {
 	let sh = mix(1.0, min(1.0, shadow), frame.shadow_look.x);
 	if (frame.shadow_look.w < 0.5) {
 		return vec3f(sh);

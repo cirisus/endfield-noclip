@@ -39,7 +39,10 @@ export const WaterSheetRow = {
 	surface: 112,
 	/** subsurface hue, saturation, value (0 without `_SUBSURFACE`), indirect strength */
 	subsurface: 116,
-	/** the `VertexMotion` (the soft body's, or none), `_IndirectSaturation`, 0, 0 */
+	/**
+	 * the `VertexMotion` (the soft body's, or none), `_IndirectSaturation`, 1 when shadowed from the far map
+	 * alone, 0
+	 */
 	misc: 120,
 	/** a soft body's offset minimum and frame count, in the stack's reveal rows, which sheets don't have */
 	softMin: 160,
@@ -149,7 +152,12 @@ export const waterSheetLook = (sheet: WaterSheetSurface): EffectLook => {
 		params.set([...softBody.range, softBody.rotationPacked ? 1 : 2], WaterSheetRow.softRange);
 	}
 	params.set(
-		[softBody === null ? VertexMotion.None : VertexMotion.SoftBody, sheet.indirectSaturation, 0, 0],
+		[
+			softBody === null ? VertexMotion.None : VertexMotion.SoftBody,
+			sheet.indirectSaturation,
+			sheet.farShadowOnly ? 1 : 0,
+			0,
+		],
 		WaterSheetRow.misc,
 	);
 	params.set(

@@ -1094,6 +1094,8 @@ export interface WaterSheetSurface {
 	additive: boolean;
 	/** the share of the colour that's lit, as an albedo (`_UseLighting`) */
 	useLighting: Weight;
+	/** the sun's shadow comes from the cached far shadow map alone, not the sharp cascades */
+	farShadowOnly: boolean;
 	/** how far a random value per object stretches and offsets the main UVs (`_WaterRandomUV`) */
 	randomUv: number;
 	disturbBias: number;

@@ -1742,6 +1742,17 @@ describe('VFXWater', () => {
 		assert.deepEqual(sheet.soft, { distance: 3, bias: 0 });
 		assert.equal(describeMaterial(material({ keywords: ['VFX_WATER_REFRACT'] }), water).kind, 'unsupported');
 		assert.equal(sheet.softBody, null);
+		assert.equal(sheet.farShadowOnly, false);
+	});
+
+	it('shadows a sheet from the far map alone where its material asks', () => {
+		// Si's Painting's ink falls (`M_fxmap_map02_lv010_waterflow_white_03_fj_01_asm`)
+		const water = shader('HGRP/Effect/VFXWater', 'water', { textures: { _MainTex: 'white' } });
+		const sheet = ofKind(
+			describeMaterial(material({ floats: { _directional_shadow_asm_only: 1 } }), water),
+			'waterSheet',
+		);
+		assert.equal(sheet.farShadowOnly, true);
 	});
 
 	it('keeps a soft body: the position and rotation textures, and the frame its material holds', () => {

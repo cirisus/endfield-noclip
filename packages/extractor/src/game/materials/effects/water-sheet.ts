@@ -147,6 +147,7 @@ export const describeWaterSheet = (reader: MaterialReader): WaterSheetSurface | 
 		vertexColor: float('_DisableVertColor', 0) === 0,
 		additive: float('_BlendMode', 0) >= 0.5,
 		useLighting: float('_UseLighting', 1),
+		farShadowOnly: float('_directional_shadow_asm_only', 0) > 0,
 		randomUv: float('_WaterRandomUV', 0),
 		disturbBias: float('_Bi_Disturb', 0),
 		disturb: disturbIntensityOf(reader, 1),

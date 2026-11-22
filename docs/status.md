@@ -372,8 +372,9 @@ packs or renders correctly.
     it ignores the second UV set the game reads as custom data; Deep Dale Street's fog-wall haze,
     the balloons' glitch and Valley Pass's fire-column haze are unchecked in game
   - VFXWater: `VFX_WATER_REFRACT`, punctual lights, matcaps, `VFX_WATER_SIMPLE_LIGHT`'s probe (lit
-    the full way instead) and the dissolve's vertex-colour weight
-    (`_UseVertexColorAlphaAsDissolveWeight`). a
+    the full way instead), the dissolve's vertex-colour weight
+    (`_UseVertexColorAlphaAsDissolveWeight`), and the sheet's own sun-shadow lookup (a four-tap
+    cascade filter at half a metre along the normal; the viewer uses the surfaces' lookup). a
     [soft body](game-data/effects.md#soft-body-animation) with a flipbook or a normal map, or played
     by particle data, stays unsupported; its per-draw frame offset is taken as 0. the waterwheels'
     pouring water, whose frame, opacity and dissolve their clip plays, is unchecked against an
