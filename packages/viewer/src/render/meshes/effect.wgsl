@@ -775,18 +775,18 @@ fn fx_stack_layer(in: EffectOut, bases: FxBases, front: bool) -> vec4f {
 		let fresnel_color = fx_row(id, FX_FRESNEL_COLOR);
 		color = mix(color, fresnel_color.rgb, fresnel_color.w * fresnel);
 	}
+	// `_IgnorePostExposure` divides out the post exposure, before the lighting when the colour is an albedo
+	color = clamp(color * mix(1.0, frame.ambient.y, soft.z), vec3f(0.0), vec3f(1000.0));
 	let lighting = fx_row(id, FX_OFFSET_MODE);
 	if (lighting.z > 0.0) {
 		// `_USE_LIGHTING`: the colour is an albedo, lit by the irradiance volume and the sun at the surface's normal
-		// turned towards the camera, or at the world's up; the game's division by the post exposure is left out
+		// turned towards the camera, or at the world's up
 		var n = normalize(in.normal);
 		n = select(-n, n, dot(n, in.rel) <= 0.0);
 		n = select(n, vec3f(0.0, 1.0, 0.0), lighting.w > 0.0);
 		let sun = frame.sun_color.rgb * (frame.sun.w / PI) * saturate(dot(n, frame.sun.xyz)) *
 			sun_visibility(in.rel, n, in.position.xy);
-		color = clamp(color, vec3f(0.0), vec3f(1000.0)) * (ambient_irradiance(in.rel + frame.eye.xyz, n) + sun);
-	} else {
-		color = clamp(color * mix(1.0, frame.ambient.y, soft.z), vec3f(0.0), vec3f(1000.0));
+		color *= ambient_irradiance(in.rel + frame.eye.xyz, n) + sun;
 	}
 	// VFXDitherAlphaNoLighting's colour pass writes its colour times the alpha before the mask and the power
 	// (`EffectRow.colorTimesAlpha`)

@@ -339,8 +339,7 @@ packs or renders correctly.
     (the Aurelyne blob is unchecked in game), [water blending](game-data/effects.md#water-blending)
     (fragments below the authored height show the checker; the height a water surface would set
     isn't followed), VFXDecal's `_USE_IN_PARTICLE`, lighting and 3D-texture variants, its parallax
-    beside a blend layer and stencil read masks other than 0 and 32, and local lights and the
-    post-exposure division on lit effects
+    beside a blend layer and stencil read masks other than 0 and 32, and local lights on lit effects
   - VFXBaseV2's breathing pulses every placement in step (per-draw time scale and offset untraced);
     Dijiang's clue board and the aisle-guide panels' edge colour are unchecked in game
   - VFXDitherAlpha's effect variants blend rather than dither and write no depth; lit ones, other

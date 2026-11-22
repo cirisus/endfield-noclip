@@ -32,7 +32,8 @@ particle meshes play through the [particles](particles.md#particles), which also
   a soft blend or edge colour, which read them, stay unsupported, as do those with a stencil. the
   composite fogs them as it does any opaque surface, unchecked against the game.
 - [lighting](../game-data/effects.md#vfxbasev2) takes the irradiance volume and the shadowed sun,
-  without local lights or the division by the post exposure.
+  without local lights, and divides the albedo by the post exposure first under
+  `_IgnorePostExposure`.
 - the [breathing](../game-data/effects.md#vfxbasev2) runs on the viewer's clock, with the per-draw
   time scale and offset left at none (their values aren't traced), so every placement pulses in
   step. its values ride in the decal fade row, which only VFXDecal reads.
