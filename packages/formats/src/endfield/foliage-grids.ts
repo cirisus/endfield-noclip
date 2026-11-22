@@ -1,17 +1,23 @@
 import { unique } from '@mary-ext/array-fns';
 
 import { FormatError } from '../binary/binary-reader.ts';
+import { ByteView } from '../binary/byte-view.ts';
 import type { Aabb } from '../unity/values.ts';
 
 import {
-	ChunkObjectKind,
 	Component,
 	parseComponentColumns,
 	type RendererDraw,
 	type StaticRenderer,
 } from './init-chunk-data.ts';
 import { levelTagOf } from './level-partition.ts';
-import { type ChunkRows, readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
+import {
+	ChunkObjectKind,
+	type ChunkRows,
+	readChunkRows,
+	readPropertyTable,
+	type MonoValue,
+} from './mono-objects.ts';
 
 // scattered foliage: grass and tree grids among a chunk's tag-3 proxy objects, serialized as whole ECS
 // archetypes in the row's keyed property table (layout in docs/game-data/world.md#foliage-grids).
@@ -32,8 +38,10 @@ export interface FoliageCluster {
 	bounds: Aabb;
 	/** draws with mesh and material keys resolved through the batch table; LOD levels follow the thresholds */
 	renderer: StaticRenderer;
-	/** column-major object-to-world matrices, one per instance */
-	instances: Float32Array[];
+	/** packed column-major 4×4 object-to-world matrices, 16 floats per instance */
+	instances: Float32Array;
+	/** number of instances in {@link instances} (`instances.length / 16`) */
+	instanceCount: number;
 }
 
 /** a grass or tree grid */
@@ -124,8 +132,7 @@ const gridType = (fb: ReturnType<typeof readChunkRows>['fb'], row: { tag: number
 	if (row.tag !== ChunkObjectKind.Proxy) {
 		return null;
 	}
-	const at = fb.field(row.table, 2);
-	const type = at === undefined ? -1 : fb.u8(at);
+	const type = fb.u8Field(row.table, 2);
 	switch (type) {
 		case FoliageGridType.Grass:
 		case FoliageGridType.Tree: {
@@ -142,11 +149,11 @@ const propertyMap = (
 	table: number,
 	id: number,
 ): Map<number, MonoValue> => {
-	const at = fb.field(table, 3);
-	if (at === undefined) {
+	const propTable = fb.tableField(table, 3);
+	if (propTable === undefined) {
 		throw new FormatError(`grid ${id} has no property table`);
 	}
-	return new Map(readPropertyTable(fb, fb.deref(at)));
+	return new Map(readPropertyTable(fb, propTable));
 };
 
 /** one entry of a grid's batch table */
@@ -204,7 +211,7 @@ const readArchetypes = (
 		const count = intProperty(props, (ENTITY_COUNT_KEY | a) >>> 0, id);
 		const descriptors = blobProperty(props, (DESCRIPTORS_KEY | a) >>> 0, id);
 		const blob = blobProperty(props, (BLOB_KEY | a) >>> 0, id);
-		const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+		const view = new ByteView(blob, `grid ${id} archetype ${a}`);
 		const parsed = parseComponentColumns(descriptors, count, blob.length, `grid ${id} archetype ${a}`);
 		const columns = new Map(parsed.map((column) => [column.id, column]));
 
@@ -245,7 +252,7 @@ const readArchetypes = (
 		}
 
 		for (let e = 0; e < count; e++) {
-			const f = (column: { offset: number } | undefined) => view.getFloat32(column!.offset + e * 4, true);
+			const f = (column: { offset: number } | undefined) => view.f32(column!.offset + e * 4);
 			const bounds: Aabb = {
 				center: [f(boundsColumns[0]), f(boundsColumns[1]), f(boundsColumns[2])],
 				extents: [f(boundsColumns[3]), f(boundsColumns[4]), f(boundsColumns[5])],
@@ -260,34 +267,33 @@ const readArchetypes = (
 			let instanceCount = 1;
 			let first = base;
 			if (type === FoliageGridType.Grass) {
-				instanceCount = view.getUint32(base, true);
+				instanceCount = view.u32(base);
 				first = base + 4;
 				if (instanceCount > grassCapacity) {
 					throw new FormatError(`grid ${id} cluster holds ${instanceCount} of ${grassCapacity} instances`);
 				}
 			}
-			// one copy per cluster rather than per instance: a scene has millions of instances, and an ArrayBuffer each would
-			// be most of the cost of reading them
-			const start = blob.byteOffset + first;
-			const copy = blob.buffer.slice(start, start + instanceCount * INSTANCE_SIZE);
-			const instances = Array.from(
-				{ length: instanceCount },
-				(_, k) => new Float32Array(copy, k * INSTANCE_SIZE, 16),
-			);
+			// pack matrices contiguously in one buffer (dropping the two trailing vec4s per instance) so
+			// millions of instances don't allocate a Float32Array view each
+			const instances = new Float32Array(instanceCount * 16);
+			const out = new Uint8Array(instances.buffer);
+			for (let k = 0; k < instanceCount; k++) {
+				out.set(view.subarray(first + k * INSTANCE_SIZE, 64), k * 64);
+			}
 			const lodCount = new Set(draws.map((draw) => draw.lod)).size;
-			clusters.push({ bounds, renderer: { draws, lodCount }, instances });
+			clusters.push({ bounds, renderer: { draws, lodCount }, instances, instanceCount });
 		}
 	}
 	return clusters;
 };
 
 const readDraws = (
-	view: DataView,
+	view: ByteView,
 	at: number,
 	capacity: number,
 	grid: { type: FoliageGridType; batches: Batch[]; byKey: Map<number, Batch>; id: number },
 ): RendererDraw[] => {
-	const count = view.getUint32(at, true);
+	const count = view.u32(at);
 	if (count > capacity) {
 		throw new FormatError(`grid ${grid.id} has ${count} draws in room for ${capacity}`);
 	}
@@ -300,11 +306,11 @@ const readDraws = (
 		// the info names its batch entry instead of holding asset keys: grass by the entry's key, trees by its
 		// index
 		if (grid.type === FoliageGridType.Grass) {
-			batch = grid.byKey.get(view.getUint32(info + 4, true));
-			flags = view.getUint32(info + 12, true);
+			batch = grid.byKey.get(view.u32(info + 4));
+			flags = view.u32(info + 12);
 		} else {
-			batch = grid.batches[view.getUint32(info + 12, true)];
-			flags = view.getUint32(info + 16, true);
+			batch = grid.batches[view.u32(info + 12)];
+			flags = view.u32(info + 16);
 		}
 		if (batch === undefined) {
 			throw new FormatError(`grid ${grid.id} draw ${d} names no batch entry`);
@@ -314,8 +320,8 @@ const readDraws = (
 			materialHash: batch.materialHash,
 			submesh: batch.submesh,
 			flags,
-			lodMaxSquared: view.getFloat32(lod, true),
-			lodMinSquared: view.getFloat32(lod + 4, true),
+			lodMaxSquared: view.f32(lod),
+			lodMinSquared: view.f32(lod + 4),
 			lod: 0,
 		});
 	}

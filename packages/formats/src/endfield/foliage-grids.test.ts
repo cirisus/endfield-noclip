@@ -170,8 +170,14 @@ test('readFoliageGrids decodes a grass grid through its batch table', () => {
 	assert.equal(grid.clusters.length, 1);
 	const [cluster] = grid.clusters;
 	assert.deepEqual(cluster.bounds, { center: [10, 20, 30], extents: [1, 2, 3] });
+	assert.equal(cluster.instanceCount, 2);
+	assert.equal(cluster.instances.length, 32);
 	assert.deepEqual(
-		cluster.instances.map((m) => [m[12], m[13], m[14]]),
+		Array.from({ length: cluster.instanceCount }, (_, i) => [
+			cluster.instances[i * 16 + 12],
+			cluster.instances[i * 16 + 13],
+			cluster.instances[i * 16 + 14],
+		]),
 		[
 			[11, 20, 30],
 			[12, 20, 30],

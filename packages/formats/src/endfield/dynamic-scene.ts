@@ -62,13 +62,13 @@ export interface DynamicEcs {
 	sceneIndex: number;
 }
 
-/** a main-file grid's geometry payloads */
+/** a main-file grid's geometry payloads, decoded lazily per vector on first access */
 export interface DynamicGrid {
-	id: number;
-	models: DynamicModel[];
+	readonly id: number;
+	readonly models: readonly DynamicModel[];
 	/** effect prefab placements, stored apart from models */
-	effects: DynamicEffect[];
-	ecs: DynamicEcs[];
+	readonly effects: readonly DynamicEffect[];
+	readonly ecs: readonly DynamicEcs[];
 }
 
 /** a set of resources an entity shows in some of its logic states */
@@ -264,8 +264,76 @@ const Width = {
 	SludgeComp: 264,
 } as const;
 
+class LazyDynamicGrid implements DynamicGrid {
+	readonly id: number;
+	readonly #fb: FlatBuffer;
+	readonly #table: number;
+	#models: DynamicModel[] | undefined;
+	#effects: DynamicEffect[] | undefined;
+	#ecs: DynamicEcs[] | undefined;
+
+	constructor(id: number, fb: FlatBuffer, table: number) {
+		this.id = id;
+		this.#fb = fb;
+		this.#table = table;
+	}
+
+	get models(): DynamicModel[] {
+		if (this.#models === undefined) {
+			const fb = this.#fb;
+			const vector = fb.vector(this.#table, Slot.Models);
+			this.#models = Array.from({ length: vector.length }, (_, n) => {
+				const at = vector.start + n * Width.Model;
+				return {
+					pathHash: fb.u64(at + 64),
+					position: fb.vec3(at + 16),
+					rotation: fb.vec3(at + 28),
+					scale: fb.vec3(at + 40),
+				};
+			});
+		}
+		return this.#models;
+	}
+
+	get effects(): DynamicEffect[] {
+		if (this.#effects === undefined) {
+			const fb = this.#fb;
+			const vector = fb.vector(this.#table, Slot.Effects);
+			this.#effects = Array.from({ length: vector.length }, (_, n) => {
+				const at = vector.start + n * Width.Effect;
+				const position = fb.vec3(at + 12);
+				// each row repeats its position at +116, which confirms the stride
+				if (fb.vec3(at + 116).some((value, axis) => value !== position[axis])) {
+					throw new FormatError(`unexpected dynamic effect row layout in grid ${this.id}`);
+				}
+				return {
+					pathHash: fb.u64(at + 48),
+					position,
+					rotation: fb.vec3(at + 24),
+					scale: fb.vec3(at + 36),
+					lodGrids: [fb.u32(at + 56), fb.u32(at + 60)],
+				};
+			});
+		}
+		return this.#effects;
+	}
+
+	get ecs(): DynamicEcs[] {
+		if (this.#ecs === undefined) {
+			const fb = this.#fb;
+			const vector = fb.vector(this.#table, Slot.Ecs);
+			this.#ecs = Array.from({ length: vector.length }, (_, n) => {
+				const at = vector.start + n * Width.Ecs;
+				return { chunk: fb.i32(at), index: fb.i32(at + 4), sceneIndex: fb.i32(at + 32) };
+			});
+		}
+		return this.#ecs;
+	}
+}
+
 /**
- * reads entities, visibility gates, and geometry payloads from a DynamicStreaming main file in one pass
+ * reads entities and visibility gates from a DynamicStreaming main file; each grid's model, effect and ECS
+ * vectors are decoded lazily on first access
  *
  * @param bytes verified, uncompressed `fb_main_*` bytes
  * @returns grids and entities in stored order
@@ -287,7 +355,6 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 		index: fb.i32(at + 12),
 		count: fb.i32(at + 16),
 	});
-	const vec3 = (at: number): [number, number, number] => [fb.f32(at), fb.f32(at + 4), fb.f32(at + 8)];
 
 	const grids: DynamicGrid[] = [];
 	const entities: DynamicEntity[] = [];
@@ -295,8 +362,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 	const gridTables = new Map<number, number>();
 	for (let g = 0; g < gridVector.length; g++) {
 		const grid = fb.tableAt(gridVector.start, g);
-		const uniqueIdAt = fb.field(grid, Slot.GridUniqueId);
-		const gridId = uniqueIdAt === undefined ? 0 : fb.u32(uniqueIdAt);
+		const gridId = fb.u32Field(grid, Slot.GridUniqueId);
 		if (gridTables.has(gridId)) {
 			throw new FormatError(`duplicate grid ${gridId}`);
 		}
@@ -327,7 +393,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 		const variable = { kind, key: fb.i32(at), mapId: kind === 'mapVar' ? fb.i32(at + 40) : null };
 		return {
 			variable,
-			gate: controlLoad === 0 ? null : { ...variable, compare, value: Number(fb.i64(at + 16)) },
+			gate: controlLoad === 0 ? null : { ...variable, compare, value: fb.i64Number(at + 16) },
 		};
 	};
 
@@ -352,40 +418,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 			return Array.from({ length: count }, (_, n) => fb.i32(integers.start + (index + n) * 4));
 		};
 
-		const models = fb.vector(grid, Slot.Models);
-		const effects = fb.vector(grid, Slot.Effects);
-		const ecs = fb.vector(grid, Slot.Ecs);
-		grids.push({
-			id: gridId,
-			models: Array.from({ length: models.length }, (_, n) => {
-				const at = models.start + n * Width.Model;
-				return {
-					pathHash: fb.u64(at + 64),
-					position: vec3(at + 16),
-					rotation: vec3(at + 28),
-					scale: vec3(at + 40),
-				};
-			}),
-			effects: Array.from({ length: effects.length }, (_, n) => {
-				const at = effects.start + n * Width.Effect;
-				const position = vec3(at + 12);
-				// each row repeats its position at +116, which confirms the stride
-				if (vec3(at + 116).some((value, axis) => value !== position[axis])) {
-					throw new FormatError(`unexpected dynamic effect row layout in grid ${gridId}`);
-				}
-				return {
-					pathHash: fb.u64(at + 48),
-					position,
-					rotation: vec3(at + 24),
-					scale: vec3(at + 36),
-					lodGrids: [fb.u32(at + 56), fb.u32(at + 60)],
-				};
-			}),
-			ecs: Array.from({ length: ecs.length }, (_, n) => {
-				const at = ecs.start + n * Width.Ecs;
-				return { chunk: fb.i32(at), index: fb.i32(at + 4), sceneIndex: fb.i32(at + 32) };
-			}),
-		});
+		grids.push(new LazyDynamicGrid(gridId, fb, grid));
 
 		const vectors = {
 			dataIndex: fb.vector(grid, Slot.DataIndex),
@@ -534,9 +567,9 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 							'ExtraSceneComp',
 						);
 						entity.extraScene = {
-							min: vec3(s),
-							max: vec3(s + 12),
-							position: vec3(s + 24),
+							min: fb.vec3(s),
+							max: fb.vec3(s + 12),
+							position: fb.vec3(s + 24),
 							direction: fb.u32(s + 36),
 						};
 						break;
@@ -551,7 +584,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 						);
 						entity.erosionCore = {
 							id: fb.u64(s),
-							position: [fb.f32(s + 32), fb.f32(s + 36), fb.f32(s + 40)],
+							position: fb.vec3(s + 32),
 						};
 						break;
 					}
@@ -559,7 +592,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 						const s = rowIn(fb.u32(di + 8), Slot.SludgeComp, index, Width.SludgeComp, 'SludgeComp');
 						entity.sludgeCore = {
 							id: fb.u64(s + 248),
-							position: [fb.f32(s + 96), fb.f32(s + 100), fb.f32(s + 104)],
+							position: fb.vec3(s + 96),
 						};
 						break;
 					}

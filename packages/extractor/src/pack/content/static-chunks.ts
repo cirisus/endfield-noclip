@@ -265,7 +265,8 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 					const chain = content.chains.intern(
 						cluster.renderer.draws.map((draw) => content.rendererDraw(draw)),
 					);
-					for (const matrix of cluster.instances) {
+					for (let i = 0; i < cluster.instanceCount; i++) {
+						const matrix = cluster.instances.subarray(i * 16, i * 16 + 16);
 						rows.push({ chain, matrix, bounds: cluster.bounds, entityId: foliage.id });
 					}
 					collector.noteOwner(foliage.levelTag, cluster.bounds);

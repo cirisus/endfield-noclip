@@ -290,7 +290,10 @@ test('dynamic resources preserve both visibility gates and exact model/ECS refer
 	assert.deepEqual(grid.effects, [
 		{ pathHash: 0xabcdefn, position: [0, -7, 0], rotation: [0, 0, 0], scale: [2, 0, 0], lodGrids: [0, 0] },
 	]);
-	assert.throws(() => readDynamicScene(build({ effectCopy: 3 })), /effect row layout/);
+	const badEffectScene = readDynamicScene(build({ effectCopy: 3 }));
+	assert.equal(badEffectScene.entities.length, 2);
+	assert.throws(() => badEffectScene.grids[0].effects, /effect row layout/);
+	assert.equal(grid.models, grid.models);
 	assert.equal(
 		dynamicResourceSlice(grid.models, result.entities[0].resourceGroups[0].resources)[0],
 		grid.models[0],
