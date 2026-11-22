@@ -32,7 +32,7 @@ import { mapPool } from '../pool.ts';
 
 import { type AssetResolver, objectKey, type ObjectRef } from './assets/assets.ts';
 import type { Visibility } from './state/scene-control.ts';
-import type { WorldIndex } from './world/world-index.ts';
+import type { ChunkFile, WorldIndex } from './world/world-index.ts';
 
 // which environment a level is lit by. the game has no per-level setting, only environment volumes blended by
 // priority at the camera, so a level's base environment is the volume that wins over most of the level's
@@ -81,10 +81,17 @@ const VOLUME_COMPONENTS = BigInt(MonoComponentType.HGEnvironmentVolume | MonoCom
  *
  * @param world world index
  * @param scene streaming scene
+ * @param filter optional chunk-file predicate (in addition to `file.scene === scene && file.area === 0`)
  * @returns the volumes, in chunk-file order
  */
-export const loadSceneVolumes = async (world: WorldIndex, scene: string): Promise<SceneVolumes> => {
-	const files = (await world.chunkFiles()).filter((file) => file.scene === scene && file.area === 0);
+export const loadSceneVolumes = async (
+	world: WorldIndex,
+	scene: string,
+	filter?: (file: ChunkFile) => boolean,
+): Promise<SceneVolumes> => {
+	const files = (await world.chunkFiles()).filter(
+		(file) => file.scene === scene && file.area === 0 && (filter === undefined || filter(file)),
+	);
 	const perFile = await mapPool(files, READ_CONCURRENCY, async (file) => {
 		const init = await world.readInitPayload(file);
 		if (!hasMonoComponents(init, VOLUME_COMPONENTS)) {

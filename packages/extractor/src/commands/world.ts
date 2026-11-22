@@ -290,11 +290,25 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 		placedKinds && (options.near !== undefined || !kinds.has('static'))
 			? surveyPlacements(context, scene).catch(errorText)
 			: null;
-	const [partition, names, standIns] = await Promise.all([
+	// static-only searches need the manifest only when at least one row matches (for bundle names)
+	const [partition, pathOf, standIns, manifest] = await Promise.all([
 		world.partition(scene),
-		assetNames(world),
+		world.pathLookup(),
 		loadStandIns(scene),
+		placedKinds ? world.manifest() : undefined,
 	]);
+	let loadedManifest = manifest;
+	const names: AssetNames = {
+		pathOf,
+		assetPathOf: (hash) => {
+			const asset = loadedManifest?.findAssets(hash)[0];
+			return asset === undefined ? undefined : loadedManifest?.assetPath(asset);
+		},
+		bundleOf: (hash) => {
+			const asset = loadedManifest?.findAssets(hash)[0];
+			return asset === undefined ? null : (loadedManifest?.bundleName(asset.bundleIndex) ?? null);
+		},
+	};
 	const lookups: FindLookups = {
 		partition,
 		names,
@@ -305,6 +319,9 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 
 	if (kinds.has('static')) {
 		for await (const candidate of staticCandidates(world, scene, options, lookups)) {
+			if (loadedManifest === undefined && rows.accepts(candidate)) {
+				loadedManifest = await world.manifest();
+			}
 			rows.add(candidate);
 			if (rows.full) {
 				break;
@@ -384,6 +401,16 @@ class FoundRows {
 	/** whether the scan can stop: without `--near`, results keep source order and stop at the limit */
 	get full(): boolean {
 		return this.#options.near === undefined && this.#rows.length >= this.#options.limit;
+	}
+
+	/** whether a candidate passes the filters (without building its row yet) */
+	accepts(candidate: FoundCandidate): boolean {
+		const { pattern } = this.#options;
+		const place = this.#measure(candidate.bounds, candidate.position);
+		return (
+			place !== undefined &&
+			(pattern === undefined || candidate.labels().some((label) => pattern.test(label)))
+		);
 	}
 
 	/** keeps a candidate that passes the filters */
@@ -928,11 +955,17 @@ const showEnvironment = async (context: Context, target: string): Promise<void> 
 		levels = [found.level];
 	}
 	// the volumes placed prefabs carry join the chunk volumes, as in the package
-	const levelTags =
-		levels.length === scene.levels.length ? null : new Set([0, ...levels.map(({ tag }) => tag)]);
+	const singleLevel = levels.length === 1 && scene.levels.length > 1 ? levels[0] : null;
+	const levelTags = singleLevel === null ? null : new Set([0, singleLevel.tag]);
 	const [survey, chunkVolumes, pathOf, names, resolver] = await Promise.all([
 		surveyPlacements(context, scene.mapId),
-		loadSceneVolumes(world, scene.mapId),
+		loadSceneVolumes(
+			world,
+			scene.mapId,
+			singleLevel === null
+				? undefined
+				: (file) => file.cell === null || singleLevel.cells.has(cellKey(file.cell.x, file.cell.z)),
+		),
 		world.pathLookup(),
 		world.names(),
 		context.resolver(),

@@ -97,6 +97,8 @@ export class WorldIndex {
 	#initPathHash: Promise<StringPathHashTable> | undefined;
 	/** both tables once {@link pathLookup} has loaded them, for its synchronous lookups */
 	#loadedPathTables: [StringPathHashTable, StringPathHashTable] | undefined;
+	/** decoded paths cached by hash while the path tables are loaded */
+	readonly #pathCache = new Map<bigint, string | undefined>();
 	/** {@link hashesOf} by normalized path */
 	readonly #hashes = new Map<string, Promise<bigint[]>>();
 	#manifest: Promise<BundleManifest> | undefined;
@@ -154,12 +156,18 @@ export class WorldIndex {
 	async pathLookup(): Promise<(hash: bigint) => string | undefined> {
 		const [main, initial] = await Promise.all([this.pathHash(), this.initPathHash()]);
 		this.#loadedPathTables = [main, initial];
+		const cache = this.#pathCache;
 		return (hash) => {
 			if (this.#loadedPathTables === undefined) {
 				throw new Error('the StringPathHash tables were released; call pathLookup again');
 			}
+			if (cache.has(hash)) {
+				return cache.get(hash);
+			}
 			const [loadedMain, loadedInitial] = this.#loadedPathTables;
-			return loadedMain.lookup(hash) ?? loadedInitial.lookup(hash);
+			const path = loadedMain.lookup(hash) ?? loadedInitial.lookup(hash);
+			cache.set(hash, path);
+			return path;
 		};
 	}
 
@@ -171,6 +179,7 @@ export class WorldIndex {
 		this.#pathHash = undefined;
 		this.#initPathHash = undefined;
 		this.#loadedPathTables = undefined;
+		this.#pathCache.clear();
 	}
 
 	/**
