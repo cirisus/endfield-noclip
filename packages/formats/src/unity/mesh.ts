@@ -18,6 +18,7 @@ import {
 	bytesField,
 	isObject,
 	numberField,
+	numbersField,
 	objectField,
 	optionalNumberField,
 	streamingInfo,
@@ -210,7 +211,7 @@ export const decodeMesh = (mesh: TypeTreeObject, streamData: Uint8Array | undefi
 	const vertexData = objectField(mesh, 'm_VertexData');
 	const vertexCount = numberField(vertexData, 'm_VertexCount');
 	const channels = arrayField(vertexData, 'm_Channels').map((value, channel) => {
-		if (typeof value !== 'object' || Array.isArray(value) || ArrayBuffer.isView(value)) {
+		if (!isObject(value)) {
 			throw new FormatError(`m_Channels[${channel}] is not an object`);
 		}
 		const dimensionByte = numberField(value, 'dimension');
@@ -309,7 +310,7 @@ export const decodeMesh = (mesh: TypeTreeObject, streamData: Uint8Array | undefi
 	const indices = indexSize === 2 ? new Uint16Array(indexCopy) : new Uint32Array(indexCopy);
 
 	const submeshes = arrayField(mesh, 'm_SubMeshes').map((value, i): MeshSubmesh => {
-		if (typeof value !== 'object' || Array.isArray(value) || ArrayBuffer.isView(value)) {
+		if (!isObject(value)) {
 			throw new FormatError(`m_SubMeshes[${i}] is not an object`);
 		}
 		const firstByte = numberField(value, 'firstByte');
@@ -329,11 +330,11 @@ export const decodeMesh = (mesh: TypeTreeObject, streamData: Uint8Array | undefi
 	});
 
 	const bindPoseCount = arrayField(mesh, 'm_BindPose').length;
-	const boneNameHashCount = arrayField(mesh, 'm_BoneNameHashes').length;
+	const boneNameHashCount = numbersField(mesh, 'm_BoneNameHashes').length;
 	const weightChannel = present(VertexAttribute.BlendWeight);
 	const indexChannel = present(VertexAttribute.BlendIndices);
 	const hasBlendWeights = weightChannel !== undefined;
-	const hasBlendIndices = present(VertexAttribute.BlendIndices) !== undefined;
+	const hasBlendIndices = indexChannel !== undefined;
 	const bonesPerVertex = optionalNumberField(mesh, 'm_BonesPerVertex') ?? 0;
 	let weights = weightChannel === undefined ? null : read(weightChannel);
 	const boneIndices = indexChannel === undefined ? null : read(indexChannel);
@@ -420,68 +421,120 @@ const readChannel = (
 	stride: number,
 	vertexCount: number,
 ): Float32Array => {
-	const { dimension, format } = info;
-	const size = FORMAT_SIZES[format];
+	const { dimension, format, offset } = info;
 	const out = new Float32Array(vertexCount * dimension);
-	for (let v = 0; v < vertexCount; v++) {
-		const base = streamOffset + stride * v + info.offset;
-		for (let d = 0; d < dimension; d++) {
-			const at = base + d * size;
-			let value: number;
-			switch (format) {
-				case VertexAttributeFormat.Float32: {
-					value = view.getFloat32(at, true);
-					break;
-				}
-				case VertexAttributeFormat.Float16: {
-					value = view.getFloat16(at, true);
-					break;
-				}
-				case VertexAttributeFormat.UNorm8: {
-					value = view.getUint8(at) / 255;
-					break;
-				}
-				case VertexAttributeFormat.SNorm8: {
-					value = Math.max(view.getInt8(at) / 127, -1);
-					break;
-				}
-				case VertexAttributeFormat.UNorm16: {
-					value = view.getUint16(at, true) / 65535;
-					break;
-				}
-				case VertexAttributeFormat.SNorm16: {
-					value = Math.max(view.getInt16(at, true) / 32767, -1);
-					break;
-				}
-				case VertexAttributeFormat.UInt8: {
-					value = view.getUint8(at);
-					break;
-				}
-				case VertexAttributeFormat.SInt8: {
-					value = view.getInt8(at);
-					break;
-				}
-				case VertexAttributeFormat.UInt16: {
-					value = view.getUint16(at, true);
-					break;
-				}
-				case VertexAttributeFormat.SInt16: {
-					value = view.getInt16(at, true);
-					break;
-				}
-				case VertexAttributeFormat.UInt32: {
-					value = view.getUint32(at, true);
-					break;
-				}
-				case VertexAttributeFormat.SInt32: {
-					value = view.getInt32(at, true);
-					break;
-				}
-				default: {
-					throw new FormatError(`channel ${info.channel} has unknown vertex format ${format}`);
+	const start = streamOffset + offset;
+	switch (format) {
+		case VertexAttributeFormat.Float32: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getFloat32(base + d * 4, true);
 				}
 			}
-			out[v * dimension + d] = value;
+			break;
+		}
+		case VertexAttributeFormat.Float16: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getFloat16(base + d * 2, true);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.UNorm8: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getUint8(base + d) / 255;
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.SNorm8: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = Math.max(view.getInt8(base + d) / 127, -1);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.UNorm16: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getUint16(base + d * 2, true) / 65535;
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.SNorm16: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = Math.max(view.getInt16(base + d * 2, true) / 32767, -1);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.UInt8: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getUint8(base + d);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.SInt8: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getInt8(base + d);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.UInt16: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getUint16(base + d * 2, true);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.SInt16: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getInt16(base + d * 2, true);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.UInt32: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getUint32(base + d * 4, true);
+				}
+			}
+			break;
+		}
+		case VertexAttributeFormat.SInt32: {
+			for (let v = 0, o = 0; v < vertexCount; v++) {
+				const base = start + stride * v;
+				for (let d = 0; d < dimension; d++) {
+					out[o++] = view.getInt32(base + d * 4, true);
+				}
+			}
+			break;
+		}
+		default: {
+			throw new FormatError(`channel ${info.channel} has unknown vertex format ${format}`);
 		}
 	}
 	return out;

@@ -139,6 +139,18 @@ export const isTransformClass = (classId: number): boolean =>
 	classId === UnityClass.Transform || classId === UnityClass.RectTransform;
 
 /**
+ * @param classId an object's Unity class id
+ * @returns whether the class is a texture (`Texture2D`, `Cubemap`, `Texture3D`, `Texture2DArray` or
+ *   `CubemapArray`)
+ */
+export const isTextureClass = (classId: number): boolean =>
+	classId === UnityClass.Texture2D ||
+	classId === UnityClass.Cubemap ||
+	classId === UnityClass.Texture3D ||
+	classId === UnityClass.Texture2DArray ||
+	classId === UnityClass.CubemapArray;
+
+/**
  * @param prefix at least the first {@link SERIALIZED_FILE_HEADER_SIZE} bytes
  * @returns the header
  * @throws {FormatError} if the version is unsupported or the fields are implausible

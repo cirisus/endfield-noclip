@@ -217,6 +217,8 @@ export const decodeAclTransforms = (bytes: Uint8Array): AclTransforms => {
 	/** per sub-track type (rotation, translation, scale), its tracks of each kind in track order */
 	const constant: number[][] = [[], [], []];
 	const animated: number[][] = [[], [], []];
+	/** bit `type` is set when track `t` has an animated sub-track of that type */
+	const animatedMask = new Uint8Array(trackCount);
 	for (let type = 0; type < 3; type++) {
 		for (let track = 0; track < trackCount; track++) {
 			const kind = kindOf(type, track);
@@ -224,6 +226,7 @@ export const decodeAclTransforms = (bytes: Uint8Array): AclTransforms => {
 				constant[type].push(track);
 			} else if (kind === ANIMATED) {
 				animated[type].push(track);
+				animatedMask[track] |= 1 << type;
 			} else if (kind !== DEFAULT) {
 				throw new FormatError(`ACL sub-track kind ${kind}`);
 			}
@@ -256,15 +259,19 @@ export const decodeAclTransforms = (bytes: Uint8Array): AclTransforms => {
 		const rotations = constant[0];
 		if (rotationDropsW) {
 			// groups of four: xxxx, yyyy, zzzz (the last group as long as it is)
+			const sample = new Float32Array(4);
 			for (let group = 0; group < rotations.length; group += 4) {
 				const count = Math.min(4, rotations.length - group);
 				for (let i = 0; i < count; i++) {
 					const x = f32(at + i * 4);
 					const y = f32(at + (count + i) * 4);
 					const z = f32(at + (count * 2 + i) * 4);
-					const sample = new Float32Array(4);
-					const length = Math.hypot(x, y, z, positiveW(x, y, z)) || 1;
-					sample.set([x / length, y / length, z / length, positiveW(x, y, z) / length]);
+					const w = positiveW(x, y, z);
+					const length = Math.hypot(x, y, z, w) || 1;
+					sample[0] = x / length;
+					sample[1] = y / length;
+					sample[2] = z / length;
+					sample[3] = w / length;
 					fill(rotations[group + i], 0, sample);
 				}
 				at += count * 12;
@@ -456,7 +463,12 @@ export const decodeAclTransforms = (bytes: Uint8Array): AclTransforms => {
 
 	// #region stripped samples
 	if (stripped) {
-		const animatedTracks = [...new Set(animated.flat())];
+		const animatedTracks: number[] = [];
+		for (let track = 0; track < trackCount; track++) {
+			if (animatedMask[track] !== 0) {
+				animatedTracks.push(track);
+			}
+		}
 		const kept: number[] = [];
 		for (let sample = 0; sample < sampleCount; sample++) {
 			if (storedSamples[sample] === 1) {
@@ -487,25 +499,35 @@ export const decodeAclTransforms = (bytes: Uint8Array): AclTransforms => {
 				const a = (before * trackCount + track) * stride;
 				const b = (after * trackCount + track) * stride;
 				const at = (sample * trackCount + track) * stride;
-				if (animated[0].includes(track)) {
+				const mask = animatedMask[track];
+				if ((mask & 1) !== 0) {
 					// shorter arc: flip the end when the dot product is negative
-					let dot = 0;
-					for (let c = 0; c < 4; c++) {
-						dot += values[a + c] * values[b + c];
-					}
-					const sign = dot < 0 ? -1 : 1;
-					const q = [0, 1, 2, 3].map((c) => values[a + c] + (values[b + c] * sign - values[a + c]) * alpha);
-					setQuat(at, q[0], q[1], q[2], q[3]);
+					const ax = values[a],
+						ay = values[a + 1],
+						az = values[a + 2],
+						aw = values[a + 3];
+					const bx = values[b],
+						by = values[b + 1],
+						bz = values[b + 2],
+						bw = values[b + 3];
+					const sign = ax * bx + ay * by + az * bz + aw * bw < 0 ? -1 : 1;
+					setQuat(
+						at,
+						ax + (bx * sign - ax) * alpha,
+						ay + (by * sign - ay) * alpha,
+						az + (bz * sign - az) * alpha,
+						aw + (bw * sign - aw) * alpha,
+					);
 				}
-				for (const [type, k] of [
-					[1, 4],
-					[2, 7],
-				] as const) {
-					if (animated[type].includes(track)) {
-						for (let c = 0; c < 3; c++) {
-							values[at + k + c] = values[a + k + c] + (values[b + k + c] - values[a + k + c]) * alpha;
-						}
-					}
+				if ((mask & 2) !== 0) {
+					values[at + 4] = values[a + 4] + (values[b + 4] - values[a + 4]) * alpha;
+					values[at + 5] = values[a + 5] + (values[b + 5] - values[a + 5]) * alpha;
+					values[at + 6] = values[a + 6] + (values[b + 6] - values[a + 6]) * alpha;
+				}
+				if ((mask & 4) !== 0) {
+					values[at + 7] = values[a + 7] + (values[b + 7] - values[a + 7]) * alpha;
+					values[at + 8] = values[a + 8] + (values[b + 8] - values[a + 8]) * alpha;
+					values[at + 9] = values[a + 9] + (values[b + 9] - values[a + 9]) * alpha;
 				}
 			}
 		}

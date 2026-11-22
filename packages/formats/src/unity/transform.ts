@@ -128,6 +128,38 @@ export const transformPoint = (matrix: Float32Array, point: readonly number[]): 
 	return out;
 };
 
+const adj = new Float64Array(9);
+
+/** writes the 3×3 linear part's adjugate (row-major) into `adj` and returns its determinant */
+const linearAdjugate = (matrix: Float32Array): number => {
+	const m00 = matrix[0],
+		m01 = matrix[4],
+		m02 = matrix[8];
+	const m10 = matrix[1],
+		m11 = matrix[5],
+		m12 = matrix[9];
+	const m20 = matrix[2],
+		m21 = matrix[6],
+		m22 = matrix[10];
+	const a00 = m11 * m22 - m12 * m21;
+	const a10 = m12 * m20 - m10 * m22;
+	const a20 = m10 * m21 - m11 * m20;
+	const det = m00 * a00 + m01 * a10 + m02 * a20;
+	if (Math.abs(det) < 1e-12) {
+		throw new RangeError('the matrix has no inverse');
+	}
+	adj[0] = a00;
+	adj[1] = m02 * m21 - m01 * m22;
+	adj[2] = m01 * m12 - m02 * m11;
+	adj[3] = a10;
+	adj[4] = m00 * m22 - m02 * m20;
+	adj[5] = m02 * m10 - m00 * m12;
+	adj[6] = a20;
+	adj[7] = m01 * m20 - m00 * m21;
+	adj[8] = m00 * m11 - m01 * m10;
+	return det;
+};
+
 /**
  * @param matrix affine column-major matrix
  * @param point a point
@@ -138,35 +170,15 @@ export const inverseTransformPoint = (
 	matrix: Float32Array,
 	point: readonly number[],
 ): [number, number, number] => {
-	const m = (r: number, c: number): number => matrix[c * 4 + r];
-	// cofactors of the 3×3 linear part, transposed: its adjugate
-	const adjugate = [
-		[
-			m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1),
-			m(0, 2) * m(2, 1) - m(0, 1) * m(2, 2),
-			m(0, 1) * m(1, 2) - m(0, 2) * m(1, 1),
-		],
-		[
-			m(1, 2) * m(2, 0) - m(1, 0) * m(2, 2),
-			m(0, 0) * m(2, 2) - m(0, 2) * m(2, 0),
-			m(0, 2) * m(1, 0) - m(0, 0) * m(1, 2),
-		],
-		[
-			m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0),
-			m(0, 1) * m(2, 0) - m(0, 0) * m(2, 1),
-			m(0, 0) * m(1, 1) - m(0, 1) * m(1, 0),
-		],
+	const det = linearAdjugate(matrix);
+	const dx = point[0] - matrix[12];
+	const dy = point[1] - matrix[13];
+	const dz = point[2] - matrix[14];
+	return [
+		(adj[0] * dx + adj[1] * dy + adj[2] * dz) / det,
+		(adj[3] * dx + adj[4] * dy + adj[5] * dz) / det,
+		(adj[6] * dx + adj[7] * dy + adj[8] * dz) / det,
 	];
-	const determinant = m(0, 0) * adjugate[0][0] + m(0, 1) * adjugate[1][0] + m(0, 2) * adjugate[2][0];
-	if (Math.abs(determinant) < 1e-12) {
-		throw new RangeError('the matrix has no inverse');
-	}
-	const d = [point[0] - matrix[12], point[1] - matrix[13], point[2] - matrix[14]];
-	const out: [number, number, number] = [0, 0, 0];
-	for (let r = 0; r < 3; r++) {
-		out[r] = (adjugate[r][0] * d[0] + adjugate[r][1] * d[1] + adjugate[r][2] * d[2]) / determinant;
-	}
-	return out;
 };
 
 /**
@@ -175,24 +187,23 @@ export const inverseTransformPoint = (
  * @throws {RangeError} if the matrix's linear part is singular
  */
 export const inverseAffine = (matrix: Float32Array): Float32Array => {
+	const det = linearAdjugate(matrix);
 	const out = new Float32Array(16);
-	const origin = inverseTransformPoint(matrix, [0, 0, 0]);
-	for (let c = 0; c < 3; c++) {
-		const unit = [0, 0, 0];
-		unit[c] = 1;
-		// the point the matrix takes to its own translation plus `unit` is the inverse's column
-		const p = inverseTransformPoint(matrix, [
-			matrix[12] + unit[0],
-			matrix[13] + unit[1],
-			matrix[14] + unit[2],
-		]);
-		for (let r = 0; r < 3; r++) {
-			out[c * 4 + r] = p[r];
-		}
-	}
-	out[12] = origin[0];
-	out[13] = origin[1];
-	out[14] = origin[2];
+	out[0] = adj[0] / det;
+	out[1] = adj[3] / det;
+	out[2] = adj[6] / det;
+	out[4] = adj[1] / det;
+	out[5] = adj[4] / det;
+	out[6] = adj[7] / det;
+	out[8] = adj[2] / det;
+	out[9] = adj[5] / det;
+	out[10] = adj[8] / det;
+	const tx = matrix[12];
+	const ty = matrix[13];
+	const tz = matrix[14];
+	out[12] = -(adj[0] * tx + adj[1] * ty + adj[2] * tz) / det;
+	out[13] = -(adj[3] * tx + adj[4] * ty + adj[5] * tz) / det;
+	out[14] = -(adj[6] * tx + adj[7] * ty + adj[8] * tz) / det;
 	out[15] = 1;
 	return out;
 };

@@ -114,6 +114,34 @@ export const arrayField = (parent: TypeTreeObject, name: string): TypeTreeValue[
 	throw new FormatError(`field ${name} is not an array`);
 };
 
+const isNumberArray = (value: readonly TypeTreeValue[]): value is number[] =>
+	value.every((item) => typeof item === 'number');
+
+/**
+ * @param parent class instance
+ * @param name field name
+ * @returns the field as a numeric array; typed arrays are returned in place without copying
+ * @throws {FormatError} if it's missing, not an array of numbers, or a 64-bit integer typed array
+ */
+export const numbersField = (parent: TypeTreeObject, name: string): ArrayLike<number> => {
+	const value = parent[name];
+	if (
+		ArrayBuffer.isView(value) &&
+		!(value instanceof DataView) &&
+		!(value instanceof BigInt64Array) &&
+		!(value instanceof BigUint64Array)
+	) {
+		return value;
+	}
+	if (Array.isArray(value)) {
+		if (!isNumberArray(value)) {
+			throw new FormatError(`field ${name} holds a non-number`);
+		}
+		return value;
+	}
+	throw new FormatError(`field ${name} is not a number array`);
+};
+
 /**
  * @param parent class instance
  * @param name field name

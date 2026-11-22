@@ -4,7 +4,8 @@ import { describe, it } from 'node:test';
 import { FormatError } from '../binary/binary-reader.ts';
 import { VkFormat } from '../binary/ktx2.ts';
 
-import { decodeTexture, TextureClass, toKtx2Texture } from './texture.ts';
+import { UnityClass } from './serialized-file.ts';
+import { decodeTexture, toKtx2Texture } from './texture.ts';
 import type { TypeTreeObject } from './type-tree.ts';
 import { streamingInfo } from './values.ts';
 
@@ -52,7 +53,7 @@ const chains = (images: number, sizes: number[]): Uint8Array => {
 describe('decodeTexture', () => {
 	it('splits a BC7 Texture2D into levels and honours m_ColorSpace', () => {
 		const data = chains(1, [64, 16, 16]);
-		const srgb = decodeTexture(TextureClass.Texture2D, texture2d({ 'image data': data }), undefined);
+		const srgb = decodeTexture(UnityClass.Texture2D, texture2d({ 'image data': data }), undefined);
 		assert.equal(srgb.kind, '2d');
 		assert.equal(srgb.vkFormat, VkFormat.BC7_SRGB_BLOCK);
 		assert.equal(srgb.srgb, true);
@@ -75,14 +76,14 @@ describe('decodeTexture', () => {
 		});
 
 		const linear = decodeTexture(
-			TextureClass.Texture2D,
+			UnityClass.Texture2D,
 			texture2d({ 'image data': data, m_ColorSpace: 0 }),
 			undefined,
 		);
 		assert.equal(linear.vkFormat, VkFormat.BC7_UNORM_BLOCK);
 		// BC5 has no sRGB variant whatever the colour space says
 		const bc5 = decodeTexture(
-			TextureClass.Texture2D,
+			UnityClass.Texture2D,
 			texture2d({ 'image data': data, m_TextureFormat: 27 }),
 			undefined,
 		);
@@ -101,8 +102,8 @@ describe('decodeTexture', () => {
 			m_StreamData: { offset: 0n, size: data.length, path: 'archive:/CAB-x/CAB-x.resS' },
 		});
 		assert.ok(streamingInfo(streamed) !== undefined);
-		assert.throws(() => decodeTexture(TextureClass.Cubemap, streamed, undefined), /no stream data/);
-		const decoded = decodeTexture(TextureClass.Cubemap, streamed, data);
+		assert.throws(() => decodeTexture(UnityClass.Cubemap, streamed, undefined), /no stream data/);
+		const decoded = decodeTexture(UnityClass.Cubemap, streamed, data);
 		assert.equal(decoded.kind, 'cube');
 		assert.equal(decoded.faces, 6);
 		assert.equal(decoded.vkFormat, VkFormat.BC6H_UFLOAT_BLOCK);
@@ -120,7 +121,7 @@ describe('decodeTexture', () => {
 
 	it('reads Texture2DArray GraphicsFormats, which carry sRGB themselves', () => {
 		const array = decodeTexture(
-			TextureClass.Texture2DArray,
+			UnityClass.Texture2DArray,
 			{
 				m_Name: 'array',
 				m_ColorSpace: 1,
@@ -149,7 +150,7 @@ describe('decodeTexture', () => {
 
 	it('converts ARGB32 to RGBA8', () => {
 		const argb = decodeTexture(
-			TextureClass.Texture2D,
+			UnityClass.Texture2D,
 			texture2d({
 				m_Width: 1,
 				m_Height: 1,
@@ -166,11 +167,11 @@ describe('decodeTexture', () => {
 
 	it('rejects unknown formats and mis-sized data', () => {
 		assert.throws(
-			() => decodeTexture(TextureClass.Texture2D, texture2d({ m_TextureFormat: 999 }), undefined),
+			() => decodeTexture(UnityClass.Texture2D, texture2d({ m_TextureFormat: 999 }), undefined),
 			FormatError,
 		);
 		assert.throws(
-			() => decodeTexture(TextureClass.Texture2D, texture2d({ 'image data': new Uint8Array(95) }), undefined),
+			() => decodeTexture(UnityClass.Texture2D, texture2d({ 'image data': new Uint8Array(95) }), undefined),
 			/needs 96/,
 		);
 		assert.throws(() => decodeTexture(43, texture2d({}), undefined), /isn't a supported texture class/);

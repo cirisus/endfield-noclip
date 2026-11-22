@@ -18,6 +18,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 
 import type { ObjectInfo, SerializedFile, SerializedType, TypeTreeNode } from './serialized-file.ts';
+import { isObject } from './values.ts';
 
 // #region types
 
@@ -149,16 +150,20 @@ export const compileTypeTree = (nodes: readonly TypeTreeNode[]): CompiledTypeTre
 	};
 };
 
+const hierarchies = new WeakMap<readonly TypeTreeNode[], TreeNode>();
+
 /**
  * @param nodes a flattened, non-empty TypeTree, as in `SerializedType.nodes`
  * @returns the root node with its children nested, for walking a read value alongside its types
  * @throws {FormatError} if the tree is empty or a node's level skips one
  */
 export const typeTreeHierarchy = (nodes: readonly TypeTreeNode[]): TreeNode => {
-	if (nodes.length === 0) {
-		throw new FormatError('empty TypeTree (was the file built without TypeTrees?)');
-	}
-	return buildTree(nodes);
+	return hierarchies.getOrInsertComputed(nodes, () => {
+		if (nodes.length === 0) {
+			throw new FormatError('empty TypeTree (was the file built without TypeTrees?)');
+		}
+		return buildTree(nodes);
+	});
 };
 
 const buildTree = (nodes: readonly TypeTreeNode[]): TreeNode => {
@@ -539,7 +544,7 @@ const compileReferencedObjectData = (): CompiledNode => {
 		skip: orphanReferencedObjectData,
 		readInClass: (c, siblings) => {
 			const { type } = siblings;
-			if (typeof type !== 'object' || Array.isArray(type) || ArrayBuffer.isView(type)) {
+			if (!isObject(type)) {
 				throw new FormatError('ReferencedObjectData without a preceding ReferencedManagedType');
 			}
 			const { class: klass, ns, asm } = type;
@@ -713,7 +718,7 @@ export const compiledTypeOf = (type: SerializedType): CompiledTypeTree => {
 	return compiledTypes.getOrInsertComputed(type, () => compileTypeTree(type.nodes));
 };
 
-const resolvers = new WeakMap<SerializedFile, RefTypeResolver>();
+const readOptions = new WeakMap<SerializedFile, ReadTypeTreeOptions>();
 
 /**
  * ref type trees end with the host's `ManagedReferencesRegistry`, but a payload doesn't repeat it (nested
@@ -741,21 +746,21 @@ const withoutRegistry = (nodes: readonly TypeTreeNode[]): TypeTreeNode[] => {
  * @returns the read options for objects in `file`, resolving managed references against its `refTypes`
  */
 export const readOptionsOf = (file: SerializedFile): ReadTypeTreeOptions => {
-	const resolveRefType = resolvers.getOrInsertComputed(file, (): RefTypeResolver => {
+	return readOptions.getOrInsertComputed(file, (): ReadTypeTreeOptions => {
 		const byName = new Map<string, SerializedType>();
 		for (const type of file.refTypes) {
 			byName.set(`${type.asmName}\0${type.nameSpace}\0${type.klassName}`, type);
 		}
 		const compiled = new Map<SerializedType, CompiledTypeTree>();
-		return (klassName, nameSpace, asmName) => {
+		const resolveRefType: RefTypeResolver = (klassName, nameSpace, asmName) => {
 			const type = byName.get(`${asmName}\0${nameSpace}\0${klassName}`);
 			if (type === undefined) {
 				return undefined;
 			}
 			return compiled.getOrInsertComputed(type, () => compileTypeTree(withoutRegistry(type.nodes)));
 		};
+		return { littleEndian: file.header.littleEndian, resolveRefType };
 	});
-	return { littleEndian: file.header.littleEndian, resolveRefType };
 };
 
 /**
@@ -783,6 +788,25 @@ export const readObject = (file: SerializedFile, info: ObjectInfo, bytes: Uint8A
 };
 
 /**
+ * reads one top-level field of an object without materializing the fields before it
+ *
+ * @param file parsed metadata
+ * @param info object table entry
+ * @param bytes exactly the object's bytes (see {@link objectBytes})
+ * @param field top-level field name
+ * @returns the field's value, or `undefined` if the type has no such field or the object omits it
+ * @throws {FormatError} if the data doesn't match the object's TypeTree
+ */
+export const readObjectField = (
+	file: SerializedFile,
+	info: ObjectInfo,
+	bytes: Uint8Array,
+	field: string,
+): TypeTreeValue | undefined => {
+	return readTypeTreeField(compiledTypeOf(info.type), bytes, readOptionsOf(file), field);
+};
+
+/**
  * reads an object's `m_Name` without materializing the fields before it
  *
  * @param file parsed metadata
@@ -796,7 +820,7 @@ export const peekObjectName = (
 	info: ObjectInfo,
 	bytes: Uint8Array,
 ): string | undefined => {
-	const value = readTypeTreeField(compiledTypeOf(info.type), bytes, readOptionsOf(file), 'm_Name');
+	const value = readObjectField(file, info, bytes, 'm_Name');
 	return typeof value === 'string' ? value : undefined;
 };
 

@@ -1,16 +1,13 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { type ShaderSummary, summarizeShader } from '@endfield-noclip/formats/unity/material';
 import { decodeMesh, type DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
-import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
-import { decodeTexture, type DecodedTexture, TextureClass } from '@endfield-noclip/formats/unity/texture';
-import { compiledTypeOf, readOptionsOf, readTypeTreeField } from '@endfield-noclip/formats/unity/type-tree';
+import { isTextureClass, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
+import { decodeTexture, type DecodedTexture } from '@endfield-noclip/formats/unity/texture';
 import { isObject, streamingInfo } from '@endfield-noclip/formats/unity/values';
 
 import { type AssetResolver, objectKey, type ObjectRef } from './assets.ts';
 
 // decoders bound to an AssetResolver: they follow m_StreamData and PPtrs across bundles
-
-const TEXTURE_CLASSES: ReadonlySet<number> = new Set(Object.values(TextureClass));
 
 /**
  * @param resolver asset resolver
@@ -34,7 +31,7 @@ export const loadMesh = async (resolver: AssetResolver, ref: ObjectRef): Promise
  * @throws {FormatError} if the object isn't a texture or doesn't decode
  */
 export const loadTexture = async (resolver: AssetResolver, ref: ObjectRef): Promise<DecodedTexture> => {
-	if (!TEXTURE_CLASSES.has(ref.info.classId)) {
+	if (!isTextureClass(ref.info.classId)) {
 		throw new FormatError(`object ${ref.info.pathId} is class ${ref.info.classId}, not a texture`);
 	}
 	const texture = await resolver.read(ref);
@@ -57,13 +54,7 @@ export const loadShaderSummary = (resolver: AssetResolver, ref: ObjectRef): Prom
 		if (ref.info.classId !== UnityClass.Shader) {
 			throw new FormatError(`object ${ref.info.pathId} is class ${ref.info.classId}, not a Shader`);
 		}
-		const bytes = await ref.file.objectBytes(ref.info);
-		const parsed = readTypeTreeField(
-			compiledTypeOf(ref.info.type),
-			bytes,
-			readOptionsOf(ref.file.file),
-			'm_ParsedForm',
-		);
+		const parsed = await ref.file.readField(ref.info, 'm_ParsedForm');
 		if (!isObject(parsed)) {
 			throw new FormatError(`shader ${ref.info.pathId} has no m_ParsedForm`);
 		}

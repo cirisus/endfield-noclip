@@ -1,6 +1,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 
 import { ACL_TRANSFORM_STRIDE, decodeAclTransforms } from './acl.ts';
+import { UnityClass } from './serialized-file.ts';
 import type { TypeTreeObject } from './type-tree.ts';
 import {
 	arrayField,
@@ -8,6 +9,7 @@ import {
 	bytesField,
 	isObject,
 	numberField,
+	numbersField,
 	objectField,
 	optionalNumberField,
 } from './values.ts';
@@ -44,18 +46,28 @@ export interface ClipEndPose {
 	renderers: Map<number, Map<number, number>>;
 }
 
-/** Unity's `ClassID(Transform)` in a generic binding */
-const TRANSFORM = 4;
-/** Unity's `ClassID(GameObject)` in a generic binding */
-const GAME_OBJECT = 1;
 /** a GameObject binding's attribute for `m_IsActive`: CRC32 of the property name */
 const IS_ACTIVE = 0x7c5a_22f6;
 /** Unity's `ClassID` of mesh, skinned mesh and particle system renderers in a generic binding */
-const RENDERERS = new Set([23, 137, 199]);
+const RENDERERS = new Set<number>([
+	UnityClass.MeshRenderer,
+	UnityClass.SkinnedMeshRenderer,
+	UnityClass.ParticleSystemRenderer,
+]);
 /** a generic binding's `customType` for a material property */
 const MATERIAL_PROPERTY = 22;
 /** a material binding's top four attribute bits: vector components x to w (0–3), colour r to a (4–7), a float */
 const MATERIAL_FLOAT = 8;
+
+/** @returns a clip's `genericBindings` validated as objects */
+const genericBindings = (clip: TypeTreeObject): TypeTreeObject[] => {
+	return arrayField(objectField(clip, 'm_ClipBindingConstant'), 'genericBindings').map((binding) => {
+		if (!isObject(binding)) {
+			throw new FormatError('invalid AnimationClip binding');
+		}
+		return binding;
+	});
+};
 
 /**
  * @param attribute a material binding's attribute
@@ -145,17 +157,14 @@ export const readClipEndPose = (clip: TypeTreeObject): ClipEndPose => {
 	const materials = new Map<number, ClipMaterialValue[]>();
 	const renderers = new Map<number, Map<number, number>>();
 	let at = 0;
-	for (const binding of arrayField(objectField(clip, 'm_ClipBindingConstant'), 'genericBindings')) {
-		if (!isObject(binding)) {
-			throw new FormatError('invalid AnimationClip binding');
-		}
+	for (const binding of genericBindings(clip)) {
 		if (numberField(binding, 'isPPtrCurve') !== 0) {
 			continue;
 		}
 		const path = numberField(binding, 'path') >>> 0;
 		const attribute = numberField(binding, 'attribute');
 		const type = numberField(binding, 'typeID');
-		if (type === GAME_OBJECT && attribute >>> 0 === IS_ACTIVE && at < stops.length) {
+		if (type === UnityClass.GameObject && attribute >>> 0 === IS_ACTIVE && at < stops.length) {
 			active.set(path, stops[at] !== 0);
 		}
 		if (RENDERERS.has(type) && at < stops.length) {
@@ -167,7 +176,7 @@ export const readClipEndPose = (clip: TypeTreeObject): ClipEndPose => {
 				renderers.getOrInsertComputed(path, () => new Map()).set(attribute >>> 0, stops[at]);
 			}
 		}
-		if (type !== TRANSFORM) {
+		if (type !== UnityClass.Transform) {
 			at++;
 			continue;
 		}
@@ -256,25 +265,6 @@ const DENSE_PACKED16 = 16;
 
 /** the 16-bit dense block's scale field per scalar kind: other floats, position, rotation, scale, Euler */
 const DENSE_FACTORS = ['m_FloatFactor', 'm_PositionFactor', '', 'm_ScaleFactor', 'm_EulerFactor'] as const;
-
-/** @returns a numeric array field as numbers, typed arrays read in place */
-const numbersField = (parent: TypeTreeObject, name: string): ArrayLike<number> => {
-	const value = parent[name];
-	if (
-		ArrayBuffer.isView(value) &&
-		!(value instanceof DataView) &&
-		!(value instanceof BigInt64Array) &&
-		!(value instanceof BigUint64Array)
-	) {
-		return value;
-	}
-	return arrayField(parent, name).map((item) => {
-		if (typeof item !== 'number') {
-			throw new FormatError(`field ${name} holds a non-number`);
-		}
-		return item;
-	});
-};
 
 /** @returns the scalars of a streamed clip's words, each curve's keys ascending by time */
 const readStreamed = (words: ArrayLike<number>, curveCount: number): StreamedKey[][] => {
@@ -368,15 +358,12 @@ export const readClipMotion = (clip: TypeTreeObject): ClipMotion => {
 	const paths: number[] = [];
 	const transformBindings: { path: number; attribute: number; order: number; at: number }[] = [];
 	const materialBindings: { path: number; nameHash: number; component: number | null; at: number }[] = [];
-	for (const binding of arrayField(objectField(clip, 'm_ClipBindingConstant'), 'genericBindings')) {
-		if (!isObject(binding)) {
-			throw new FormatError('invalid AnimationClip binding');
-		}
+	for (const binding of genericBindings(clip)) {
 		if (numberField(binding, 'isPPtrCurve') !== 0) {
 			continue;
 		}
 		const type = numberField(binding, 'typeID');
-		if (type !== TRANSFORM) {
+		if (type !== UnityClass.Transform) {
 			if (RENDERERS.has(type) && numberField(binding, 'customType') === MATERIAL_PROPERTY) {
 				const property = materialProperty(numberField(binding, 'attribute'));
 				materialBindings.push({ path: numberField(binding, 'path') >>> 0, ...property, at: kinds.length });
@@ -451,8 +438,13 @@ export const readClipMotion = (clip: TypeTreeObject): ClipMotion => {
 	}
 
 	const values = new Float64Array(scalarKinds.length);
+	let lastTime = Number.NaN;
 	/** reads every scalar at a time into `values` */
 	const evaluate = (time: number): void => {
+		if (time === lastTime) {
+			return;
+		}
+		lastTime = time;
 		const t = start + time;
 		for (let i = 0; i < streamedCount; i++) {
 			values[i] = sampleStreamed(streamed[i], t);
@@ -564,14 +556,8 @@ const readAclMotion = (clip: TypeTreeObject, acl: TypeTreeObject): ClipMotion =>
 	const taken = [0, 0, 0];
 	const paths: number[] = [];
 	const bindings: { path: number; attribute: number; track: number; constant: number[] | null }[] = [];
-	for (const [index, binding] of arrayField(
-		objectField(clip, 'm_ClipBindingConstant'),
-		'genericBindings',
-	).entries()) {
-		if (!isObject(binding)) {
-			throw new FormatError('invalid AnimationClip binding');
-		}
-		const transform = numberField(binding, 'typeID') === TRANSFORM;
+	for (const [index, binding] of genericBindings(clip).entries()) {
+		const transform = numberField(binding, 'typeID') === UnityClass.Transform;
 		const attribute = numberField(binding, 'attribute');
 		let constant: number[] | null = null;
 		if (constantIndices.has(index)) {
@@ -690,15 +676,12 @@ export const readClipActivity = (clip: TypeTreeObject): Map<number, boolean> => 
 	const deltas = arrayField(objectField(clip, 'm_MuscleClip'), 'm_ValueArrayDelta');
 	const activity = new Map<number, boolean>();
 	let at = 0;
-	for (const binding of arrayField(objectField(clip, 'm_ClipBindingConstant'), 'genericBindings')) {
-		if (!isObject(binding)) {
-			throw new FormatError('invalid AnimationClip binding');
-		}
+	for (const binding of genericBindings(clip)) {
 		if (numberField(binding, 'isPPtrCurve') !== 0) {
 			continue;
 		}
 		const type = numberField(binding, 'typeID');
-		if (type === GAME_OBJECT && numberField(binding, 'attribute') >>> 0 === IS_ACTIVE) {
+		if (type === UnityClass.GameObject && numberField(binding, 'attribute') >>> 0 === IS_ACTIVE) {
 			const delta = deltas[at];
 			if (!isObject(delta)) {
 				throw new FormatError('AnimationClip has fewer values than bindings');
@@ -709,7 +692,7 @@ export const readClipActivity = (clip: TypeTreeObject): Map<number, boolean> => 
 			);
 		}
 		// Transform positions and scales take three values, rotations four (Euler three); other bindings one
-		if (type === TRANSFORM) {
+		if (type === UnityClass.Transform) {
 			at += numberField(binding, 'attribute') === 2 ? 4 : 3;
 		} else {
 			at++;

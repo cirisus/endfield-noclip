@@ -13,7 +13,6 @@ import {
 	type ObjectInfo,
 	parseSerializedFile,
 	parseSerializedFileHeader,
-	SERIALIZED_FILE_HEADER_SIZE,
 	type SerializedFile,
 	serializedFileMetadataEnd,
 	UnityClass,
@@ -22,7 +21,9 @@ import {
 	objectBytes,
 	peekObjectName,
 	readObject,
+	readObjectField,
 	type TypeTreeObject,
+	type TypeTreeValue,
 } from '@endfield-noclip/formats/unity/type-tree';
 import {
 	arrayField,
@@ -209,6 +210,9 @@ export const openBundle = async (context: { vfs: Vfs; keys: Keys }, name: string
 /** SerializedFiles up to this size are read whole; larger ones read objects on demand */
 const EAGER_SERIALIZED_FILE_SIZE = 16 * 1024 * 1024;
 
+/** initial bytes read from a lazily opened SerializedFile to cover its header and small metadata in one read */
+const METADATA_PREFIX_SIZE = 4096;
+
 /** bytes read from the start of an object to find its `m_Name` in a lazily read file */
 const NAME_PREFIX_SIZE = 4096;
 
@@ -234,6 +238,7 @@ export class BundleAssetFile {
 	readonly node: BundleNode;
 	readonly file: SerializedFile;
 	readonly #bytes: Uint8Array | undefined;
+	#assetBundles: Promise<AssetBundleObject[]> | undefined;
 
 	/**
 	 * @param bundle containing bundle
@@ -265,9 +270,19 @@ export class BundleAssetFile {
 			const bytes = await bundle.readNode(node);
 			return new BundleAssetFile(bundle, node, parseSerializedFile(bytes), bytes);
 		}
-		const header = parseSerializedFileHeader(await bundle.readNode(node, 0, SERIALIZED_FILE_HEADER_SIZE));
-		const prefix = await bundle.readNode(node, 0, serializedFileMetadataEnd(header));
-		return new BundleAssetFile(bundle, node, parseSerializedFile(prefix), undefined);
+		const prefix = await bundle.readNode(node, 0, Math.min(node.size, METADATA_PREFIX_SIZE));
+		const header = parseSerializedFileHeader(prefix);
+		const metadataEnd = serializedFileMetadataEnd(header);
+		let metadata: Uint8Array;
+		if (metadataEnd <= prefix.length) {
+			metadata = prefix;
+		} else {
+			const rest = await bundle.readNode(node, prefix.length, metadataEnd);
+			metadata = new Uint8Array(metadataEnd);
+			metadata.set(prefix);
+			metadata.set(rest, prefix.length);
+		}
+		return new BundleAssetFile(bundle, node, parseSerializedFile(metadata), undefined);
 	}
 
 	/** @returns the raw bytes of one object */
@@ -288,6 +303,19 @@ export class BundleAssetFile {
 		return readObject(this.file, info, await this.objectBytes(info));
 	}
 
+	/**
+	 * reads one top-level field of an object without materializing the fields before it
+	 *
+	 * @param target object path id or table entry
+	 * @param field top-level field name
+	 * @returns the field's value, or `undefined` if the type has no such field or the object omits it
+	 * @throws {FormatError} if there's no such object or it doesn't match its TypeTree
+	 */
+	async readField(target: bigint | ObjectInfo, field: string): Promise<TypeTreeValue | undefined> {
+		const info = typeof target === 'bigint' ? getObjectInfo(this.file, target) : target;
+		return readObjectField(this.file, info, await this.objectBytes(info), field);
+	}
+
 	/** @returns the object's `m_Name`, or `undefined` if its class has none */
 	async peekName(info: ObjectInfo): Promise<string | undefined> {
 		if (this.#bytes !== undefined || info.byteSize <= NAME_PREFIX_SIZE) {
@@ -302,8 +330,13 @@ export class BundleAssetFile {
 		}
 	}
 
-	/** @returns every AssetBundle object of the file with its `m_Container` */
-	async assetBundles(): Promise<AssetBundleObject[]> {
+	/** @returns every AssetBundle object of the file with its `m_Container`, cached after the first read */
+	assetBundles(): Promise<AssetBundleObject[]> {
+		this.#assetBundles ??= this.#readAssetBundles();
+		return this.#assetBundles;
+	}
+
+	async #readAssetBundles(): Promise<AssetBundleObject[]> {
 		const bundles: AssetBundleObject[] = [];
 		for (const info of this.file.objects) {
 			if (info.classId !== UnityClass.AssetBundle) {

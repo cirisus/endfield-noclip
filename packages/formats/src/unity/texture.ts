@@ -12,6 +12,7 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { imageByteLength, ktx2FormatInfo, type Ktx2Texture, VkFormat } from '../binary/ktx2.ts';
 
+import { UnityClass } from './serialized-file.ts';
 import type { TypeTreeObject } from './type-tree.ts';
 import {
 	bytesField,
@@ -23,15 +24,6 @@ import {
 } from './values.ts';
 
 // #region formats
-
-/** Unity class ids of texture classes */
-export const TextureClass = {
-	Texture2D: 28,
-	Cubemap: 89,
-	Texture3D: 117,
-	Texture2DArray: 187,
-	CubemapArray: 188,
-} as const;
 
 /** a source format and how it maps onto KTX2 */
 interface SourceFormat {
@@ -201,7 +193,7 @@ export interface DecodedTexture {
 /**
  * decodes a texture's metadata and splits its data into levels
  *
- * @param classId the object's class id (see {@link TextureClass})
+ * @param classId the object's class id (see {@link UnityClass})
  * @param texture a decoded texture object
  * @param streamData the `m_StreamData` bytes, required when `streamingInfo` (`values.ts`) returns a value
  * @returns the texture
@@ -244,8 +236,8 @@ export const decodeTexture = (
 	let format: DecodedTexture['format'];
 	let srgb: boolean;
 	switch (classId) {
-		case TextureClass.Texture2D:
-		case TextureClass.Cubemap: {
+		case UnityClass.Texture2D:
+		case UnityClass.Cubemap: {
 			const value = numberField(texture, 'm_TextureFormat');
 			const known = TEXTURE_FORMATS.get(value);
 			if (known === undefined) {
@@ -255,7 +247,7 @@ export const decodeTexture = (
 			format = { enum: 'TextureFormat', value, name: known.name };
 			srgb = colorSpace === 1 && known.srgb !== undefined;
 			const imageCount = optionalNumberField(texture, 'm_ImageCount') ?? 1;
-			if (classId === TextureClass.Cubemap || numberField(texture, 'm_TextureDimension') === 4) {
+			if (classId === UnityClass.Cubemap || numberField(texture, 'm_TextureDimension') === 4) {
 				if (imageCount !== 6) {
 					throw new FormatError(`cubemap ${name} has ${imageCount} images`);
 				}
@@ -270,9 +262,9 @@ export const decodeTexture = (
 			}
 			break;
 		}
-		case TextureClass.Texture2DArray:
-		case TextureClass.CubemapArray:
-		case TextureClass.Texture3D: {
+		case UnityClass.Texture2DArray:
+		case UnityClass.CubemapArray:
+		case UnityClass.Texture3D: {
 			const value = numberField(texture, 'm_Format');
 			const known = GRAPHICS_FORMATS.get(value);
 			if (known === undefined) {
@@ -281,10 +273,10 @@ export const decodeTexture = (
 			source = known;
 			format = { enum: 'GraphicsFormat', value, name: known.name };
 			srgb = known.isSrgb;
-			if (classId === TextureClass.Texture2DArray) {
+			if (classId === UnityClass.Texture2DArray) {
 				kind = '2d-array';
 				layers = numberField(texture, 'm_Depth');
-			} else if (classId === TextureClass.CubemapArray) {
+			} else if (classId === UnityClass.CubemapArray) {
 				kind = 'cube-array';
 				layers = numberField(texture, 'm_CubemapCount');
 				faces = 6;
@@ -326,15 +318,25 @@ export const decodeTexture = (
 		const images = layers * faces;
 		const chain = levelImageBytes.reduce((sum, size) => sum + size, 0);
 		checkSize(name, chain * images, data.length);
-		levels = levelImageBytes.map((size, level) => {
-			const out = new Uint8Array(size * images);
-			const within = levelImageBytes.slice(0, level).reduce((sum, previous) => sum + previous, 0);
-			for (let image = 0; image < images; image++) {
-				const from = image * chain + within;
-				out.set(data.subarray(from, from + size), image * size);
+		levels = [];
+		if (images === 1) {
+			let at = 0;
+			for (const size of levelImageBytes) {
+				levels.push(data.subarray(at, at + size));
+				at += size;
 			}
-			return out;
-		});
+		} else {
+			let within = 0;
+			for (const size of levelImageBytes) {
+				const out = new Uint8Array(size * images);
+				for (let image = 0; image < images; image++) {
+					const from = image * chain + within;
+					out.set(data.subarray(from, from + size), image * size);
+				}
+				levels.push(out);
+				within += size;
+			}
+		}
 	}
 	if (source.convert !== undefined) {
 		levels = levels.map(source.convert);

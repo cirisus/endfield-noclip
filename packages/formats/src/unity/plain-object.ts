@@ -88,7 +88,9 @@ const convertClass = (
 		if (options.dropField(name, type) || !Object.hasOwn(value, name)) {
 			continue;
 		}
-		const converted = convertValue(child, value[name], [...path, name], options, pptrs);
+		path.push(name);
+		const converted = convertValue(child, value[name], path, options, pptrs);
+		path.pop();
 		if (converted !== undefined) {
 			out[name] = converted;
 		}
@@ -108,7 +110,7 @@ const convertValue = (
 		if (!options.keepPPtr(type, name)) {
 			return undefined;
 		}
-		pptrs.push({ path, type, pptr: asPPtr(value) });
+		pptrs.push({ path: [...path], type, pptr: asPPtr(value) });
 		return null;
 	}
 	const components = STRUCTS[type];
@@ -241,7 +243,10 @@ const numberAt = (value: TypeTreeValue, field: string, path: string[]): number =
 	if (!isObject(value)) {
 		throw new FormatError(`${path.join('.')} is not an object`);
 	}
-	return numberOf(value[field], [...path, field]);
+	path.push(field);
+	const result = numberOf(value[field], path);
+	path.pop();
+	return result;
 };
 
 const numberOf = (value: TypeTreeValue | undefined, path: string[]): number => {
