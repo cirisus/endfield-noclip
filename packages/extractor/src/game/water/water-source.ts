@@ -47,6 +47,8 @@ const READ_CONCURRENCY = 16;
  * @param world world index
  * @param scene streaming scene, e.g. `map02`
  * @param filter optional chunk-file predicate
+ * @param options.includeGlobals whether to also scan Mono objects for global water config bindings (default
+ *   `true`); pass `false` when only water surfaces are needed
  * @returns the scene's water placements
  * @throws {Error} if a chunk with water lacks its StreamingChunkData sibling
  */
@@ -54,7 +56,9 @@ export const readSceneWater = async (
 	world: WorldIndex,
 	scene: string,
 	filter?: (file: ChunkFile) => boolean,
+	options?: { includeGlobals?: boolean },
 ): Promise<SceneWater> => {
+	const includeGlobals = options?.includeGlobals ?? true;
 	const files = (await world.chunkFiles()).filter(
 		(file) => file.scene === scene && (filter === undefined || filter(file)),
 	);
@@ -63,7 +67,7 @@ export const readSceneWater = async (
 		const hasWater = init.groups.some((group) =>
 			group.columns.some((column) => column.id === WATER_SURFACE_COMPONENT),
 		);
-		const hasGlobal = init.objects.some((object) => object.kind === ChunkObjectKind.Mono);
+		const hasGlobal = includeGlobals && init.objects.some((object) => object.kind === ChunkObjectKind.Mono);
 		if (!hasWater && !hasGlobal) {
 			return null;
 		}
@@ -74,8 +78,8 @@ export const readSceneWater = async (
 		const streaming = parseStreamingChunk(data);
 		return {
 			file,
-			surfaces: readWaterSurfaces(init, streaming),
-			globals: readWaterGlobalBindings(init, streaming),
+			surfaces: hasWater ? readWaterSurfaces(init, streaming) : [],
+			globals: hasGlobal ? readWaterGlobalBindings(init, streaming) : [],
 		};
 	});
 

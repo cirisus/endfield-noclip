@@ -66,7 +66,7 @@ import { readSceneWater } from '../game/water/water-source.ts';
 import { readWaterVolumes } from '../game/water/water-volumes.ts';
 import { loadDungeonUses, readOperatorNames } from '../game/world/dungeons.ts';
 import { indexTerrain } from '../game/world/terrain-source.ts';
-import { type IndexedEntity, pivotOf, type WorldIndex } from '../game/world/world-index.ts';
+import { type ChunkFile, type IndexedEntity, pivotOf, type WorldIndex } from '../game/world/world-index.ts';
 import { DEBUG_DIR, STAND_INS_FILE, type StandInReport } from '../pack/debug.ts';
 import { type ScenePlacementSurvey, surveyPlacedVolumes, surveyPlacements } from '../pack/survey.ts';
 import { mapPool } from '../pool.ts';
@@ -501,6 +501,11 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 		levelOf: (tag) => (partition && levelOfTag(partition, tag)?.id) ?? (tag === 0 ? 'shared' : `tag ${tag}`),
 	};
 	const rows = new FoundRows(options);
+	const scanAll = options.near !== undefined;
+	const lightPromise = scanAll && kinds.has('light') ? lightCandidates(world, scene, options, lookups) : null;
+	const waterPromise =
+		scanAll && kinds.has('water') ? waterCandidates(context, scene, options, lookups) : null;
+	const envPromise = scanAll && kinds.has('env') ? envCandidates(context, scene, options, lookups) : null;
 
 	if (kinds.has('static')) {
 		for await (const candidate of staticCandidates(world, scene, options, lookups)) {
@@ -530,7 +535,7 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	}
 
 	if (!rows.full && kinds.has('light')) {
-		for (const candidate of await lightCandidates(world, scene, options, lookups)) {
+		for (const candidate of await (lightPromise ?? lightCandidates(world, scene, options, lookups))) {
 			rows.add(candidate);
 			if (rows.full) {
 				break;
@@ -539,7 +544,7 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	}
 
 	if (!rows.full && kinds.has('water')) {
-		for (const candidate of await waterCandidates(context, scene, lookups)) {
+		for (const candidate of await (waterPromise ?? waterCandidates(context, scene, options, lookups))) {
 			rows.add(candidate);
 			if (rows.full) {
 				break;
@@ -548,7 +553,7 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 	}
 
 	if (!rows.full && kinds.has('env')) {
-		for (const candidate of await envCandidates(context, scene, options, lookups)) {
+		for (const candidate of await (envPromise ?? envCandidates(context, scene, options, lookups))) {
 			rows.add(candidate);
 			if (rows.full) {
 				break;
@@ -585,25 +590,34 @@ const drawLabels = (entity: ChunkEntity, { pathOf }: AssetNames): string[] =>
 		pathOf(draw.materialHash) ?? hashText(draw.materialHash),
 	]) ?? [];
 
+const nearCellFilter = (
+	near: readonly number[] | undefined,
+	radius: number | undefined,
+): ((file: ChunkFile) => boolean) | undefined => {
+	if (near === undefined) {
+		return undefined;
+	}
+	const cx = Math.floor(near[0] / CELL_SIZE);
+	const cz = Math.floor(near[2] / CELL_SIZE);
+	const reach = radius === undefined ? 1 : Math.ceil(radius / CELL_SIZE) + 1;
+	return (file) =>
+		file.cell === null || (Math.abs(file.cell.x - cx) <= reach && Math.abs(file.cell.z - cz) <= reach);
+};
+
 async function* staticCandidates(
 	world: WorldIndex,
 	scene: string,
 	options: Pick<FindOptions, 'near' | 'radius' | 'sceneState' | 'area' | 'noHlod'>,
 	lookups: FindLookups,
 ): AsyncGenerator<FoundCandidate> {
-	const { near, radius } = options;
 	const { names, standIns, partition } = lookups;
-	const cell =
-		near === undefined ? null : { x: Math.floor(near[0] / CELL_SIZE), z: Math.floor(near[2] / CELL_SIZE) };
-	const reach = radius === undefined ? 0 : Math.ceil(radius / CELL_SIZE) + 1;
+	const cellFilter = nearCellFilter(options.near, options.radius);
 	for await (const { entity, decalMaterial } of world.sceneEntitiesWithDecals(
 		scene,
 		(file) =>
 			(options.sceneState === undefined || file.sceneState === options.sceneState) &&
 			(options.area === undefined || file.area === options.area) &&
-			(cell === null ||
-				file.cell === null ||
-				(Math.abs(file.cell.x - cell.x) <= reach && Math.abs(file.cell.z - cell.z) <= reach)),
+			(cellFilter === undefined || cellFilter(file)),
 	)) {
 		if (options.noHlod && HLOD_LAYERS.has(entity.layer)) {
 			continue;
@@ -779,18 +793,13 @@ const lightCandidates = async (
 	options: Pick<FindOptions, 'near' | 'radius' | 'sceneState' | 'area'>,
 	lookups: FindLookups,
 ): Promise<FoundCandidate[]> => {
-	const { near, radius } = options;
-	const cell =
-		near === undefined ? null : { x: Math.floor(near[0] / CELL_SIZE), z: Math.floor(near[2] / CELL_SIZE) };
-	const reach = radius === undefined ? 0 : Math.ceil(radius / CELL_SIZE) + 1;
+	const cellFilter = nearCellFilter(options.near, options.radius);
 	const files = (await world.chunkFiles()).filter(
 		(file) =>
 			file.scene === scene &&
 			(options.sceneState === undefined || file.sceneState === options.sceneState) &&
 			(options.area === undefined || file.area === options.area) &&
-			(cell === null ||
-				file.cell === null ||
-				(Math.abs(file.cell.x - cell.x) <= reach && Math.abs(file.cell.z - cell.z) <= reach)),
+			(cellFilter === undefined || cellFilter(file)),
 	);
 	const perFile = await mapPool(files, 16, async (file) => {
 		const init = await world.readInitPayload(file);
@@ -848,12 +857,13 @@ const lightCandidates = async (
 const waterCandidates = async (
 	context: Context,
 	scene: string,
+	options: Pick<FindOptions, 'near' | 'radius'>,
 	lookups: FindLookups,
 ): Promise<FoundCandidate[]> => {
 	const { world } = context;
 	const { names, partition } = lookups;
 	const [{ surfaces }, { volumes }] = await Promise.all([
-		readSceneWater(world, scene),
+		readSceneWater(world, scene, nearCellFilter(options.near, options.radius), { includeGlobals: false }),
 		readWaterVolumes(context, scene, null, partition).catch(() => ({ volumes: [], unsupported: [] })),
 	]);
 	const out: FoundCandidate[] = [];
@@ -939,7 +949,8 @@ const envCandidates = async (
 	lookups: FindLookups,
 ): Promise<FoundCandidate[]> => {
 	const { world } = context;
-	const chunkVolumes = await loadSceneVolumes(world, scene);
+	// with `--near`, envCandidates tests containment at `near` itself, so only covering cells + Global matter
+	const chunkVolumes = await loadSceneVolumes(world, scene, nearCellFilter(options.near, undefined));
 	const out: FoundCandidate[] = [];
 	for (const entry of chunkVolumes.environment) {
 		const { volume } = entry;
@@ -1078,15 +1089,15 @@ const showEnvironment = async (
 	}
 	const singleLevel = levels.length === 1 && scene.levels.length > 1 ? levels[0] : null;
 	const levelTags = singleLevel === null ? null : new Set([0, singleLevel.tag]);
+	let chunkFilter: ((file: ChunkFile) => boolean) | undefined;
+	if (at !== undefined) {
+		chunkFilter = nearCellFilter(at, undefined);
+	} else if (singleLevel !== null) {
+		chunkFilter = (file) => file.cell === null || singleLevel.cells.has(cellKey(file.cell.x, file.cell.z));
+	}
 	const [survey, chunkVolumes, pathOf, names, resolver] = await Promise.all([
 		surveyPlacements(context, scene.mapId, singleLevel?.id ?? null),
-		loadSceneVolumes(
-			world,
-			scene.mapId,
-			singleLevel === null
-				? undefined
-				: (file) => file.cell === null || singleLevel.cells.has(cellKey(file.cell.x, file.cell.z)),
-		),
+		loadSceneVolumes(world, scene.mapId, chunkFilter),
 		world.pathLookup(),
 		world.names(),
 		context.resolver(),
