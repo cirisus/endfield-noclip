@@ -8,7 +8,7 @@ import {
 	VertexAttributeFormat,
 } from '@endfield-noclip/formats/unity/mesh';
 
-import { type RigidBodyBake, rigidBodySkin, type VatTexels } from './rigid-body-skin.ts';
+import { type VatBake, vatSkin, type VatTexels } from './vat-skin.ts';
 
 const attribute = (dimension: number, values: number[]): MeshAttribute => ({
 	dimension,
@@ -86,7 +86,8 @@ for (let row = 0; row < 4; row++) {
 	rotation.texels.set([0, 0, Math.sin(half), 0], row * 8);
 }
 
-const bake: RigidBodyBake = {
+const bake: VatBake = {
+	body: 'rigid',
 	position: { bundleIndex: 0, file: '', pathId: 0n },
 	rotation: { bundleIndex: 0, file: '', pathId: 0n },
 	submeshes: [0],
@@ -131,9 +132,9 @@ const bakedPosition = (
 	return [0, 1, 2].map((row) => m[row * 4] * x + m[row * 4 + 1] * y + m[row * 4 + 2] * z + m[row * 4 + 3]);
 };
 
-describe('rigid-body animation', () => {
+describe('vertex animation', () => {
 	it('moves each piece as the shader does, holds the rest pose on frame 0 and other submeshes still', () => {
-		const baked = rigidBodySkin(mesh, bake, position, rotation);
+		const baked = vatSkin(mesh, bake, position, rotation);
 		assert.ok(!('reason' in baked));
 		// still, piece 1 and the collapsed piece
 		assert.equal(baked.motion.boneCount, 3);
@@ -158,7 +159,7 @@ describe('rigid-body animation', () => {
 	});
 
 	it('plays a negative rate backwards', () => {
-		const baked = rigidBodySkin(
+		const baked = vatSkin(
 			mesh,
 			{ ...bake, cycleRate: -bake.cycleRate, animateFirstFrame: true },
 			position,
@@ -170,8 +171,41 @@ describe('rigid-body animation', () => {
 		bakedPosition(baked, 1, 0).forEach((value, i) => assert.ok(Math.abs(value - expected[i]) < 1e-5));
 	});
 
+	it('moves a soft body point by its offset from rest, and turns +y and −x into its normal and tangent', () => {
+		// frame 2 of every column: offset (0.5, 0, 0), a quarter turn about z
+		const offsets: VatTexels = { width: 2, height: 4, texels: new Float32Array(32) };
+		const turns: VatTexels = { width: 2, height: 4, texels: new Float32Array(32) };
+		for (let row = 0; row < 4; row++) {
+			for (let column = 0; column < 2; column++) {
+				turns.texels.set([0, 0, 0, 1], (row * 2 + column) * 4);
+			}
+		}
+		const half = Math.SQRT1_2;
+		offsets.texels.set([0.5, 0, 0, 0], 1 * 8);
+		turns.texels.set([0, 0, half, half], 1 * 8);
+		const baked = vatSkin(mesh, { ...bake, body: 'soft', animateFirstFrame: true }, offsets, turns);
+		assert.ok(!('reason' in baked));
+		// each point of submesh 0 is its own bone, after the still bone
+		assert.equal(baked.motion.boneCount, 7);
+		assert.deepEqual(
+			bakedPosition(baked, 1, 2).map((value) => Math.round(value * 1e5) / 1e5),
+			[1.5, 0, 0],
+		);
+		assert.deepEqual([...baked.mesh.normals!.subarray(3, 6)], [0, 1, 0]);
+		assert.deepEqual([...baked.mesh.tangents!.data.subarray(4, 7)], [-1, 0, 0]);
+		const bone = baked.mesh.skin!.indices!.data[1];
+		const m = baked.motion.matrices.subarray((2 * baked.motion.boneCount + bone) * 12);
+		// the normal +y turns to −x
+		assert.deepEqual(
+			[m[1], m[5], m[9]].map((value) => Math.round(value * 1e5) / 1e5),
+			[-1, 0, 0],
+		);
+		// submesh 1 keeps its own frame
+		assert.deepEqual([...baked.mesh.normals!.subarray(18, 21)], [0, 0, 0]);
+	});
+
 	it("can't bake a mesh without the pivot's UV sets", () => {
-		const baked = rigidBodySkin({ ...mesh, uvs: [null, mesh.uvs[1], null] }, bake, position, rotation);
+		const baked = vatSkin({ ...mesh, uvs: [null, mesh.uvs[1], null] }, bake, position, rotation);
 		assert.ok('reason' in baked);
 	});
 });

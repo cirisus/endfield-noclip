@@ -601,7 +601,16 @@ the scroll clock is the fourth component of the pipeline's time parameters, whic
 unused. what the game writes there isn't traced: it's assumed to be seconds, so `_OffsetSpeed` is UV
 tiles per second.
 
-## rigid-body animation
+## vertex animation textures
+
+`HGRP/Lit` plays two kinds of Houdini vertex animation, both from a `_PositionTexture` and a
+`_RotationTexture` sampled in the vertex stage of every pass, one texel column per piece or point
+and one row per frame. the frame and the row follow the
+[soft-body animation](effects.md#soft-body-animation) of the effect shaders. Jingyu's hanging
+ornaments use both: the cans and charms are rigid bodies and the strings they hang from soft ones,
+the two baked from one simulation, so a string's end stays on its can.
+
+### rigid-body animation
 
 `HGRP/Lit` materials with `_VAT_RIGIDBODY` play a Houdini vertex animation that moves each piece of
 the mesh rigidly. on map02 they're the tin cans and charms hung on strings in Jingyu's market
@@ -635,8 +644,19 @@ of their mesh (`s_map02_sfornament_1_001_05_lod0`, 19 texels wide over 160 frame
 within a millimetre. the frame isn't interpolated (`_B_interpolate` is off and the variant has no
 blend).
 
-the strings the cans hang from are separate meshes (`…_soft_lod*`) whose materials use Lit's
-`_VAT_SOFTBODY`, which isn't read here.
+### soft-body animation
+
+`HGRP/Lit` materials with `_VAT_SOFTBODY` (on map02 only the strings of Jingyu's hanging ornaments,
+`M_map02_sfornament_1_001_*_soft_lod*`, separate meshes beside the cans) move each vertex on its
+own. the texel is found as for a rigid body, from UV1 and the frame, and the vertex moves to
+`rest + offset`, the offset read like a rigid piece's position. `_RotationTexture` holds a whole
+quaternion (`q / 2 + 0.5` in 8-bit textures), and the vertex's normal is `rotate(q, +y)` and its
+tangent `rotate(q, −x)`, in place of the mesh's own (`_BlendMeshNormalAndTangent` blends back to
+them; the strings leave it at 0, and the tangent's bitangent sign is then 0). there's no rest pose
+on frame 0, whose offsets are zero on the strings, and a vertex whose UV1 v is at most 0.1 collapses
+to the object's origin, as in a rigid body. the strings' textures hold a column per point (436 for
+`s_map02_sfornament_1_001_05_soft_lod0`) over the cans' 160 frames, and evaluated beside the cans
+their ends stay within a millimetre of the cans they're tied to while the cans swing up to 34 cm.
 
 ## clock
 

@@ -9,11 +9,11 @@ import { type DecodedMesh, VertexAttributeFormat } from '@endfield-noclip/format
 import type { DecodedTexture } from '@endfield-noclip/formats/unity/texture';
 
 import type { ObjectLocator } from '../../game/assets/assets.ts';
-import type { RigidBodyAnimation } from '../../game/materials/surfaces/rigid-body.ts';
+import type { VatAnimation } from '../../game/materials/surfaces/vat-animation.ts';
 import type { SkinMotion } from '../../game/prefabs/prefab.ts';
 
-/** a {@link RigidBodyAnimation} as the conversion worker reads it */
-export interface RigidBodyBake extends Omit<RigidBodyAnimation, 'position' | 'rotation'> {
+/** a {@link VatAnimation} as the conversion worker reads it */
+export interface VatBake extends Omit<VatAnimation, 'position' | 'rotation'> {
 	position: ObjectLocator;
 	rotation: ObjectLocator;
 	/** the submeshes drawn with the animation; the others hold still */
@@ -28,8 +28,8 @@ export interface VatTexels {
 	texels: Float32Array;
 }
 
-/** the most bones a vertex's `uint8x4` indices can name */
-const MAX_BONES = 256;
+/** the most bones a vertex's `uint16x4` indices can name */
+const MAX_BONES = 65_536;
 
 /**
  * @param texture a decoded VAT texture
@@ -67,21 +67,28 @@ export const vatTexels = (texture: DecodedTexture): VatTexels => {
  * @param position its position texture
  * @param rotation its rotation texture
  * @returns a copy of the mesh skinned to one bone per piece (bone 0 holding the other submeshes still) and
- *   the motion that plays the animation, or the reason it can't be baked
+ *   the motion that plays the animation, or the reason it can't be baked. a soft body's pieces are its points
+ *   (each distinct UV1 and rest position), and its moving vertices' normals and tangents become +y and −x,
+ *   which the bones turn as the shader turns them
  */
-export const rigidBodySkin = (
+export const vatSkin = (
 	mesh: DecodedMesh,
-	bake: RigidBodyBake,
+	bake: VatBake,
 	position: VatTexels,
 	rotation: VatTexels,
 ): { mesh: DecodedMesh; motion: SkinMotion } | { reason: string } => {
+	const soft = bake.body === 'soft';
 	const lookup = mesh.uvs[1];
 	const pivotX = mesh.uvs[2];
 	const pivotYz = mesh.uvs[3];
-	if (lookup == null || pivotX == null || pivotYz == null) {
-		return { reason: 'a rigid-body mesh without UV sets 1–3' };
+	if (lookup == null) {
+		return { reason: 'a vertex-animated mesh without UV set 1' };
 	}
-	// the shader's per-vertex inputs: UV1 finds the piece's texels, UV2.x and UV3 hold its pivot
+	if (!soft && (pivotX == null || pivotYz == null)) {
+		return { reason: 'a rigid-body mesh without UV sets 2 and 3' };
+	}
+	// the shader's per-vertex inputs: UV1 finds the piece's texels; a rigid piece's pivot is in UV2.x and UV3,
+	// a soft body's point moves from its rest position
 	const moving = new Uint8Array(mesh.vertexCount);
 	for (const index of bake.submeshes) {
 		const submesh = mesh.submeshes[index];
@@ -101,11 +108,16 @@ export const rigidBodySkin = (
 		}
 		const u = lookup.data[vertex * lookup.dimension];
 		const v = lookup.data[vertex * lookup.dimension + 1];
-		const pivot: [number, number, number] = [
-			-pivotX.data[vertex * pivotX.dimension],
-			pivotYz.data[vertex * pivotYz.dimension],
-			1 - pivotYz.data[vertex * pivotYz.dimension + 1],
-		];
+		let pivot: [number, number, number];
+		if (soft || pivotX == null || pivotYz == null) {
+			pivot = [mesh.positions[vertex * 3], mesh.positions[vertex * 3 + 1], mesh.positions[vertex * 3 + 2]];
+		} else {
+			pivot = [
+				-pivotX.data[vertex * pivotX.dimension],
+				pivotYz.data[vertex * pivotYz.dimension],
+				1 - pivotYz.data[vertex * pivotYz.dimension + 1],
+			];
+		}
 		const key = `${u} ${v} ${pivot.join(' ')}`;
 		let piece = pieceOf.get(key);
 		if (piece === undefined) {
@@ -116,7 +128,7 @@ export const rigidBodySkin = (
 	}
 	const boneCount = pieces.length + 1;
 	if (boneCount > MAX_BONES) {
-		return { reason: `a rigid-body mesh of ${pieces.length} pieces, more than ${MAX_BONES - 1}` };
+		return { reason: `a vertex-animated mesh of ${pieces.length} pieces, more than ${MAX_BONES - 1}` };
 	}
 
 	const { frameCount, cycleRate, cycleStart } = bake;
@@ -150,33 +162,39 @@ export const rigidBodySkin = (
 			const at: [number, number] = [u * bake.uScale, 1 - bake.vScale * (1 - v + shown / frameCount)];
 			const p = texel(position, ...at);
 			const r = texel(rotation, ...at);
-			const [a, b, c] = bake.hdr
-				? [r[0], r[1], r[2]]
-				: [(r[0] - 0.5) * 2, (r[1] - 0.5) * 2, (r[2] - 0.5) * 2];
-			const d = Math.sqrt(Math.max(1 - a * a - b * b - c * c, 0));
-			// the rotation texture leaves out the largest component, which the position's alpha names
-			const slot = p[3] * 4;
+			const [a, b, c, e] = bake.hdr
+				? [r[0], r[1], r[2], r[3]]
+				: [(r[0] - 0.5) * 2, (r[1] - 0.5) * 2, (r[2] - 0.5) * 2, (r[3] - 0.5) * 2];
 			let q: [x: number, y: number, z: number, w: number];
-			switch (Math.floor(slot)) {
-				case 1: {
-					q = [d, b, c, a];
-					break;
+			let scale = 1;
+			if (soft) {
+				q = [a, b, c, e];
+			} else {
+				const d = Math.sqrt(Math.max(1 - a * a - b * b - c * c, 0));
+				// the rotation texture leaves out the largest component, which the position's alpha names
+				const slot = p[3] * 4;
+				switch (Math.floor(slot)) {
+					case 1: {
+						q = [d, b, c, a];
+						break;
+					}
+					case 2: {
+						q = [a, -d, c, -b];
+						break;
+					}
+					case 3: {
+						q = [a, b, -d, -c];
+						break;
+					}
+					default: {
+						q = [a, b, c, d];
+						break;
+					}
 				}
-				case 2: {
-					q = [a, -d, c, -b];
-					break;
-				}
-				case 3: {
-					q = [a, b, -d, -c];
-					break;
-				}
-				default: {
-					q = [a, b, c, d];
-					break;
-				}
+				scale =
+					bake.scale *
+					(bake.maxPieceScale === null ? 1 : bake.maxPieceScale * (1 - (slot - Math.floor(slot))));
 			}
-			const scale =
-				bake.scale * (bake.maxPieceScale === null ? 1 : bake.maxPieceScale * (1 - (slot - Math.floor(slot))));
 			const [x, y, z, w] = q;
 			const rows = [
 				[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
@@ -185,7 +203,8 @@ export const rigidBodySkin = (
 			];
 			for (let row = 0; row < 3; row++) {
 				const [m0, m1, m2] = rows[row].map((value) => value * scale);
-				const offset = bake.min[row] + p[row] * bake.range[row];
+				// a soft body's offset is from the rest position, a rigid piece's position is absolute
+				const offset = (soft ? pivot[row] : 0) + bake.min[row] + p[row] * bake.range[row];
 				matrices.set([m0, m1, m2, offset - (m0 * pivot[0] + m1 * pivot[1] + m2 * pivot[2])], m + row * 4);
 			}
 		}
@@ -193,6 +212,7 @@ export const rigidBodySkin = (
 	return {
 		mesh: {
 			...mesh,
+			...(soft ? softFrames(mesh, moving) : {}),
 			skin: {
 				bonesPerVertex: 1,
 				bindPoseCount: boneCount,
@@ -208,5 +228,40 @@ export const rigidBodySkin = (
 			},
 		},
 		motion: { boneCount, frameCount, frameRate, matrices },
+	};
+};
+
+/**
+ * @param mesh a soft-body mesh
+ * @param moving per vertex, 1 where the animation moves it
+ * @returns its normals and tangents with the moving vertices' set to +y and −x, the directions the shader
+ *   turns by each frame's rotation in place of the mesh's own. the shader passes a bitangent sign of 0, which
+ *   flattens the normal map across the tangent; the sign is kept here
+ */
+const softFrames = (
+	mesh: DecodedMesh,
+	moving: Uint8Array,
+): Pick<DecodedMesh, 'normals' | 'packedNormals' | 'tangents'> => {
+	const normals = mesh.normals?.slice() ?? new Float32Array(mesh.vertexCount * 3);
+	const source = mesh.tangents;
+	const tangents = new Float32Array(mesh.vertexCount * 4);
+	for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
+		if (source !== null) {
+			for (let k = 0; k < Math.min(source.dimension, 4); k++) {
+				tangents[vertex * 4 + k] = source.data[vertex * source.dimension + k];
+			}
+		}
+		if (moving[vertex] === 0) {
+			continue;
+		}
+		normals.set([0, 1, 0], vertex * 3);
+		const sign =
+			source !== null && source.dimension >= 4 && source.data[vertex * source.dimension + 3] < 0 ? -1 : 1;
+		tangents.set([-1, 0, 0, sign], vertex * 4);
+	}
+	return {
+		normals,
+		packedNormals: null,
+		tangents: { dimension: 4, format: VertexAttributeFormat.Float32, data: tangents },
 	};
 };

@@ -300,13 +300,14 @@ disagree; the report counts those meshes and `debug/assets.json` lists their set
 mesh any swaying material draws is converted with the strongest of their sways, which puts the sway
 weights in position W and grows its bounds, and a mesh any material offsets by a texture with the
 farthest of their offsets ([swaying geometry](package-format.md#geometry-blob-mesh-efgm)). a mesh
-drawn with a [rigid-body animation](game-data/materials.md#rigid-body-animation) is baked into a
-skeletal one ([rigid-body-skin.ts](../packages/extractor/src/pack/convert/rigid-body-skin.ts)): the
-worker reads the animation's two textures and makes a bone of each piece (each distinct UV1 and
-pivot) on the submeshes drawn with it, bone 0 holding the rest still, and samples the game's frame
-at the middle of each baked frame, so a negative speed plays the loop backwards. a mesh whose draws
-disagree on the animation, or that a renderer poses or animates, stays still with the reason in
-`debug/assets.json` (`unanimated`).
+drawn with a [vertex animation texture](game-data/materials.md#vertex-animation-textures) is baked
+into a skeletal one ([vat-skin.ts](../packages/extractor/src/pack/convert/vat-skin.ts)): the worker
+reads the animation's two textures and makes a bone of each rigid piece (each distinct UV1 and
+pivot) or soft point (each distinct UV1 and rest position) on the submeshes drawn with it, bone 0
+holding the rest still, gives a soft body's moving vertices the +y normals and −x tangents its bones
+turn, and samples the game's frame at the middle of each baked frame, so a negative speed plays the
+loop backwards. a mesh whose draws disagree on the animation, or that a renderer poses or animates,
+stays still with the reason in `debug/assets.json` (`unanimated`).
 
 **skin pose.** [skin-pose.ts](../packages/formats/src/unity/skin-pose.ts) bakes linear blend
 skinning into a new static mesh: positions, normals, tangents and bounds move into the space of the
@@ -687,7 +688,7 @@ it), implemented in [pack/store/pack-cache.ts](../packages/extractor/src/pack/st
   it. without a cache the same store lives in the staging package's `.spool` and is deleted after
   the pack.
 - `memo/` holds mesh and texture conversion results keyed by the job (the mesh or texture, the
-  tangent UV set, the sway, the vertex offset, the rigid-body animation, the zstd level) and a
+  tangent UV set, the sway, the vertex offset, the vertex animation, the zstd level) and a
   fingerprint of the converter: every workspace module `convert-worker.ts` transitively imports, the
   extractor's `package.json` and node's zstd version. each memo records the bundles the conversion
   read and their catalog MD5s; it's used only while those MD5s match and its blobs exist. so an

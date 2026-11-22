@@ -22,7 +22,7 @@ import {
 import { placedWaterFoam } from '../../game/materials/effects/water-foam.ts';
 import {
 	describeMaterial,
-	materialRigidBody,
+	materialVat,
 	materialSway,
 	materialVertexOffset,
 } from '../../game/materials/material-describe.ts';
@@ -53,7 +53,7 @@ import {
 import type { OffsetReach, SwayReach } from './geometry.ts';
 import { surfaceMotion } from './material-motion.ts';
 import { convertMaterial, ShaderTable } from './materials.ts';
-import type { RigidBodyBake } from './rigid-body-skin.ts';
+import type { VatBake } from './vat-skin.ts';
 
 // converting the assets the packer referenced (by the ids `AssetIds` handed out) reads materials first (they
 // decide which meshes need tangents and which textures are used), then meshes, then textures, then describes
@@ -604,7 +604,7 @@ interface MeshNeeds {
 	/** the farthest any material's vertex offset moves it, `null` without one */
 	offset: (OffsetReach | null)[];
 	/** the rigid-body animation its materials play, `null` without one or when they disagree on it */
-	rigidBody: (RigidBodyBake | null)[];
+	vat: (VatBake | null)[];
 	/** why a mesh drawn with rigid-body animations isn't baked with one, by mesh */
 	unanimated: Map<number, string>;
 }
@@ -670,27 +670,27 @@ const meshNeeds = (
 			}
 		}
 	}
-	const { rigidBody, unanimated } = rigidBodyNeeds(input, materials, textures);
+	const { vat, unanimated } = vatNeeds(input, materials, textures);
 	return {
 		tangentUvs,
 		tangentUv: tangentUvs.map((uvs) => (uvs.size === 0 ? null : Math.min(...uvs))),
 		sway,
 		offset,
-		rigidBody,
+		vat,
 		unanimated,
 	};
 };
 
 /** each mesh's rigid-body animation (see {@link meshNeeds}) */
-const rigidBodyNeeds = (
+const vatNeeds = (
 	input: AssetConversionInput,
 	materials: LoadedMaterials,
 	textures: TextureUses,
-): Pick<MeshNeeds, 'rigidBody' | 'unanimated'> => {
+): Pick<MeshNeeds, 'vat' | 'unanimated'> => {
 	const animations = materials.converted.map((material) =>
-		material === null ? null : materialRigidBody(material, materials.shaders.shaders[material.shader]),
+		material === null ? null : materialVat(material, materials.shaders.shaders[material.shader]),
 	);
-	const found = new Map<number, { key: string; bake: RigidBodyBake }>();
+	const found = new Map<number, { key: string; bake: VatBake }>();
 	const unanimated = new Map<number, string>();
 	for (const chain of input.chains) {
 		for (const draw of chain.draws) {
@@ -699,7 +699,7 @@ const rigidBodyNeeds = (
 				continue;
 			}
 			const { position, rotation, ...values } = animation;
-			const bake: RigidBodyBake = {
+			const bake: VatBake = {
 				...values,
 				position: textures.objects[position].locator,
 				rotation: textures.objects[rotation].locator,
@@ -720,7 +720,7 @@ const rigidBodyNeeds = (
 		}
 	}
 	return {
-		rigidBody: input.geometries.map((_asset, id) => {
+		vat: input.geometries.map((_asset, id) => {
 			const bake = found.get(id)?.bake ?? null;
 			return bake === null ? null : { ...bake, submeshes: bake.submeshes.toSorted((a, b) => a - b) };
 		}),
@@ -760,7 +760,7 @@ const convertGeometries = async (
 				tangentUv: needs.tangentUv[id],
 				sway: needs.sway[id],
 				offset: needs.offset[id],
-				rigidBody: needs.rigidBody[id],
+				vat: needs.vat[id],
 				zstdLevel: input.geometryZstdLevel,
 			}),
 		(result, _asset, id) => {

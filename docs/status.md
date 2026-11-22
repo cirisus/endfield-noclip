@@ -200,12 +200,12 @@ packs or renders correctly.
   (glints, cracks, dust, volume, refraction), interior parallax and mapping, `_ZWRITE_OFF`, and
   vertex animation other than `HGRP/Lit`'s [swaying cloth](viewer/materials.md#swaying-cloth),
   [vertex offset](viewer/materials.md#vertex-offset) and
-  [rigid-body animation](viewer/materials.md#rigid-body-animation) (`_SIMPLE_VERTEXANIM_PENDULUM`,
-  `…_ROPE`, `HGRP/LitTransparent`'s cloth, `_VAT_SOFTBODY` on Lit (the strings Jingyu's hanging cans
-  hang from), `HGRP/LitEffect`'s `_VAT_RIGIDBODY`, `_COMMONVAT_*`, `_MOVING_BAMBOO`). the cloth sway
-  is unchecked against an in-game shot
-- [rigid-body animation](viewer/materials.md#rigid-body-animation) is baked per mesh, so a mesh
-  drawn with different animations holds still (map02's `s_zmdmachinevat_lod*`, played by five
+  [vertex animation textures](viewer/materials.md#vertex-animation-textures)
+  (`_SIMPLE_VERTEXANIM_PENDULUM`, `…_ROPE`, `HGRP/LitTransparent`'s cloth, `HGRP/LitEffect`'s
+  `_VAT_RIGIDBODY`, `_COMMONVAT_*`, `_MOVING_BAMBOO`). the cloth sway is unchecked against an
+  in-game shot
+- [vertex animation textures](viewer/materials.md#vertex-animation-textures) are baked per mesh, so
+  a mesh drawn with different animations holds still (map02's `s_zmdmachinevat_lod*`, played by five
   materials at different speeds, and one Hongshan waterway mesh); its frames are interpolated where
   the game steps them, and it's unchecked against an in-game shot
 - the [cloth simulation](game-data/materials.md#cloth-simulation) isn't run: entities with a cloth
@@ -600,7 +600,7 @@ packs or renders correctly.
   level scripts set, only those set on script start (constant or by one saved property) are read;
   `PlayDecorationAnimation` and values set by quest, custom or volume events aren't, and a saved
   property's default (set, as in a finished save) is assumed. vertex-animation-texture meshes other
-  than [rigid-body](viewer/materials.md#rigid-body-animation) ones (`_vat`, e.g. floating rocks)
+  than [Lit's VAT](viewer/materials.md#vertex-animation-textures) ones (`_vat`, e.g. floating rocks)
   draw their rest pose
 - [spinning scenery](game-data/animation.md#spinning-scenery) (Qingbo's other waterwheels, the
   originium hub frames) turns from its stored pose at the viewer clock's zero rather than at the

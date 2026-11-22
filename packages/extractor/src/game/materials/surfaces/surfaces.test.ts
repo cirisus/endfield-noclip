@@ -6,8 +6,8 @@ import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 import { describeMaterial } from '../material-describe.ts';
 import { type MaterialValues, readerOf, type ShaderEntry } from '../material-values.ts';
 
-import { rigidBodyOf } from './rigid-body.ts';
 import { keywordsNotDrawn, surfaceGaps } from './surface-keywords.ts';
+import { vatOf } from './vat-animation.ts';
 
 /** a shader entry declaring only the overrides' properties */
 const shaderEntry = (
@@ -1121,7 +1121,7 @@ describe('rigid-body animation', () => {
 	});
 
 	it('reads the loop, the bounds’ padding and the HDR textures', () => {
-		const animation = rigidBodyOf(readerOf(cans, shader));
+		const animation = vatOf(readerOf(cans, shader));
 		assert.ok(animation !== null && !('kind' in animation));
 		assert.equal(animation.frameCount, 160);
 		assert.ok(Math.abs(animation.cycleRate - 30 / 159.99) < 1e-9);
@@ -1133,7 +1133,7 @@ describe('rigid-body animation', () => {
 
 	it('leaves a frame set per draw as a gap', () => {
 		const held = { ...cans, floats: { ...cans.floats, _B_autoPlayback: 0 } };
-		const animation = rigidBodyOf(readerOf(held, shader));
+		const animation = vatOf(readerOf(held, shader));
 		assert.ok(animation !== null && 'kind' in animation);
 		assert.deepEqual(surfaceGaps(readerOf(held, shader)), ['_VAT_RIGIDBODY']);
 	});

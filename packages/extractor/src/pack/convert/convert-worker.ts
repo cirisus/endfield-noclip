@@ -28,7 +28,7 @@ import type {
 	WorkerRequest,
 } from './convert-pool.ts';
 import { convertMesh, geometryReady, rigidSkin } from './geometry.ts';
-import { type RigidBodyBake, rigidBodySkin, type VatTexels, vatTexels } from './rigid-body-skin.ts';
+import { type VatBake, vatSkin, type VatTexels, vatTexels } from './vat-skin.ts';
 import { syntheticMesh, syntheticMeshKey } from './synthetic-mesh.ts';
 import { convertTexture } from './textures.ts';
 
@@ -61,13 +61,13 @@ const loadVatTexels = async ({ bundleIndex, file, pathId }: ObjectLocator): Prom
 	vatTexels(await loadTexture(resolver, await resolver.objectIn(bundleIndex, file, pathId)));
 
 /** bakes a mesh's rigid-body animation from its textures */
-const bakeRigidBody = async (
+const bakeVat = async (
 	mesh: DecodedMesh,
-	bake: RigidBodyBake,
-): Promise<ReturnType<typeof rigidBodySkin>> => {
+	bake: VatBake,
+): Promise<ReturnType<typeof vatSkin>> => {
 	// an animation that can't be read leaves the mesh still rather than failing it
 	try {
-		return rigidBodySkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
+		return vatSkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
 	} catch (error) {
 		return { reason: `a rigid-body animation whose textures can't be read: ${errorText(error)}` };
 	}
@@ -101,12 +101,12 @@ const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
 			if (motion?.kind === 'rigid') {
 				source = rigidSkin(source);
 			}
-			if (job.rigidBody !== null) {
+			if (job.vat !== null) {
 				// a renderer's own animation or pose and a VAT's would compound; the renderer's is kept
 				const baked =
 					pose !== undefined || motion !== undefined
 						? { reason: 'a rigid-body animation on a posed or animated renderer' }
-						: await bakeRigidBody(source, job.rigidBody);
+						: await bakeVat(source, job.vat);
 				if ('reason' in baked) {
 					unanimated = baked.reason;
 				} else {
