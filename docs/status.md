@@ -4,7 +4,7 @@ coverage, known divergences from the game, open unknowns, and [code follow-ups](
 topic docs hold the details; this page is the index. update it in the same commit that closes or
 opens a gap.
 
-only `map01` and `map02` are tested. other scenes listed by `world scenes` are unverified.
+only `map01` and `map02` are tested. other scenes listed by `scene list` are unverified.
 
 ## covered
 

@@ -29,35 +29,35 @@ pnpm extract --help
 `withContext` (`context.ts`), which mounts the VFS, builds the world index, and creates the asset
 resolver lazily.
 
-| command    | purpose                                                                                                                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`     | writes `endfield.local.json` with `Endfield_Data` path and validated keys                                                                                                                |
-| `pack`     | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                                                          |
-| `world`    | world index queries: `scenes`, `dungeons`, levels/cells, cell entities, level members, `env` (base environment), path ↔ hash ↔ bundle `resolve`, catalog `paths`, scene placement `find` |
-| `variants` | lists stream areas, progression controllers, and chunk files selected by a stream-area choice                                                                                            |
-| `vfs`      | lists VFS groups/files and extracts one logical file                                                                                                                                     |
-| `bundle`   | inspects bundles: header, per-class counts, object JSON, stream data, container path and class search in main/initial bundles                                                            |
-| `asset`    | decodes one mesh, texture, or material by bundle+path id or asset path; traces entity draws; exports a cell as glTF                                                                      |
-| `terrain`  | lists terrain scenes/tiles and exports heightmaps as PNG                                                                                                                                 |
-| `water`    | lists water surfaces (by map/level/cell) and gameplay water volumes, prints counts, dumps water configs                                                                                  |
+| command   | purpose                                                                                                                                            |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`    | writes `endfield.local.json` with `Endfield_Data` path and validated keys                                                                          |
+| `pack`    | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                    |
+| `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`: scenery, prefabs, lights, water, env), `env` (level or `--at`), `controls` |
+| `inspect` | decodes and summarizes a `prefab` (hierarchy + packer output), `material` (declared props + surface), `mesh`, `texture`, or `water-config`         |
+| `audit`   | queries `out/<scene>/debug/` without opening the install: `materials`, `geometries`, `stand-ins`, `interactives`, `water`, `env`                   |
+| `data`    | path catalog `paths`/`resolve`, SparkBuffer `tables`/`table`, and MemoryPack level `scripts`/`interactives`                                        |
+| `vfs`     | lists VFS groups/files and extracts one logical file                                                                                               |
+| `bundle`  | inspects bundles: header, per-class counts, object JSON, stream data, container path and class search in main/initial bundles                      |
 
 only `init` and `pack` are needed to build packages; the rest are for research and debugging.
-`asset`'s glTF exports (`export/`) mirror Unity's X axis and use base colours only.
 
 ### finding assets and scenery
 
 ```sh
-pnpm extract world paths 'water.*material' --limit 50 --json
-pnpm extract world find map02 --near=-476.6,181.8,734.3 --radius 20 --max-size 50
-pnpm extract world find map02 --name 'rock|cliff' --kind static --json
+pnpm extract data paths 'water.*material' --limit 50 --json
+pnpm extract scene find map02 --near=-476.6,181.8,734.3 --radius 20 --max-size 50 --no-hlod
+pnpm extract scene env map02 --at=-1072.4,197.0,-1410.9
+pnpm extract inspect prefab main/dcd0a8888ee70d437e1d553e.ab
+pnpm extract audit materials map02 --unsupported --group
 pnpm extract bundle find --class Shader --group initial --limit 20
 ```
 
-- **`world paths`**: regex-searches both StringPathHash catalogs (case-insensitive). prints hex
-  hash, full path, and matching manifest bundles. identical hash/path pairs deduplicate; distinct
-  hashes for the same path stay separate. an empty bundle list means no manifest asset; use
-  `world resolve` for dependency details.
-- **`world find`**: searches all placements in a scene across every scene state and stream area,
+- **`data paths`**: regex-searches both StringPathHash catalogs (case-insensitive). prints hex hash,
+  full path, and matching manifest bundles. identical hash/path pairs deduplicate; distinct hashes
+  for the same path stay separate. an empty bundle list means no manifest asset; use `data resolve`
+  for dependency details.
+- **`scene find`**: searches all placements in a scene across every scene state and stream area,
   reporting what gates each row. `--kind` selects sources (default all):
 
 | kind       | source                                                                                          | visibility from                     |
@@ -68,40 +68,45 @@ pnpm extract bundle find --class Shader --group initial --limit 20
 | `effect`   | DynamicStreaming effect prefab rows                                                             | same as `dynamic`                   |
 | `facility` | [interactives](extraction/prefabs-and-interactives.md#interactives), incl. unfound models       | facility, door, and bridge controls |
 | `cabin`    | built [Dijiang cabins](extraction/scene-controls.md#dijiang-cabins-and-region-walls)            | slot's cabin control                |
+| `light`    | chunk local lights ([local lights](game-data/lighting.md#local-lights))                         | chunk file's scene state and area   |
+| `water`    | placed water surfaces and gameplay water volumes ([water](game-data/water.md))                  | always                              |
+| `env`      | chunk environment volumes ([environment](game-data/environment.md))                             | chunk file's scene states           |
 
 visibility prints as package scene controls under default game state: alternatives joined by `|`,
 requirements by `&`, each `control=values` (or `always` when ungated). `static` rows also show their
 [streaming layer](game-data/world.md#streaming-layers), and rect decals show their material
-(accepted by `asset material`).
+(accepted by `inspect material`).
 
 - `--name`: matches entity names, mesh/material paths (including rect decals), prefab paths, and row
   sources.
 - `--near x,y,z --radius n`: keeps rows whose world bounds (or pivot/placement) lie within `n` m in
   Unity coordinates; sorted nearest first, then smallest bounds first among containing boxes.
-  `--max-size n` drops rows whose longest bound side exceeds `n` m (e.g. HLOD clusters, wide
-  volumes). prefab rows have positions only, no bounds.
-- `--scene-state` and `--area`: filter static chunk files before entity-id deduplication; other
-  kinds are unaffected.
+  `--max-size n` drops rows whose longest bound side exceeds `n` m (and global env volumes);
+  `--no-hlod` drops static `HLOD0`/`HLOD1`/`HLOD2` layers. prefab rows have positions only, no
+  bounds.
+- `--scene-state` and `--area`: filter static chunk files and chunk lights; other kinds are
+  unaffected.
 - if `out/<scene>/debug/stand-ins.json` exists, rows drawn as
   [stand-ins](package-format.md#stand-ins) are annotated with their reasons (prefab renderers by
   asset path; placed cubes by name within 2 m).
-- all kinds except `static` come from the packer's placement sources
+- all kinds except `static`, `light`, `water`, and `env` come from the packer's placement sources
   ([survey.ts](../packages/extractor/src/pack/survey.ts)), including level scripts. load failures
   print to stderr and static rows still run.
 - text output lists distance, kind, level, position, name, size, visibility, first draw's
   mesh/material/material bundle (or prefab path/bundle; or component ids if no renderer), and source
   chunk/row. `--json` adds all draws, matrices, bounds, raw visibility alternatives, and prefab
   rotation/scale.
-- both `world paths` and `world find` default to 100 results (`--limit` must be positive). summaries
+- both `data paths` and `scene find` default to 100 results (`--limit` must be positive). summaries
   and limit notices go to stderr so `--json` emits one JSON array (`[]` if empty). without `--near`,
   hitting `--limit` stops scanning early; with `--near`, all sources are scanned to keep the
   nearest.
 - **`bundle find --class`**: lists one row per object (bundle, SerializedFile node, path id, class,
-  name, container paths) ready for `bundle dump` or `asset`. `--filter` matches container paths
+  name, container paths) ready for `bundle dump` or `inspect`. `--filter` matches container paths
   (combining with `--class` selects objects in matching SerializedFiles). `--group` takes `main`
   (default), `initial`, or `all`. `--limit` caps output rows; `--scan` caps bundles.
-- **`variants --areas`**: lists every selected chunk, including area 0. `--json` adds a `selection`
-  object of sorted area ids and chunk file names without trailing text.
+- **`audit`**: reads `out/<scene>/debug/` directly (no game install opened) to filter or `--group`
+  materials (`--unsupported`, `--undrawn`, `--gap`, `--shader`), geometries, stand-ins, unsupported
+  interactives, water, and environments.
 
 ## local config and keys
 
@@ -159,7 +164,7 @@ table first, then initial); the bundle manifest maps paths to bundles and depend
 
 because the [path hash function](game-data/assets.md#open) isn't ported, path → hash
 (`WorldIndex.hashesOf`) decodes paths of matching length in both tables (first lookup indexes by
-length in <1 s; later lookups take ~1 ms). `world resolve <path|hash>` prints both directions, the
+length in <1 s; later lookups take ~1 ms). `data resolve <path|hash>` prints both directions, the
 holding bundle, and its dependencies. code:
 [string-path-hash.ts](../packages/formats/src/hg/string-path-hash.ts),
 [bundle-manifest.ts](../packages/formats/src/hg/bundle-manifest.ts),
@@ -291,12 +296,11 @@ arrays and `UInt8` bools as booleans. code:
   ([init-chunk-data.ts](../packages/formats/src/endfield/init-chunk-data.ts),
   [streaming-chunk-data.ts](../packages/formats/src/endfield/streaming-chunk-data.ts),
   [static scenery](game-data/world.md#static-scenery-initchunkdata-and-streamingchunkdata)):
-  `WorldIndex.chunkFiles()` parses chunk filenames; `world cells <level>` prints `sceneState/area`;
-  `world entities <scene> <x> <z>|global` dumps one cell. `InitChunkData` accepts only versions 47
-  and 49 ([layout](game-data/world.md#initchunkdata-layout)). `readChunkEntities` builds
-  `ChunkEntity` rows (id, tag, name, matrix, bounds, decal flag, `StaticRenderer` draws with
-  StringPathHash keys, submesh, flags, LOD range) and throws on stride/count mismatches. kind-1
-  objects use [mono-objects.ts](../packages/formats/src/endfield/mono-objects.ts); local lights use
+  `WorldIndex.chunkFiles()` parses chunk filenames. `InitChunkData` accepts only versions 47 and 49
+  ([layout](game-data/world.md#initchunkdata-layout)). `readChunkEntities` builds `ChunkEntity` rows
+  (id, tag, name, matrix, bounds, decal flag, `StaticRenderer` draws with StringPathHash keys,
+  submesh, flags, LOD range) and throws on stride/count mismatches. kind-1 objects use
+  [mono-objects.ts](../packages/formats/src/endfield/mono-objects.ts); local lights use
   [chunk-lights.ts](../packages/formats/src/endfield/chunk-lights.ts).
 - **foliage grids** ([foliage-grids.ts](../packages/formats/src/endfield/foliage-grids.ts),
   [foliage grids](game-data/world.md#foliage-grids)).
@@ -305,15 +309,12 @@ arrays and `UInt8` bools as booleans. code:
 - **terrain** ([terrain.ts](../packages/formats/src/hg/terrain.ts),
   [terrain-source.ts](../packages/extractor/src/game/world/terrain-source.ts),
   [terrain](game-data/terrain.md)): validates that the mip chain fills the payload exactly.
-  `terrain scenes|tiles|export-heights`
-  ([commands/terrain.ts](../packages/extractor/src/commands/terrain.ts)) inspects and exports
-  heightmaps.
 
 **level partition**: `buildLevelPartition`
 ([level-partition.ts](../packages/formats/src/endfield/level-partition.ts)) cross-checks MapConfig
 `levelIds`, LevelConfig `levelGrids`, and entity-id level tags
 ([the level partition](game-data/world.md#the-level-partition)), collecting disagreements as
-`issues` (`world levels <map>`). `world levels <map> --verify` checks tags by pivot majority vote
+`issues` (`scene levels <map>`). `scene levels <map> --verify` checks tags by pivot majority vote
 (excluding backdrop cells so skyline props don't outvote small levels). because ownership follows
 tag, not position:
 
@@ -322,7 +323,7 @@ tag, not position:
 - MapRegionTable polygons are UI overlays only, never clip volumes
 
 `classifyEntity` returns a bucket (`level`, `shared` for tag 0, `unassigned`) and grid placement
-(`own`, `neighbour`, `backdrop`, `unplaced`); `world members <level>` summarizes them.
+(`own`, `neighbour`, `backdrop`, `unplaced`).
 
 ### water
 
@@ -357,9 +358,8 @@ decoders for [water data](game-data/water.md):
   and counted (`waterScriptActionsComputed`). `WaterVolumeSetAmount` is treated as moving at the
   volume's speed (assumption: move vs snap is unverified).
 
-`water surfaces|volumes|census|config`
-([commands/water.ts](../packages/extractor/src/commands/water.ts)) inspects placements, volumes
-(`--json` adds outlines), counts, and configs. package layout is in
+`scene find <scene> --kind water` lists placements and volumes, `inspect water-config <ref>` dumps
+configs, and `audit water <scene>` summarizes packed counts and errors. package layout is in
 [water](package-format.md#water).
 
 ### irradiance
@@ -392,8 +392,8 @@ LevelData files with populated blackbox settings (factory puzzles) are skipped a
 ## pack
 
 one package holds one streaming scene
-([scenes, maps and levels](game-data/world.md#scenes-maps-and-levels)). `world scenes` lists all
-scenes. `world dungeons`
+([scenes, maps and levels](game-data/world.md#scenes-maps-and-levels)). `scene list` lists all
+scenes. `scene list --dungeons`
 ([game/world/dungeons.ts](../packages/extractor/src/game/world/dungeons.ts)) lists DungeonTable
 entries with their level, streamed scene (`=` if own), operator, and referencing missions (unlisted
 entries come from menus, NPCs, or are unused). `--level` accepts only levels of the scene's own map,
@@ -456,7 +456,7 @@ registers controls and lights, and tracks report counts and failures.
 - **new placed prefab source**: emit `StructureModel`s and add it to `collectPlacementSources`.
   [prefab-placements.ts](../packages/extractor/src/pack/content/prefab-placements.ts) handles
   renderers, lights, environment volumes, and stand-ins (reading each prefab root once), and
-  `world find` / `world env` pick it up automatically via
+  `scene find` / `scene env` pick it up automatically via
   [survey.ts](../packages/extractor/src/pack/survey.ts).
 - **new prefab component**: add a reader, step, or candidate source to the renderer walk, or a
   visitor to `walkPrefab`

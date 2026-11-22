@@ -144,4 +144,5 @@ rather than the component default or a lower-priority volume
 ([status](../status.md#lighting-and-post-processing)).
 
 the pack report lists each level's base volume, coverage, where it wins, and inherited sections.
-`world env` explains the vote over the same chunk and prefab volumes (marking prefab ones).
+`scene env` explains the vote over the same chunk and prefab volumes (marking prefab ones), and
+`scene env <scene> --at x,y,z` shows the volume stack at one point.

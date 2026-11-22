@@ -72,8 +72,8 @@ condition classes map to `SceneCondition.kind`:
 
 unknown classes or malformed fields throw.
 
-`WorldIndex` exposes chunk suffixes as `ChunkFile.sceneState` and `ChunkFile.area` (`world entities`
-and `asset cell` accept `--scene-state` / `--area`).
+`WorldIndex` exposes chunk suffixes as `ChunkFile.sceneState` and `ChunkFile.area` (`scene find`
+accepts `--scene-state` / `--area`).
 [dynamic-resources.ts](../../packages/formats/src/endfield/dynamic-resources.ts) reads visible-state
 lists (`states`, `groupStates`) and visible-area lists (`areas`, `groupAreas`); gating uses these
 lists, never the resource group's `sceneState` field.
@@ -159,7 +159,7 @@ Remediation Station's light column on `f1m19d3`) shows by default. these are fac
 ## progressions
 
 implemented in [scenery-variants.ts](../../packages/extractor/src/game/state/scenery-variants.ts)
-([progressions](../game-data/scene-states.md#progressions); inspect with `variants <scene>`).
+([progressions](../game-data/scene-states.md#progressions); inspect with `scene controls <scene>`).
 
 - keyed `<kind>:<key>` (settlement id, POI id, or region level id); a settlement's main and
   secondary controllers share one progression.

@@ -136,7 +136,7 @@ update other options with `viewer.setOptions({...})`, which marks dirty and appl
     requested, and `resident` is `null` while loading (`bucket.geometry.resident` or a texture
     blob).
   - to identify the source entity, run
-    [`world find --near`](extraction.md#finding-assets-and-scenery) or read `debug/instances.jsonl`
+    [`scene find --near`](extraction.md#finding-assets-and-scenery) or read `debug/instances.jsonl`
     ([debug outputs](extraction.md#report-and-debug-outputs)).
 
 ## profiling
