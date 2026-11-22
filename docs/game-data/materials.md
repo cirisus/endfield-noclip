@@ -346,13 +346,16 @@ glass and effects share one list (the pass's full step order is under
 then draws decals, then every queue 2900–3100 renderer (both the static ECS scenery and GameObject
 renderers such as prefab effects, whose shaders are all `LightMode` `ForwardOnly`) in one order:
 each side is sorted back to front (sorting layer, render queue, then distance, then renderer
-priority, Unity's `CommonTransparent`) and the two sorted lists are merged by their keys, farther
-first. so an effect kilometres behind a window draws first and the window blends over it. the
-sorting layer criterion covers a renderer's `m_SortingLayer` (the layer's place in the layer order)
-and then its `m_SortingOrder`, lower first; prefab effects use the order to stack parts that share a
-centre: the blue talosite's dark backing card (`glow01_andi`) is −4, its light column and ground
-glow −2, its upper glow line −1, and its shards and star icon 0, so the card always draws behind the
-icon. `_TransparentSortPriority` (±50) acts only through the material's render queue. at PC settings
+priority: the SRP list's `sortingCriteria` is 0x57, Unity's `CommonTransparent` plus
+`RendererPriority`) and the two sorted lists are merged by their keys, farther first. so an effect
+kilometres behind a window draws first and the window blends over it. within a sorting band a lower
+queue draws first however near it is: Qingbo Stockade's falls lay their VFXWater columns
+(queue 3001) over the VFXBaseV2 curtain sheets (3000) behind them from any distance. the sorting
+layer criterion covers a renderer's `m_SortingLayer` (the layer's place in the layer order) and then
+its `m_SortingOrder`, lower first; prefab effects use the order to stack parts that share a centre:
+the blue talosite's dark backing card (`glow01_andi`) is −4, its light column and ground glow −2,
+its upper glow line −1, and its shards and star icon 0, so the card always draws behind the icon.
+`_TransparentSortPriority` (±50) acts only through the material's render queue. at PC settings
 nothing renders transparents at half size, so the order holds there. what distance each side sorts
 by (bounds centre, most likely) isn't traced.
 

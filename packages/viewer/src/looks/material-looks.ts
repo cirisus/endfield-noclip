@@ -309,6 +309,16 @@ export class LazyMaterialLooks {
 	look(material: number): MaterialLook {
 		return (this.#looks[material] ??= materialLook(this.#entries[material]));
 	}
+
+	/**
+	 * @param material material id, below {@link count}
+	 * @returns its render queue, by which transparent draws sort before their distance; 0 for a material that
+	 *   didn't convert, which draws nothing
+	 */
+	renderQueue(material: number): number {
+		const entry = this.#entries[material];
+		return entry.status === 'ready' ? entry.renderQueue : 0;
+	}
 }
 
 /**

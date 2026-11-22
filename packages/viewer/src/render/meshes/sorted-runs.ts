@@ -8,9 +8,11 @@
 /**
  * @param layer a renderer's sorting layer (its place in the layer order), i16
  * @param order its sorting order within the layer, i16
+ * @param queue its material's render queue, 0–65535
  * @returns its sort band: lower bands draw first, whatever their distance
  */
-export const sortBand = (layer: number, order: number): number => layer * 65_536 + order;
+export const sortBand = (layer: number, order: number, queue: number): number =>
+	(layer * 65_536 + order) * 65_536 + queue;
 
 /** a draw's instances in draw order, as the merge reads them */
 export interface SortedSource {

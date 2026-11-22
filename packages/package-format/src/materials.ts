@@ -17,6 +17,11 @@ export interface ReadyMaterial {
 	status: 'ready';
 	/** the faces the game culls */
 	cull: MaterialCull;
+	/**
+	 * the material's render queue (`customRenderQueue`, else its shader's): the game sorts transparent draws by
+	 * it after their sorting layer and order and before their distance
+	 */
+	renderQueue: number;
 	/** what the material draws, interpreted by the extractor */
 	surface: MaterialSurface;
 	/**

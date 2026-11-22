@@ -227,6 +227,11 @@ export class MeshBuckets {
 		return material < this.#standIn ? this.#looks.look(material) : undefined;
 	}
 
+	/** @returns a material's render queue, 0 for the stand-ins, which draw opaque */
+	#renderQueueOf(material: number): number {
+		return material < this.#standIn ? this.#looks.renderQueue(material) : 0;
+	}
+
 	/**
 	 * an emitter's box spans everywhere its particles reach, so it doesn't stand in for them; nor does a shadow
 	 * proxy's
@@ -277,7 +282,7 @@ export class MeshBuckets {
 					shadowOnly,
 					gpuCullable: draw.particles === null && (queue === 'opaque' || queue === 'cutout'),
 					sorted: SORTED_RANGES.has(look.queue),
-					band: sortBand(draw.sortingLayer, draw.sortingOrder),
+					band: sortBand(draw.sortingLayer, draw.sortingOrder, this.#renderQueueOf(material)),
 					particles: draw.particles,
 					buckets: Array.from({ length: BUCKET_VARIANTS }, () => null),
 				});

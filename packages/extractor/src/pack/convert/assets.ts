@@ -584,7 +584,7 @@ const describeSurfaces = (
 				motion = moving;
 			}
 		}
-		return { status: 'ready', cull: material.cull, surface, gaps, motion };
+		return { status: 'ready', cull: material.cull, renderQueue: material.renderQueue, surface, gaps, motion };
 	});
 	return { entries, unsupported };
 };

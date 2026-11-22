@@ -39,12 +39,13 @@ test('interleaves draws far to near, keeping neighbouring instances of one draw 
 
 test('lower sorting bands draw first, whatever their distance', () => {
 	// the blue talosite's parts share a centre: its dark backing card (order −4) goes behind the shards (0)
-	const backing = sortBand(0, -4);
+	const backing = sortBand(0, -4, 3000);
+	const shards = sortBand(0, 0, 3000);
 	assert.deepEqual(
 		merged([
-			{ distances: [17.01], bands: [0] },
+			{ distances: [17.01], bands: [shards] },
 			{ distances: [17], bands: [backing] },
-			{ distances: [500, 16], bands: [backing, 0] },
+			{ distances: [500, 16], bands: [backing, shards] },
 		]),
 		[
 			[2, 0, 1],
@@ -53,7 +54,22 @@ test('lower sorting bands draw first, whatever their distance', () => {
 			[2, 1, 1],
 		],
 	);
-	assert.ok(sortBand(-1, 100) < sortBand(0, -100));
+	assert.ok(sortBand(-1, 100, 3000) < sortBand(0, -100, 3000));
+	assert.ok(sortBand(0, -1, 3100) < sortBand(0, 0, 2900));
+});
+
+test('within a sorting order, a lower render queue draws first, whatever its distance', () => {
+	// Qingbo's falls: the curtain sheets (queue 3000) behind the near column (3001) even once nearer
+	assert.deepEqual(
+		merged([
+			{ distances: [60], bands: [sortBand(0, 0, 3001)] },
+			{ distances: [55], bands: [sortBand(0, 0, 3000)] },
+		]),
+		[
+			[1, 0, 1],
+			[0, 0, 1],
+		],
+	);
 });
 
 test('ties go to the earlier draw, and only the listed count draws', () => {
