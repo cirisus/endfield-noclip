@@ -33,12 +33,12 @@ import { type AssetResolver, objectKey, type ObjectRef } from '../game/assets/as
 import { RENDER_PIPELINE_QUAD_PATH } from '../game/assets/builtin-resources.ts';
 import { describeMaterial } from '../game/materials/material-describe.ts';
 import { loadMaterial, type LoadedMaterial } from '../game/materials/material-load.ts';
+import { DECAL_PROJECTOR_CLASS } from '../game/prefabs/decal-projector.ts';
 import { readPrefabEnvironmentVolumes } from '../game/prefabs/prefab-environment.ts';
 import { readPrefabLights } from '../game/prefabs/prefab-lights.ts';
 import { walkPrefab } from '../game/prefabs/prefab-walk.ts';
 import { readPrefabRenderers } from '../game/prefabs/prefab.ts';
 import { loadSectorTexture } from '../game/water/water-source.ts';
-import { openAssetFiles, openBundle } from '../hg/bundles.ts';
 import { DECAL_CUBE_PATH } from '../pack/content/pack-content.ts';
 import { convertMaterial, ShaderTable } from '../pack/convert/materials.ts';
 import { zstdSync } from '../zstd.ts';
@@ -153,7 +153,7 @@ const resolveObjectArg = async (
 		return resolver.findUnique({ hash, path: (await context.world.pathOf(hash)) ?? null }, classId);
 	}
 	if (BUNDLE_NAME.test(target)) {
-		return resolveFromBundle(context, resolver, target, classId);
+		return resolveFromBundle(resolver, target, classId);
 	}
 	const hashes = await context.world.hashesOf(target);
 	if (hashes.length !== 1) {
@@ -168,13 +168,12 @@ const resolveObjectArg = async (
 
 /** picks the unique object of `classId` (or main GameObject for prefabs) in a bundle */
 const resolveFromBundle = async (
-	context: Context,
 	resolver: AssetResolver,
 	bundleName: string,
 	classId: number,
 ): Promise<ObjectRef> => {
 	const bundleIndex = resolver.bundleIndex(bundleName);
-	const files = await openAssetFiles(await openBundle(context, bundleName));
+	const files = await resolver.assetFiles(bundleIndex);
 	if (classId === UnityClass.GameObject) {
 		const containerRoots: ObjectRef[] = [];
 		for (const file of files) {
@@ -265,6 +264,13 @@ const inspectPrefab = async (
 
 	// 1. walk the full hierarchy (including inactive nodes) so nothing is hidden
 	const hierarchy: HierarchyNode[] = [];
+	const scriptNames = new Map<object, Promise<string>>();
+	const cachedScriptName = (ref: ObjectRef): Promise<string> =>
+		ref.info.type === undefined
+			? scriptName(resolver, ref)
+			: scriptNames.getOrInsertComputed(ref.info.type, () => scriptName(resolver, ref));
+	let hasParticles = false;
+	let hasDecal = false;
 	await walkPrefab(
 		resolver,
 		root,
@@ -276,9 +282,17 @@ const inspectPrefab = async (
 					if (component.classId === UnityClass.Transform || component.classId === UnityClass.RectTransform) {
 						continue;
 					}
+					if (
+						component.classId === UnityClass.ParticleSystem ||
+						component.classId === UnityClass.ParticleSystemRenderer
+					) {
+						hasParticles = true;
+					} else if (component.classId === DECAL_PROJECTOR_CLASS) {
+						hasDecal = true;
+					}
 					if (component.classId === UnityClass.MonoBehaviour) {
 						// oxlint-disable-next-line no-await-in-loop -- keeps authored component order
-						components.push(await scriptName(resolver, component.ref));
+						components.push(await cachedScriptName(component.ref));
 					} else {
 						components.push(typeName(component.ref.info.type) ?? `class:${component.classId}`);
 					}
@@ -297,10 +311,10 @@ const inspectPrefab = async (
 		-1,
 	);
 
-	// 2. run the packer's own readers
+	// 2. run the packer's own readers (only look up built-in fallback meshes if the prefab needs them)
 	const [particleQuad, decalCube] = await Promise.all([
-		findBuiltinMesh(context, resolver, RENDER_PIPELINE_QUAD_PATH),
-		findBuiltinMesh(context, resolver, DECAL_CUBE_PATH),
+		hasParticles ? findBuiltinMesh(context, resolver, RENDER_PIPELINE_QUAD_PATH) : null,
+		hasDecal ? findBuiltinMesh(context, resolver, DECAL_CUBE_PATH) : null,
 	]);
 	const [renderersResult, lightsResult, volumesResult] = await Promise.all([
 		readPrefabRenderers(resolver, root, {
@@ -318,7 +332,35 @@ const inspectPrefab = async (
 		}).catch((error: unknown) => errorText(error)),
 	]);
 
-	// 3. summarize each renderer's mesh & materials (including describeMaterial)
+	// 3. summarize each renderer's mesh & materials (including describeMaterial), caching repeated materials
+	const loadMaterialSummary = async (matRef: ObjectRef) => {
+		try {
+			const loaded = await loadMaterial(resolver, matRef);
+			const described = describeLoadedMaterial(loaded);
+			return {
+				name: loaded.record.name,
+				object: objectKey(matRef),
+				bundle: resolver.manifest.bundle(matRef.bundleIndex).name,
+				shader: loaded.shader.name,
+				queue: loaded.classification.renderQueue,
+				blend: loaded.classification.blend,
+				surface: described.surface.kind,
+				...(described.surface.kind === 'unsupported' || described.surface.kind === 'undrawn'
+					? { reason: described.surface.reason }
+					: {}),
+				...('gaps' in described.surface &&
+				Array.isArray(described.surface.gaps) &&
+				described.surface.gaps.length > 0
+					? { gaps: described.surface.gaps }
+					: {}),
+			};
+		} catch (error) {
+			return { object: objectKey(matRef), error: errorText(error) };
+		}
+	};
+	const materialCache = new Map<string, ReturnType<typeof loadMaterialSummary>>();
+	const summarizeMaterial = (matRef: ObjectRef) =>
+		materialCache.getOrInsertComputed(objectKey(matRef), () => loadMaterialSummary(matRef));
 	const rendererSummaries =
 		typeof renderersResult === 'string'
 			? { error: renderersResult }
@@ -327,34 +369,7 @@ const inspectPrefab = async (
 						const meshName =
 							(await renderer.mesh.file.peekName(renderer.mesh.info)) ?? objectKey(renderer.mesh);
 						const materials = await Promise.all(
-							renderer.materials.map(async (matRef) => {
-								if (matRef === null) {
-									return null;
-								}
-								try {
-									const loaded = await loadMaterial(resolver, matRef);
-									const described = describeLoadedMaterial(loaded);
-									return {
-										name: loaded.record.name,
-										object: objectKey(matRef),
-										bundle: resolver.manifest.bundle(matRef.bundleIndex).name,
-										shader: loaded.shader.name,
-										queue: loaded.classification.renderQueue,
-										blend: loaded.classification.blend,
-										surface: described.surface.kind,
-										...(described.surface.kind === 'unsupported' || described.surface.kind === 'undrawn'
-											? { reason: described.surface.reason }
-											: {}),
-										...('gaps' in described.surface &&
-										Array.isArray(described.surface.gaps) &&
-										described.surface.gaps.length > 0
-											? { gaps: described.surface.gaps }
-											: {}),
-									};
-								} catch (error) {
-									return { object: objectKey(matRef), error: errorText(error) };
-								}
-							}),
+							renderer.materials.map(async (matRef) => (matRef === null ? null : summarizeMaterial(matRef))),
 						);
 						let kind: string = 'mesh';
 						if (renderer.decal !== null) {
