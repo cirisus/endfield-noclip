@@ -28,7 +28,7 @@ its map's B, not the mirror that `_RoughnessMax` alone would give.
 
 ## forward Lit
 
-`HGRP/LitForward` is Lit drawn in a forward pass instead of the GBuffer; in the packages surveyed
+`HGRP/LitForward` is Lit drawn in a forward pass instead of the GBuffer; across the scenes checked
 only the golden treasure chest's body uses it (`M_anm_com_treasurechest+1_001_02`, in
 `int_trchest_common_gorgeous_postmodel`). its surface inputs are Lit's: the texture layouts, base
 colour, `0.08 · _Specular` reflectance, and the emission mask, whose emission is also multiplied by
@@ -219,7 +219,7 @@ of the sun's illuminance, before the shadow map and cloud shadow:
 - all four are multiplied by the sun shadow term
 
 [local lights](lighting.md#local-lights) light foliage through the same four terms, with the shading
-normal's N·L in place of the stored one.
+normal's N·L in place of the stored one and without the 1/π (matching local lights' units).
 
 `HGRP/Foliage/Leaf` fills the inputs from its material and the mesh's vertex colours (R ambient
 occlusion, A height in the canopy):
@@ -343,21 +343,22 @@ behind it shows through.
 
 glass and effects share one list (the pass's full step order is under
 [blending](effects.md#blending)). the transparent pass copies the opaque scene into its own target,
-then draws decals, then every queue 2900–3100 renderer (both the static ECS scenery and GameObject
-renderers such as prefab effects, whose shaders are all `LightMode` `ForwardOnly`) in one order:
-each side is sorted back to front (sorting layer, render queue, then distance, then renderer
-priority: the SRP list's `sortingCriteria` is 0x57, Unity's `CommonTransparent` plus
-`RendererPriority`) and the two sorted lists are merged by their keys, farther first. so an effect
-kilometres behind a window draws first and the window blends over it. within a sorting band a lower
-queue draws first however near it is: Qingbo Stockade's falls lay their VFXWater columns
-(queue 3001) over the VFXBaseV2 curtain sheets (3000) behind them from any distance. the sorting
-layer criterion covers a renderer's `m_SortingLayer` (the layer's place in the layer order) and then
-its `m_SortingOrder`, lower first; prefab effects use the order to stack parts that share a centre:
-the blue talosite's dark backing card (`glow01_andi`) is −4, its light column and ground glow −2,
-its upper glow line −1, and its shards and star icon 0, so the card always draws behind the icon.
-`_TransparentSortPriority` (±50) acts only through the material's render queue. at PC settings
-nothing renders transparents at half size, so the order holds there. what distance each side sorts
-by (bounds centre, most likely) isn't traced.
+then draws decals, then every queue 2900–3400 renderer on PC (2900–3100 when low-resolution
+transparents are enabled; both the static ECS scenery and GameObject renderers such as prefab
+effects, whose shaders are all `LightMode` `ForwardOnly`) in one order: each side is sorted back to
+front (sorting layer, render queue, then distance, then renderer priority: the SRP list's
+`sortingCriteria` is 0x57, Unity's `CommonTransparent` plus `RendererPriority`) and the two sorted
+lists are merged by their keys, farther first. so an effect kilometres behind a window draws first
+and the window blends over it. within a sorting band a lower queue draws first however near it is:
+Qingbo Stockade's falls lay their VFXWater columns (queue 3001) over the VFXBaseV2 curtain sheets
+(3000) behind them from any distance. the sorting layer criterion covers a renderer's
+`m_SortingLayer` (the layer's place in the layer order) and then its `m_SortingOrder`, lower first;
+prefab effects use the order to stack parts that share a centre: the blue talosite's dark backing
+card (`glow01_andi`) is −4, its light column and ground glow −2, its upper glow line −1, and its
+shards and star icon 0, so the card always draws behind the icon. `_TransparentSortPriority` (±50)
+acts only through the material's render queue. at PC settings nothing renders transparents at half
+size, so the order holds there. what distance each side sorts by (bounds centre, most likely) isn't
+traced.
 
 ## decals
 
@@ -476,13 +477,15 @@ the box:
   is `saturate(1 − 2·|d| + _SoftBias · _UseSoftBlend)` with `d` the local coordinate along the axis.
   the placement's colour isn't read
 
-the deferred lighting reads the mask (only while `_WaterWetnessMaskParam0.x` is above 1/2048, a
-global whose setter isn't traced) with the porosity Lit's G-buffer stores,
+the deferred lighting reads the mask (separate from [rain wetness](environment.md#wetness); active
+only while `_WaterWetnessMaskParam0.x` is above 1/2048, a global whose setter isn't traced) with the
+porosity Lit's G-buffer stores,
 `saturate(_PorosityFactorX · roughness + _PorosityFactorZ · metallic + _PorosityFactorY)`, or 0 with
-`_DisableVerticalFlow`. with `w` the wetness, the albedo is multiplied by `1 − porosity · w²` and
-the roughness falls towards `min(1 − porosity · w, roughness)` by `w²`; the normal stays. Lit's
-defaults (0.2, 0.4 and 0, which the waterwheel's materials keep) darken a surface of roughness 0.7
-to about 46% and smooth it to 0.46 at full wetness.
+`_DisableVerticalFlow`. when the placement's `_m6 & 255 == 2`, the box bends into a sector by
+`_m5 / 12` degrees. with `w` the wetness, the albedo is multiplied by `1 − porosity · w²` and the
+roughness falls towards `min(1 − porosity · w, roughness)` by `w²`; the normal stays. Lit's defaults
+(0.2, 0.4 and 0, which the waterwheel's materials keep) darken a surface of roughness 0.7 to about
+46% and smooth it to 0.46 at full wetness.
 
 ## matte paintings
 
@@ -662,7 +665,7 @@ and its normal and tangent turn by `q`. `s` is `_globalPscaleMul`, times
 `_VATMaxPieceScale · (1 − fract(4 · alpha))` under `_pScaleInPosA`. two cases override it: on frame
 0 the vertex keeps its rest position unless `_B_animateFirstFrame` is set, and a vertex whose UV1 v
 is at most 0.1 collapses to the object's origin. of the 37 materials with the keyword whose asset
-paths are known (across every packed scene, both shaders), all have RGBA half-float textures
+paths are known (across the scenes checked, both shaders), all have RGBA half-float textures
 (`_TextureFormat` 1), none sets `_pScaleInPosA`, `_HoudiniVATInParticle` (UV sets and the frame from
 particle data) or `_BlendMeshNormalAndTangent` (the mesh's own normal kept), and all play on their
 own, at speeds from −8 to 9 and some with a `_gameTimeAtFirstFrame`. the cans' textures are
@@ -726,4 +729,6 @@ the bone animation read `g`.
 - whether anything sets a per-draw [emission](#emission) colour on static scenery; no drawn object
   needs one
 - whether premultiplied [glass](#glass) multiplies its colour by its alpha, and how glass refracts
+- what distance each side of the [transparent draw order](#transparent-draw-order) sorts by (bounds
+  centre is inferred, not traced)
 - what the game does with the bump on meshes without tangents

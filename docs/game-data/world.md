@@ -1,9 +1,9 @@
-# world: maps, levels, streaming and terrain
+# world: maps, levels and streaming
 
 streaming scenes and their coordinate frames, levels as sets of 128 m cells, entity level tags, the
-static and dynamic streaming files, stream areas, terrain tiles, LOD/HLOD data and how the game
-streams them by layer. which scenery a scene state, quest or variable switches on is in
-[scene-states.md](scene-states.md).
+static and dynamic streaming files, stream areas, LOD/HLOD data and how the game streams them by
+layer. terrain tiles and blending are in [terrain.md](terrain.md); which scenery a scene state,
+quest or variable switches on is in [scene-states.md](scene-states.md).
 
 ## scenes, maps and levels
 
@@ -61,23 +61,13 @@ send the party to a scene directly, and each mission's
 display name with a quest (`dung02_cdg005` and quest `e11m7` are both "Homecoming").
 
 a dungeon's id names a level, not necessarily a scene: many operator-story levels stream another
-scene. Liino's and Gilberta's stream `map01`, Typhoeus's `dung02_rdg009` and `rdg015` stream
-`map02`, Mi Fu's `rdg006`/`rdg007` stream `rdg004`, and Li Zhiyan's `dung02_rdg012` streams
-`rdg008`. so `rdg` numbers skipped in the scene list (`dung01_rdg002`, `rdg008`–`rdg014`) are still
-dungeons, and only `dung01_rdg006` and `rdg009` have no LevelConfig at all. the `rdg` rows leave
-`dungeonName` and `relatedCharId` empty; the operator comes from the character missions that lead
-there (`charId`, and the `c<n>` mission prefix matches `chr_00<n>`). a mission names a level in
-`levelId`, quests' `levelIdOverride`, tracking entries' `sceneId` and conditions' `_mapId`
-(`{ constValue }`). some entries no mission names: `dung02_rdg012` (`dung_lizhiyan_02`), and
-`dung02_rdg015`, which its mission (`c34m3d6`) spells `dung02_rdg0015`.
-
-`dung02_rdg012` is most likely Deep Dale Street's revisit, where Arcane (Li Zhiyan) sends the player
-after chapter 11 (inferred, not traced to the dialogue): it streams `dung02_rdg008`'s scene, spawns
-the player in the ruined plaza (3.4, 63.1, 89.6) rather than at the story's start (-77, 103, 231),
-and its LevelData holds only a checkpoint, a rope-port pair from the plaza up to the street (-77,
-64.7 → 82.5, 128) and a sub-file for `e11m8d5`, the post-story "keep exploring" mission. no plain
-JSON, table or pooled file names `dung_lizhiyan_02` outside its own rows, so whatever enters it is
-elsewhere.
+scene (e.g. `dung02_rdg009` and `rdg015` stream `map02`, `dung02_rdg012` streams `dung02_rdg008`).
+the `rdg` rows leave `dungeonName` and `relatedCharId` empty; the operator comes from the character
+missions (`charId`, with `c<n>` matching `chr_00<n>`). a mission names a level in `levelId`, quests'
+`levelIdOverride`, tracking entries' `sceneId` and conditions' `_mapId` (`{ constValue }`).
+inferred: `dung02_rdg012` (`dung_lizhiyan_02`, not named by any mission) is Deep Dale Street's
+post-chapter-11 revisit—it streams `dung02_rdg008`, spawns in the ruined plaza and holds only a
+checkpoint, a rope-port pair and an `e11m8d5` sub-file.
 
 ### LevelConfig
 
@@ -136,9 +126,9 @@ by id in each cell's chunk. so:
 the in-game map's place names are `Data/Json/UILevelMapLoadConfig/<level>.json` static elements of
 type 2: a `textId` (`scene_<level>_…_location_tips_<n>`, through `TextTable`) at a world `position`
 (x, z; y is 0), such as "Bridge Approach" in The Hub and "Tianjing Courtyard" in Wuling City. a map
-with `basic.needInverseXZ` set swaps x and z; none of the packed scenes' levels were seen to. the
-same files give interior floor names (`tierNames`, `scene_<level>_layer_tips_<n>`) with per-tier
-bounds (`tierInfos`); how tiers relate to stream areas isn't established. level display names are
+with `basic.needInverseXZ` set swaps x and z (not set on map01 or map02). the same files give
+interior floor names (`tierNames`, `scene_<level>_layer_tips_<n>`) with per-tier bounds
+(`tierInfos`); how tiers relate to stream areas isn't established. level display names are
 `LevelDescTable.showName`.
 
 ## static scenery: InitChunkData and StreamingChunkData
@@ -176,27 +166,28 @@ a component group is an ECS archetype stored column-major: a descriptor list of
 `(component id, stride)` and one blob of `count · Σ stride` bytes. component ids are anonymous
 column selectors; the ones with established meaning:
 
-| id    | content                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0–5   | world AABB, centre xyz then extents xyz (f32 each)                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 6     | the game's `RenderObjectLODInfoComponent` (20 bytes): LOD centre (world), half size squared, dither byte, culling options byte (0 on every map02 entity)                                                                                                                                                                                                                                                                                                                      |
-| 8–14  | draw infos for capacity `2^(id − 8)`: count, 24-byte infos (the game's `RendererInfo`: submesh, `renderFlags`), then `(max², min²)` LOD bounds                                                                                                                                                                                                                                                                                                                                |
-| 18    | 256-byte instance constants starting with the object-to-world matrix                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 21    | 64-byte name prefix (root object names win when present)                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 27    | rect decal constants (160 bytes): matrix, inverse, UV scale and offset, RGBA8 colour, intensity, an angle the decal's shaders don't read (270 and 90 seen), flags (0 on every decal seen); material in StreamingChunkData under `0xff010000` ([materials](materials.md#decals))                                                                                                                                                                                               |
-| 28    | terrain decal constants in 27's layout (matrix, inverse, params, packed colour); material in StreamingChunkData, `HGRP/TerrainDecalLit`                                                                                                                                                                                                                                                                                                                                       |
-| 30    | a water surface placement ([water](water.md#placements-initchunkdata-component-30))                                                                                                                                                                                                                                                                                                                                                                                           |
-| 31    | a WaterDecal box (172 bytes, the game's `HGWaterDecalComponent`): `u32` render type mask (1), mesh and material ids (0 in the file), the object-to-world matrix at 12, two vectors (0 seen), then four `animParam` vectors at 108, the first two the renderer's values ([WaterDecal](water.md#waterproxy-and-waterdecal)); StreamingChunkData names the render pipeline's cube under `0xff000000` and its material under `0xff010000` (map02's `P_waterdecal_01`, all Global) |
-| 42    | a local light's runtime data, zero-filled in the file (244 bytes); the values are in the object row (below)                                                                                                                                                                                                                                                                                                                                                                   |
-| 44    | on collider-only entities (`…_COL1`, `P_box_collider`, `MergedCollider_…`), always with 21 alone (tens of thousands on map02); content unread                                                                                                                                                                                                                                                                                                                                 |
-| 52    | a constant spin about the entity's own origin (16 bytes): speed (rad/s, non-negative), unit axis (local); only on the originium hub frames ([spinning scenery](animation.md#spinning-scenery))                                                                                                                                                                                                                                                                                |
-| 54    | a constant spin (92 bytes): speed (rad/s, non-negative), unit axis, pivot (world), six floats not checked (a local box, by their values), then the stored position, rotation quaternion xyzw and scale; only on Qingbo Stockade's waterwheels' renderers ([spinning scenery](animation.md#spinning-scenery))                                                                                                                                                                  |
-| 58    | one byte (0 seen), on map02's light-art entities alone (about 1250: mist cards and boxes, light beams): their draws' LOD bounds are [camera distances](#lod-and-hlod)                                                                                                                                                                                                                                                                                                         |
-| 60    | a cloth hash (u32): the entity's vertices follow the [cloth](#cloth-groups) with that hash ([cloth simulation](materials.md#cloth-simulation))                                                                                                                                                                                                                                                                                                                                |
-| 61    | an oriented box (44 bytes): u32 0, centre xyz, a size xyz (half or full unchecked), rotation quaternion xyzw; with 21 and the 1-byte 62 on map02's `shadowOC_CAVE_*` entities, the only ones seen                                                                                                                                                                                                                                                                             |
-| 63    | the same light's settings, zero-filled (448 bytes)                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 67    | LOD ranges: LOD count and cumulative draw count per LOD                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 68–74 | draw refs for capacity `2^(id − 68)`: `(u64 material hash, u64 mesh hash, …)`                                                                                                                                                                                                                                                                                                                                                                                                 |
+| id    | content                                                                                                                                                                                                                                                                                                      |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0–5   | world AABB, centre xyz then extents xyz (f32 each)                                                                                                                                                                                                                                                           |
+| 6     | the game's `RenderObjectLODInfoComponent` (20 bytes): LOD centre (world), half size squared, dither byte, culling options byte (0 on every map02 entity)                                                                                                                                                     |
+| 7     | generic render-object info (24 bytes): layer mask, flags, scene mask, art tag and squared sorting distance                                                                                                                                                                                                   |
+| 8–14  | draw infos for capacity `2^(id − 8)`: count, 24-byte infos (the game's `RendererInfo`: submesh, `renderFlags`), then `(max², min²)` LOD bounds                                                                                                                                                               |
+| 18    | 256-byte instance constants starting with the object-to-world matrix                                                                                                                                                                                                                                         |
+| 21    | 64-byte name prefix (root object names win when present)                                                                                                                                                                                                                                                     |
+| 27    | rect decal constants (160 bytes): matrix, inverse, UV scale and offset, RGBA8 colour, intensity, an angle the decal's shaders don't read (270 and 90 seen), flags (0 on every decal seen); material in StreamingChunkData under `0xff010000` ([materials](materials.md#decals))                              |
+| 28    | terrain decal constants in 27's layout (matrix, inverse, params, packed colour); material in StreamingChunkData, `HGRP/TerrainDecalLit`                                                                                                                                                                      |
+| 30    | a water surface placement ([water](water.md#placements-initchunkdata-component-30))                                                                                                                                                                                                                          |
+| 31    | a WaterDecal box (`HGWaterDecalComponent`, 172 bytes; [WaterDecal](water.md#waterproxy-and-waterdecal))                                                                                                                                                                                                      |
+| 42    | a local light's runtime data, zero-filled in the file (244 bytes); the values are in the object row (below)                                                                                                                                                                                                  |
+| 44    | on collider-only entities (`…_COL1`, `P_box_collider`, `MergedCollider_…`), always with 21 alone (tens of thousands on map02); content unread                                                                                                                                                                |
+| 52    | a constant spin about the entity's own origin (16 bytes): speed (rad/s, non-negative), unit axis (local); only on the originium hub frames ([spinning scenery](animation.md#spinning-scenery))                                                                                                               |
+| 54    | a constant spin (92 bytes): speed (rad/s, non-negative), unit axis, pivot (world), six floats not checked (a local box, by their values), then the stored position, rotation quaternion xyzw and scale; only on Qingbo Stockade's waterwheels' renderers ([spinning scenery](animation.md#spinning-scenery)) |
+| 58    | one byte (0 seen), on map02's light-art entities alone (about 1250: mist cards and boxes, light beams): their draws' LOD bounds are [camera distances](#lod-and-hlod)                                                                                                                                        |
+| 60    | a cloth hash (u32): the entity's vertices follow the [cloth](#cloth-groups) with that hash ([cloth simulation](materials.md#cloth-simulation))                                                                                                                                                               |
+| 61    | an oriented box (44 bytes): u32 0, centre xyz, a size xyz (half or full unchecked), rotation quaternion xyzw; with 21 and the 1-byte 62 on map02's `shadowOC_CAVE_*` entities, the only ones seen                                                                                                            |
+| 63    | the same light's settings, zero-filled (448 bytes)                                                                                                                                                                                                                                                           |
+| 67    | LOD ranges: LOD count and cumulative draw count per LOD                                                                                                                                                                                                                                                      |
+| 68–74 | draw refs for capacity `2^(id − 68)`: `(u64 material hash, u64 mesh hash, …)`                                                                                                                                                                                                                                |
 
 object row kinds by census: 1 = GameObjects the client rebuilds as MonoBehaviours (environment and
 post volumes, probes, water, terrain root), 2 = component-group entities, 3 = proxies: audio, grass
@@ -363,8 +354,8 @@ so a draw's LOD is the rank of its upper threshold. instances are a column-major
 matrix and two vec4 parameters (96 bytes): a grass entity is a cluster of nearby instances (column
 `37 + k`, `GrassClusterK{4,8,16,32}Component`: a count and room for `4 · 2^k`), a tree entity one
 instance (column 80, `HGTreeComponent`). column 6 (20 bytes) starts with a point and a squared size;
-column 7 (24 bytes) isn't identified. the layout comes from a census over map01 and map02, the
-component names from the IL2CPP metadata.
+column 7 (24 bytes) is the same render-object info as in component groups. the layout comes from a
+census over map01 and map02, the component names from the IL2CPP metadata.
 
 map02 holds about a million grass and bush instances in tens of thousands of clusters, and under
 twenty thousand trees; map01 a few hundred thousand grass instances and no tree grids. grids repeat
@@ -479,127 +470,7 @@ the frame.
   untested row starts visible, and how far the centre moves before rows are tested again (5 m, by
   the setting's name), is unchecked.
 - once loaded, a prefab's renderers are culled only by their own LODGroups and effect LOD tables
-  ([effects](effects.md#effect-lod-tables)). the LOD proxies the dynamic scene builds for models and
-  effects never hide them: a proxy names a near and a far grid containing the row (the satellites'
-  are a level-3 and a level-5 cell, small effects' levels 0 and 1, the corroded planet's its own
-  grid twice) and sets the animator's or effect's LOD level to the first of them that's loaded, else
-  to 2. an effect's level is the band its root's LOD table shows, the same index (High, Mid, Low);
-  the camera's distance and the table's cull distance play no part.
-
-## terrain
-
-terrain lives in VFS group `F84BF5E6`:
-
-```
-Data/Terrain/PC/<scene>/Terrain_<level>_<x>_<z>_<H|N|T|A|S|C>.bytes
-Data/Terrain/PC/<scene>/Layers/LAYER_<D|N|C>_<index>.bytes
-```
-
-each file is a u32 clear size and an inverted-LZ4 block (a few are stored raw, e.g.
-`dung02_dg005/Layers/LAYER_C_3`), and the clear bytes are a 20-byte little-endian `TRET` header
-(magic, `u32` version 1, `u16` width, height, mip count and Unity `GraphicsFormat`, `u32` payload
-size) followed by one texture's mip chain, which fills the payload exactly. the mip count field is
-inferred from layer files, whose payloads are exactly the sum of their mip chains.
-
-tiles form a quadtree over the scene's terrain square: level `l` splits it into `2^l × 2^l` tiles,
-`x` along +X and `z` along +Z. the finest tiles are 64 m (map02's leaf is level 6, map01's level 5).
-
-| channel  | content                                                                                            |
-| -------- | -------------------------------------------------------------------------------------------------- |
-| `H`      | 65² heights, R8G8 read as little-endian u16, 1 m spacing; outer samples are shared with neighbours |
-| `N`, `A` | baked normal and albedo pages, DXT5                                                                |
-| `T`      | tint page, DXT5 sRGB                                                                               |
-| `S`      | splat control, RGBA8                                                                               |
-| `C`      | 34² cliff index, R8G8, driving the cliff projection                                                |
-
-pages are 132² with a 2-texel border around a 128² core that covers the tile edge to edge, and have
-one level. every tile with a height page has all six channels, at every level. layers are per-scene
-material textures addressed by index ([close-up layers](#close-up-layers)): `D` diffuse (BC7 sRGB),
-`N` normal (BC7), `C` cone maps for parallax (R8). the terrain shader binds the tile channels as
-`_HeightmapAtlas` (`H`), `_NormalmapAtlas` (`N`), `_TintColorAtlas` (`T`), `_AlbedoAtlas` (`A`),
-`_SplatCtrlAtlas` (`S`) and `_CliffIndexAtlas` (`C`), and the layers as the texture arrays `_Splats`
-(`D`), `_Normals` (`N`) and `_ConeMaps` (`C`).
-
-the baked `A` and `N` pages are what the game draws where its close-up layer blend doesn't reach:
-
-| channel | r                   | g                   | b                    | a                          |
-| ------- | ------------------- | ------------------- | -------------------- | -------------------------- |
-| `A`     | albedo, linear      | albedo              | albedo               | subsurface curvature input |
-| `N`     | world normal x ·2−1 | world normal z ·2−1 | perceptual roughness | occlusion                  |
-
-`A` is linear despite its UNorm format, and the normal's y is `√(1 − x² − z²)`. the normal's
-orientation was checked against normals from the height page (r = +X, g = +Z, rows along +Z).
-
-the terrain's placement isn't in the tiles. it comes from the scene's `HGTerrainSurfacesData`
-MonoBehaviour at
-`assets/beyond/dynamicassets/scenes/pc/<scene>/terrain/hgterrainsurfacesdata.asset`:
-
-- `terrainPosition`: world position of the square's minimum corner; `y` is the height of a zero
-  sample
-- `heightScale`: metres spanned by the 15-bit height range
-- `terrainSize`: root edge length, a power-of-two multiple of 64 m
-- `nodeData`: a complete breadth-first quadtree (`index = (4^l − 1)/3 + z·2^l + x`) down to the leaf
-  level, whether or not a node has tile files, with per-node `nodeLevel` (0 for the root and for
-  levels above the coarsest tiles), `parent`, `allHole`, min/max height (metres above
-  `terrainPosition.y`) and a `maxHeightError` (metres). on map02 `localMaxHeight` is the maximum of
-  the node's samples with the hole bit masked off, and `localMinHeight` counts holes as 0. despite
-  its name, `maxHeightError` isn't the error of drawing the node instead of its children: leaves,
-  with nothing finer, carry hundreds of metres on map02, and against the children's samples it runs
-  from about equal to over a hundred times the measured error. it follows the node's page's largest
-  step between neighbouring samples (per level, typically most of it, rarely above). what the game
-  uses it for isn't known
-- `layerData`: the close-up material layers by ordinal; see below
-- `sectorSplatInfo`: one u64 per 64 m sector, a bitmask of the layer ordinals the sector uses
-  (checked against the index map on map02)
-
-world Y of a sample is `position.y + (h & 0x7fff) · heightScale / 32768`. bit 15 marks a hole. on
-map01 and map02 about 95% of holes have no height (their low bits are 0, the terrain's base); only
-some beside solid ground keep one. holes are cut per vertex: the terrain's vertex shader gives a
-vertex on a hole sample no position, so every triangle touching it is dropped whole, and a solid
-sample ringed by holes draws nothing. the pass draws patches of 16 × 16 quads cut along alternating
-diagonals: a quad whose x + z in the patch is even is cut from its minimum corner to its maximum
-corner, an odd one across. so of a quad with one hole corner, the triangle away from that corner
-draws only if the diagonal doesn't end on the hole. that a patch's quads fall on its page's samples
-with the page's parity (16 samples a patch, pages being 64 quads wide) is inferred, not traced.
-
-the game's subdivision passes (`TerrainDepthOnlySubdivision` and its like) instead read the four
-samples around a vertex, drop it only when all four are holes, and take its height from the solid
-ones alone. the pipeline turns them on only while terrain deformation is enabled; which scenes
-enable it isn't surveyed.
-
-### close-up layers
-
-near the camera the game draws a blend of tiling material layers instead of the baked pages.
-
-- **index**: `terrain/splatindexmap.tga`, an RGBA32 Texture2D of `terrainSize / 8` texels (row 0 at
-  the minimum z), names 4 layer ordinals per 8 m cell, each stored times 4
-- **weights**: the leaf's `S` page; rgb weight the cell's slots 0–2, slot 3 gets `1 − r − g − b`.
-  the weights belong to that cell's layers
-- **layers** (`layerData`): `splatST` (x: repeats across the terrain square, y: texture index, zw:
-  uv offset), `packedSplatInfo` (mean albedo, normal xy scale), `diffuseRemapScale` (rgb multiplier,
-  height-blend border in w), `maskMapRemapScale`/`Offset` (scale and offset for occlusion in y,
-  height in z, roughness in w; the offset's x is a surface type id)
-- **textures**: `LAYER_D` is sRGB albedo with height in alpha; `LAYER_N` is tangent-space normal xy,
-  roughness in b, occlusion in a. on map02 they are 1024² BC7 with 11 levels and repeat every 2–9 m
-- **blend**: with weighted heights `wh = w · h`, each slot gets
-  `w · (max(0, wh − max(wh) + border) + ε)`, normalized. albedo is the blended
-  `diffuse · diffuseScale`, plus `(tint − mean) · a⁴` from the leaf's `T` page, `mean` being the
-  blended mean albedos. the blended tangent normal is oriented on the baked normal, with tangent
-  `cross(n, +Z)`
-- **projection**: world position times the layer's repeats per metre, on the x, y and z planes. the
-  game picks one plane per pixel at random
-
-### puddles
-
-the `S` page's alpha is a puddle level, independent of weather. water stands where it rises above
-the ground: close up the ground is the layers' heights weighted by the splat weights (`Σ w · h`, the
-same `w` as above), far away a flat 0.5. with `w = sat((S.a − ground) / 0.46)`:
-
-- albedo × `1 − 0.35 w`
-- roughness → 0 and occlusion × `1 − 0.1 w`
-- the normal bends towards straight up by `0.98 w`
-
-layers with parallax enabled use a parallax-weighted height instead of `Σ w · h`.
+  ([effects](effects.md#effect-lod-tables)); the dynamic scene's LOD proxies never hide them.
 
 ## LOD and HLOD
 
@@ -687,12 +558,9 @@ tier's radius and never hides. that's about 17 thousand map02 entities across th
 nearly every static renderer of indie_dg005, on `HLOD1`. `Tiny` holds about 70 thousand of map02's
 small renderers.
 
-the radii come from the settings INI TextAssets (`assets/beyond/initialassets/settings/*.ini` in the
-initial bundles; PC reads `desktopsettings.ini`), sections `[Streaming@<preset>]`, over defaults in
-code. the preset is the scene detail quality: 1000 lowest to 5000 highest, 4000 being the high
-preset and 5000 very high (`windowsplayer_qualitymap.json`; a medium device defaults to 3500). 2000
-has no section and takes 1000's; values in brackets are inherited from a lower preset, which is
-assumed:
+the radii come from `DesktopSettings`'s `[Streaming@<preset>]` sections over code defaults (preset
+inheritance as in [quality settings](quality-settings.md#from-preset-to-settings); values in
+brackets are assumed inherited):
 
 | radius, m   | 1000 | 3000 | 4000  | 5000  | code default |
 | ----------- | ---- | ---- | ----- | ----- | ------------ |
@@ -814,9 +682,7 @@ polylines with a height range) fence it.
 
 ## open
 
-- terrain: the distance where the close-up layers give way to the baked pages and how they fade; how
-  the cliff projection (`C` page) and the cone-map parallax (`LAYER_C`) shade; what `maxHeightError`
-  is for
+- what writes the streaming centre (inferred: the player character, not the camera)
 - the meaning of a negative `minSquared` (never culled by size, or culled below `√−minSquared`)
 - the size the LODGroup thresholds are authored against (the object's bounds, a LODGroup size, …)
 - the HLOD generated-material channel layout

@@ -1,23 +1,12 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { FlatBuffer } from '../binary/flatbuffer.ts';
 
-// DynamicStreaming main grids: `Data/DynamicStreaming/PC/Scene/<scene>/fb_main_<L>_<i>_<j>.bytes`. this reads
-// what state selection needs: each entity's id, controller, gate and view-state components, its resource
-// groups with their LogicState masks, and its extra-scene, erosion and sludge links.
+// DynamicStreaming main grids: `Data/DynamicStreaming/PC/Scene/<scene>/fb_main_<L>_<i>_<j>.bytes`.
 // field indices and record layouts follow Variante/endfield_research_kit (MIT,
 // `scripts/game_data/contracts/dynamic_{main_vector,root_comp,resource_comp,scalar_components}_native.json`);
 // the ResourceComp stride (132, not the contract's 124) and the DataIndex type → vector pairing were measured
-// on the client.
-//
-//   root: 3 [SingleGrid table]   4 [string] (root string table: settlement ids, POI ids, level ids …)
-//   grid: 0 u32 uniqueId (L<<16 | i<<8 | j), then vectors of fixed-width records (`Slot`, `Width`)
-//   DataGroup (24 B) = i32 invalid, i32 type, u32 grid, i32 index, i32 num, i32 total: a typed slice of the vector
-//     `type` selects, in grid `grid`
-//   DataIndex (16 B) = the first four DataGroup fields
-//   RootComp: u32 entityType @0, u32 state @4, Comps DataGroup @8 (slice of DataIndex: the entity's components)
-//
-// each record's fields are in docs/game-data/assets.md#fb_main-grids; how the gates load an entity, in
-// docs/game-data/scene-states.md#dynamic-load-gates
+// on the client. layout in docs/game-data/assets.md#fb_main-grids; load gates in
+// docs/game-data/scene-states.md#dynamic-load-gates.
 
 // #region types
 

@@ -84,14 +84,17 @@ one path, sometimes repeated.
 `Mesh` (class 43) stores vertex channels and streams, the index buffer and submeshes, with vertex
 data in `m_StreamData` when present.
 
-- **packed normals.** most meshes pack the normal into one 32-bit word; the channel's dimension byte
-  reads `0x31` (low nibble = real dimension 1, high nibble = packing flag 3). bits 0–19 are two
-  signed 10-bit octahedral coordinates (÷511). bits 20–31 hold a third signed 10-bit field (bits
-  20–29), a bit that is always set (30) and the bitangent sign (31), which the game's vertex shader
-  uses for the tangent frame.
-- **tangents.** meshes with plain f32 normals carry f32×4 tangents (w = bitangent sign).
-  packed-normal meshes have no tangent channel of their own (unverified across the install); their
-  tangent frame comes from the packed word.
+- **packed normals and tangents.** most meshes pack the normal and tangent into one 32-bit word; the
+  channel's dimension byte reads `0x31` (low nibble = real dimension 1, high nibble = packing flag
+  3). the Lit vertex shader treats the attribute as packed when bit 30 is set (else plain f32×3):
+  - bits 0–9 and 10–19: signed 10-bit octahedral normal `n` (÷511)
+  - bits 20–29: signed 10-bit tangent parameter `a` (÷511); bit 31: bitangent sign
+  - tangent decode: `t0 = normalize(n.yzx − n.zxy` orthogonalised against `n)`,
+    `t1 = normalize(cross(n, t0))`, `s = sign(a)`, `u = 1 − 2·a·s`,
+    `tangent = [t0 t1] · normalize(u, s·(1 − |u|))`
+  - instance normals are transformed by the inverse transpose (rows scaled by `1 / |row|²`)
+- **plain tangents.** meshes with plain f32 normals carry f32×4 tangents (w = bitangent sign).
+  packed-normal meshes have no separate tangent channel (unverified across the full install).
 - other channels seen: uv0/uv1 f32×2; vertex colour unorm8×4; uv2/uv3 snorm8×4 with dimension byte
   `0x24` (high nibble 2, meaning unknown).
 - **the dimension byte's high nibble** beyond the above: 3 on HLOD cluster meshes' snorm8×4 normals,
@@ -264,5 +267,8 @@ appear in static chunks. ECS renderers with a spin component turn
 ## open
 
 - the meaning of the uv dimension byte's high nibble 2
-- the path hash function: it diverges from XXH3 at 128 UTF-8 bytes (see AnimeStudio's
-  `EndfieldVfsHash`)
+- whether any packed-normal mesh also ships a separate tangent channel (unverified across the full
+  install)
+- the path hash function: it diverges from XXH3 at 128 UTF-8 bytes
+- whether Unity's built-in Cube's face UV orientation matches the pipeline's bundled `Cube.fbx`
+  (unverified)

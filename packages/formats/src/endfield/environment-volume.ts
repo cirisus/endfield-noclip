@@ -8,14 +8,9 @@ import {
 	type MonoValue,
 } from './mono-objects.ts';
 
-// environment and post-processing volumes among the tag-1 chunk objects (`mono-objects.ts`); their fields and
-// shapes are in docs/game-data/environment.md#environment-volumes. the result types name their fields after the
-// properties of the game's `HGEnvironmentVolumeBase` / `HGEnvironmentVolume` and Unity's `Volume`; the asset
-// fields (the phase, the profile) come from the StreamingChunkData half.
-//
-// the polyline blob: u32 byteLength, f32×3 position, f32×3 rotation (Euler degrees), u32 n, n × f32×2 points
-// (x, z relative to position), then an edge BVH the client builds from them, and last f32 height,
-// f32 baseHeightOffset.
+// environment and post-processing volumes among the tag-1 chunk objects (`mono-objects.ts`; fields, shapes
+// and polyline blob layout in docs/game-data/environment.md#environment-volumes). result fields follow
+// `HGEnvironmentVolumeBase` / `HGEnvironmentVolume` and Unity's `Volume`.
 
 // #region types
 

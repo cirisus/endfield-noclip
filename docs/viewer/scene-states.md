@@ -20,12 +20,14 @@ results array is replaced only when a result differs.
 the camera stands in for the player: unless the user picks a value, the viewer sets every camera
 control from the eye (`cameraValues`; [package format](../package-format.md#controls)). an `area`
 test is 1 while the game's trigger test ([stream areas](../game-data/world.md#stream-areas)) shows
-its area at the eye (`zonesAt`, `areasShownIn`); a `near` test is 1 while the eye is within any of
-its reaches (an interactive's radius); a `triggers` test keeps the value the last trigger volume the
-eye entered or left set. `SceneState` holds the triggers' memory of the camera's path and drops it
-with the package, so the first evaluation enters every volume holding the eye. the viewer recomputes
-them whenever the camera moves and re-evaluates visibility only when one changes. an interactive
-swaps between its two settled looks at once, without the game's transition clips.
+its area at the eye (`zonesAt`, `areasShownIn`); above or below every trigger, where the game would
+fall back to the root areas, the viewer keeps zones whose footprint the camera is over so an
+overview still shows the level. a `near` test is 1 while the eye is within any of its reaches (an
+interactive's radius); a `triggers` test keeps the value the last trigger volume the eye entered or
+left set. `SceneState` holds the triggers' memory of the camera's path and drops it with the
+package, so the first evaluation enters every volume holding the eye. the viewer recomputes them
+whenever the camera moves and re-evaluates visibility only when one changes. an interactive swaps
+between its two settled looks at once, without the game's transition clips.
 
 ## the scene conditions panel
 

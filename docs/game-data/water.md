@@ -483,3 +483,13 @@ the material's distortion strengths are 0 and its mask is unset, so neither chan
 `_ST` (15 × 1.29, offset −11.75) and gradient `_ST` (300 × 1, offset −297.4) put a single front
 across the sheet between about 0.78 and 0.85 of UV0's u; elsewhere the clamped textures hold their
 edge texels.
+
+## open
+
+- clipmap LOD grid extent and top-down prepass view bounds (unrecovered)
+- [water volumes](#water-volumes): `ground_distance`, server starting amount vs authored amount on
+  depletable pools, whether an empty pool's surface still draws, and whether the timer step is
+  inferred accurately
+- [WaterDecal](#waterproxy-and-waterdecal): unnamed distortion texture mip-bias material value
+- visual checks against in-game shots: Wuling falls grey-teal vs white, Test Area sewage/acid
+  opacity, Suiming lily pad depth at stage 1, and overlapping volume + placed surface draws

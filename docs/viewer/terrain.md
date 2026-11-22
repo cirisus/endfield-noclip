@@ -1,23 +1,24 @@
 # terrain
 
-how the viewer draws the terrain and foliage grids that [game-data/world.md](../game-data/world.md)
-describes. which pages a frame selects and streams is in
-[streaming.md](streaming.md#terrain-selection); the shader is
+how the viewer draws the terrain ([game-data/terrain.md](../game-data/terrain.md)) and foliage grids
+([game-data/world.md](../game-data/world.md#foliage-grids)). which pages a frame selects and streams
+is in [streaming.md](streaming.md#terrain-selection); the shader is
 [`render/terrain/terrain.wgsl`](../../packages/viewer/src/render/terrain/terrain.wgsl).
 
 ## terrain
 
-the baked surface pages ([terrain](../game-data/world.md#terrain)) are drawn as stored: albedo,
-normal, roughness and occlusion; the `A` page's subsurface curvature isn't drawn. patches without a
-resident surface page get a stand-in colour by slope. rain wetness applies on top, as on other
-surfaces ([wetness](environment.md#wetness)).
+the baked surface pages ([terrain](../game-data/terrain.md#tiles-and-placement)) are drawn as
+stored: albedo, normal, roughness and occlusion; the `A` page's subsurface curvature isn't drawn.
+patches without a resident surface page get a stand-in colour by slope. rain wetness applies on top,
+as on other surfaces ([wetness](environment.md#wetness)).
 
-[holes](../game-data/world.md#terrain) are cut as the game's base terrain pass cuts them: a triangle
-touching a hole vertex isn't drawn at all. each vertex passes a hole flag on, and a fragment is
-discarded unless the interpolated flag is exactly 0 (`in_hole`), which only a triangle of three
-solid vertices gives. no share of such a triangle may be kept: most holes sit at the terrain's base
-height, hundreds of metres down, so even a hundredth of one hangs a curtain several metres tall
-below every edge of solid ground. the triangles are still rasterized before they're discarded.
+[holes](../game-data/terrain.md#heights-and-holes) are cut as the game's base terrain pass cuts
+them: a triangle touching a hole vertex isn't drawn at all. each vertex passes a hole flag on, and a
+fragment is discarded unless the interpolated flag is exactly 0 (`in_hole`), which only a triangle
+of three solid vertices gives. no share of such a triangle may be kept: most holes sit at the
+terrain's base height, hundreds of metres down, so even a hundredth of one hangs a curtain several
+metres tall below every edge of solid ground. the triangles are still rasterized before they're
+discarded.
 
 which triangles a hole takes depends on how the quads are cut, so the patch grid (`gridIndices` in
 [`terrain-renderer.ts`](../../packages/viewer/src/render/terrain/terrain-renderer.ts)) alternates
@@ -27,7 +28,7 @@ then draw the same odd triangles as in the game, and no others.
 ### close-up layers
 
 on leaves whose splat page and the package's layer textures are resident, `detail_surface` blends
-the [close-up layers](../game-data/world.md#close-up-layers) and fades them into the baked page by
+the [close-up layers](../game-data/terrain.md#close-up-layers) and fades them into the baked page by
 distance.
 
 - **distances**: the fade runs from 96 to 144 m (`DETAIL_FADE_START`/`END` in the shader), and
@@ -46,7 +47,7 @@ distance.
 
 ### puddles
 
-`wet_surface` applies the [puddle](../game-data/world.md#puddles) terms to the leaf's surface. the
+`wet_surface` applies the [puddle](../game-data/terrain.md#puddles) terms to the leaf's surface. the
 ground the puddle level fills to moves from the layers' weighted height to the baked pages' flat 0.5
 across the same distance fade as the close-up layers. only leaf `S` pages are packed, so puddles
 stop where leaves stop loading their splat page; parallax layers' heights aren't used (their

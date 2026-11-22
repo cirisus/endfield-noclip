@@ -1,19 +1,8 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { ByteView } from '../binary/byte-view.ts';
 
-// SparkBuffer config tables (`Data/TableCfg/*.bytes`, Table group):
-//
-//   u32 typesOffset, u32 rootOffset, u32 dataOffset
-//   types: u32 count, count × { u8 kind (6 = enum, 8 = bean), pad4, u32 hash, cstring name, pad4, then
-//          bean: u32 fieldCount, fieldCount × { cstring name, type ref }
-//          enum: u32 valueCount, valueCount × { cstring name, pad4, i32 value } }
-//   type ref: u8 type, then [pad4, u32 typeHash] for beans and enums, the element's type ref for arrays, or
-//             the key's and the value's type refs for maps
-//   root:  u8 0x0a (map), cstring name, key type ref, value type ref
-//   data:  u32 slotCount, slotCount × (u32 entriesOffset, u32 entryCount); entries are `key ‖ value` packed
-//          with natural alignment. bools and bytes are u8, enums i32, floats f32, doubles f64. strings, beans,
-//          arrays and maps are stored as u32 absolute offsets (0xFFFFFFFF = null); a bean's fields follow the
-//          same packing, an array is `u32 count ‖ elements`, and a map field has the root's data layout.
+// SparkBuffer config tables (`Data/TableCfg/*.bytes`, Table group; layout in
+// docs/game-data/containers.md#sparkbuffer-config-tables).
 
 /** value type codes (the game's `SparkType`) */
 export const SparkType = {

@@ -3,20 +3,9 @@ import { FlatBuffer } from '../binary/flatbuffer.ts';
 
 import { ChunkObjectKind, INIT_CHUNK_VERSIONS } from './init-chunk-data.ts';
 
-// the tag-1 members of the InitChunkData / StreamingChunkData root union vector (slots 3–5, see
-// `init-chunk-data.ts`): GameObjects the client rebuilds as MonoBehaviours (environment volumes, post volumes,
-// reflection probes, lights, wind motors, water, terrain root). an Init row and the Streaming row at the same
-// index describe the same object: Init carries the name and the inline values, Streaming carries the asset
-// references (and some nested blobs), so the two are merged per component.
-//
-//   row         0 name (Init; empty in Streaming)   1 u32 ?   3 u64 StreamingComponentType mask
-//               4 [component]
-//   component   0 u32 component type (one mask bit)  3 [u32 field key]  4 [u8 value type]  5 [uoffset → value]
-//
-// a field key is `bit << 24 | field << 16 | element`: the component's mask bit index (14 for 0x4000; 0 for
-// Transform), the field's index in its class and, for fixed arrays (matrix rows, curve keys), the element. a
-// value is addressed by a uoffset in slot 5 and laid out by its type code, see {@link MonoValue}
-// (docs/game-data/world.md#streamingchunkdata).
+// tag-1 members of the InitChunkData / StreamingChunkData root union vector (GameObjects rebuilt as
+// MonoBehaviours: environment/post volumes, probes, lights, wind motors, water, terrain root). Init carries
+// inline values and Streaming carries asset references, merged per component (docs/game-data/world.md#streamingchunkdata).
 
 // #region types
 

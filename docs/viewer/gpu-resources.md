@@ -1,5 +1,7 @@
 # GPU resource management
 
+## device and layouts
+
 - **device** ([`gfx/device.ts`](../../packages/viewer/src/gfx/device.ts)): the effect pipelines
   exceed WebGPU's default of 16 sampled textures per stage, so the device asks for the adapter's
   limit, as it does for storage buffers per stage; samplers stay at the default. without BC support,
@@ -13,6 +15,8 @@
   | terrain  | 12                    | 7             | 4                   |
   | effects  | 19                    | 15            | 4                   |
   | water    | 15                    | 7             | 3                   |
+
+## buffers and pools
 
 - **range allocator**
   ([`gfx/range-allocator.ts`](../../packages/viewer/src/gfx/range-allocator.ts)): first-fit over
@@ -75,13 +79,16 @@
   table ([`mesh-renderer.ts`](../../packages/viewer/src/render/meshes/mesh-renderer.ts)) holds each
   drawn material's `LOOK_FLOATS` parameters, which don't change once built: a material gets the next
   slot and its upload the first time it's drawn, a frame's new slots going up in one write per run.
-  it's a `GrowableBuffer` of 704-byte slots, starting at 4096 (2.75 MiB) and doubling as a view
-  draws more materials; a package unload replaces it, since the next package's ids name other looks.
-  shadow passes bind a placeholder in place of the shadow map they render into.
+  it's a `GrowableBuffer` of 768-byte slots (48 rows), starting at 4096 (3 MiB) and doubling as a
+  view draws more materials; a package unload replaces it, since the next package's ids name other
+  looks. shadow passes bind a placeholder in place of the shadow map they render into.
   [`render/frame/frame-bindings.ts`](../../packages/viewer/src/render/frame/frame-bindings.ts)
   builds both group 0s; the streamed textures in them (reflection cubemap, shadow ramp, cloud
   shadow) are placeholders until resident, and setting one rebuilds the groups only when its view
   changes.
+
+## pipelines and uploads
+
 - **pipeline cache** ([`gfx/pipeline-cache.ts`](../../packages/viewer/src/gfx/pipeline-cache.ts)):
   modules by label, pipelines by a state key such as `mesh/opaque/back/unorm16x2`, compiled with
   `createRenderPipelineAsync` (or `createComputePipelineAsync` through `prepareCompute`, for the
@@ -112,6 +119,9 @@
   the buffer only when its row pitch is a multiple of 256 bytes, as `copyBufferToTexture` requires
   (every BC level at least 64 texels wide); a texture's large levels share one buffer and one
   submit.
+
+## textures and samplers
+
 - **texture sets** ([`gfx/texture-set.ts`](../../packages/viewer/src/gfx/texture-set.ts)): each post
   pass (and the water's foam) keeps its targets for the current render size in one set, which it
   destroys and refills on resize; the set counts its bytes from the formats and mip levels, which

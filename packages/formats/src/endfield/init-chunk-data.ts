@@ -6,18 +6,8 @@ import { levelTagOf } from './level-partition.ts';
 
 // static scenery placements (docs/game-data/world.md#static-scenery-initchunkdata-and-streamingchunkdata).
 // framing ported from An1X3R/Endfield-map-extractor (MIT, `extractor_core/{instances,flatbuffer}.py`,
-// `extract_scene_renderer_materials.py`) and the field readings of Variante/endfield_research_kit (MIT,
+// `extract_scene_renderer_materials.py`) and field readings of Variante/endfield_research_kit (MIT,
 // `memory/game_data/world_chunk*.md`).
-//
-// root table, 8 slots:
-//   0 u32 version (47, 49)        1 i32×2 chunk origin (x·128, z·128); Global stores (INT32_MAX, INT32_MIN)
-//   2 [row]   empty in Init   3 [u32] object ids     4 [u8] object kinds     5 [table] object rows
-//   6 [table{[u32]}] per-group entity ids             7 [table] component groups, parallel to 6
-// object rows are a union vector: slot 4 is the tag, each row's field 0 is the full object name and field 1
-// its streaming layer.
-// component group, 5 slots:
-//   0 128-bit descriptor-id mask   1 u32 count   2 f32×6 group AABB (centre, extents; zero = unset)
-//   3 [(u16 component id, u16 stride, u32 0)]   4 table{[u8]} component-major blob of count·Σstride bytes
 
 // #region types
 

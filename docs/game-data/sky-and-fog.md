@@ -15,8 +15,8 @@ illuminance; the game's C# scales it by `atmosphere.outerSunIrradianceColor` (ra
 `light.directIntensity` (the exposed sun, `directLux · preExposure`) × `sky.proceduralSkyLuxFactor`
 when it renders the LUT, and the sky pass samples it unscaled. the LUT fades out just below the
 horizon, where it also takes a ground bounce from `atmosphere.groundAlbedo`. the procedural sky then
-applies a global colour adjustment (`_VFXParams1`, desaturation and tint) set by native code, not
-recovered.
+applies the global scene-effect colour adjustment (`_VFXParams1`, [blending](effects.md#blending)),
+which is neutral `(1, 1, 1, 1)` outside a `VFXSceneDark` playable.
 
 the cloud panorama (`cloud.cloudTexture`) is blended over the sky by its alpha above the horizon. it
 covers only the upper hemisphere: u is the azimuth (`atan2(x, z)`) turned back by `rotation`
@@ -177,7 +177,6 @@ its outskirts' phase sets.
 
 ## open
 
-- the procedural sky's global colour adjustment (`_VFXParams1`).
 - whether `cloudFadeAlpha` reaches the cloud's alpha without `brightnessAffectCloudAlpha`: the game
   has two code paths that differ, and which runs on PC is unchecked.
 - which phases draw the moon's ring, and where it falls among the layers; which light a space level

@@ -1,7 +1,7 @@
 Endfield's game levels in the browser: an offline extractor turns a local game install into a
 package, and a WebGPU viewer streams that package one level at a time.
 
-Last verified: 2026-11-10
+Last verified: 2026-11-22
 
 ## layout
 
@@ -15,7 +15,8 @@ Last verified: 2026-11-10
   changing it, and update it in the same commit when behavior changes, because these pages are the
   only durable record of the findings. start at [docs/architecture.md](docs/architecture.md); known
   gaps are in [docs/status.md](docs/status.md). `docs/game-data/` is only what we know about the
-  game; how our code implements it goes in `docs/viewer/`, `extraction.md` or `package-format.md`
+  game; how our code implements it goes in `docs/viewer/`, `docs/extraction.md`, `docs/extraction/`,
+  or `docs/package-format.md`
 
 ## development notes
 

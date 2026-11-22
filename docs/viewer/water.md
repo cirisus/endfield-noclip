@@ -34,9 +34,8 @@ the viewer computes the [game's shading](../game-data/water.md#shading) per frag
 where the game writes a G-buffer and lights it full-screen after the opaque scene:
 
 - **pass**: drawn in the post chain after compositing, over a copy of the HDR scene, and only in the
-  `lit` debug view. both faces are drawn so water reads from below. only the nearest surface at a
-  pixel shades, as in the game's G-buffer, so a surface under another stays hidden (Wuling's stream
-  slopes run beneath its river plane).
+  `lit` debug view. only the nearest surface at a pixel shades, as in the game's G-buffer, so a
+  surface under another stays hidden (Wuling's stream slopes run beneath its river plane).
 - **effects over it**: the game lights its water before drawing transparent things, and its camera
   depth holds the scene without the water ([game data](../game-data/water.md#waterdecal)), so they
   presumably show over the water even below its surface (unchecked against an in-game shot). the

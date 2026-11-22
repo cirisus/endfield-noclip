@@ -628,9 +628,10 @@ fn local_light_at(i: u32, rel: vec3f) -> LocalLight {
 	return out;
 }
 
-// what a local light's shadow map lets through to a camera-relative point (docs/viewer/lighting.md#local-light-
-// shadows): a spot looks its one tile up, a point light the tile of the cube face the point lies in. `n` is the
-// surface normal the lookup is pushed along (zero in the fog), `to_light` runs from the point to the light
+// what a local light's shadow map lets through to a camera-relative point
+// (docs/viewer/lighting.md#local-light-shadows): a spot looks its one tile up, a point light the tile of the
+// cube face the point lies in. `n` is the surface normal the lookup is pushed along (zero in the fog),
+// `to_light` runs from the point to the light
 fn local_light_shadow(i: u32, rel: vec3f, n: vec3f, to_light: vec3f) -> f32 {
 	let s = lights[i * LIGHT_VEC4S + 8u];
 	if (s.x < 0.0 || s.y <= 0.0) {

@@ -57,9 +57,10 @@ walls such renderers stand in for cull their back faces. no Dijiang material cha
 `_ShadowCullMode`.
 
 - the sharp cascades filter with 16 gathers (64 depths) on a Poisson disk rotated per 4×4 pixel
-  cell, at a radius of `csmShadowSoftness / split` (splits 12, 30 and, as the game computes it, 40
-  m) in the game's 2 × 2 atlas uv. the blocked fraction goes through a curve that hardens edges
-  where blockers are close in depth and leaves plain PCF where they're far.
+  cell, at a radius of `csmShadowSoftness / split` (splits 12, 30 and, with `CSMSplit2 = 0.5`
+  halving the 80 m split for the penumbra alone, 40 m) in the game's 2 × 2 atlas uv. the blocked
+  fraction goes through a curve that hardens edges where blockers are close in depth and leaves
+  plain PCF where they're far.
 - unverified: a point uses the first cascade containing it, dithered with the next one over the
   outer tenth of its bounding sphere's radius, and the sharp cascades fade into the far layer before
   their 80 m reach (the settings give a `CSMFadeInnerDistance` of 60 m at PC high).
@@ -292,9 +293,9 @@ the same shadows.
 
 light beams are a modified Volumetric Light Beam (a third-party Unity asset): a renderer on the
 shared `ConeMesh.asset` with a per-beam material of `Hidden/VLB_HGRP_SinglePass` (about 150
-materials across the packed scenes, most of them map02's). Wuling Very Large Rift (dung02_dg005) has
-the largest, 781 m across, in script groups that pair each beam with its lights (a dark set on by
-default, a bright set a level script shows).
+materials across map01, map02 and the checked dungeons, most of them map02's). Wuling Very Large
+Rift (dung02_dg005) has the largest, 781 m across, in script groups that pair each beam with its
+lights (a dark set on by default, a bright set a level script shows).
 
 the cone mesh is 64 sides with z 0 to 1 and a start cap; UV0's u marks the cap and v the outside
 faces (1) against the inside ones (0), so one back-culled draw shows the inside from within. the
@@ -313,12 +314,13 @@ the product of:
 | near camera    | fades in over `_DistanceCamClipping` past the near plane                                                                                    |
 | distance fade  | by the camera's view depth to the beam's origin, over `_DistanceFadeStart`–`End` and the second pair (equal ends: a step)                   |
 | clipping plane | `_UseClippingPlane`: fades across `_AdditionalClippingPlaneWS` over `_ClippingPlaneTransition`                                              |
-| cap            | caps show only when `_ConeParams1.w` is 1 (0 on every packed beam)                                                                          |
+| cap            | caps show only when `_ConeParams1.w` is 1 (0 on every beam checked)                                                                         |
 
 the colour is `_ColorFlat` (LDR) times `_AlphaInside` or `_AlphaOutside`. `_BlendMode` 1 adds it
 (One One, nearly every material); 0 alpha-blends (a few). `VLB_NOISE_3D` multiplies by a global 3D
 noise and `VLB_USE_FOG` applies the atmosphere and exponential fog. the shader also scales by a
-per-renderer value and a global tint and saturation whose sources aren't recovered.
+per-renderer value (untraced) and the global scene-effect grade (`_VFXParams1`,
+[blending](effects.md#blending)).
 
 ## open
 
@@ -326,6 +328,7 @@ per-renderer value and a global tint and saturation whose sources aren't recover
   in native engine code.
 - the sun's units: the sun shades with the local lights' lobe (no 1/π on diffuse); whether the CPU
   folds a 1/π into the sun's colour is unknown. phases also carry a `directIntensityDividePi`.
+- baked lightmaps on HLOD and terrain (unchecked; static scenery doesn't appear to use them).
 - where local reflection probes are placed.
 - [local light shadows](#local-light-shadows): what makes the game draw a cached tile again (a
   native flag on the light), the native cull of a tile's casters and its small-caster measure, how a

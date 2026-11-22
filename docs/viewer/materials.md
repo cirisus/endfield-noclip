@@ -254,7 +254,7 @@ isn't read, and a texture on a UV set other than 0 is dropped.
 ## forward Lit
 
 [forward Lit](../game-data/materials.md#forward-lit) (`HGRP/LitForward`, the golden treasure chest)
-is drawn as Lit, deferred with everything else, so it reflects the scene's sky cubemap and
+is drawn as Lit in the main pass with everything else, so it reflects the scene's sky cubemap and
 screen-space reflections rather than its own `_CUSTOM_IBL` cubemap, and its metal reads darker than
 the game's. none of Lit's optional layers are read for it.
 

@@ -320,7 +320,7 @@ defaults 0 and 32), whatever `_StencilComp` says, as the scenery's [decals](mate
 so it leaves foliage and other surfaces whose `_StencilRef` has bit 32 alone: Si's Painting's water
 decals (`M_fxmap_map02_lv010_waterdecal_02`, boxes 28 to 35 m across in its waterfall cave, near
 unity 1110, 378, 1155) take the defaults, so they cover the rock but not the trees inside them. so
-do the 29 VFXDecal materials with asset paths in the packed scenes.
+do the 29 VFXDecal materials with known asset paths.
 
 `_USE_PARALLAX` sinks the decal into the surface. the view direction, taken in the box's frame (x
 and z across, y up), steps the main texture's UVs by `−_ParallaxScale · v.xz / v.y / 30` per layer
@@ -708,9 +708,10 @@ Lodespring's red light stripes along the crystal ridge (`M_fx_prop_connectline_*
 
 the transparent pass starts from a copy of the opaque scene (the copy refracting glass samples,
 which never holds transparents) and draws, in order: a full-screen scene colour adjustment of the
-effect manager's, the water's lighting on the one-pass deferred path, the scan-line post effect,
-forward decals, the VFXDecal boxes in a list of their own (so every box lies under every other
-effect), glass and effects in one sorted list
+effect manager's (`_VFXParams1`, driven by `HGVFXManager.m_currentSceneDarkValue` and saturation;
+neutral `(1, 1, 1, 1)` unless a `VFXSceneDark` playable runs), the water's lighting on the one-pass
+deferred path, the scan-line post effect, forward decals, the VFXDecal boxes in a list of their own
+(so every box lies under every other effect), glass and effects in one sorted list
 ([transparent draw order](materials.md#transparent-draw-order)), then world-space UI, rain and snow.
 it attaches the depth read-only and writes a second target, the motion vectors, where each bright
 transparent pixel (luminance times alpha above 0.05) sets a flag for the temporal pass. the sorted
@@ -785,3 +786,16 @@ the collectible marker (`int_collection_common_postmodel`, whose view states onl
 collected) is one: bands from 0, 30 and 60 m, culled at 80 m. within 30 m it shows everything: the
 triangle icon, its glow card, two line trails, sparks and rings; from 30 to 60 m the icon and the
 rings; from 60 to 80 m the icon alone.
+
+## open
+
+- `_InkWashGlobalParams`: what drives the ink-wash screen effect's global parameters
+- [invisible bridges](#invisible-bridges): initial reveal radius before any script sets a fire-seed
+  level
+- [water blending](#water-blending): `VFXWaterBlendConfig` asset layout and runtime water height
+- [soft-body animation](#soft-body-animation): per-draw frame offset (`d`) source
+- `VFXDitherAlpha`: `_TaaFrameInfo.z` frame value
+- [reflection-only effects](#reflection-only-effects): `VFXReflectionPass` behaviour against an
+  in-game shot
+- [effect LOD tables](#effect-lod-tables): which `EffectSetting` in a multi-setting prefab an effect
+  instance drives, and whether static scenery uses distance-banded effects

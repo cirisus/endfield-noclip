@@ -38,7 +38,7 @@ shadow layers' constants, the texture store it requests into, the mesh draw rang
 its buckets are keyed by, and the geometry pool and skin types a residency holds. nothing but `ui/`
 and `app.tsx` imports `viewer/`.
 
-implementation pages link to the corresponding [game-data](../game-data/lighting.md) findings:
+implementation pages link to the corresponding [game-data](../architecture.md) findings:
 
 | page                                  | covers                                                                           |
 | ------------------------------------- | -------------------------------------------------------------------------------- |

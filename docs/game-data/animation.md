@@ -98,9 +98,9 @@ set its model's parameters as it loads
 
 - Wuling City's spinning cube (`p_anm_map02_machine+1_002_01`, at −1442, 330, −336 in map02_lv002,
   placed by mission `e6m1`'s level data): its controller `AC_anm_map02_machine+1_002_01` has one
-  state, `idle_loop`, playing the looping 53.3 s clip `A_anm_map02_machine+1_002_01` (1602 frames at
-  30 fps, [ACL-compressed](#acl-compressed-clips)) on 15 Transforms of a skinned mesh: four of them
-  turn a full circle over the loop.
+  state, `idle_loop`, playing the looping 53.3 s clip `A_anm_map02_machine+1_002_01` (1600 samples
+  at 30 Hz, [ACL-compressed](#acl-compressed-clips)) on 15 Transforms of a skinned mesh: four of
+  them turn a full circle over the loop.
 - Qingbo Stockade's octagonal waterwheels (`p_igroup_map02_sfwaterwheel+2_004_01`, two in
   map02_lv003 at −530.4, 246.9, −1074.6 and −551.8, 247.5, −1103.8, model rows of a dynamic
   structure gated by script group `23300000004`), built of plain mesh renderers: the root's
@@ -171,3 +171,10 @@ runs it is fed an absolute time. the baked ECS entities hold it as column 52: 3.
 second (0.0611) about local +y, which their matrices lay horizontal along the frame. no other entity
 in any scene has column 52. that the entity turns `speed · t` about its local axis through its own
 origin, from the stored pose, is inferred from the profile, not read from the native system.
+
+## open
+
+- [ACL-compressed clips](#acl-compressed-clips): what `RootMotionBufferData`, `RootPosIndex`,
+  `RootRotIndex` and `RootTrackCount` add
+- [spinning scenery](#spinning-scenery): the native systems behind columns 52 and 54 (their
+  absolute-time spin formulas are inferred from the data and collider scripts)

@@ -12,7 +12,7 @@ an `HGEnvironmentPhase` (`EnvParse/Env_*.asset`, a MonoBehaviour read through it
 is one complete look, stored as a list of `HG*Config` sections. each section carries `m_active`:
 whether the phase sets that section at all. an inactive section leaves whatever is under it (a
 lower-priority volume, or the scene's global phase) unchanged, even if its own fields hold plausible
-values. read sections only after checking `m_active`.
+values; sections only apply when `m_active` is set.
 
 | phase field           | holds                                                         |
 | --------------------- | ------------------------------------------------------------- |
@@ -169,21 +169,6 @@ positive one. the per-section lerps have special cases:
 - **rain**: the wetness blends as under [wetness](#wetness); the falling rain's transition between
   enabled and disabled isn't recovered.
 
-## wind
-
-the blended phase's `windConfig` drives the shaders' main wind (`_WindGlobalParams0`), set per
-camera from the renderer's wind manager: x is the main intensity, `speed · 0.25` (speed in m/s, 5–30
-in map02's phases); y is the wind clock; z and w are `direction`'s X and Z, as stored. `direction`
-is the unit vector `horizontalDirectionAngle` (degrees from +Z toward +X) and
-`verticalDirectionAngle` give. each gameplay update advances the clock by the previous frame's
-intensity times 0.08 times the frame time, so at a steady speed it runs at `speed · 0.02` per
-second, and keeps the previous frame's values (`_LastWindGlobalParams0`) for motion vectors.
-[swaying cloth](materials.md#swaying-cloth) reads it.
-
-the same update scrolls a wind noise's UV against the direction by the clock's step
-(`_WindGlobalParams2`), and wind motors (local wind sources the player and scripts register) feed
-other parameters; neither is described here.
-
 ## activation
 
 nothing in the default chunk data says whether a volume starts enabled: the stored rows carry no
@@ -202,6 +187,21 @@ outrank a level's regular look:
 
 map02's Si's Painting is several disjoint painting worlds, each with its own priority-200 global
 volume.
+
+## wind
+
+the blended phase's `windConfig` drives the shaders' main wind (`_WindGlobalParams0`), set per
+camera from the renderer's wind manager: x is the main intensity, `speed · 0.25` (speed in m/s, 5–30
+in map02's phases); y is the wind clock; z and w are `direction`'s X and Z, as stored. `direction`
+is the unit vector `horizontalDirectionAngle` (degrees from +Z toward +X) and
+`verticalDirectionAngle` give. each gameplay update advances the clock by the previous frame's
+intensity times 0.08 times the frame time, so at a steady speed it runs at `speed · 0.02` per
+second, and keeps the previous frame's values (`_LastWindGlobalParams0`) for motion vectors.
+[swaying cloth](materials.md#swaying-cloth) reads it.
+
+the same update scrolls a wind noise's UV against the direction by the clock's step
+(`_WindGlobalParams2`), and wind motors (local wind sources the player and scripts register) feed
+other parameters; neither is described here.
 
 ## weather
 
@@ -267,7 +267,8 @@ the file sets neither property: what starts it and how they're initialised isn't
 ### wetness
 
 the game's deferred lighting wets every surface it shades (not forward-shaded glass or effects) from
-the blended rain section, whether or not rain falls:
+the blended rain section, whether or not rain falls (this is separate from the water-wetness mask
+and per-material porosity used by [wetness decals](materials.md#wetness-decals)):
 
 - **blend.** with `enableWetness` on both sides, the fields lerp. with it on one side only, the
   result is wet with that side's settings and `wetness` fading in from 0.

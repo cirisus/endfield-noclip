@@ -145,85 +145,25 @@ each run, in under a second, and never written out.
 
 ## container layers
 
-the install is read through three nested layers. each is decoded by a `formats` module; the
-extractor adds file handles, caching and cross-file lookups on top.
+the install is read through three nested layers; their on-disk formats, encryption, USPC string
+pools, SparkBuffer tables and MemoryPack wire layout are in
+[containers.md](game-data/containers.md). each is decoded by a `formats` module, and the extractor
+adds file handles, caching and cross-file lookups on top:
 
-| layer          | what it is                                                                                                                                                                                                    | decoder                                                         | extractor side                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------- |
-| VFS            | `VFS/<group hash>/` directories per data group, each with a ChaCha20-encrypted `.blc` catalog listing logical files and the `.chk` chunk files that store them; some logical files are encrypted individually | `formats/src/hg/vfs-catalog.ts`                                 | `extractor/src/hg/vfs.ts`             |
-| HG bundle      | Unity's UnityFS bundle with the signature, header, block table and directory scrambled, blocks passed through a keyed XOR pad, and data compressed with a nibble-interleaved ("inverted") LZ4                 | `formats/src/hg/bundle.ts`, `bundle-cipher.ts`, `binary/lz4.ts` | `extractor/src/hg/bundles.ts`         |
-| SerializedFile | Unity 2021.3.34f5 assets files (format 22, target platform 19, StandaloneWindows64) with embedded TypeTrees, inside bundles                                                                                   | `formats/src/unity/serialized-file.ts`, `type-tree.ts`          | `extractor/src/game/assets/assets.ts` |
+| layer          | decoder                                                                       | extractor side                        |
+| -------------- | ----------------------------------------------------------------------------- | ------------------------------------- |
+| VFS            | `formats/src/hg/vfs-catalog.ts`, `payload.ts`                                 | `extractor/src/hg/vfs.ts`             |
+| HG bundle      | `formats/src/hg/bundle.ts`, `bundle-cipher.ts`, `binary/lz4.ts`               | `extractor/src/hg/bundles.ts`         |
+| SerializedFile | `formats/src/unity/serialized-file.ts`, `type-tree.ts`                        | `extractor/src/game/assets/assets.ts` |
+| tables & data  | `formats/src/hg/string-pool.ts`, `spark-buffer.ts`, `endfield/memory-pack.ts` | `extractor/src/game/`                 |
 
-**VFS.** the install has two layers, `Persistent/VFS` (patches) and `StreamingAssets/VFS`. a group's
-Persistent catalog is complete and supersedes the StreamingAssets one, while its chunks may live in
-either layer (Persistent first). every logical file carries the MD5 of its decrypted bytes, which
-`readVerified` checks. the well-known group hashes are in `VfsGroup` (`hg/vfs.ts`): Bundle and
-InitialBundle hold asset bundles, BundleManifest the bundle manifest, ExtendData and
-InitialExtendData the main and initial StringPathHash tables, Streaming and DynamicStreaming the
-world chunk data, Terrain the terrain tiles, JsonData pooled LevelConfig/LevelData, and Table the
-SparkBuffer config tables. Streaming, DynamicStreaming and terrain files are wrapped in a
-size-prefixed inverted-LZ4 envelope (`formats/src/hg/payload.ts`); a few terrain files are stored
-raw. Bundle, Streaming, Terrain and ExtendData files aren't encrypted individually; BundleManifest,
-nearly all of JsonData, Table and the Lua and IFix patch groups are. not read:
-`Persistent/index_main.json` (an obfuscated index the merged `.blc` catalogs make unnecessary) and
-`CompressData.bin` (Brotli-compressed UTF-16 JSON, the AI's NodeCanvas behaviour trees).
-
-**the build.** the client is an IL2CPP build of Unity 2021.3.34f5, a version suffix Unity doesn't
-publish (a source-licensed, patched editor). its `global-metadata.dat` is version 29 and
-unencrypted, with one extra int32 per type definition row, which
-[il2cpp/metadata.ts](../packages/formats/src/il2cpp/metadata.ts) tells by the row size. the render
-pipeline (HGRP) is `HG.RenderPipelines.Runtime` over SRP Core, not URP or HDRP, with native engine
-modules behind managed shims (`HGGraphicsModule`, `HGGraphicsCPPModule`, `HGOcclusionCullingModule`,
-`ClusterRendererModule`); the client also ships `HG.HLOD.Runtime`, `Google.FlatBuffers`,
-`MemoryPack` and an IL hotfix VM (`IFixRuntime`).
-
-**bundles.** `UnityBundle` is a random-access reader: it parses the header and directory, then
-decodes only the blocks overlapping a requested range, so pulling one CAB out of a large bundle
-reads little. the descrambling is ported from AnimeStudio. the bundle cipher is AES-128 with a
-custom substitution box, chained like OFB except that the next IV is derived from the keystream
-block. it only covers sampled positions (a buffer of up to 256 bytes whole, else `256 / blocks`
-bytes at the start of each of the first 256 sixteen-byte blocks), so it reduces to one 256-byte XOR
-pad, derived once from the keys. the blocks-info is padded and compressed with standard LZ4, data
-blocks of type 5 are padded and compressed with inverted LZ4, and type 0 blocks are raw. the encoder
-may end an LZ4 block on a match, which strict decoders reject.
-
-**catalogs and encrypted files.** a `.blc` catalog is `u32 version`, 8 more bytes, then a ChaCha20
-body whose nonce is those first 12 bytes (block counter from 1). an encrypted logical file uses the
-same key with the nonce `u32 catalog version ‖ i64 ivSeed`, the seed coming from its catalog entry,
-so any 64-byte-aligned slice decrypts on its own. the catalog's `codeVersion` is 4 or 5; 5 widens
-each chunk's and file's tag (`VFSFileTag`) from 4 bytes to 8, and a file's tag follows its optional
-seed. the game calls a group a VFS block (`VFBlockMainInfo`, with an `EVFSBlockType` such as 11 for
-`Bundle`).
-
-**pooled strings.** pooled JsonData payloads (LevelConfig, LevelData) store `i32` string ids, −2 for
-null and −1 for the empty string, into the USPC v1 pools `Data/Json/StringPool/StringPool<n>.byte`
-([string-pool.ts](../packages/formats/src/hg/string-pool.ts), layout per
-Variante/endfield_research_kit). a block file is `u32 'USPC'`, `u32 version` (1), `u32 flags` (1 =
-LZ4), `u32 count`, `u32 rawSize`, `u32 packedSize` and the body, which raw is `u32 count`, `count`
-`u32` offsets and `count` strings (`u32 byteLength`, UTF-8); block 0 has a `u32` block file count
-before its magic. every block holds as many strings as block 0, so id `i` is in block
-`⌊i / blockSize⌋`.
-
-**config tables.** a SparkBuffer table (`Data/TableCfg/*.bytes`,
-[spark-buffer.ts](../packages/formats/src/hg/spark-buffer.ts)) is a typed map:
-
-- `u32 typesOffset`, `u32 rootOffset`, `u32 dataOffset`
-- types: `u32 count`, each `u8 kind` (6 enum, 8 bean), padding to 4, `u32 hash`, a C string name,
-  padding to 4, then for a bean `u32 fieldCount` fields of (C string name, type ref) and for an enum
-  `u32 valueCount` values of (C string name, padding to 4, `i32 value`)
-- a type ref is `u8 type` (the game's `SparkType`: 0 bool, 1 byte, 2 int, 3 long, 4 float, 5 double,
-  6 enum, 7 string, 8 bean, 9 array, 10 map), followed for beans and enums by padding to 4 and the
-  `u32` type hash, for arrays by the element's type ref, and for maps by the key's and the value's
-- root: `u8 10` (map), a C string name, the key and value type refs
-- data: `u32 slotCount`, `slotCount` × `(u32 entriesOffset, u32 entryCount)`; entries are key then
-  value, packed with natural alignment. bools and bytes are `u8`, ints and enums `i32`, longs `i64`,
-  floats `f32`, doubles `f64`. strings (C strings), beans, arrays and maps are `u32` absolute
-  offsets, `0xFFFFFFFF` for null; a bean's fields follow the same packing, an array is `u32 count`
-  and its elements, and a map field has the root's data layout
-
-the layout was recovered from MapIdTable, LevelDescTable, the I18nTextTable files,
-SpaceshipAreaUnlockNeedCenterLvTable, SpaceshipGrowCabinLvTable and the Dungeon tables, with map
-fields from SettlementBasicDataTable.
+- **VFS (`hg/vfs.ts`).** `VfsGroup` holds the group hashes; `readVerified` checks each logical
+  file's decrypted MD5. `Persistent/index_main.json` and `CompressData.bin` aren't read.
+- **bundles (`hg/bundles.ts`).** `UnityBundle` is a random-access reader: it parses the header and
+  directory, then decodes only the blocks overlapping a requested range, so pulling one CAB out of a
+  large bundle reads little. descrambling is ported from AnimeStudio.
+- **IL2CPP metadata (`il2cpp/metadata.ts`).** detects the extra `i32` per type-definition row by row
+  size and drives the MemoryPack schema reader.
 
 ### asset resolution
 
@@ -402,8 +342,7 @@ field names, curves as keys and gradients as colour and alpha keys.
   [foliage-grids.ts](../packages/formats/src/endfield/foliage-grids.ts)).
 - **stream areas** ([stream areas](game-data/world.md#stream-areas),
   [stream-area.ts](../packages/formats/src/endfield/stream-area.ts)).
-- **terrain** ([terrain](game-data/world.md#terrain),
-  [terrain.ts](../packages/formats/src/hg/terrain.ts),
+- **terrain** ([terrain](game-data/terrain.md), [terrain.ts](../packages/formats/src/hg/terrain.ts),
   [terrain-source.ts](../packages/extractor/src/game/world/terrain-source.ts)): the parser checks
   the mip chain fills the payload exactly. `terrain scenes|tiles|export-heights`
   ([commands/terrain.ts](../packages/extractor/src/commands/terrain.ts)) inspects and exports the
@@ -495,9 +434,8 @@ how the cells are stored is in [irradiance cells](package-format.md#irradiance-c
 MemoryPack, decoded by [memory-pack.ts](../packages/formats/src/endfield/memory-pack.ts) with the
 schema read at extract time from the install's IL2CPP metadata and `GameAssembly.dll`
 ([il2cpp/](../packages/formats/src/il2cpp); see [local config and keys](#local-config-and-keys)).
-the encoding and its rules beyond the wrappers are under
-[level scripts](game-data/scene-states.md#level-scripts). every level script and interactive
-template of the client decodes to its exact length.
+the wire layout and custom formatters are under [MemoryPack](game-data/containers.md#memorypack).
+every level script and interactive template of the client decodes to its exact length.
 
 LevelData files with populated blackbox settings (factory puzzle scenes) are listed in
 `unsupported-interactives.json` rather than partially read.

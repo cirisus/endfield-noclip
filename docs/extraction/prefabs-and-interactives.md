@@ -242,6 +242,8 @@ placement's position, rotation and scale but not its model scale, and so does a
 [laser gate](../game-data/interactives.md#laser-gates) that starts on, for each name in its model
 root's `effectsOnActive` (`ElectricFences`).
 
+## animation and poses
+
 ### looping clips
 
 a settled state whose clip loops keeps playing it
@@ -323,6 +325,8 @@ cube it agrees with upstream ACL's decompressor to about 1e-5 in translations an
 the clip then samples between frames like the dense block, wrapping when the buffer does, with
 tracks mapped to bindings through the sub-track masks and constant bindings held at their listed
 values.
+
+## special interactives
 
 ### moving platforms
 

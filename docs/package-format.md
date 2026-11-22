@@ -136,11 +136,11 @@ precise anywhere in the world.
 ## tile tree
 
 `TreeInfo` describes a forest of quadtrees on one unbounded grid that coincides with the game's
-[terrain](game-data/world.md#terrain) quadtree, so tree nodes never split the game's own units:
-`origin` and `rootSize` are the terrain square's corner and edge (scenes without terrain get a 4096
-m square centred on the origin). level `l` tiles are `rootSize / 2^l`; `(l, x, z)` may be negative
-or past `2^l − 1` for content off the terrain square, such as far skyline props. terrain page keys
-equal tree keys.
+[terrain](game-data/terrain.md) quadtree, so tree nodes never split the game's own units: `origin`
+and `rootSize` are the terrain square's corner and edge (scenes without terrain get a 4096 m square
+centred on the origin). level `l` tiles are `rootSize / 2^l`; `(l, x, z)` may be negative or past
+`2^l − 1` for content off the terrain square, such as far skyline props. terrain page keys equal
+tree keys.
 
 | level           | role (map02: 4096 m root)                                          |
 | --------------- | ------------------------------------------------------------------ |
@@ -227,42 +227,6 @@ content under a tag no level owns, the content counts as every level's. a level'
 `rectRightTop`, `playerInitPos`); the viewer lists levels with them and poses its first view of a
 level over the playable rectangle, falling back to the spawn height while coarse terrain loads
 ([level-pose.ts](../packages/viewer/src/scene/level-pose.ts)).
-
-### environments
-
-`tables/environment.json.zst` (`EnvironmentTable`,
-[pack/tables/environments.ts](../packages/extractor/src/pack/tables/environments.ts); how the
-extractor reads it is in [packing environments](extraction/environments.md)):
-
-- `posts`: the levels' post-processing profiles, deduplicated by name.
-- `schema`: per section field, whether it lerps, lerps and rounds, or switches at ½
-  ([blend schema](extraction/environments.md#blend-schema)); fields it doesn't list switch.
-- `sections`: per section, every distinct value a phase holds. phases repeat most of each other's
-  sections (map02's lens flares alone made up about 5 MB of JSON across its few hundred phases), so
-  they're stored once.
-- `phases`: every phase a volume applies, uncomposed: its name, the sections it marks active, and
-  per section it holds, an index into that section's pool. deduplicated by name.
-  `resolveEnvironment` looks the sections up, sharing their objects between phases.
-- `flowNoise`: texture id of the height fog's 3D flow noise, packed once, or `null`
-  ([flow noise](game-data/sky-and-fog.md#flow-noise)).
-- `volumes`: every global, box and prism volume: name without its `#…` suffix, visibility `group`
-  (owning level and loading condition), the index of its `environmentVolume` `control`, shape in
-  world coordinates (a box as its centre, half-extents and the rotation taking world offsets into
-  its frame, which the packer works out from the game's Euler angles), `blend` (`EnvironmentBlend`:
-  `replace`, `depth` over a distance, `fade` in and out over durations, or `scripted`, from the
-  game's blend modes 0–3; a volume with any other mode is dropped and listed in
-  `debug/environments.json`), priority, and phase index (or `null` when the phase can't be read;
-  such a volume has no control and never applies).
-
-`LevelInfo.environment` names a level's base volume (whose phase is never `null`) and post profile
-([the level's base environment](extraction/environments.md#the-levels-base-environment)); a viewer
-starts its blend from all of that phase's sections.
-
-nothing in the chunk data says whether a volume starts enabled
-([activation](game-data/environment.md#activation)), so each volume with a phase gets an
-`environmentVolume:<index>` control, which its group requires on. it defaults on, except for a
-`scripted` volume, whose fade-in script isn't followed: off, and at full strength when the user
-turns it on. a viewer therefore decides whether a volume applies from its group alone.
 
 ## binary encodings
 
@@ -430,9 +394,10 @@ gradient predictor beats left-only prediction by about 10 % after zstd, and raw 
 %: a 65² leaf page of map02 comes to about 2 KB at zstd 19. the packer ships every level of the
 game's pyramid, not only leaves, so the viewer can run CDLOD from native data. a node's bounds span
 its page's lowest and highest non-hole samples. the game's per-node `maxHeightError` isn't packed:
-it isn't an error bound ([terrain](game-data/world.md#terrain)). a scene with terrain tiles but no
-`HGTerrainSurfacesData` fails the pack rather than guessing a placement. `terrainHeight` and
-`isTerrainHole` decode samples: `y = baseHeight + (h & 0x7fff) · heightScale / 32768`.
+it isn't an error bound ([terrain](game-data/terrain.md#tiles-and-placement)). a scene with terrain
+tiles but no `HGTerrainSurfacesData` fails the pack rather than guessing a placement.
+`terrainHeight` and `isTerrainHole` decode samples:
+`y = baseHeight + (h & 0x7fff) · heightScale / 32768`.
 
 the page layout is the package format's, not the manifest's: `TERRAIN_PAGE_SAMPLES` (65) samples per
 height page edge, `TERRAIN_HOLE_BIT`, `TERRAIN_SURFACE_TEXELS` and `TERRAIN_SURFACE_BORDER` for the
@@ -445,9 +410,9 @@ calls for a new package version. the terrain square is the tile tree's root.
 
 8-byte header: `u32 magic, u16 version, u16 side`, then two BC3 images of `side²` texels (rows along
 +Z), albedo then normal, each in `writeTexture` block order. they are the game's baked `A` and `N`
-tile pages as stored, one level each; [world.md](game-data/world.md#terrain) gives their channels.
-`TERRAIN_SURFACE_TEXELS` (132) is the side, and the outer `TERRAIN_SURFACE_BORDER` (2) texels of
-each edge lie outside the tile, so world `x` maps to
+tile pages as stored, one level each; [terrain.md](game-data/terrain.md#tiles-and-placement) gives
+their channels. `TERRAIN_SURFACE_TEXELS` (132) is the side, and the outer `TERRAIN_SURFACE_BORDER`
+(2) texels of each edge lie outside the tile, so world `x` maps to
 `u = border / side + (x − tile.minX) / tile.size · (side − 2 · border) / side`. a tile missing
 either page has no surface ref and is listed in `debug/terrain.json`. map02's few thousand pages are
 about 120 MB raw and half that stored.
@@ -455,7 +420,7 @@ about 120 MB raw and half that stored.
 ### splat page (`.tsl`, `EFSL`) and layer textures (`.tly`)
 
 a leaf's close-up blend inputs, the game's splat control, tint and index pages
-([world.md](game-data/world.md#close-up-layers)). 12-byte header:
+([terrain.md](game-data/terrain.md#close-up-layers)). 12-byte header:
 `u32 magic, u16 version, u16 side, u16 cells, u16 0`, then the `S` page's RGBA8 texels (`side²`),
 the `T` page's BC3 sRGB blocks, and `cells²` cells of 4 layer ordinals cut from the scene's index
 map, row-major from the leaf's minimum corner. the images share the surface page's layout. a leaf
@@ -540,51 +505,66 @@ conversion.
 **UVs and textures are both unflipped**: Unity stores texel row 0 at v = 0, so does the package, and
 a WebGPU upload of the bytes as they are samples correctly with the game's UVs.
 
+### textures (`.tex`)
+
+texel data is the game's BC or float blocks unchanged: no transcoding, no container (no KTX2 at
+runtime), sRGB taken from the texture itself rather than from the material. each texture is cut into
+pieces ([textures.ts](../packages/extractor/src/pack/convert/textures.ts)):
+
+- the **tail**: the longest run of smallest levels totalling at most `TEXTURE_TAIL_BYTES` (64 KiB),
+  as one blob. for BC7 that's up to 128² (21.8 KB), and the next level (256²) is itself 64 KiB, so
+  no streamed piece is much smaller than this (per-request latency dominates below it) and one small
+  read makes any texture drawable.
+- **each larger level** as its own blob.
+
+inside a piece, levels run largest first, each holding every layer, face and depth slice in
+`writeTexture` order; `textureLevelLayout` gives sizes, `bytesPerRow` and `rowsPerImage`. every
+piece is a whole czar member, so `czar verify` checks it. texture objects with identical shape,
+format, sampler and texels share one entry.
+
 ## JSON tables
 
 each is one zstd frame (level 9) around JSON. a material's id is its index in `entries`, and a
 material is ready or an `UnconvertedEntry`, as in the [asset tables](#asset-tables).
 
-| table       | contents                                                                                                                                                                                                                                                                                                              |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `materials` | `entries`: `ReadyMaterial` with its cull mode, render queue, `surface` and `gaps` ([materials](#materials))                                                                                                                                                                                                           |
-| `water`     | see [water](#water)                                                                                                                                                                                                                                                                                                   |
-| `lights`    | `LightEntry`: kind (spot, point), entity id, visibility group, position, direction, final linear colour, range, cone angles, tube length, soft source radius, falloff exponent, specular and volumetric scattering intensity, priority, camera-distance fade, culling box as a rows3x4 inverse; see [lights](#lights) |
-| `particles` | see [particles](#particles)                                                                                                                                                                                                                                                                                           |
+| table         | contents                                                                                                                                                                                                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment` | `EnvironmentTable`: posts, blend schema, deduplicated phase sections, phases, `flowNoise`, volumes ([environments](#environments))                                                                                                                                                                                    |
+| `materials`   | `entries`: `ReadyMaterial` with its cull mode, render queue, `surface` and `gaps` ([materials](#materials))                                                                                                                                                                                                           |
+| `water`       | see [water](#water)                                                                                                                                                                                                                                                                                                   |
+| `lights`      | `LightEntry`: kind (spot, point), entity id, visibility group, position, direction, final linear colour, range, cone angles, tube length, soft source radius, falloff exponent, specular and volumetric scattering intensity, priority, camera-distance fade, culling box as a rows3x4 inverse; see [lights](#lights) |
+| `particles`   | see [particles](#particles)                                                                                                                                                                                                                                                                                           |
+
+### environments
+
+`tables/environment.json.zst` (`EnvironmentTable`,
+[pack/tables/environments.ts](../packages/extractor/src/pack/tables/environments.ts); packing rules
+in [environments](extraction/environments.md)):
+
+- `posts`: the levels' post-processing profiles, deduplicated by name.
+- `schema`: per section field, whether it lerps, lerps and rounds, or switches at ½
+  ([blend schema](extraction/environments.md#blend-schema)); fields it doesn't list switch.
+- `sections`: per section, every distinct value a phase holds (deduplicated across phases).
+- `phases`: every phase a volume applies, uncomposed: name, active sections, and per-section indices
+  into `sections`. `resolveEnvironment` resolves shared section objects.
+- `flowNoise`: texture id of the height fog's 3D flow noise, packed once, or `null`
+  ([flow noise](game-data/sky-and-fog.md#flow-noise)).
+- `volumes`: global, box and prism volumes (name without `#…`, visibility `group`,
+  `environmentVolume:<index>` `control`, world-space shape, `blend` mode `replace`/`depth`/`fade`/
+  `scripted`, priority, phase index or `null`).
+
+`LevelInfo.environment` names each level's base volume and post profile; the viewer starts its blend
+from all of that phase's sections and evaluates volume activation from its `group` alone (`scripted`
+controls default off, others on).
 
 ### materials
 
-each material is its cull mode and its `surface`: the extractor's interpretation of its serialized
-state ([material and shader](game-data/assets.md#material-and-shader), decoded as
-[extraction.md](extraction.md#asset-classes) describes) into what it draws
-([surfaces.ts](../packages/package-format/src/surfaces.ts),
-[game/materials/material-describe.ts](../packages/extractor/src/game/materials/material-describe.ts)).
-a surface is one model with its inputs resolved (the Lit model, a matte painting, erosion rock, a
-dithered effect, a texture stack, a lit decal, a water sheet, water foam, refraction, six-way smoke,
-a mist card or volume, a light beam, a portal's stencil mask), with Unity property names, keyword
-rules, colour spaces and the shaders' formulas already applied; `undrawn` for materials the game
-draws nothing visible with; or `unsupported` with the reason the viewer can't draw it. the viewer
-packs a surface into its draw parameters without reading Unity properties.
-
-a material also lists its `gaps`: what the game draws of it that the surface leaves out, by the name
-of the shader keyword the describer doesn't read or the property it reads past
-([surface-keywords.ts](../packages/extractor/src/game/materials/surfaces/surface-keywords.ts)). the
-viewer shows them in its [gaps view](viewer/materials.md#gaps).
-
-a texture is a `TextureSlot` (a bound texture-table id with its UV set and `_ST`, which the
-extractor has already replaced where a shader tiles by a property of its own), an `EffectTexture`
-(also its scroll, rotation and custom-data shift), or a bare id where nothing else is read. a
-`number` id is always bound; a `TextureRef` is `null` for a slot the material leaves unset, which
-the shader samples as white. a texture the surface doesn't sample is a `null` field. colours are
-`Color`/`Rgb` ([values.ts](../packages/package-format/src/values.ts)), linear where the field says
-so; Unity vectors that aren't colours are named tuples.
-
-an optional feature (a near camera fade, a dissolve, a soft blend, …) is `null` when off. a Unity
-switch the shaders only test is a `boolean`, and a mode they only branch on a string union
-(`'over' | 'add' | 'multiply'`, `'less-equal'`, UV sources as `'uv0' | 'uv1' | 'polar' | 'screen'`).
-a switch or mode the shaders blend by its fractional value, as the game's do, stays a number: a
-`Weight` (0 off, 1 on) such as `ignorePostExposure`, or a numbered mode or channel its field
-documents.
+each material is its cull mode, render queue, `gaps` (shader keywords/properties not drawn, shown in
+the [gaps view](viewer/materials.md#gaps)) and its resolved `surface`
+([surfaces.ts](../packages/package-format/src/surfaces.ts) defines the surface union and texture/
+colour/switch conventions;
+[material-describe.ts](../packages/extractor/src/game/materials/material-describe.ts) builds it).
+`undrawn` marks materials the game draws nothing visible with; `unsupported` carries the reason.
 
 **rect decals**: a rect decal placement draws the game's VFXDecal cube with its material
 ([decals](game-data/materials.md#decals)), its colour and UV transform being its row's
@@ -834,7 +814,7 @@ drawn once at the emitter's transform, sized as its scaling mode sizes particles
 scale moves stand-ins and frozen particles but sizes them only under Hierarchy, or Local on the
 prefab's root: Jingyu's drifting petals, placed 52× in Shape mode, stand in petal-sized.
 
-### stand-ins
+## stand-ins
 
 content the game draws but the viewer can't is packed as `Unsupported` draws, so the viewer can mark
 where something is missing. each is listed with why in the debug index's `stand-ins.json`
@@ -852,23 +832,6 @@ where something is missing. each is listed with why in the debug index's `stand-
 the material still names what the game draws where it's known, and is `0xffffffff` otherwise. cubes
 are a synthetic geometry (`synthetic:cube` in the debug index), a unit cube from −0.5 to 0.5 the
 instance transform scales.
-
-### textures (`.tex`)
-
-texel data is the game's BC or float blocks unchanged: no transcoding, no container (no KTX2 at
-runtime), sRGB taken from the texture itself rather than from the material. each texture is cut into
-pieces ([textures.ts](../packages/extractor/src/pack/convert/textures.ts)):
-
-- the **tail**: the longest run of smallest levels totalling at most `TEXTURE_TAIL_BYTES` (64 KiB),
-  as one blob. for BC7 that's up to 128² (21.8 KB), and the next level (256²) is itself 64 KiB, so
-  no streamed piece is much smaller than this (per-request latency dominates below it) and one small
-  read makes any texture drawable.
-- **each larger level** as its own blob.
-
-inside a piece, levels run largest first, each holding every layer, face and depth slice in
-`writeTexture` order; `textureLevelLayout` gives sizes, `bytesPerRow` and `rowsPerImage`. every
-piece is a whole czar member, so `czar verify` checks it. texture objects with identical shape,
-format, sampler and texels share one entry.
 
 ## asset placement
 

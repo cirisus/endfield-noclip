@@ -168,7 +168,7 @@ export const readTerrainTexture = (packed: Uint8Array): TerrainTexture => {
 
 /**
  * tile channels: `H` heights, `N` baked normal, `T` tint, `A` baked albedo, `S` splat control, `C` cliff
- * index. their layouts and shader bindings are in docs/game-data/world.md#terrain
+ * index. their layouts and shader bindings are in docs/game-data/terrain.md#tiles-and-placement
  */
 export type TerrainTileChannel = 'H' | 'N' | 'T' | 'A' | 'S' | 'C';
 
@@ -310,7 +310,7 @@ export interface TerrainNode {
 	localMaxHeight: number;
 	/**
 	 * metres; despite its name not the error of drawing this node instead of its children, but close to its
-	 * page's largest step between neighbouring samples (see game-data/world.md#terrain)
+	 * page's largest step between neighbouring samples (see docs/game-data/terrain.md#tiles-and-placement)
 	 */
 	maxHeightError: number;
 }
@@ -519,8 +519,8 @@ export const TERRAIN_PAGE_SIZE = 132;
 export const TERRAIN_PAGE_BORDER = 2;
 
 /**
- * reads a baked `A` or `N` page's BC3 blocks (channel contents in docs/game-data/world.md#terrain). rows
- * advance along world +Z like the height page's.
+ * reads a baked `A` or `N` page's BC3 blocks (channel contents in
+ * docs/game-data/terrain.md#tiles-and-placement). rows advance along world +Z like the height page's.
  *
  * @param texture a decoded `_A` or `_N` file
  * @returns the page's single level of BC3 blocks; a view into the texture
@@ -542,8 +542,8 @@ export const readTerrainBc3Page = (texture: TerrainTexture): Uint8Array => {
 
 /**
  * reads a baked `S` page: splat control, the blend weights of the 4 layers its 8 m cell's index names. rgb
- * weight layers 0–2, layer 3 gets `1 − r − g − b`; a is the puddle level (`docs/game-data/world.md#puddles`).
- * rows along +Z.
+ * weight layers 0–2, layer 3 gets `1 − r − g − b`; a is the puddle level
+ * (`docs/game-data/terrain.md#puddles`). rows along +Z.
  *
  * @param texture a decoded `_S` file
  * @returns the page's 132² RGBA8 texels; a view into the texture

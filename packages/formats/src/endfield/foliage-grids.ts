@@ -7,19 +7,8 @@ import { ChunkObjectKind, Component, type RendererDraw, type StaticRenderer } fr
 import { levelTagOf } from './level-partition.ts';
 import { readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
 
-// scattered foliage: the grass and tree grids among a chunk's proxy objects (tag-3 rows). each grid is a 64 m
-// cell's worth of ECS entities the client creates itself, serialized as whole archetypes into the row's keyed
-// property table (`mono-objects.ts` layout). the full layout is in docs/game-data/world.md#foliage-grids:
-//
-//   row         0 name   2 u8 proxy type   3 table
-//   Init        0xff000000 archetype count, then per archetype a:
-//               0xff02xxxx entity count   0xff03xxxx descriptors, 8 bytes each: u16 component id, u16 stride
-//               0xff04xxxx component-major blob of count · Σ stride bytes, as an InitChunkData group's
-//   Streaming   0xff050000 batch table length n, then per entry i < n:
-//               0xff06xxxx u32 batch key   0xff07xxxx material   0xff08xxxx mesh   0xff09xxxx submesh
-//
-// the archetypes reuse InitChunkData's bounds (0–5) and draw-info (8–14) columns, and hold their instances
-// in a column of their own.
+// scattered foliage: grass and tree grids among a chunk's tag-3 proxy objects, serialized as whole ECS
+// archetypes in the row's keyed property table (layout in docs/game-data/world.md#foliage-grids).
 
 // #region types
 

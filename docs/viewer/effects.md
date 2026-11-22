@@ -6,7 +6,7 @@ per family beside the rows they share in `effect-look.ts`, and
 [`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl)). the extractor reads each
 effect material's properties and keywords into a [surface](../package-format.md#materials)
 ([game/materials/effects/](../../packages/extractor/src/game/materials/effects/), one module per
-shader), or marks it unsupported with the reason; the viewer packs the surface into the look's 44
+shader), or marks it unsupported with the reason; the viewer packs the surface into the look's 48
 rows, all of which effect looks lay out for themselves (mesh looks use the first 35). effects on
 particle meshes play through the [particles](particles.md#particles), which also carry their
 [custom data](particles.md#custom-data); what's left out is in [status](../status.md).

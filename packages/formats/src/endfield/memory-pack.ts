@@ -3,15 +3,8 @@ import type { AttributeReader, TypeDefinition } from '../il2cpp/metadata.ts';
 import type { Il2CppRuntime, Il2CppTypeRef } from '../il2cpp/registration.ts';
 
 // MemoryPack-serialized game data (level scripts, interactive templates, LevelData, view-state controllers).
-// the client deserializes through generated wrapper classes named `<Namespace_Type>ForMemoryPack`: an object
-// is a member-count byte (255 for null) followed by its members in the order of the wrapper's `__name__`
-// setter properties, base wrapper first; a polymorphic base is a union, a tag byte choosing the subtype from
-// the wrapper's `[MemoryPackUnion(tag, typeof(subtype))]` attributes. collections are an int32 count and
-// their elements; strings are ids into the JsonData string pool. the schema is read from the user's install
-// (its IL2CPP metadata and binary), never stored in this repo.
-//
-// the rules beyond the generated wrappers (raw unmanaged structs, raw dictionaries, flagged values and the
-// types with formatters of their own) are in docs/game-data/scene-states.md#level-scripts
+// the schema is read from the user's install (IL2CPP metadata and binary), never stored in this repo.
+// wire layout and custom formatters are in docs/game-data/containers.md#memorypack.
 
 /** a decoded value: objects carry their wrapper's name as `$type`; 64-bit integers are decimal strings */
 export type MemoryPackValue =

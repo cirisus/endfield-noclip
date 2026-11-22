@@ -3,18 +3,10 @@ import { FormatError } from '../binary/binary-reader.ts';
 import { ChunkObjectKind } from './init-chunk-data.ts';
 import { readChunkRows, readPropertyTable, type MonoValue } from './mono-objects.ts';
 
-// resource bindings of streamed objects: `Data/Streaming/PC/<scene>/Streaming/StreamingChunkData_<x>_<z>_<sceneStateId>_<areaId>.bytes`
-// (and `…_Global_…`), the sibling of the same-named InitChunkData. it shares the Init root layout and object ids
-// (`readChunkRows`); what it adds per object is a keyed property table (`readPropertyTable`) whose values point
-// at assets by StringPathHash key. row readings follow Variante/endfield_research_kit (MIT,
-// `memory/game_data/world_chunk_union_vectors.md`).
-//
-// rows by kind:
-//   1 (5 slots): 3 inline u64 StreamingComponentType mask, 4 [table] one property table per component
-//   2 (6 slots): 3 property table, 4 sixteen zero bytes, 5 empty vector
-//   3 (4 slots): 3 property table (grass and tree grids' batch tables, see `foliage-grids.ts`)
-// kind-1 objects are read with their Init row by `readMonoObjects`; this flat view is for keys that don't fit
-// its component addressing (kind-2 entity properties, component bits from 32 up).
+// resource bindings of streamed objects (`StreamingChunkData_*`, sibling of `InitChunkData_*`; layout in
+// docs/game-data/world.md#streamingchunkdata). row readings follow Variante/endfield_research_kit (MIT,
+// `memory/game_data/world_chunk_union_vectors.md`). kind-1 objects are read with their Init row by
+// `readMonoObjects`; this flat view is for keys outside its component addressing (kind-2 properties, bits ≥ 32).
 
 // #region types
 

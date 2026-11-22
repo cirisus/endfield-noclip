@@ -4,15 +4,9 @@ import { ByteView } from '../binary/byte-view.ts';
 import { hashSlot, type HashSlot, slotAt } from './hash-slots.ts';
 
 // `Data/ExtendData/Main/StringPathHash.bin` (ExtendData group) and
-// `Data/ExtendData/Initial/InitStringPathHash.bin` (InitialExtendData group): a stored hash table from 64-bit
-// path hashes to asset/`Data/` paths. world data (InitChunkData draws, LevelConfig levelDataPaths) references
-// assets by these hashes. layout per
-// Variante/endfield_research_kit (MIT, `scripts/game_data/extend_data_binary.py`):
-//
-//   u32 stringsOffset (= 8 + 24·count) ‖ u32 count
-//   count × (u32 bucketOffset, u32 bucketLength)       slot = hash mod count
-//   count × 16-byte buckets: (u32 ?, u64 hash, u32 pathOffset relative to stringsOffset)
-//   count × (u32 byteLength ‖ UTF-16LE ‖ u16 0)
+// `Data/ExtendData/Initial/InitStringPathHash.bin` (InitialExtendData group): stored hash table from 64-bit
+// path hashes to asset/`Data/` paths (layout in docs/game-data/assets.md#lookup-tables). layout per
+// Variante/endfield_research_kit (MIT, `scripts/game_data/extend_data_binary.py`).
 
 const SLOTS_START = 8;
 const BUCKET_SIZE = 16;

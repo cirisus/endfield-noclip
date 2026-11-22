@@ -78,19 +78,19 @@ packs or renders correctly.
   against in-game shots at Jingyu's cherry-tree pit and cave arch only, where lit blossoms still
   read a little paler than the game's. [light beams](viewer/effects.md#light-beams) lack their 3D
   noise, a per-renderer scale and a global tint, and aren't checked against an in-game shot
-- surface shading that shows most indoors: per-draw emission colours other than prefabs'
-  `AnimationProperties_Emissive` resting colour (or their view states' emissive config) aren't known
-  ([emission](#surfaces-and-terrain)); meshes without tangents draw their normal map flat (what the
-  game's bump does there is unchecked); normals are transformed by the model matrix rather than its
-  inverse transpose; every material but leaves without `_TwoSidedNormal` lights the side facing the
-  camera; the packed tangent frame isn't decoded, so tangents are generated (MikkTSpace) from a UV
-  set ([geometry](package-format.md#binary-encodings))
+- surface shading that shows most indoors: meshes without tangents draw their normal map flat (what
+  the game's bump does there is unchecked); normals are transformed by the model matrix rather than
+  its inverse transpose; every material but leaves without `_TwoSidedNormal` lights the side facing
+  the camera; the packed tangent frame isn't decoded, so tangents are generated (MikkTSpace) from a
+  UV set ([geometry](package-format.md#binary-encodings)). per-draw emission overrides are under
+  [surfaces and terrain](#surfaces-and-terrain)
 - screen-space reflections
   ([screen-space reflections](viewer/lighting.md#screen-space-reflections)): the rain wetness
-  variant's ripple normals aren't drawn, and reflection-only effects don't write the march's inputs.
-  thin emissive strips reflect as stable white speckles on glossy floors (Dijiang's deck, under its
-  light strips): only some of the half-resolution rays hit a strip a pixel or two wide, and the
-  temporal filter keeps each hit at full brightness. untraced beyond that
+  variant's ripple normals aren't drawn; reflection-only effects are under
+  [effects and particles](#effects-and-particles). thin emissive strips reflect as stable white
+  speckles on glossy floors (Dijiang's deck, under its light strips): only some of the
+  half-resolution rays hit a strip a pixel or two wide, and the temporal filter keeps each hit at
+  full brightness. untraced beyond that
 - ambient occlusion ([ambient occlusion](viewer/post-processing.md#ambient-occlusion)): normals come
   from depth, one depth-aware blur stands in for the game's temporal and two spatial filters, there
   are no depth mips, and the reach is capped at 48 half-resolution pixels
@@ -142,10 +142,10 @@ packs or renders correctly.
   ripples) doesn't render. rain wetness ignores shelter, since the rain occlusion map isn't
   rendered, and has no jittered coverage edges, water running down walls or flooding of
   normal-mapped dips ([wetness](viewer/environment.md#wetness))
-- sky ([sky](viewer/sky-and-fog.md#sky)): the sky-view LUT's ground bounce and the procedural sky's
-  colour adjustment (`_VFXParams1`) aren't drawn; at Power Plateau's overcast the sky stays 15–20
-  sRGB levels brighter than the in-game shot and the clouds lighter and thinner, while Wuling's sky
-  matches. which of the game's two cloud-alpha paths runs on PC is unchecked
+- sky ([sky](viewer/sky-and-fog.md#sky)): the sky-view LUT's ground bounce isn't drawn; at Power
+  Plateau's overcast the sky stays 15–20 sRGB levels brighter than the in-game shot and the clouds
+  lighter and thinner, while Wuling's sky matches. which of the game's two cloud-alpha paths runs on
+  PC is unchecked
 - the sky's celestial layers ([beyond the atmosphere](viewer/sky-and-fog.md#beyond-the-atmosphere))
   are unchecked against in-game shots: sky planets are always added rather than blended by their
   `_BlendMode` and miss the global colour adjustment, stars aren't thinned behind their rings, the
@@ -259,9 +259,9 @@ packs or renders correctly.
 - terrain holes ([terrain](viewer/terrain.md#terrain)) follow the game's base pass, where one hole
   vertex drops its triangles, on quads cut along the game's alternating diagonals (their alignment
   to the page's samples is inferred). where the game deforms its terrain it draws its subdivision
-  passes instead ([terrain](game-data/world.md#terrain)), and solid ground reaches up to a sample
-  further into holes than the viewer draws it; which scenes do isn't surveyed. triangles touching a
-  hole are rasterized and then discarded, though they can span the screen
+  passes instead ([terrain](game-data/terrain.md#heights-and-holes)), and solid ground reaches up to
+  a sample further into holes than the viewer draws it; which scenes do isn't surveyed. triangles
+  touching a hole are rasterized and then discarded, though they can span the screen
 - puddles ([terrain](viewer/terrain.md#puddles)) stop past the leaf splat pages' load distance,
   ignore the parallax layers' height, and have no ripples
 - HLOD/detail, LOD and mip swaps pop without cross-fade; ground-blend and decal meshes z-fight
@@ -278,14 +278,15 @@ packs or renders correctly.
   and has no multiple scattering, configs sharing a `materialIndex` keep their own looks where the
   game gives both the last loaded's, and effects below the surface show over it, unchecked against
   the game
-- [foam boxes](viewer/water.md#foam-boxes) (`HGRP/WaterDecal`) ignore their per-placement
-  `HGWaterDecalRenderer` values (neutral on every map02 prefab), their displacement and the
-  distortion texture's mip bias (an unnamed material value); their variants beyond `_USE_DISTURB`,
-  `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE` and `_USE_WATER_EROSION`, those with a `_ZTest`
-  other than 4, 5 or 8, and erosion alongside a dissolve, a distortion or a mask texture, show as
-  [unsupported](viewer/materials.md#unsupported-materials) (none of map02's), and the Wuling falls'
-  foam and Wuling City's red tide ([erosion](game-data/water.md#water-erosion), its clamped samplers
-  approximated) are unchecked against an in-game shot; other fluid types are unverified
+- [foam boxes](viewer/water.md#foam-boxes) (`HGRP/WaterDecal`): the displacement pass
+  (`_BLEND_DISPLACEMENT`) isn't drawn, prefab boxes' `HGWaterDecalRenderer` values aren't packed
+  (neutral on every map02 prefab), and the distortion texture's mip bias (an unnamed material value)
+  isn't read. `_BLEND_BASECOLOR2` boxes (11 map02 materials), variants beyond `_USE_DISTURB`,
+  `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE` and `_USE_WATER_EROSION`, `_ZTest` outside 4/5/8,
+  and erosion alongside dissolve/distortion/mask stay
+  [unsupported](viewer/materials.md#unsupported-materials); Wuling falls' foam and Wuling City's red
+  tide ([erosion](game-data/water.md#water-erosion), clamped samplers approximated) are unchecked
+  against in-game shots, and other fluid types are unverified
 - water volumes ([viewer](viewer/water.md#water-volumes)): volumes without a `WaterConfig` of their
   own draw with their water type's surface prefab config, but without its foam decal or per-level
   multipliers ([game data](game-data/water.md#water-volumes)); moves are linear; floaters keep their
@@ -301,9 +302,6 @@ packs or renders correctly.
   Painting's lily pool (near 980, 293, 972) now draw as foamed water down the rock, but read
   grey-teal where the game shows them white; unchecked against an in-game shot from the same pose.
   at Jingyu the VFXWater sheet still sits inside the rocks in front of the falls
-- WaterDecal: the displacement pass (`_BLEND_DISPLACEMENT`) isn't drawn, `_BLEND_BASECOLOR2` boxes
-  (11 map02 materials) stay unsupported, and prefab boxes' renderer values aren't packed
-  ([foam boxes](viewer/water.md#foam-boxes))
 
 ## effects and particles
 
@@ -390,11 +388,11 @@ packs or renders correctly.
     map, the cards' own fog and the boxes' depth prepass and vertex colour aren't drawn, and only
     additive boxes draw; Suiming's cave-exit light card is unchecked in game. at Si's Painting's
     lily pool (946, 295, 973) a box hazes the pads 15 m out more than the game does, though the box
-    follows the shader; `_VFXParams1` and the PC value of the exposure the box divides by are the
-    untraced inputs. that cards' and boxes' [distance LODs](game-data/world.md#lod-and-hlod) are
+    follows the shader; the PC exposure the box divides by and `Material.SetColor` linearisation are
+    the untraced inputs. that cards' and boxes' [distance LODs](game-data/world.md#lod-and-hlod) are
     measured from their LOD centre is inferred
-  - across effects: the game's global scene-effect colour adjustment (`_VFXParams1`, set natively;
-    the Jingyu blight reads less saturated than in game)
+  - across effects: `VFXSceneDark` playable overrides of `_VFXParams1` aren't run (neutral
+    `(1, 1, 1, 1)` otherwise; the Jingyu blight still reads less saturated than in game)
   - stencil [portals](game-data/effects.md#portals) draw without their masks' own colour and depth,
     support only keep and replace, and need `depth32float-stencil8`
 - [reflection-only effects](game-data/effects.md#reflection-only-effects) aren't drawn, as in the
@@ -456,17 +454,13 @@ packs or renders correctly.
   through their [fade](game-data/particles.md#spline-movers), so Qingbo's buckets and Sword Vault
   Dale's floating stones appear and leave without fading (the stones also shrink from and to
   nothing)
-- temporal smoothing of effects: moving particles, scrolling and animated effects have no motion
-  vectors, and transparent layers write no depth, so the temporal antialiasing reprojects them by
-  the opaque scene behind ([frame](viewer/frame.md)). the game's effect variants carry
-  `HG_ENABLE_MV`; how the result differs on screen is unchecked
 - Marker Stone's low mist banks over the valley are missing; their source is unknown
-- the transparent pass sorts by the distance to each instance's bounding-sphere centre, where what
-  the game measures (bounds centre, most likely) isn't traced; only instances of one draw that are
-  neighbours in the order share a call. prefab renderers' sorting layers and orders sort first, but
-  not the render queue (2900–3100 share the pass) or renderer priority, and static scenery takes
-  band 0, since what fills its ECS band byte isn't traced ([frame](viewer/frame.md)). the corroded
-  planet's plume through Dijiang's deck glass is unchecked against the in-game shot's brightness
+- the transparent pass sorts by sorting band (prefab sorting layer/order, static scenery band 0
+  since its ECS band byte isn't traced), render queue, then distance to each instance's
+  bounding-sphere centre (what the game measures, likely bounds centre, isn't traced); renderer
+  priority isn't sorted, and only neighbouring instances of one draw share a call
+  ([frame](viewer/frame.md)). the corroded planet's plume through Dijiang's deck glass is unchecked
+  against the in-game shot's brightness
 
 ## scenes and conditional content
 
@@ -680,9 +674,6 @@ packs or renders correctly.
 
 ## renderer and performance
 
-- with every level shown, HLOD clusters the game would unload through its HLOD-unload volumes
-  ([stream area](game-data/world.md#stream-areas) slots 7–9, undecoded) may draw over neighbouring
-  levels; none were seen on map02
 - teleport points and named places as viewpoints: the game's fast-travel destinations and the place
   names it shows aren't packed ([teleport points](game-data/world.md#teleport-points),
   [named places](game-data/world.md#named-places))
@@ -690,11 +681,10 @@ packs or renders correctly.
   GPU-culled buckets still cost an encoded draw each
   ([performance](viewer/performance.md#optimization-candidates))
 - shadow layers redraw whole on every new selection, without the game's tiled cache of its far map
-  or its per-layer cull of small casters, whose size measure isn't decoded
-  ([performance](viewer/performance.md#optimization-candidates),
-  [quality settings](game-data/quality-settings.md))
+  or its per-layer small-caster cull ([lighting and post-processing](#lighting-and-post-processing),
+  [performance](viewer/performance.md#optimization-candidates))
 - geometry pools never shrink, so their spare capacity stays outside the stream budget
-  ([GPU resources](viewer/gpu-resources.md))
+  ([GPU resources](viewer/gpu-resources.md#buffers-and-pools))
 - the terrain's close-up blending and the timestamp queries' own overhead are unprofiled; large
   regions at the default budget evict content during a flight
 - texture mips follow what the main pass samples ([mip feedback](viewer/streaming.md#mip-feedback)),
@@ -704,8 +694,9 @@ packs or renders correctly.
   if the texture spanned it once, as does everything on a device without room for the feedback
   target. the viewer's one budget holds textures and meshes together, where the game budgets
   textures alone
-- temporal antialiasing has no sharpening (the game sharpens by 0.3), and reprojects by depth and
-  camera alone, so moving content reprojects as if it stood still ([frame](viewer/frame.md))
+- temporal antialiasing has no sharpening (the game sharpens by 0.3) and reprojects by depth and
+  camera alone without motion vectors, so moving content, particles and scrolling/transparent
+  effects reproject by the static scene behind ([frame](viewer/frame.md))
 
 ## packaging
 
@@ -727,7 +718,7 @@ packs or renders correctly.
 - the tree's `geometricError` is a placeholder (`edge / 16`) that only orders requests
   ([tile tree](package-format.md#tile-tree))
 - the terrain's cliff-index pages and cone maps aren't packed
-  ([terrain](game-data/world.md#terrain))
+  ([terrain](game-data/terrain.md#tiles-and-placement))
 - port the game's path hash so lookups stop reverse-scanning the path-hash table
   ([asset resolution](extraction.md#asset-resolution))
 - meshes: collision-only meshes, vertices in `m_CompressedMesh` and line and point topologies are
@@ -803,8 +794,6 @@ an entry when it's done or ruled out.
   test
 - viewer: `fx_smoothstep` (`effect.wgsl`) against `hermite` (`mesh.wgsl`); the reflection march
   duplicated between `water/ssr-trace.wgsl` and `fs_march` in `post/ssr.wgsl`
-- the [materials](package-format.md#materials) section of the package-format page restates the
-  `surfaces.ts` module header
 
 ### CLI candidates
 

@@ -3,24 +3,9 @@ import { ByteView } from '../binary/byte-view.ts';
 
 import { hashSlot } from './hash-slots.ts';
 
-// `Data/Bundles/Windows/manifest.hgmmap` (BundleManifest group). the stored file is one Brotli stream over
-// the layout below; asset paths inside it are Brotli-compressed again. layout and field names per
-// Variante/endfield_research_kit (MIT, `scripts/game_data/bundle_manifest{,_native}.py` +
-// `contracts/bundle_manifest_native.json`):
-//
-//   header (156 bytes): u32 0xFF11FF11, u32 n, UTF-16 guid[n]; u32 0xF1F2F3F4, u32 n, UTF-16 hash[n]; u32 0
-//   asset dictionary:  u32 size, u32 capacity, capacity × (u32 offset, u32 count) slots,
-//                      capacity × AssetInfo{ i64 pathHashHead, u32 path, i32 bundleIndex, i32 assetSize, u32 0 }
-//   bundle dictionary: same shape over 48-byte Bundle values keyed by hashName (bundleIndex stored as 0)
-//   bundle array:      u32 size, u32 count, count × Bundle{ i32 bundleIndex, u32 name, u32 dependencies,
-//                      u32 directReverseDependencies, u32 directDependencies, u32 bundleFlags, i64 hashName,
-//                      i64 hashVersion, i32 category, u32 0 }
-//   data region:       u32 size, data, u32 size
-//
-// slot offsets are relative to the dictionary's capacity word; slot = unsigned key mod capacity. `name` and
-// the dependency lists point into the data region: UTF-16 strings are `u32 byteLength ‖ chars ‖ u16 0`,
-// lists are `u32 count ‖ u32 bundleIndex[count] ‖ u16 0`. `path` points at
-// `u32 length ‖ Brotli(UTF-16LE) ‖ u16 0`.
+// `Data/Bundles/Windows/manifest.hgmmap` (BundleManifest group; layout in docs/game-data/assets.md#lookup-tables).
+// layout and field names per Variante/endfield_research_kit (MIT, `scripts/game_data/bundle_manifest{,_native}.py`
+// + `contracts/bundle_manifest_native.json`).
 
 const HEAD1 = 0xff11ff11;
 const HEAD2 = 0xf1f2f3f4;

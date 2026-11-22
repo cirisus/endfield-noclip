@@ -594,33 +594,9 @@ complete and hides them otherwise.
 
 ### level scripts
 
-level scripts and other MemoryPack game data take their schema from the install's IL2CPP metadata
-(`il2cpp_data/Metadata/global-metadata.dat`, version 29) and `GameAssembly.dll`: the generated
-`<Type>ForMemoryPack` wrappers' setter properties give each object's members in order, and their
-`MemoryPackUnion` attributes the union tags.
-
-an object is a member-count byte (255 for null) followed by its members in the order of the
-wrapper's `__name__` setter properties, base wrapper first. a polymorphic base is a union: a tag
-byte (250 then a u16 for large tags, 255 for null) choosing the subtype. collections are an int32
-count (−1 for null) and their elements; strings are ids into the JsonData string pool. beyond the
-generated wrappers, found by decoding every level script of the client to its exact length:
-
-- unmanaged structs of a few kinds are copied raw at their in-memory size, padding included, except
-  as `List` elements, which go through their wrapper: `*Ptr`, `GameplayTag`,
-  `CameraControlStateInitialParam`, `PosRot`, `NpcBehaviorTag`, `ConditionValue`, `ValueUnion`,
-  `AudioId`, `AbilitySystemData.PlungingAttackData`, `StringPathHash` and `BezierKnot`. the last two
-  were confirmed by decoding every LevelData file but Dijiang's two to its exact length
-- a `Dictionary` of two unmanaged types (primitives, enums, Unity vectors) is copied raw as
-  `KeyValuePair` rows, padding included
-- `Nullable<T>` and `Optional<T>` of an unmanaged `T` are raw: a flag byte, then `T` at its
-  alignment. an `Optional` keeps its value when disabled
-- four types have formatters of their own. `AnimationCurve`: a member count of 3, the pre- and
-  post-wrap modes, then raw 28-byte `Keyframe`s. `SerializeFieldDictionary`: a header byte, 255 for
-  null, 1 for one list of key/value pairs, 2 for a key list then a value list. `SendLuaEvent`,
-  `SendLuaEvent1` and `SendLuaEvent2`: a member count, the id, an inline UTF-8 uid, a bool, the next
-  id, a bool, a `Param<string>` event name, then one inline UTF-8 JSON string per parameter.
-  `AudioBlackScreenBehaviour`: a raw 16-byte struct of a preset byte, a flags byte, a fade-in bool,
-  an f32 in time at +4, a fade-out bool at +8 and an f32 out time at +12
+level scripts are [MemoryPack](containers.md#memorypack)-serialized payloads whose schema comes from
+the install's IL2CPP metadata (`global-metadata.dat`) and `GameAssembly.dll`. every shipped level
+script decodes to its exact byte length under the rules documented there.
 
 ## other runtime state
 

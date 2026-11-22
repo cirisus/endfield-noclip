@@ -14,13 +14,20 @@ frosted glass, the exposure histogram, cutscene effects and the uber pass.
 ## ambient occlusion
 
 the game's GTAO is XeGTAO at half the render size. the graphics quality setting picks the kernel,
-not the volume's `qualityLevel`: PC high marches 3 slices × 3 steps (low and medium 2 × 2, ultra 9 ×
-3). unless `ambientOcclusion.custom` is set, the game ignores the volume's march settings for a
-fixed preset: radius 4 m, falloff range 1, sample distribution power 1, thin-occluder compensation
-2; only `finalValuePower` comes from the volume (6 on map02). thin-occluder compensation scales
-depth differences by `1 + thin` in the falloff distance. the result occludes the ambient part of the
-radiance ([ambient](lighting.md#ambient)). the game marches over prefiltered depth mips, reads
-GBuffer normals and filters the result temporally and twice spatially before upsampling.
+not the volume's `qualityLevel`: the shader enum has Low/Medium (`2 × 2`), High (`3 × 3`), and Ultra
+(`9 × 3`), with PC's shipped presets topping out at High
+([quality settings](quality-settings.md#values-by-level)). unless `ambientOcclusion.custom` is set,
+the game ignores the volume's march settings for a fixed preset: radius 4 m, falloff range 1, sample
+distribution power 1, thin-occluder compensation 2; only `finalValuePower` comes from the volume (6
+on map02). thin-occluder compensation scales depth differences by `1 + thin` in the falloff
+distance.
+
+the pass chain runs at AO resolution until the upsample: depth prefilter (5 mips via XeGTAO
+`DepthMIPFilter`) → main march (64 × 64 Hilbert + R2 noise, GBuffer octahedral normals,
+`max(0.03, (vis / S)^finalValuePower) / 1.5`) → temporal reprojection (3 × 3 min/max clamp) → two 3
+× 3 edge-aware spatial denoises (pass 2 restores ×1.5) → unweighted 5-tap bilinear upsample. the
+result occludes both diffuse ambient and specular occlusion (`min(gtao, materialAO)`,
+[ambient](lighting.md#ambient)).
 
 ## light shafts
 

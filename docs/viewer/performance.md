@@ -90,25 +90,17 @@ how to measure is in [driving the viewer](../driving-the-viewer.md#profiling).
 - **cached work.** the transmittance and multiple-scattering LUTs render once per environment;
   irradiance clipmaps update only on re-centre or new cells; local lights are selected, binned and
   uploaded only when the camera, render size or shown lights change, not on settle frames.
-- **textures stream what's sampled.** the main pass reports the mip levels it samples per material
-  and textures load down to those ([mip feedback](streaming.md#mip-feedback)), which cut the
-  textures in use at street-level and interior stops by a third to two thirds. over the routes below
-  it cut what's downloaded by a quarter to two fifths; on map02's Wuling City and Jingyu walks the
-  frame's median/p95 went from about 15/34 ms to 12/23 ms and the frames over 50 ms (a few dozen a
-  walk, stalls in `prepare` and `encode` while uploads kept the GPU process busy) went away. the
-  target costs 4 bytes a pixel; the compute pass's and the readback's own cost isn't measured.
-- **large uploads staged.** streamed data of 128 KiB or more goes through a
-  [staging buffer](gpu-resources.md) instead of a queue write, which stalled the main thread for
-  15–30 ms per megabyte-sized texture level while streaming.
-- **a frame's worth of decode jobs in hand.** the decode workers' answers reach the main thread only
-  between frames, so the jobs posted to them are what a frame can take in. with four per worker
-  about 16 blobs got through a frame while the workers idled, which bounded all loading; with 64
-  ([decode workers](loading.md#decode-workers-and-zstd)) a map02 teleport settles in about a second
-  rather than 2.5, and the page in a little over 2 s rather than 5. what's decoded and waiting to
-  upload is held to 64 MiB, so the workers don't run ahead of the frames' upload budget.
-- **several reads a request.** what's wanted of one archive goes out as the ranges of one request
-  where the server answers multi-range requests ([fetching](streaming.md#residency-and-budgets)),
-  which halved the requests of a map02 flight.
+- **textures stream what's sampled.** [mip feedback](streaming.md#mip-feedback) cut resident
+  textures at street-level and interior stops by a third to two thirds, downloads by a quarter to
+  two fifths, and map02 walk frame median/p95 from ~15/34 ms to 12/23 ms (eliminating >50 ms upload
+  stalls). the target costs 4 bytes/px; compute and readback overhead is unprofiled.
+- **large uploads staged.** data ≥ 128 KiB uses
+  [staged writes](gpu-resources.md#pipelines-and-uploads) instead of queue writes, avoiding 15–30 ms
+  main-thread stalls per MiB texture level.
+- **decode pipeline.** 64 queued jobs per [decode worker](loading.md#decode-workers-and-zstd)
+  (capped at 64 MiB awaiting upload) cut map02 teleport settle from 2.5 s to ~1 s and page load from
+  5 s to ~2 s; [multi-range requests](streaming.md#residency-and-budgets) halved request counts on a
+  map02 flight.
 - **particle integrals tabulated.** how far a velocity curve has carried a particle is read from a
   table built once per curve ([motion](particles.md#motion)), and colours are read without
   allocating.

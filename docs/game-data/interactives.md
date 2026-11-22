@@ -76,16 +76,13 @@ completed, only locks interaction with it. Dijiang's operator summon point
 between the model component and the variant table sit hundreds of component and action-graph types.
 the table is followed only by the template's temporary properties and two flags, and its keys are
 exactly the InteractiveTable ids that name this template, other than the template's own id, which is
-never a key (this holds for every shipped template). variant entries are 14-member objects in name
-order; `Optional<T>` is an object of (enabled, value) for managed `T` and a raw struct (enabled,
-padding, value) for unmanaged `T`.
+never a key (this holds for every shipped template). variant entries are 14-member
+[MemoryPack](containers.md#memorypack) objects.
 
 ### the LevelData format
 
-LevelData is a sequential format that stores no field lengths, so a field can only be passed by
-reading it, and misreading one misframes every later row. polymorphic fields are MemoryPack unions
-whose tag indexes the subclasses in name order, with each subclass's members also in name order.
-gameplay tags are unmanaged four-byte values.
+LevelData is a sequential [MemoryPack](containers.md#memorypack) payload with no field lengths, so a
+field can only be passed by reading it, and misreading one misframes every later row.
 
 ## gameplay locks
 
@@ -351,7 +348,7 @@ from its saved property (false in the template), then fires `switchState`, which
 transition on the second layer. the base layer of `int_001_comm_terminal_controller` starts on
 `error_idle`, the red crosses on the pedestal, and rests on `normal_idle` while `fixed` holds
 (`seamless` selects a third pair). no mission, level script or table names the terminal or sets
-`fixed`, so the server sets it; the user reports it's fixed once the story is done.
+`fixed`, so the server sets it; in game it's reported to be fixed once the story is done.
 
 ## talosites
 
@@ -591,3 +588,13 @@ switch isn't known either. where the ports stand is held by the server.
 (`InteractiveLogicElectricFence`) instead, which recomputes its `state` from its electric node's net
 power against a threshold before playing the same kind of effect list, so its start depends on
 server power.
+
+## open
+
+- per-placement start phase of looping view-state clips
+- whether `ForceEnd` ends a non-persistent view-state effect with its state (assumed)
+- whether `Distance` is a plain 3D distance (assumed) and how `InZone` swaps to its runtime radius
+- whether the empty model override alone keeps the Wuling bridges' template drawbridge from loading
+  (inferred)
+- how bamboo raft wakes update while moving (assumed)
+- where the server's AIC factory power ports stand (not present in client files)

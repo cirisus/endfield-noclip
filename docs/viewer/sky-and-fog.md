@@ -64,8 +64,9 @@ from `heightFogConfig.enable`, as the game does.
 the volumetric fog's froxels are computed each frame by a compute pass
 ([`render/sky/volumetric-fog.ts`](../../packages/viewer/src/render/sky/volumetric-fog.ts)), which
 scatters the sun, the ambient probe and the packed [local lights](lighting.md#local-lights),
-unshadowed. it slices depth as the game does, on a fixed 160 × 90 × 64 grid, where the game's
-follows the view up to 240 × 135 × 128 at PC high and 320 × 180 × 128 at very high
+shadowed through the sun and [local-light shadow maps](lighting.md#local-light-shadows). it slices
+depth as the game does, on a fixed 160 × 90 × 64 grid, where the game's follows the view up to 240 ×
+135 × 128 at PC high and 320 × 180 × 128 at very high
 ([quality settings](../game-data/quality-settings.md#values-by-level)). the slices per doubling (32)
 and the history weight (90 %) are Unreal's defaults, the game's not being recovered. its sky term
 takes the ambient probe, which carries `indirectDiffuseFactor`. local fog volumes and the volumetric

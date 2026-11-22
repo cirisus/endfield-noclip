@@ -80,10 +80,10 @@ produce:
 ## terrain selection
 
 terrain is CDLOD, with the viewer's own LOD rule: the game's per-node `maxHeightError` isn't an
-error bound ([terrain](../game-data/world.md#terrain)). each level's distance range comes from its
-sample spacing and `terrainPixels` (default 3 px per sample). a node subdivides while the next finer
-range reaches it; a quadrant whose child page isn't resident is drawn from the parent page while the
-child is requested, and vertices morph to the coarser grid over the last 30% of a level's range (the
+error bound ([terrain](../game-data/terrain.md)). each level's distance range comes from its sample
+spacing and `terrainPixels` (default 3 px per sample). a node subdivides while the next finer range
+reaches it; a quadrant whose child page isn't resident is drawn from the parent page while the child
+is requested, and vertices morph to the coarser grid over the last 30% of a level's range (the
 coarsest level never morphs). every selected page quadrant is an instance of one shared grid, so
 terrain is a single draw
 ([`render/terrain/terrain-renderer.ts`](../../packages/viewer/src/render/terrain/terrain-renderer.ts)).
@@ -92,8 +92,8 @@ each visited node also wants its surface page at the same priority. a patch is s
 finest resident surface page at or above its node, magnified when it's an ancestor's, so the ground
 keeps its colours while finer pages stream. leaves within `DETAIL_DISTANCE` (160 m) also want their
 splat page, which the [close-up layers](terrain.md#close-up-layers) need along with every layer
-texture (pinned at load). `terrainSurface` and `terrainSplat` turn the two off; without BC textures
-neither loads.
+texture (pinned when the first splat page arrives). `terrainSurface` and `terrainSplat` turn the two
+off; without BC textures neither loads.
 
 ## per-instance LOD
 

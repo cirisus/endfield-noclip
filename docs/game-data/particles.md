@@ -288,3 +288,11 @@ form (`m_Mode`, `m_ConstantMin/Max`, `m_CurveMultiplier`, `m_CurveMin/Max`), and
   7% of the trip and back to 1 over the last 5%, and Sword Vault Dale's stones 1 to 0 over their
   first 2–5%, with `transparentAlpha` 1 in both; read as opacity, either would hide its objects for
   most of their trip. the shaft's movers set `transparentAlpha` 0, so they never fade.
+
+## open
+
+- [particle systems](#particle-systems): exact per-frame rate-curve integration, donut shape,
+  `separateAxis` speed limits, drag curves, non-sphere force fields, freeform stretch, and Unity's
+  trail generation (`minVertexDistance`)
+- [spline movers](#spline-movers): lifetime span formula (`length / speed`, unverified) and how the
+  renderer applies the `alphaOverLifeTime` fade (untraced)
