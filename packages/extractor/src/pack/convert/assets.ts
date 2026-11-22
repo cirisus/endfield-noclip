@@ -713,7 +713,7 @@ const vatNeeds = (
 				found.set(draw.geometry, { key, bake });
 			} else if (held.key !== key) {
 				found.delete(draw.geometry);
-				unanimated.set(draw.geometry, 'a mesh drawn with different rigid-body animations');
+				unanimated.set(draw.geometry, 'a mesh drawn with different vertex animations');
 			} else if (!held.bake.submeshes.includes(draw.submesh)) {
 				held.bake.submeshes.push(draw.submesh);
 			}
