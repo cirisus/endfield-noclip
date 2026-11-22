@@ -261,13 +261,19 @@ export class BundleAssetFile {
 	}
 
 	/**
-	 * reads the metadata, and the whole file too if it's small
+	 * reads the metadata, and the whole file too if it's small (unless `eager` is `false`)
 	 *
 	 * @param bundle containing bundle
 	 * @param node a node flagged as a SerializedFile
+	 * @param options.eager whether to read SerializedFiles up to 16 MB whole (default `true`); pass `false`
+	 *   when only metadata or a few objects are needed
 	 */
-	static async open(bundle: UnityBundle, node: BundleNode): Promise<BundleAssetFile> {
-		if (node.size <= EAGER_SERIALIZED_FILE_SIZE) {
+	static async open(
+		bundle: UnityBundle,
+		node: BundleNode,
+		options?: { eager?: boolean },
+	): Promise<BundleAssetFile> {
+		if ((options?.eager ?? true) && node.size <= EAGER_SERIALIZED_FILE_SIZE) {
 			const bytes = await bundle.readNode(node);
 			return new BundleAssetFile(bundle, node, parseSerializedFile(bytes), bytes);
 		}
@@ -369,8 +375,12 @@ export class BundleAssetFile {
 
 /**
  * @param bundle an opened bundle
+ * @param options.eager whether to read small SerializedFiles whole (default `true`)
  * @returns its SerializedFiles
  */
-export const openAssetFiles = (bundle: UnityBundle): Promise<BundleAssetFile[]> => {
-	return Promise.all(bundle.serializedFileNodes().map((node) => BundleAssetFile.open(bundle, node)));
+export const openAssetFiles = (
+	bundle: UnityBundle,
+	options?: { eager?: boolean },
+): Promise<BundleAssetFile[]> => {
+	return Promise.all(bundle.serializedFileNodes().map((node) => BundleAssetFile.open(bundle, node, options)));
 };

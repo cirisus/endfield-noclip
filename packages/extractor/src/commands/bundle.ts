@@ -53,11 +53,13 @@ export const run = async (args: string[]): Promise<void> => {
 	await withContext(values.config, async (context) => {
 		switch (sub) {
 			case 'info': {
-				await info(await openAssetFilesByName(context, name));
+				await info(await openAssetFilesByName(context, name, { eager: false }));
 				break;
 			}
 			case 'dump': {
-				const files = await openAssetFilesByName(context, name);
+				const files = await openAssetFilesByName(context, name, {
+					eager: pathId === undefined && values.class === undefined,
+				});
 				const matches = (object: ObjectInfo): boolean => {
 					if (pathId !== undefined) {
 						return object.pathId === pathId;
@@ -108,11 +110,12 @@ const isClass = (object: ObjectInfo, name: string): boolean => {
 const openAssetFilesByName = async (
 	context: Context,
 	name: string | undefined,
+	options?: { eager?: boolean },
 ): Promise<BundleAssetFile[]> => {
 	if (name === undefined) {
 		throw new Error(usage);
 	}
-	return openAssetFiles(await openBundle(context, name));
+	return openAssetFiles(await openBundle(context, name), options);
 };
 
 // #region info
@@ -294,7 +297,7 @@ const find = async (
 		pending.set(
 			index,
 			(async () => {
-				const assets = await openAssetFiles(await openBundle(context, name));
+				const assets = await openAssetFiles(await openBundle(context, name), { eager: false });
 				const matches = await Promise.all(assets.map((asset) => scanAsset(asset, options)));
 				return matches.flat();
 			})().catch((error: unknown) => (error instanceof Error ? error : new Error(String(error)))),
