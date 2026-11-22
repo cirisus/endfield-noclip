@@ -393,7 +393,7 @@ export class AssetResolver {
 		if (node === undefined) {
 			throw new Error(`stream file ${info.path} not found`);
 		}
-		return bundle.readNodeRange(node, info.offset, info.offset + info.size);
+		return bundle.readNode(node, info.offset, info.offset + info.size);
 	}
 
 	/**

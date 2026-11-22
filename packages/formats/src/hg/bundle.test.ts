@@ -103,11 +103,11 @@ describe('UnityBundle', () => {
 		assert.deepEqual(await bundle.readNode(cab), stream.subarray(0, 300));
 		assert.deepEqual(await bundle.readNode(resS), stream.subarray(300));
 		// repeated and overlapping reads go through the block cache
-		assert.deepEqual(await bundle.readNodeRange(resS, 40, 450), stream.subarray(340, 750));
-		assert.deepEqual(await bundle.readNodeRange(cab, 99, 101), stream.subarray(99, 101));
-		assert.deepEqual(await bundle.readNodeRange(resS, 459, 460), stream.subarray(759, 760));
-		assert.deepEqual(await bundle.readNodeRange(cab, 5, 5), new Uint8Array(0));
-		assert.throws(() => bundle.readNodeRange(cab, 0, 301), RangeError);
+		assert.deepEqual(await bundle.readNode(resS, 40, 450), stream.subarray(340, 750));
+		assert.deepEqual(await bundle.readNode(cab, 99, 101), stream.subarray(99, 101));
+		assert.deepEqual(await bundle.readNode(resS, 459, 460), stream.subarray(759, 760));
+		assert.deepEqual(await bundle.readNode(cab, 5, 5), new Uint8Array(0));
+		assert.throws(() => bundle.readNode(cab, 0, 301), RangeError);
 	});
 
 	it('only fetches the blocks overlapping a read', async () => {

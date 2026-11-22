@@ -456,21 +456,13 @@ export class UnityBundle {
 	}
 
 	/**
-	 * @param node node to read
-	 * @returns the node's bytes; the caller owns them
-	 */
-	readNode(node: BundleNode): Promise<Uint8Array> {
-		return this.readNodeRange(node, 0, node.size);
-	}
-
-	/**
 	 * @param node node to read from
-	 * @param start inclusive offset within the node
-	 * @param end exclusive offset within the node
+	 * @param start inclusive offset within the node (defaults to 0)
+	 * @param end exclusive offset within the node (defaults to the node size)
 	 * @returns the requested bytes; the caller owns them
 	 * @throws {RangeError} if the range lies outside the node
 	 */
-	readNodeRange(node: BundleNode, start: number, end: number): Promise<Uint8Array> {
+	readNode(node: BundleNode, start = 0, end = node.size): Promise<Uint8Array> {
 		if (start < 0 || end > node.size || start > end) {
 			throw new RangeError(`range ${start}..${end} outside ${node.path} (${node.size} bytes)`);
 		}

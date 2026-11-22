@@ -33,8 +33,6 @@ import {
 	type PPtr,
 } from '@endfield-noclip/formats/unity/values';
 
-import { groupByDefined } from '@mary-ext/array-fns';
-
 import { DEFAULT_OUT } from '../cli-args.ts';
 import type { Keys } from '../config.ts';
 import { ignoreMissing } from '../errors.ts';
@@ -244,8 +242,6 @@ export class BundleAssetFile {
 	readonly node: BundleNode;
 	readonly file: SerializedFile;
 	readonly #bytes: Uint8Array | undefined;
-	/** per class id: lowercase `m_Name` → objects */
-	readonly #names = new Map<number, Promise<Map<string, ObjectInfo[]>>>();
 
 	/**
 	 * @param bundle containing bundle
@@ -277,10 +273,8 @@ export class BundleAssetFile {
 			const bytes = await bundle.readNode(node);
 			return new BundleAssetFile(bundle, node, parseSerializedFile(bytes), bytes);
 		}
-		const header = parseSerializedFileHeader(
-			await bundle.readNodeRange(node, 0, SERIALIZED_FILE_HEADER_SIZE),
-		);
-		const prefix = await bundle.readNodeRange(node, 0, serializedFileMetadataEnd(header));
+		const header = parseSerializedFileHeader(await bundle.readNode(node, 0, SERIALIZED_FILE_HEADER_SIZE));
+		const prefix = await bundle.readNode(node, 0, serializedFileMetadataEnd(header));
 		return new BundleAssetFile(bundle, node, parseSerializedFile(prefix), undefined);
 	}
 
@@ -289,7 +283,7 @@ export class BundleAssetFile {
 		if (this.#bytes !== undefined) {
 			return objectBytes(this.#bytes, info);
 		}
-		return this.bundle.readNodeRange(this.node, info.byteStart, info.byteStart + info.byteSize);
+		return this.bundle.readNode(this.node, info.byteStart, info.byteStart + info.byteSize);
 	}
 
 	/**
@@ -308,32 +302,12 @@ export class BundleAssetFile {
 			return peekObjectName(this.file, info, await this.objectBytes(info));
 		}
 		// `m_Name` sits near the start of every class that has one; read the rest only if it doesn't fit
-		const prefix = await this.bundle.readNodeRange(
-			this.node,
-			info.byteStart,
-			info.byteStart + NAME_PREFIX_SIZE,
-		);
+		const prefix = await this.bundle.readNode(this.node, info.byteStart, info.byteStart + NAME_PREFIX_SIZE);
 		try {
 			return peekObjectName(this.file, info, prefix);
 		} catch {
 			return peekObjectName(this.file, info, await this.objectBytes(info));
 		}
-	}
-
-	/**
-	 * finds objects by name; the first call per class reads every name of that class
-	 *
-	 * @param classId class of the objects
-	 * @param name `m_Name`, lowercase
-	 * @returns the objects of that class whose lowercased name is `name`
-	 */
-	async objectsNamed(classId: number, name: string): Promise<ObjectInfo[]> {
-		const index = this.#names.getOrInsertComputed(classId, async () => {
-			const objects = this.file.objects.filter((info) => info.classId === classId);
-			const names = await Promise.all(objects.map((info) => this.peekName(info)));
-			return groupByDefined(objects, (_info, i) => names[i]?.toLowerCase());
-		});
-		return (await index).get(name) ?? [];
 	}
 
 	/** @returns every AssetBundle object of the file with its `m_Container` */
