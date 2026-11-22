@@ -1,7 +1,12 @@
 import { FormatError } from '../binary/binary-reader.ts';
 import { multiplyQuaternions, unityEulerQuaternion } from '../unity/transform.ts';
 
-import type { MemoryPackValue } from './memory-pack.ts';
+import {
+	asMemoryPackNumber,
+	asMemoryPackObject,
+	asMemoryPackVec3,
+	type MemoryPackValue,
+} from './memory-pack.ts';
 
 /** a Unity Splines `BezierKnot`: tangents are in the knot's own frame */
 export interface SplineKnot {
@@ -22,34 +27,6 @@ export interface LevelSpline {
 	knots: SplineKnot[];
 }
 
-type Fields = { [key: string]: MemoryPackValue };
-
-const record = (value: MemoryPackValue | undefined, what: string): Fields => {
-	if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
-		throw new FormatError(`invalid spline ${what}`);
-	}
-	return value;
-};
-
-const number = (value: MemoryPackValue | undefined, what: string): number => {
-	if (typeof value !== 'number') {
-		throw new FormatError(`invalid spline ${what}`);
-	}
-	return value;
-};
-
-const vec3 = (value: MemoryPackValue | undefined, what: string): [number, number, number] => {
-	if (Array.isArray(value)) {
-		if (value.length !== 3) {
-			throw new FormatError(`invalid spline ${what}`);
-		}
-		return [number(value[0], what), number(value[1], what), number(value[2], what)];
-	}
-	// Unity.Mathematics float3
-	const { x, y, z } = record(value, what);
-	return [number(x, what), number(y, what), number(z, what)];
-};
-
 /**
  * reads the splines of a LevelData the MemoryPack schema decoded whole (`LevelDataForMemoryPack`)
  *
@@ -58,32 +35,35 @@ const vec3 = (value: MemoryPackValue | undefined, what: string): [number, number
  * @throws {FormatError} if a spline is malformed
  */
 export const readLevelSplines = (levelData: MemoryPackValue): LevelSpline[] => {
-	const { splines } = record(levelData, 'level data');
+	const { splines } = asMemoryPackObject(levelData, 'spline level data');
 	if (!Array.isArray(splines)) {
 		return [];
 	}
 	return splines.map((value) => {
-		const spline = record(value, 'entry');
+		const spline = asMemoryPackObject(value, 'spline entry');
 		if (!Array.isArray(spline.knots)) {
 			throw new FormatError('invalid spline knots');
 		}
 		return {
-			id: number(spline.splineId, 'id'),
-			position: vec3(spline.position, 'position'),
-			rotation: vec3(spline.rotation, 'rotation'),
+			id: asMemoryPackNumber(spline.splineId, 'spline id'),
+			position: asMemoryPackVec3(spline.position, 'spline position'),
+			rotation: asMemoryPackVec3(spline.rotation, 'spline rotation'),
 			closed: spline.closed === true,
 			knots: spline.knots.map((knotValue) => {
-				const knot = record(knotValue, 'knot');
-				const { x, y, z, w } = record(record(knot.Rotation, 'knot rotation').value, 'knot rotation');
+				const knot = asMemoryPackObject(knotValue, 'spline knot');
+				const { x, y, z, w } = asMemoryPackObject(
+					asMemoryPackObject(knot.Rotation, 'spline knot rotation').value,
+					'spline knot rotation',
+				);
 				return {
-					position: vec3(knot.Position, 'knot position'),
-					tangentIn: vec3(knot.TangentIn, 'knot tangent'),
-					tangentOut: vec3(knot.TangentOut, 'knot tangent'),
+					position: asMemoryPackVec3(knot.Position, 'spline knot position'),
+					tangentIn: asMemoryPackVec3(knot.TangentIn, 'spline knot tangent'),
+					tangentOut: asMemoryPackVec3(knot.TangentOut, 'spline knot tangent'),
 					rotation: [
-						number(x, 'knot rotation'),
-						number(y, 'knot rotation'),
-						number(z, 'knot rotation'),
-						number(w, 'knot rotation'),
+						asMemoryPackNumber(x, 'spline knot rotation'),
+						asMemoryPackNumber(y, 'spline knot rotation'),
+						asMemoryPackNumber(z, 'spline knot rotation'),
+						asMemoryPackNumber(w, 'spline knot rotation'),
 					],
 				};
 			}),

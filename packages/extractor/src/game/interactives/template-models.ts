@@ -4,7 +4,7 @@ import {
 	readInteractiveTable,
 	readInteractiveVariantModels,
 } from '@endfield-noclip/formats/endfield/interactive-model';
-import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
+import { isMemoryPackObject, type MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
 
 import type { FacilitySources, InteractiveForm } from './facility-sources.ts';
 import type { PlacedInteractive } from './placed-interactives.ts';
@@ -62,6 +62,48 @@ const facilityModels = (
 		throw new FormatError(`${path} lacks a model and a model-upgrade list holding it`);
 	}
 	return { id: model.modelId, scale: model.modelScale, levels };
+};
+
+/**
+ * @param template a decoded interactive template
+ * @returns its base model from its model component, or `null` when it names none
+ * @throws {FormatError} if its model scale isn't a positive finite number
+ */
+const baseModelFromValue = (template: MemoryPackValue): { id: string; scale: number } | null => {
+	const model = findComponent(template, '_InteractiveModelComponentDataForMemoryPack');
+	if (model === undefined) {
+		return null;
+	}
+	const scale = model.modelScale;
+	if (typeof scale !== 'number' || !Number.isFinite(scale) || scale <= 0) {
+		throw new FormatError('invalid interactive model scale');
+	}
+	const id = model.modelId;
+	return typeof id === 'string' && id.length > 0 ? { id, scale } : null;
+};
+
+/**
+ * @param template a decoded interactive template
+ * @returns the model id of each variant that overrides the template's model, or `null` for an enabled empty
+ *   override
+ */
+const variantModelsFromValue = (template: MemoryPackValue): Map<string, string | null> => {
+	const overrides = new Map<string, string | null>();
+	if (!isMemoryPackObject(template) || !Array.isArray(template.templateVariant)) {
+		return overrides;
+	}
+	for (const pair of template.templateVariant) {
+		if (!Array.isArray(pair) || typeof pair[0] !== 'string' || !isMemoryPackObject(pair[1])) {
+			continue;
+		}
+		const model = pair[1].modelId;
+		if (!isMemoryPackObject(model) || model.enabled !== true) {
+			continue;
+		}
+		// an enabled empty override means no model, not the template's
+		overrides.set(pair[0], typeof model.value === 'string' && model.value.length > 0 ? model.value : null);
+	}
+	return overrides;
 };
 
 /** what a placed template draws */
@@ -132,9 +174,9 @@ export const resolveTemplateModels = async (
 			continue;
 		}
 		let bytes: Uint8Array | undefined;
+		let decoded: MemoryPackValue | undefined;
 		let upgrade = upgrades.get(data);
 		if (upgrade === undefined) {
-			let decoded: MemoryPackValue | undefined;
 			try {
 				// oxlint-disable-next-line no-await-in-loop -- small templates, read once per map
 				bytes = await sources.read(data);
@@ -168,13 +210,21 @@ export const resolveTemplateModels = async (
 		let resolved = templates.get(template);
 		if (resolved === undefined) {
 			try {
-				// oxlint-disable-next-line no-await-in-loop -- small templates, read once per map
-				const file = bytes ?? (await sources.read(data));
-				resolved = {
-					base: readInteractiveBaseModel(file, string),
-					variants: readInteractiveVariantModels(file, string, variantsOf.get(template) ?? new Set()),
-					failure: null,
-				};
+				if (decoded !== undefined) {
+					resolved = {
+						base: baseModelFromValue(decoded),
+						variants: variantModelsFromValue(decoded),
+						failure: null,
+					};
+				} else {
+					// oxlint-disable-next-line no-await-in-loop -- small templates, read once per map
+					const file = bytes ?? (await sources.read(data));
+					resolved = {
+						base: readInteractiveBaseModel(file, string),
+						variants: readInteractiveVariantModels(file, string, variantsOf.get(template) ?? new Set()),
+						failure: null,
+					};
+				}
 			} catch (error) {
 				if (!(error instanceof FormatError)) {
 					throw error;

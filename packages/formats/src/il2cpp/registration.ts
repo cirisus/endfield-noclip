@@ -61,6 +61,7 @@ export class Il2CppRuntime {
 	readonly #fieldOffsets: number;
 	readonly #resolved = new Map<number, Il2CppTypeRef>();
 	readonly #definitionNames = new Map<number, string>();
+	readonly #fields = new Map<number, readonly ResolvedField[]>();
 
 	/**
 	 * @param metadata the build's metadata
@@ -128,25 +129,28 @@ export class Il2CppRuntime {
 	 * @param definition a type definition
 	 * @returns its fields, constants left out, with offsets for instance fields
 	 */
-	fields(definition: TypeDefinition): ResolvedField[] {
-		const { view } = this.#image;
-		const fields: ResolvedField[] = [];
-		const table = view.u64(this.#fieldOffsets + definition.index * 8);
-		for (let i = 0; i < definition.fieldCount; i++) {
-			const field = this.metadata.field(definition.fieldStart + i);
-			const attributes = this.typeAttributes(field.typeIndex);
-			if ((attributes & FIELD_LITERAL) !== 0) {
-				continue;
+	fields(definition: TypeDefinition): readonly ResolvedField[] {
+		return this.#fields.getOrInsertComputed(definition.index, () => {
+			const { view } = this.#image;
+			const fields: ResolvedField[] = [];
+			const table = view.u64(this.#fieldOffsets + definition.index * 8);
+			const tableOffset = table === 0n ? 0 : requireVaOffset(this.#image, table);
+			for (let i = 0; i < definition.fieldCount; i++) {
+				const field = this.metadata.field(definition.fieldStart + i);
+				const attributes = this.typeAttributes(field.typeIndex);
+				if ((attributes & FIELD_LITERAL) !== 0) {
+					continue;
+				}
+				const isStatic = (attributes & FIELD_STATIC) !== 0;
+				let offset = table === 0n ? 0 : view.i32(tableOffset + i * 4);
+				// instance offsets count the object header, which a value type doesn't have
+				if (definition.valueType && !isStatic) {
+					offset -= 16;
+				}
+				fields.push({ name: field.name, type: this.type(field.typeIndex), offset, static: isStatic });
 			}
-			const isStatic = (attributes & FIELD_STATIC) !== 0;
-			let offset = table === 0n ? 0 : view.i32(requireVaOffset(this.#image, table) + i * 4);
-			// instance offsets count the object header, which a value type doesn't have
-			if (definition.valueType && !isStatic) {
-				offset -= 16;
-			}
-			fields.push({ name: field.name, type: this.type(field.typeIndex), offset, static: isStatic });
-		}
-		return fields;
+			return fields;
+		});
 	}
 
 	/**
@@ -186,13 +190,13 @@ export class Il2CppRuntime {
 		if (cached !== undefined) {
 			return cached;
 		}
-		const definition = this.metadata.typeDefinition(index);
-		const name = definition.name.replace(/`\d+$/, '');
+		const name = this.metadata.typeDefinitionName(index).replace(/`\d+$/, '');
+		const declaringTypeIndex = this.metadata.typeDefinitionDeclaringType(index);
 		let result: string;
-		if (definition.declaringTypeIndex === -1) {
+		if (declaringTypeIndex === -1) {
 			result = name;
 		} else {
-			const outer = this.type(definition.declaringTypeIndex);
+			const outer = this.type(declaringTypeIndex);
 			if (outer.kind !== 'definition' && outer.kind !== 'generic') {
 				throw new FormatError(`type ${name} is nested in a ${outer.kind}`);
 			}

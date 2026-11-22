@@ -124,6 +124,26 @@ export class Il2CppMetadata {
 
 	/**
 	 * @param index a type definition index
+	 * @returns its name, without decoding the rest of the row
+	 * @throws {FormatError} if the index is out of range
+	 */
+	typeDefinitionName(index: number): string {
+		const at = this.#row(Table.TypeDefinitions, this.#typeRow, index);
+		return this.string(this.#view.i32(at));
+	}
+
+	/**
+	 * @param index a type definition index
+	 * @returns the type table index of its enclosing type, or -1 if top-level
+	 * @throws {FormatError} if the index is out of range
+	 */
+	typeDefinitionDeclaringType(index: number): number {
+		const at = this.#row(Table.TypeDefinitions, this.#typeRow, index);
+		return this.#view.i32(at + 12);
+	}
+
+	/**
+	 * @param index a type definition index
 	 * @returns the definition
 	 * @throws {FormatError} if the index is out of range
 	 */

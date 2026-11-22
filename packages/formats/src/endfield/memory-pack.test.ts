@@ -86,6 +86,9 @@ const fakeRuntime = (types: FakeType[]): Il2CppRuntime => {
 	const unionAttribute = types.length;
 	const metadata = {
 		typeDefinitionCount: types.length,
+		typeDefinitionName: (i: number) =>
+			i === unionAttribute ? 'MemoryPackUnionAttribute' : definitions[i].name,
+		typeDefinitionDeclaringType: (i: number) => definitions[i].declaringTypeIndex,
 		typeDefinition: (i: number) =>
 			i === unionAttribute ? { name: 'MemoryPackUnionAttribute' } : definitions[i],
 		method: (i: number) => (i === -1 ? { declaringType: unionAttribute } : methods[i]),

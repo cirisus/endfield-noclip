@@ -25,6 +25,57 @@ export type MemoryPackObject = { [key: string]: MemoryPackValue };
 export const isMemoryPackObject = (value: MemoryPackValue | undefined): value is MemoryPackObject =>
 	value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value);
 
+/**
+ * @param value a decoded value, or a missing member
+ * @param what label for the error message
+ * @returns the value as an object
+ * @throws {FormatError} if it isn't an object
+ */
+export const asMemoryPackObject = (value: MemoryPackValue | undefined, what: string): MemoryPackObject => {
+	if (!isMemoryPackObject(value)) {
+		throw new FormatError(`invalid ${what}`);
+	}
+	return value;
+};
+
+/**
+ * @param value a decoded value, or a missing member
+ * @param what label for the error message
+ * @returns the value as a number
+ * @throws {FormatError} if it isn't a number
+ */
+export const asMemoryPackNumber = (value: MemoryPackValue | undefined, what: string): number => {
+	if (typeof value !== 'number') {
+		throw new FormatError(`invalid ${what}`);
+	}
+	return value;
+};
+
+/**
+ * @param value a decoded value, or a missing member
+ * @param what label for the error message
+ * @returns a 3-vector from either a `Vector3` array or a `Unity.Mathematics.float3` object
+ * @throws {FormatError} if it isn't a 3-vector of numbers
+ */
+export const asMemoryPackVec3 = (
+	value: MemoryPackValue | undefined,
+	what: string,
+): [number, number, number] => {
+	if (Array.isArray(value)) {
+		if (value.length !== 3) {
+			throw new FormatError(`invalid ${what}`);
+		}
+		return [
+			asMemoryPackNumber(value[0], what),
+			asMemoryPackNumber(value[1], what),
+			asMemoryPackNumber(value[2], what),
+		];
+	}
+	// Unity.Mathematics float3
+	const { x, y, z } = asMemoryPackObject(value, what);
+	return [asMemoryPackNumber(x, what), asMemoryPackNumber(y, what), asMemoryPackNumber(z, what)];
+};
+
 /** a generated wrapper class */
 interface Wrapper {
 	name: string;
@@ -32,6 +83,12 @@ interface Wrapper {
 	fields: { name: string; type: Il2CppTypeRef }[];
 	/** subtypes by union tag, or `null` for a plain object */
 	union: Map<number, number> | null;
+}
+
+/** precomputed field layout of a raw-copied struct */
+interface RawStruct {
+	name: string;
+	fields: { name: string; type: Il2CppTypeRef; offset: number }[];
 }
 
 /** unmanaged layout */
@@ -95,11 +152,15 @@ export class MemoryPackSchema {
 		this.runtime = runtime;
 		const { metadata } = runtime;
 		for (let index = 0; index < metadata.typeDefinitionCount; index++) {
-			const definition = metadata.typeDefinition(index);
-			if (!definition.name.endsWith('ForMemoryPack') || definition.declaringTypeIndex !== -1) {
+			if (metadata.typeDefinitionDeclaringType(index) !== -1) {
 				continue;
 			}
-			this.#wrappers.set(definition.name, index);
+			const name = metadata.typeDefinitionName(index);
+			if (!name.endsWith('ForMemoryPack')) {
+				continue;
+			}
+			const definition = metadata.typeDefinition(index);
+			this.#wrappers.set(name, index);
 			for (let m = 0; m < definition.methodCount; m++) {
 				const method = metadata.method(definition.methodStart + m);
 				if (method.name === 'GetValue' && method.parameterCount === 0) {
@@ -145,7 +206,7 @@ export class MemoryPackSchema {
 				const parent = this.runtime.type(definition.parentIndex);
 				if (
 					parent.kind === 'definition' &&
-					metadata.typeDefinition(parent.definition).name.endsWith('ForMemoryPack')
+					metadata.typeDefinitionName(parent.definition).endsWith('ForMemoryPack')
 				) {
 					fields.push(...this.wrapper(parent.definition).fields);
 				}
@@ -173,9 +234,9 @@ export class MemoryPackSchema {
 		}
 		const union = new Map<number, number>();
 		for (const constructor of reader.constructors) {
-			const attribute = metadata.typeDefinition(metadata.method(constructor).declaringType);
+			const attributeName = metadata.typeDefinitionName(metadata.method(constructor).declaringType);
 			const args = readAttributeArguments(reader, this.runtime);
-			if (attribute.name !== 'MemoryPackUnionAttribute') {
+			if (attributeName !== 'MemoryPackUnionAttribute') {
 				continue;
 			}
 			const [tag, type] = args;
@@ -343,6 +404,7 @@ export class MemoryPackReader {
 	readonly #strings: (id: number) => string | null | undefined;
 	readonly #layouts = new Map<string, Layout | null>();
 	readonly #layoutRefs = new WeakMap<Il2CppTypeRef, Layout | null>();
+	readonly #rawStructs = new Map<number, RawStruct>();
 	#bytes: Uint8Array = new Uint8Array();
 	#view: DataView = new DataView(this.#bytes.buffer);
 	#at = 0;
@@ -417,7 +479,6 @@ export class MemoryPackReader {
 
 	#value(type: Il2CppTypeRef, listElement: boolean): MemoryPackValue {
 		const { runtime } = this.schema;
-		const name = runtime.typeName(type);
 		if (type.kind === 'primitive') {
 			if (type.name === 'string') {
 				const id = this.#i32();
@@ -428,12 +489,12 @@ export class MemoryPackReader {
 		}
 		if (type.kind === 'array') {
 			if (type.rank !== 1) {
-				throw new FormatError(`unsupported array ${name}`);
+				throw new FormatError(`unsupported array ${runtime.typeName(type)}`);
 			}
 			return this.#list(() => this.#value(type.element, false));
 		}
 		if (type.kind !== 'definition' && type.kind !== 'generic') {
-			throw new FormatError(`unsupported type ${name}`);
+			throw new FormatError(`unsupported type ${runtime.typeName(type)}`);
 		}
 		const base = runtime.definitionName(type.definition);
 		const special = this.#special(base);
@@ -504,7 +565,7 @@ export class MemoryPackReader {
 		}
 		const wrapper = this.schema.wrapperFor(type);
 		if (wrapper === undefined) {
-			throw new FormatError(`no wrapper serializes ${name}`);
+			throw new FormatError(`no wrapper serializes ${runtime.typeName(type)}`);
 		}
 		return this.#wrapper(wrapper);
 	}
@@ -732,6 +793,14 @@ export class MemoryPackReader {
 		if (type.kind !== 'definition') {
 			throw new FormatError(`no raw form for ${runtime.typeName(type)}`);
 		}
+		const cached = this.#rawStructs.get(type.definition);
+		if (cached !== undefined) {
+			const result: { [key: string]: MemoryPackValue } = { $type: cached.name };
+			for (const field of cached.fields) {
+				result[field.name] = this.#rawAt(field.type, at + field.offset);
+			}
+			return result;
+		}
 		const definition = runtime.metadata.typeDefinition(type.definition);
 		const vector = VECTORS.get(definition.name);
 		if (vector !== undefined) {
@@ -742,14 +811,21 @@ export class MemoryPackReader {
 		if (definition.enumType) {
 			return this.#rawAt(runtime.type(definition.elementTypeIndex), at);
 		}
-		const result: { [key: string]: MemoryPackValue } = { $type: definition.name };
-		for (const field of runtime.fields(definition)) {
-			if (!field.static) {
-				result[field.name.replace(/^<(\w+)>k__BackingField$/, '$1')] = this.#rawAt(
-					field.type,
-					at + field.offset,
-				);
-			}
+		const struct: RawStruct = {
+			name: definition.name,
+			fields: runtime
+				.fields(definition)
+				.filter((field) => !field.static)
+				.map((field) => ({
+					name: field.name.replace(/^<(\w+)>k__BackingField$/, '$1'),
+					type: field.type,
+					offset: field.offset,
+				})),
+		};
+		this.#rawStructs.set(definition.index, struct);
+		const result: { [key: string]: MemoryPackValue } = { $type: struct.name };
+		for (const field of struct.fields) {
+			result[field.name] = this.#rawAt(field.type, at + field.offset);
 		}
 		return result;
 	}
