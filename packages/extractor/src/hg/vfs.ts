@@ -66,7 +66,6 @@ export interface MountedGroup {
 	catalog: VfsCatalog;
 	/** layers to search for chunks, highest priority first */
 	dirs: string[];
-	files: Map<string, VfsFileEntry>;
 }
 
 /** chunk files kept open at once; least recently used ones are closed once idle */
@@ -131,7 +130,7 @@ export class Vfs {
 	 */
 	async find(hash: string, name: string): Promise<VfsFile | undefined> {
 		const group = await this.group(hash);
-		const entry = group.files.get(name);
+		const entry = group.catalog.get(name);
 		return entry && { group, entry };
 	}
 
@@ -245,13 +244,7 @@ export class Vfs {
 		}
 
 		const catalog = parseVfsCatalog(blc, this.#key, VFS_CIPHER_OPTIONS);
-		const files = new Map<string, VfsFileEntry>();
-		for (const chunk of catalog.chunks) {
-			for (const file of chunk.files) {
-				files.set(file.name, file);
-			}
-		}
-		return { catalog, dirs, files };
+		return { catalog, dirs };
 	}
 
 	#acquire(group: MountedGroup, md5: string): ChunkHandle {

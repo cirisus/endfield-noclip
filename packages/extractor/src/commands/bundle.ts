@@ -283,7 +283,7 @@ const find = async (
 			? [VfsGroup.Bundle, VfsGroup.InitialBundle]
 			: [options.group === 'initial' ? VfsGroup.InitialBundle : VfsGroup.Bundle];
 	const catalogs = await Promise.all(groups.map((group) => context.vfs.group(group)));
-	const allNames = catalogs.flatMap((catalog) => Array.from(catalog.files.keys()));
+	const allNames = catalogs.flatMap((group) => Array.from(group.catalog.names()));
 	const maxScan = Math.min(allNames.length, options.scan);
 	let scanned = 0;
 	let found = 0;

@@ -203,7 +203,7 @@ const tableShortName = (name: string): string =>
 
 const listTables = async (context: Context, filter: RegExp | undefined): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.Table);
-	const names = [...group.files.values()]
+	const names = [...group.catalog]
 		.filter((file) => file.name.endsWith(TABLE_SUFFIX))
 		.map((file) => ({ name: tableShortName(file.name), length: file.length }))
 		.filter((entry) => filter === undefined || filter.test(entry.name))
@@ -223,24 +223,20 @@ const readTable = async (
 	const exactPath = name.includes('/')
 		? name
 		: `${TABLE_PREFIX}${name}${name.endsWith(TABLE_SUFFIX) ? '' : TABLE_SUFFIX}`;
-	let file = group.files.get(exactPath);
-	if (file === undefined) {
+	let matchedPath = group.catalog.has(exactPath) ? exactPath : undefined;
+	if (matchedPath === undefined) {
 		const lower = exactPath.toLowerCase();
-		for (const candidate of group.files.values()) {
-			if (candidate.name.toLowerCase() === lower) {
-				file = candidate;
+		for (const candidate of group.catalog.names()) {
+			if (candidate.toLowerCase() === lower) {
+				matchedPath = candidate;
 				break;
 			}
 		}
 	}
-	if (file === undefined) {
+	if (matchedPath === undefined) {
 		throw new Error(`table ${name} not found; see \`data tables\``);
 	}
-	const vfsFile = await context.vfs.find(VfsGroup.Table, file.name);
-	if (vfsFile === undefined) {
-		throw new Error(`table ${name} not found; see \`data tables\``);
-	}
-	const table = parseSparkTable(await context.vfs.readVerified(vfsFile));
+	const table = parseSparkTable(await context.vfs.readFile(VfsGroup.Table, matchedPath));
 	const matched: { key: string | number | bigint; value: unknown }[] = [];
 	for (const [key, value] of table.entries) {
 		const keyText = String(key);
@@ -289,10 +285,10 @@ const readScripts = async (
 ): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.JsonData);
 	const prefix = `Data/Json/LevelScriptData/${level}/`;
-	const files = [...group.files.values()]
-		.filter((file) => file.name.startsWith(prefix) && file.name.endsWith('.json'))
-		.filter((file) => options.id === undefined || file.name === `${prefix}${options.id}.json`)
-		.toSorted((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
+	const files = [...group.catalog.names()]
+		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
+		.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`)
+		.toSorted((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 	if (files.length === 0) {
 		throw new Error(
 			`no level scripts found for ${level}${options.id === undefined ? '' : ` id ${options.id}`}`,
@@ -301,15 +297,15 @@ const readScripts = async (
 
 	const mp = await context.memoryPack();
 	const matched: object[] = [];
-	for (const file of files) {
-		const scriptId = file.name.slice(prefix.length, -'.json'.length);
+	for (const name of files) {
+		const scriptId = name.slice(prefix.length, -'.json'.length);
 		// oxlint-disable-next-line no-await-in-loop -- stops at --limit
-		const decoded = mp.decode(await context.vfs.readFile(VfsGroup.JsonData, file.name), SCRIPT_ROOT);
+		const decoded = mp.decode(await context.vfs.readFile(VfsGroup.JsonData, name), SCRIPT_ROOT);
 		if (options.filter !== undefined && !options.filter.test(JSON.stringify(decoded, jsonReplacer))) {
 			continue;
 		}
 		if (options.id !== undefined || options.json) {
-			matched.push({ id: scriptId, file: file.name, data: decoded });
+			matched.push({ id: scriptId, file: name, data: decoded });
 		} else {
 			const graph = toScript(scriptId, level, decoded);
 			const types = new Set<string>();
@@ -351,9 +347,9 @@ const readInteractives = async (
 ): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.JsonData);
 	const prefix = `Data/Json/LevelData/${level}/`;
-	const files = [...group.files.values()]
-		.filter((file) => file.name.startsWith(prefix) && file.name.endsWith('.json'))
-		.toSorted((a, b) => a.name.localeCompare(b.name));
+	const files = [...group.catalog.names()]
+		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
+		.toSorted((a, b) => a.localeCompare(b));
 	if (files.length === 0) {
 		throw new Error(`no LevelData files found for ${level}`);
 	}
@@ -368,15 +364,15 @@ const readInteractives = async (
 
 	const matched: object[] = [];
 	const skipped: string[] = [];
-	for (const file of files) {
+	for (const name of files) {
 		// oxlint-disable-next-line no-await-in-loop -- stops at --limit
-		const bytes = await context.vfs.readFile(VfsGroup.JsonData, file.name);
+		const bytes = await context.vfs.readFile(VfsGroup.JsonData, name);
 		let rows;
 		try {
 			rows = readLevelInteractives(bytes, resolveString);
 		} catch (error) {
 			if (error instanceof UnsupportedLevelData) {
-				skipped.push(`${file.name}: ${errorText(error)}`);
+				skipped.push(`${name}: ${errorText(error)}`);
 				continue;
 			}
 			throw error;
@@ -397,7 +393,7 @@ const readInteractives = async (
 				modelScale: row.modelScale,
 				properties: row.properties,
 				componentProperties: Object.fromEntries(row.componentProperties),
-				file: file.name,
+				file: name,
 			};
 			if (options.filter !== undefined && !options.filter.test(JSON.stringify(plain, jsonReplacer))) {
 				continue;
@@ -409,7 +405,7 @@ const readInteractives = async (
 					.filter(Boolean)
 					.join(' ');
 				console.log(
-					`${idText.padStart(12)}  ${pos.padEnd(24)} ${row.template.padEnd(36)} ${flags}  @ ${file.name.split('/').pop()}`,
+					`${idText.padStart(12)}  ${pos.padEnd(24)} ${row.template.padEnd(36)} ${flags}  @ ${name.split('/').pop()}`,
 				);
 			}
 			if (matched.length >= options.limit) {

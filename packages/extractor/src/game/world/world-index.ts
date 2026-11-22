@@ -209,7 +209,7 @@ export class WorldIndex {
 		this.#stringPool ??= (async () => {
 			const group = await this.vfs.group(VfsGroup.JsonData);
 			const poolFiles = mapDefined(
-				[...group.files.keys()],
+				[...group.catalog.names()],
 				(name) => /^Data\/Json\/StringPool\/StringPool(\d+)\.byte$/.exec(name) ?? undefined,
 			);
 			poolFiles.sort((a, b) => Number(a[1]) - Number(b[1]));
@@ -229,7 +229,7 @@ export class WorldIndex {
 			const group = await this.vfs.group(VfsGroup.JsonData);
 			const pool = await this.stringPool();
 
-			const names = [...group.files.keys()].filter((name) => name.startsWith('Data/Json/LevelConfig/'));
+			const names = [...group.catalog.names()].filter((name) => name.startsWith('Data/Json/LevelConfig/'));
 			const configs = await mapPool(names, READ_CONCURRENCY, async (name) =>
 				parseLevelConfig(await this.#read(VfsGroup.JsonData, name), (id) => pool.get(id)),
 			);
@@ -354,7 +354,7 @@ export class WorldIndex {
 	 */
 	async missions(): Promise<MissionRuntime[]> {
 		const group = await this.vfs.group(VfsGroup.JsonData);
-		const ids = mapDefined([...group.files.keys()], (name) => MISSION_PATTERN.exec(name)?.[1]);
+		const ids = mapDefined([...group.catalog.names()], (name) => MISSION_PATTERN.exec(name)?.[1]);
 		const missions = await mapPool(ids, READ_CONCURRENCY, (id) => this.mission(id));
 		return definite(missions).toSorted((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
 	}
@@ -363,7 +363,7 @@ export class WorldIndex {
 	chunkFiles(): Promise<ChunkFile[]> {
 		this.#chunkFiles ??= (async () => {
 			const files: ChunkFile[] = [];
-			for (const name of (await this.vfs.group(VfsGroup.Streaming)).files.keys()) {
+			for (const name of (await this.vfs.group(VfsGroup.Streaming)).catalog.names()) {
 				const match = CHUNK_PATTERN.exec(name);
 				if (match) {
 					const [, scene, x, z, sceneState, area] = match;
@@ -404,7 +404,7 @@ export class WorldIndex {
 	/** @returns the streaming scene names (worlds) */
 	async scenes(): Promise<string[]> {
 		const scenes = new Set<string>();
-		for (const name of (await this.vfs.group(VfsGroup.Streaming)).files.keys()) {
+		for (const name of (await this.vfs.group(VfsGroup.Streaming)).catalog.names()) {
 			if (name.startsWith(STREAMING_ROOT)) {
 				scenes.add(name.slice(STREAMING_ROOT.length).split('/')[0]);
 			}
@@ -673,7 +673,7 @@ export class WorldIndex {
 	dynamicEntities(scene: string): Promise<DynamicEntity[]> {
 		return this.#dynamicEntities.getOrInsertComputed(scene, async () => {
 			const prefix = `${DYNAMIC_SCENE_ROOT}${scene}/fb_main_`;
-			const names = [...(await this.vfs.group(VfsGroup.DynamicStreaming)).files.keys()]
+			const names = [...(await this.vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
 				.filter((name) => name.startsWith(prefix))
 				.toSorted();
 			const perFile = await mapPool(names, READ_CONCURRENCY, async (name) =>

@@ -429,7 +429,7 @@ class DynamicFiles {
 	 * @throws {FormatError} on a grid id two files share
 	 */
 	async readOwners(): Promise<{ grids: Map<number, DynamicResourceGrid>; owners: DynamicResourceEntity[] }> {
-		const names = [...(await this.#vfs.group(VfsGroup.DynamicStreaming)).files.keys()]
+		const names = [...(await this.#vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
 			.filter((name) => name.startsWith(`${this.#prefix}fb_main_`))
 			.map((name) => name.slice(this.#prefix.length))
 			.toSorted();

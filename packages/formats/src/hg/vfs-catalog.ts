@@ -19,38 +19,6 @@ export interface VfsFileEntry {
 	ivSeed: bigint | null;
 }
 
-/** one physical `.chk` file */
-export interface VfsChunkEntry {
-	md5: string;
-	contentMd5: string;
-	length: number;
-	blockType: number;
-	files: VfsFileEntry[];
-}
-
-/**
- * a decrypted `<group>.blc` catalog, the game's `VFBlockMainInfo`. the game calls a group a VFS block; this
- * project says group because "block" already names several other layers
- */
-export interface VfsCatalog {
-	/** catalog version; also forms part of per-file nonces */
-	version: number;
-	/** human name (`groupCfgName`), e.g. `Bundle`, `Streaming` */
-	groupName: string;
-	/** 8 hex digits, matching the directory name */
-	groupHash: string;
-	/** the group's `EVFSBlockType` value, e.g. 11 for `Bundle`; chunks and files repeat it */
-	blockType: number;
-	fileCount: number;
-	chunksLength: number;
-	chunks: VfsChunkEntry[];
-}
-
-// #endregion
-
-/** bytes before the encrypted body: `u32 version ‖ 8 bytes`, which together form the nonce */
-const CATALOG_HEAD_LENGTH = 12;
-
 /** XORs `input` with a ChaCha20 keystream starting at `counter`, writing to `output` (which may alias `input`) */
 export type ChaCha20Cipher = (
 	key: Uint8Array,
@@ -60,9 +28,135 @@ export type ChaCha20Cipher = (
 	output: Uint8Array,
 ) => void;
 
+/** where a slice sits in an encrypted logical file, and the file's key material */
+export interface VfsSliceCipher {
+	/** offset of the slice within the logical file; must be a multiple of 64 */
+	position: number;
+	/** 32-byte VFS key */
+	key: Uint8Array;
+	/** catalog version */
+	version: number;
+	/** the entry's seed */
+	ivSeed: bigint;
+}
+
+// #endregion
+
+/** bytes before the encrypted body: `u32 version ‖ 8 bytes`, which together form the nonce */
+const CATALOG_HEAD_LENGTH = 12;
+
+/** sentinel in `#entryChunk` when a file's chunk md5 differs from its enclosing chunk's */
+const FOREIGN_CHUNK = 0xffffffff;
+
 const defaultChaCha20: ChaCha20Cipher = (key, nonce, counter, input, output) => {
 	chacha20(key, nonce, input, output, counter);
 };
+
+/**
+ * a decrypted `<group>.blc` catalog, the game's `VFBlockMainInfo`. the game calls a group a VFS block; this
+ * project says group because "block" already names several other layers.
+ *
+ * entries are indexed by logical path during parsing and decoded on demand from the decrypted catalog bytes,
+ * so mounting a large catalog (such as `Bundle`) avoids allocating per-file objects, MD5 hex strings, and
+ * `bigint` seeds for untouched files.
+ */
+export class VfsCatalog {
+	/** catalog version; also forms part of per-file nonces */
+	readonly version: number;
+	/** human name (`groupCfgName`), e.g. `Bundle`, `Streaming` */
+	readonly groupName: string;
+	/** 8 hex digits, matching the directory name */
+	readonly groupHash: string;
+	/** the group's `EVFSBlockType` value, e.g. 11 for `Bundle`; chunks and files repeat it */
+	readonly blockType: number;
+	readonly fileCount: number;
+	readonly chunksLength: number;
+
+	readonly #plain: Uint8Array;
+	readonly #view: DataView;
+	readonly #chunkMd5s: string[];
+	readonly #files: Map<string, number>;
+	readonly #entryChunk: Uint32Array;
+	readonly #entryDataOffset: Uint32Array;
+
+	/**
+	 * @param fields validated catalog header and index tables; construct via {@link parseVfsCatalog}
+	 * @internal
+	 */
+	constructor(fields: {
+		version: number;
+		groupName: string;
+		groupHash: string;
+		blockType: number;
+		fileCount: number;
+		chunksLength: number;
+		plain: Uint8Array;
+		chunkMd5s: string[];
+		files: Map<string, number>;
+		entryChunk: Uint32Array;
+		entryDataOffset: Uint32Array;
+	}) {
+		this.version = fields.version;
+		this.groupName = fields.groupName;
+		this.groupHash = fields.groupHash;
+		this.blockType = fields.blockType;
+		this.fileCount = fields.fileCount;
+		this.chunksLength = fields.chunksLength;
+		this.#plain = fields.plain;
+		this.#view = new DataView(fields.plain.buffer, fields.plain.byteOffset, fields.plain.byteLength);
+		this.#chunkMd5s = fields.chunkMd5s;
+		this.#files = fields.files;
+		this.#entryChunk = fields.entryChunk;
+		this.#entryDataOffset = fields.entryDataOffset;
+	}
+
+	/**
+	 * @param name logical file path
+	 * @returns whether the catalog lists a file with that path
+	 */
+	has(name: string): boolean {
+		return this.#files.has(name);
+	}
+
+	/**
+	 * @param name logical file path
+	 * @returns the decoded entry, or `undefined` if absent
+	 */
+	get(name: string): VfsFileEntry | undefined {
+		const index = this.#files.get(name);
+		return index === undefined ? undefined : this.#entry(name, index);
+	}
+
+	/** @returns an iterator over every logical file path in catalog order */
+	names(): MapIterator<string> {
+		return this.#files.keys();
+	}
+
+	/** yields every file entry in catalog order */
+	*entries(): Generator<VfsFileEntry> {
+		for (const [name, index] of this.#files) {
+			yield this.#entry(name, index);
+		}
+	}
+
+	/** @see entries */
+	[Symbol.iterator](): Generator<VfsFileEntry> {
+		return this.entries();
+	}
+
+	#entry(name: string, index: number): VfsFileEntry {
+		const at = this.#entryDataOffset[index];
+		const chunkIndex = this.#entryChunk[index];
+		const chunkMd5 =
+			chunkIndex === FOREIGN_CHUNK ? toHex(this.#plain.subarray(at, at + 16)) : this.#chunkMd5s[chunkIndex];
+		const dataMd5 = toHex(this.#plain.subarray(at + 16, at + 32));
+		const offset = i64NumberLe(this.#view, at + 32);
+		const length = i64NumberLe(this.#view, at + 40);
+		const blockType = this.#plain[at + 48];
+		const ivSeed = this.#plain[at + 49] !== 0 ? this.#view.getBigInt64(at + 50, true) : null;
+		return { name, chunkMd5, dataMd5, offset, length, blockType, ivSeed };
+	}
+}
 
 /**
  * decrypts and parses a `.blc` catalog.
@@ -122,59 +216,54 @@ export const parseVfsCatalog = (
 		throw new FormatError(`implausible vfs catalog counts: ${fileCount} files, ${chunkCount} chunks`);
 	}
 
-	const chunks: VfsChunkEntry[] = [];
+	const chunkMd5s: string[] = [];
+	const files = new Map<string, number>();
+	const entryChunk = new Uint32Array(fileCount);
+	const entryDataOffset = new Uint32Array(fileCount);
 	let parsedFiles = 0;
+
 	for (let c = 0; c < chunkCount; c++) {
 		const md5Offset = r.offset;
 		r.skip(16);
-		const md5 = hexRange(plain, md5Offset, 16);
-		const contentMd5Offset = r.offset;
+		const md5 = toHex(plain.subarray(md5Offset, md5Offset + 16));
+		chunkMd5s.push(md5);
+		// contentMd5 isn't needed to read files
 		r.skip(16);
-		const contentMd5 = hexRange(plain, contentMd5Offset, 16);
 		const length = r.i64Number();
-		const chunkBlockType = r.u8();
-		r.skip(tagLength);
+		// chunk blockType + tag
+		r.skip(1 + tagLength);
 
 		const itemCount = r.i32();
 		if (itemCount < 0) {
 			throw new FormatError(`negative file count in chunk ${md5}`);
 		}
-		const files: VfsFileEntry[] = [];
+		if (parsedFiles + itemCount > fileCount) {
+			throw new FormatError(`vfs catalog declares ${fileCount} files but holds more`);
+		}
 		for (let i = 0; i < itemCount; i++) {
 			const name = readShortString(r);
 			// the name hash isn't needed to read files
 			r.skip(8);
-			// a Bundle catalog has hundreds of thousands of files, so they share their chunk's string rather than each holding a copy
-			const chunkMd5Offset = r.offset;
-			r.skip(16);
-			const chunkMd5 = bytesEqual16(plain, chunkMd5Offset, md5Offset)
-				? md5
-				: hexRange(plain, chunkMd5Offset, 16);
-			const dataMd5Offset = r.offset;
-			r.skip(16);
-			const dataMd5 = hexRange(plain, dataMd5Offset, 16);
+			const dataOffset = r.offset;
+			// chunkMd5 (16) + dataMd5 (16)
+			r.skip(32);
 			const offset = r.i64Number();
 			const fileLength = r.i64Number();
-			const fileBlockType = r.u8();
+			r.skip(1);
 			const encrypted = r.bool();
-			const ivSeed = encrypted ? r.i64() : null;
+			if (encrypted) {
+				r.skip(8);
+			}
 			// the file tag follows the optional seed; reading it first yields bogus nonces
 			r.skip(tagLength);
 			if (offset < 0 || fileLength < 0 || offset + fileLength > length) {
 				throw new FormatError(`vfs entry ${name} lies outside its chunk`);
 			}
-			files.push({
-				name,
-				chunkMd5,
-				dataMd5,
-				offset,
-				length: fileLength,
-				blockType: fileBlockType,
-				ivSeed,
-			});
+			const index = parsedFiles++;
+			entryChunk[index] = bytesEqual16(plain, dataOffset, md5Offset) ? c : FOREIGN_CHUNK;
+			entryDataOffset[index] = dataOffset;
+			files.set(name, index);
 		}
-		parsedFiles += files.length;
-		chunks.push({ md5, contentMd5, length, blockType: chunkBlockType, files });
 	}
 
 	if (parsedFiles !== fileCount) {
@@ -184,20 +273,20 @@ export const parseVfsCatalog = (
 		throw new FormatError(`vfs catalog has ${r.remaining} trailing bytes`);
 	}
 
-	return { version, groupName, groupHash, blockType, fileCount, chunksLength, chunks };
+	return new VfsCatalog({
+		version,
+		groupName,
+		groupHash,
+		blockType,
+		fileCount,
+		chunksLength,
+		plain,
+		chunkMd5s,
+		files,
+		entryChunk,
+		entryDataOffset,
+	});
 };
-
-/** where a slice sits in an encrypted logical file, and the file's key material */
-export interface VfsSliceCipher {
-	/** offset of the slice within the logical file; must be a multiple of 64 */
-	position: number;
-	/** 32-byte VFS key */
-	key: Uint8Array;
-	/** catalog version */
-	version: number;
-	/** the entry's seed */
-	ivSeed: bigint;
-}
 
 /**
  * decrypts a slice of an encrypted logical file in place. ChaCha20 is seekable, so any 64-byte-aligned window
@@ -225,15 +314,8 @@ export const decryptVfsFileSliceInPlace = (
 	decrypt(cipher.key, nonce, 1 + cipher.position / 64, data, data);
 };
 
-const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0').toUpperCase());
-
-const hexRange = (bytes: Uint8Array, start: number, length: number): string => {
-	let out = '';
-	const end = start + length;
-	for (let i = start; i < end; i++) {
-		out += HEX[bytes[i]];
-	}
-	return out;
+const i64NumberLe = (view: DataView, at: number): number => {
+	return view.getInt32(at + 4, true) * 0x1_0000_0000 + view.getUint32(at, true);
 };
 
 const bytesEqual16 = (bytes: Uint8Array, a: number, b: number): boolean => {

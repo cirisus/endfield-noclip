@@ -46,7 +46,7 @@ export const indexTerrain = async (vfs: Vfs): Promise<Map<string, TerrainSceneIn
 	const scenes = new Map<string, TerrainSceneIndex>();
 	// a tile's channels arrive in any order, so they're gathered before tiles without heights are set aside
 	const channels = new Map<TerrainSceneIndex, Map<string, TerrainTileFiles['channels']>>();
-	for (const entry of group.files.values()) {
+	for (const entry of group.catalog) {
 		const path = parseTerrainPath(entry.name);
 		if (path === undefined) {
 			continue;

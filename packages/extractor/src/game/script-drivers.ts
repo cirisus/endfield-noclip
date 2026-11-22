@@ -807,7 +807,7 @@ export const loadLevelScripts = async (
 	const wanted = new Set([...entities].map((id) => BigInt(id)));
 	const scripts = new Map<string, Script>();
 	let undecoded = 0;
-	for (const name of (await vfs.group(VfsGroup.JsonData)).files.keys()) {
+	for (const name of (await vfs.group(VfsGroup.JsonData)).catalog.names()) {
 		const match = SCRIPT_PATH.exec(name);
 		if (match === null) {
 			continue;
@@ -1222,7 +1222,7 @@ const namesAny = (bytes: Uint8Array, ids: ReadonlySet<bigint>): boolean => {
 const missionScriptReferences = async (context: Pick<Context, 'vfs'>): Promise<Map<string, Set<string>>> => {
 	const { vfs } = context;
 	const references = new Map<string, Set<string>>();
-	for (const name of (await vfs.group(VfsGroup.JsonData)).files.keys()) {
+	for (const name of (await vfs.group(VfsGroup.JsonData)).catalog.names()) {
 		const match = /^Data\/Json\/MissionRuntimeAsset\/(\w+)\.json$/.exec(name);
 		if (match === null || match[1].endsWith('_meta')) {
 			continue;

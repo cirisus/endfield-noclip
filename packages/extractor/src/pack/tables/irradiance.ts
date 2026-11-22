@@ -155,7 +155,7 @@ export const packIrradianceRegions = async (
 		return [];
 	}
 	const directory = `Data/IrradianceVolume/PC/${options.scene}/v3/`;
-	const names = [...(await vfs.group(IRRADIANCE_GROUP)).files.keys()].filter((name) =>
+	const names = [...(await vfs.group(IRRADIANCE_GROUP)).catalog.names()].filter((name) =>
 		name.startsWith(directory),
 	);
 	const bakes = await Promise.all(

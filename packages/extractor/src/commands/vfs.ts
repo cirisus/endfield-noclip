@@ -45,7 +45,7 @@ export const run = async (args: string[]): Promise<void> => {
 					throw new Error('vfs ls needs a group hash');
 				}
 				const filter = values.filter === undefined ? undefined : new RegExp(values.filter, 'i');
-				for (const entry of (await vfs.group(group)).files.values()) {
+				for (const entry of (await vfs.group(group)).catalog) {
 					if (filter === undefined || filter.test(entry.name)) {
 						console.log(
 							`${String(entry.length).padStart(11)}  ${entry.ivSeed === null ? ' ' : 'E'}  ${entry.name}`,
