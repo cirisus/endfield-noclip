@@ -348,7 +348,6 @@ export class Viewer {
 		return this.#environment.look.environment.name;
 	}
 
-	/** @returns the environment volumes applied at the camera, in order */
 	/**
 	 * what the meshes drawn last frame are drawn without, for the gaps view's legend
 	 *
@@ -369,6 +368,7 @@ export class Viewer {
 			.toSorted((a, b) => a.nearest - b.nearest);
 	}
 
+	/** @returns the environment volumes applied at the camera, in order */
 	get appliedVolumes(): readonly AppliedVolume[] {
 		return this.#environment.applied;
 	}
