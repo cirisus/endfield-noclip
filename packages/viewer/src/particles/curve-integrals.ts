@@ -41,7 +41,16 @@ const tables = new WeakMap<AnimationCurve, WeakMap<AnimationCurve, (IntegralTabl
 
 /** @returns the table of `a(u) · b(u) · u^power`, `b` being {@link ALONE} for `a(u) · u^power` */
 const tableOf = (a: AnimationCurve, b: AnimationCurve, power: 0 | 1): IntegralTable => {
-	const byPower = tables.getOrInsertComputed(a, () => new WeakMap()).getOrInsertComputed(b, () => []);
+	let byB = tables.get(a);
+	if (byB === undefined) {
+		byB = new WeakMap();
+		tables.set(a, byB);
+	}
+	let byPower = byB.get(b);
+	if (byPower === undefined) {
+		byPower = [undefined, undefined];
+		byB.set(b, byPower);
+	}
 	let table = byPower[power];
 	if (table === undefined) {
 		const at = (u: number): number =>
@@ -148,8 +157,15 @@ export const integrateOverAge = (
 	age: number,
 	life: number,
 ): number => {
+	if (drawn.curve.mode === CurveMode.Constant && drawn.curve.scalar === 0) {
+		return 0;
+	}
 	const a = termsInto(ofCurve, drawn);
 	const b = scale === null ? UNSCALED : termsInto(ofScale, scale);
+	if (a.count === 1 && b.count === 1 && a.curves[0] === null && b.curves[0] === null) {
+		const factor = a.factors[0] * b.factors[0];
+		return factor * (power === 1 ? 0.5 * age * age : age);
+	}
 	// within the lifetime the age runs 0–1 of it; past it, or without one, the curves hold one value
 	const within = life > 0 ? Math.min(age, life) : 0;
 	const u = life > 0 ? within / life : 0;

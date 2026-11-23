@@ -166,6 +166,8 @@ interface RowContext {
 	quadFrame: readonly Vec3[] | null;
 	/** whether the pivot offsets the row in its own frame (stretched quads place it themselves) */
 	pivoted: boolean;
+	/** whether {@link shape} leaves {@link RowGeometry.axes} unit-length, so extent needs no axis norms */
+	unitAxes: boolean;
 	/** turns and sizes the row by the render mode and alignment */
 	shape: (row: RowGeometry, particle: Readonly<ParticleInput>, context: RowContext) => void;
 }
@@ -209,8 +211,6 @@ const scratch = {
 	/** the particle's world position (on-screen limits) and pivot offset (`ParticleField#write`) */
 	at: vec3(),
 	shift: vec3(),
-	/** the particle's rotation (`ParticleField#write`) */
-	rotation: [0, 0, 0, 1] satisfies Quat,
 };
 
 /** writes `v` turned (not moved) by the emitter's transform into `out` @returns `out` */
@@ -248,16 +248,23 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	const [right, streak, face] = axes;
 	const v = particle.velocity;
 	const velocity = toWorldInto(scratch.world, context.m, v[0], v[1], v[2]);
-	const speed = Math.hypot(velocity[0], velocity[1], velocity[2]);
+	const speed = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
 	// a still particle has no streak, and the game draws nothing for it
-	for (let r = 0; r < 3; r++) {
-		streak[r] = speed > 1e-15 ? velocity[r] / speed : view.up[r];
+	if (speed > 1e-15) {
+		const inv = 1 / speed;
+		streak[0] = velocity[0] * inv;
+		streak[1] = velocity[1] * inv;
+		streak[2] = velocity[2] * inv;
+	} else {
+		streak[0] = view.up[0];
+		streak[1] = view.up[1];
+		streak[2] = view.up[2];
 	}
 	const f = view.forward;
 	const sight = scratch.sight;
-	for (let r = 0; r < 3; r++) {
-		sight[r] = origin[r] + center[r] - view.eye[r];
-	}
+	sight[0] = origin[0] + center[0] - view.eye[0];
+	sight[1] = origin[1] + center[1] - view.eye[1];
+	sight[2] = origin[2] + center[2] - view.eye[2];
 	const acrossX = streak[1] * sight[2] - streak[2] * sight[1];
 	const acrossY = streak[2] * sight[0] - streak[0] * sight[2];
 	const acrossZ = streak[0] * sight[1] - streak[1] * sight[0];
@@ -266,7 +273,7 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	const flatY = acrossY - f[1] * ahead;
 	const flatZ = acrossZ - f[2] * ahead;
 	// one moving along the line of sight has no width, so the game draws nothing for it either
-	const flatLength = Math.hypot(flatX, flatY, flatZ);
+	const flatLength = Math.sqrt(flatX * flatX + flatY * flatY + flatZ * flatZ);
 	if (flatLength > 1e-15) {
 		normalizeOrZInto(right, flatX, flatY, flatZ);
 	} else {
@@ -343,8 +350,10 @@ const meshVelocityShape = (
 /** the row keeps its rotation: in the world's frame, or the camera's, which the GPU turns it with */
 const keptShape = (): void => {};
 
-/** @returns what every row of an emitter's system shares this frame, by its render mode */
-const rowContext = (
+/** writes what every row of an emitter's system shares this frame into `context` */
+const fillRowContext = (
+	context: RowContext,
+	quadFrame: [Vec3, Vec3, Vec3],
 	info: ParticleSystemInfo,
 	view: ParticleView,
 	block: EmitterBlock,
@@ -353,18 +362,17 @@ const rowContext = (
 	scales: Readonly<Vec3>,
 ): RowContext => {
 	const pivot = info.pivot;
-	const context: RowContext = {
-		info,
-		view,
-		origin: block.origin,
-		m,
-		scales,
-		sizing: info.sizedByScale ? scales : UNIT,
-		billboard: RowBillboard.None,
-		quadFrame: null,
-		pivoted: pivot[0] !== 0 || pivot[1] !== 0 || pivot[2] !== 0,
-		shape: quadShape,
-	};
+	context.info = info;
+	context.view = view;
+	context.origin = block.origin;
+	context.m = m;
+	context.scales = scales;
+	context.sizing = info.sizedByScale ? scales : UNIT;
+	context.billboard = RowBillboard.None;
+	context.quadFrame = null;
+	context.pivoted = pivot[0] !== 0 || pivot[1] !== 0 || pivot[2] !== 0;
+	context.unitAxes = true;
+	context.shape = quadShape;
 	// quads turn in the camera's frame or its heading's (which `row_basis` turns them in on the GPU, as
 	// billboard chains are), or lie flat facing up. billboards take their render alignment: the camera's
 	// (View), the world's axes or the emitter's
@@ -380,7 +388,11 @@ const rowContext = (
 				}
 				case ParticleAlignment.Local:
 				case ParticleAlignment.Velocity: {
-					context.quadFrame = columns.map(normalizeOrZ);
+					for (let i = 0; i < 3; i++) {
+						const c = columns[i];
+						normalizeOrZInto(quadFrame[i], c[0], c[1], c[2]);
+					}
+					context.quadFrame = quadFrame;
 					break;
 				}
 			}
@@ -412,10 +424,12 @@ const rowContext = (
 				}
 				case ParticleAlignment.Local: {
 					context.shape = meshLocalShape;
+					context.unitAxes = false;
 					break;
 				}
 				case ParticleAlignment.Velocity: {
 					context.shape = meshVelocityShape;
+					context.unitAxes = false;
 					break;
 				}
 			}
@@ -493,6 +507,8 @@ export class ParticleField {
 	/** the row being built (`#write`) and what its render mode's step reads of its particle */
 	readonly #row: RowGeometry = { axes: [vec3(), vec3(), vec3()], sizes: vec3(), center: vec3() };
 	readonly #particle: ParticleInput = { size: vec3(), velocity: vec3(), length: 0 };
+	readonly #quadFrame: [Vec3, Vec3, Vec3] = [vec3(), vec3(), vec3()];
+	#context: RowContext | null = null;
 	readonly #color = new Float32Array(4);
 	readonly #custom = new Float32Array(4);
 	/** one particle's trail points (`#writeTrails`) */
@@ -647,10 +663,13 @@ export class ParticleField {
 	#columnsOf(m: Float64Array): void {
 		for (let i = 0; i < 3; i++) {
 			const column = this.#columns[i];
-			column[0] = m[i];
-			column[1] = m[4 + i];
-			column[2] = m[8 + i];
-			this.#scales[i] = Math.hypot(column[0], column[1], column[2]);
+			const x = m[i];
+			const y = m[4 + i];
+			const z = m[8 + i];
+			column[0] = x;
+			column[1] = y;
+			column[2] = z;
+			this.#scales[i] = Math.sqrt(x * x + y * y + z * z);
 		}
 	}
 
@@ -710,21 +729,41 @@ export class ParticleField {
 		const count = this.#evaluate(block, row, emitter, view, emitter.rows.count);
 		const m = this.#m;
 		const particles = this.#particles;
-		const context = rowContext(info, view, block, m, this.#columns, this.#scales);
-		const { sizing, billboard, pivoted, shape } = context;
+		const context =
+			this.#context === null
+				? (this.#context = {
+						info,
+						view,
+						origin: block.origin,
+						m,
+						scales: this.#scales,
+						sizing: UNIT,
+						billboard: RowBillboard.None,
+						quadFrame: null,
+						pivoted: false,
+						unitAxes: true,
+						shape: quadShape,
+					})
+				: this.#context;
+		fillRowContext(context, this.#quadFrame, info, view, block, m, this.#columns, this.#scales);
+		const { sizing, billboard, pivoted, unitAxes, shape } = context;
 		const turnedBy = pivoted ? billboardBasis(billboard, view) : null;
 		const origin = block.origin;
 		const pivot = info.pivot;
 		const screenSize = info.screenSize;
 		const sheet = info.textureSheet;
+		const hasCustom = info.customData !== null;
 		const infoWord = (RowKind.Detail | (billboard << 30)) >>> 0;
 		const slot = block.blockSlot;
 		const out = this.#rowsF32;
 		const words = this.#rows;
 		const geometry = this.#row;
 		const { axes, sizes, center } = geometry;
+		const [ax0, ax1, ax2] = axes;
 		const particle = this.#particle;
-		const { at, shift, rotation } = scratch;
+		const { at, shift } = scratch;
+		const color = this.#color;
+		const custom = this.#custom;
 		emitter.live.length = 0;
 		for (let i = 0; i < count; i++) {
 			const base = i * PARTICLE_FLOATS;
@@ -735,23 +774,57 @@ export class ParticleField {
 				center[1] = center[1] + m[7];
 				center[2] = center[2] + m[11];
 			}
-			// the rotation's axes, which the render mode's step turns into the frame they're drawn in
-			for (let k = 0; k < 4; k++) {
-				rotation[k] = particles[base + ParticleFloat.rotation + k];
+			// the rotation's 3×3 axes, which the render mode's step turns into the frame they're drawn in
+			const qx = particles[base + ParticleFloat.rotation];
+			const qy = particles[base + ParticleFloat.rotation + 1];
+			const qz = particles[base + ParticleFloat.rotation + 2];
+			const qw = particles[base + ParticleFloat.rotation + 3];
+			if (qx === 0 && qy === 0) {
+				const c = 1 - 2 * qz * qz;
+				const s = 2 * qw * qz;
+				ax0[0] = c;
+				ax0[1] = s;
+				ax0[2] = 0;
+				ax1[0] = -s;
+				ax1[1] = c;
+				ax1[2] = 0;
+				ax2[0] = 0;
+				ax2[1] = 0;
+				ax2[2] = 1;
+			} else {
+				const xx = 2 * qx * qx;
+				const yy = 2 * qy * qy;
+				const zz = 2 * qz * qz;
+				const xy = 2 * qx * qy;
+				const xz = 2 * qx * qz;
+				const yz = 2 * qy * qz;
+				const wx = 2 * qw * qx;
+				const wy = 2 * qw * qy;
+				const wz = 2 * qw * qz;
+				ax0[0] = 1 - yy - zz;
+				ax0[1] = xy + wz;
+				ax0[2] = xz - wy;
+				ax1[0] = xy - wz;
+				ax1[1] = 1 - xx - zz;
+				ax1[2] = yz + wx;
+				ax2[0] = xz + wy;
+				ax2[1] = yz - wx;
+				ax2[2] = 1 - xx - yy;
 			}
-			rotateInto(axes[0], rotation, 1, 0, 0);
-			rotateInto(axes[1], rotation, 0, 1, 0);
-			rotateInto(axes[2], rotation, 0, 0, 1);
-			for (let k = 0; k < 3; k++) {
-				particle.size[k] = particles[base + ParticleFloat.size + k];
-				particle.velocity[k] = particles[base + ParticleFloat.velocity + k];
-				sizes[k] = particle.size[k] * sizing[k];
-			}
+			particle.size[0] = particles[base + ParticleFloat.size];
+			particle.size[1] = particles[base + ParticleFloat.size + 1];
+			particle.size[2] = particles[base + ParticleFloat.size + 2];
+			particle.velocity[0] = particles[base + ParticleFloat.velocity];
+			particle.velocity[1] = particles[base + ParticleFloat.velocity + 1];
+			particle.velocity[2] = particles[base + ParticleFloat.velocity + 2];
+			sizes[0] = particle.size[0] * sizing[0];
+			sizes[1] = particle.size[1] * sizing[1];
+			sizes[2] = particle.size[2] * sizing[2];
 			particle.length = sizes[1];
 			if (screenSize !== null) {
-				for (let r = 0; r < 3; r++) {
-					at[r] = origin[r] + center[r];
-				}
+				at[0] = origin[0] + center[0];
+				at[1] = origin[1] + center[1];
+				at[2] = origin[2] + center[2];
 				const ratio = screenRatio(sizes, screenSize, view, at);
 				sizes[0] = sizes[0] * ratio;
 				sizes[1] = sizes[1] * ratio;
@@ -760,48 +833,69 @@ export class ParticleField {
 			if (pivoted) {
 				// the pivot moves the mesh in its turned and sized frame, the one it's drawn in: for camera-facing
 				// rows that frame is turned on the GPU, so turn the offset with it here
-				for (let r = 0; r < 3; r++) {
-					let sum = 0;
-					for (let k = 0; k < 3; k++) {
-						sum += axes[k][r] * sizes[k] * pivot[k];
-					}
-					shift[r] = sum;
-				}
+				const p0 = sizes[0] * pivot[0];
+				const p1 = sizes[1] * pivot[1];
+				const p2 = sizes[2] * pivot[2];
+				shift[0] = ax0[0] * p0 + ax1[0] * p1 + ax2[0] * p2;
+				shift[1] = ax0[1] * p0 + ax1[1] * p1 + ax2[1] * p2;
+				shift[2] = ax0[2] * p0 + ax1[2] * p1 + ax2[2] * p2;
 				if (turnedBy !== null) {
 					times3ColumnsInto(shift, turnedBy, shift[0], shift[1], shift[2]);
 				}
-				for (let r = 0; r < 3; r++) {
-					center[r] += shift[r];
-				}
+				center[0] += shift[0];
+				center[1] += shift[1];
+				center[2] += shift[2];
 			}
+			const s0 = sizes[0];
+			const s1 = sizes[1];
+			const s2 = sizes[2];
 			const o = i * ROW_WORDS;
-			for (let r = 0; r < 3; r++) {
-				out[o + r * 4] = axes[0][r] * sizes[0];
-				out[o + r * 4 + 1] = axes[1][r] * sizes[1];
-				out[o + r * 4 + 2] = axes[2][r] * sizes[2];
-				out[o + r * 4 + 3] = center[r];
-			}
-			const extent = Math.max(
-				Math.hypot(axes[0][0], axes[0][1], axes[0][2]) * sizes[0],
-				Math.hypot(axes[1][0], axes[1][1], axes[1][2]) * sizes[1],
-				Math.hypot(axes[2][0], axes[2][1], axes[2][2]) * sizes[2],
-			);
-			for (let r = 0; r < 3; r++) {
-				out[o + 12 + r] = center[r];
-				out[o + RowWord.extent + r] = extent;
-			}
+			out[o] = ax0[0] * s0;
+			out[o + 1] = ax1[0] * s1;
+			out[o + 2] = ax2[0] * s2;
+			out[o + 3] = center[0];
+			out[o + 4] = ax0[1] * s0;
+			out[o + 5] = ax1[1] * s1;
+			out[o + 6] = ax2[1] * s2;
+			out[o + 7] = center[1];
+			out[o + 8] = ax0[2] * s0;
+			out[o + 9] = ax1[2] * s1;
+			out[o + 10] = ax2[2] * s2;
+			out[o + 11] = center[2];
+			const extent = unitAxes
+				? Math.max(s0, s1, s2)
+				: Math.max(
+						Math.sqrt(ax0[0] * ax0[0] + ax0[1] * ax0[1] + ax0[2] * ax0[2]) * s0,
+						Math.sqrt(ax1[0] * ax1[0] + ax1[1] * ax1[1] + ax1[2] * ax1[2]) * s1,
+						Math.sqrt(ax2[0] * ax2[0] + ax2[1] * ax2[1] + ax2[2] * ax2[2]) * s2,
+					);
+			out[o + 12] = center[0];
+			out[o + 13] = center[1];
+			out[o + 14] = center[2];
+			out[o + RowWord.extent] = extent;
+			out[o + RowWord.extent + 1] = extent;
+			out[o + RowWord.extent + 2] = extent;
 			words[o + RowWord.block] = slot;
 			words[o + RowWord.info] = infoWord;
 			words[o + RowWord.sheet] =
 				sheet === null ? 0 : rowSheet(sheet.tiles, particles[base + ParticleFloat.tile], sheet.uvChannels);
-			for (let k = 0; k < 4; k++) {
-				this.#color[k] = particles[base + ParticleFloat.color + k];
-				this.#custom[k] = particles[base + ParticleFloat.custom + k];
+			color[0] = particles[base + ParticleFloat.color];
+			color[1] = particles[base + ParticleFloat.color + 1];
+			color[2] = particles[base + ParticleFloat.color + 2];
+			color[3] = particles[base + ParticleFloat.color + 3];
+			words[o + RowWord.color] = packRowColor(color);
+			if (hasCustom) {
+				custom[0] = particles[base + ParticleFloat.custom];
+				custom[1] = particles[base + ParticleFloat.custom + 1];
+				custom[2] = particles[base + ParticleFloat.custom + 2];
+				custom[3] = particles[base + ParticleFloat.custom + 3];
+				const [xy, zw] = packRowCustom(custom);
+				words[o + RowWord.custom] = xy;
+				words[o + RowWord.custom + 1] = zw;
+			} else {
+				words[o + RowWord.custom] = 0;
+				words[o + RowWord.custom + 1] = 0;
 			}
-			words[o + RowWord.color] = packRowColor(this.#color);
-			const [xy, zw] = packRowCustom(this.#custom);
-			words[o + RowWord.custom] = xy;
-			words[o + RowWord.custom + 1] = zw;
 			emitter.live.push(emitter.rows.start + i);
 		}
 		if (count > 0) {
@@ -842,7 +936,7 @@ export class ParticleField {
 					head[r] = (head[r] + tail[r]) * 0.5 + m[r * 4 + 3];
 					tail[r] = origin[r] + head[r] - view.eye[r];
 				}
-				const length = Math.hypot(along[0], along[1], along[2]);
+				const length = Math.sqrt(along[0] * along[0] + along[1] * along[1] + along[2] * along[2]);
 				if (!(length > 1e-9)) {
 					continue;
 				}
