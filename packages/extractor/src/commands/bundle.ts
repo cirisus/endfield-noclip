@@ -6,7 +6,7 @@ import { streamingInfo } from '@endfield-noclip/formats/unity/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
-import { parseOptionalInteger, parsePathId, save } from '../cli-args.ts';
+import { parseOptionalInteger, parsePathId, save, separatePositionals } from '../cli-args.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText } from '../errors.ts';
 import { type BundleAssetFile, openAssetFiles, openBundle } from '../hg/bundles.ts';
@@ -17,32 +17,38 @@ export const summary = 'inspect and search bundle objects; dump JSON or stream p
 /** command usage, available without opening the install */
 export const usage = `usage:
   bundle info <name>                     header, nodes and per-class object counts
-  bundle dump <name> [--path-id N] [--class Mesh|43] [--limit n] [--max-array n]
-                                         objects as JSON; big arrays are truncated
+  bundle dump <name> [--path-id N] [--class Mesh|43] [--name re] [--text] [--json]
+      [--limit n] [--max-array n]        objects as JSON; --text prints TextAsset m_Script;
+                                         --json wraps output in a single JSON array
   bundle stream <name> --path-id N -o <file>
                                          writes an object's m_StreamData (.resS) payload
-  bundle find [--filter <re>] [--class Shader|48] [--scan n] [--limit n] [--group main|initial|all]
+  bundle find [re] [--filter re] [--class Shader|48] [--scan n] [--limit n] [--group main|initial|all]
                                          searches bundles for m_Container paths matching <re>
                                          and/or objects of a class; class results include node, path id and name
 
 <name> is a bundle hex id, main/<hex>.ab, or a full logical path.
 negative path ids need the --path-id=-N form.`;
 
+const OPTIONS = {
+	config: { type: 'string' },
+	'path-id': { type: 'string' },
+	class: { type: 'string' },
+	name: { type: 'string' },
+	text: { type: 'boolean', default: false },
+	json: { type: 'boolean', default: false },
+	limit: { type: 'string' },
+	'max-array': { type: 'string' },
+	filter: { type: 'string' },
+	scan: { type: 'string' },
+	group: { type: 'string', default: 'main' },
+	output: { type: 'string', short: 'o' },
+} as const;
+
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
-		args,
+		args: separatePositionals(args, OPTIONS),
 		allowPositionals: true,
-		options: {
-			config: { type: 'string' },
-			'path-id': { type: 'string' },
-			class: { type: 'string' },
-			limit: { type: 'string' },
-			'max-array': { type: 'string' },
-			filter: { type: 'string' },
-			scan: { type: 'string' },
-			group: { type: 'string', default: 'main' },
-			output: { type: 'string', short: 'o' },
-		},
+		options: OPTIONS,
 	});
 	const [sub, name] = positionals;
 	const limit = parseOptionalInteger(values.limit, '--limit') ?? Infinity;
@@ -57,8 +63,11 @@ export const run = async (args: string[]): Promise<void> => {
 				break;
 			}
 			case 'dump': {
+				if (values.text && values.json) {
+					throw new Error('use either --text or --json, not both');
+				}
 				const files = await openAssetFilesByName(context, name, {
-					eager: pathId === undefined && values.class === undefined,
+					eager: pathId === undefined && values.class === undefined && values.name === undefined,
 				});
 				const matches = (object: ObjectInfo): boolean => {
 					if (pathId !== undefined) {
@@ -66,7 +75,13 @@ export const run = async (args: string[]): Promise<void> => {
 					}
 					return values.class === undefined || isClass(object, values.class);
 				};
-				await dump(files, matches, { limit, maxArray });
+				await dump(files, matches, {
+					nameFilter: values.name === undefined ? undefined : new RegExp(values.name, 'i'),
+					text: values.text,
+					json: values.json,
+					limit,
+					maxArray,
+				});
 				break;
 			}
 			case 'stream': {
@@ -80,15 +95,19 @@ export const run = async (args: string[]): Promise<void> => {
 				break;
 			}
 			case 'find': {
-				if (values.filter === undefined && values.class === undefined) {
-					throw new Error('bundle find needs --filter <re> and/or --class <class>');
+				if (values.filter !== undefined && name !== undefined) {
+					throw new Error('pass the container pattern either positionally or with --filter, not both');
+				}
+				const filterPattern = values.filter ?? name;
+				if (filterPattern === undefined && values.class === undefined) {
+					throw new Error('bundle find needs <re>, --filter <re>, and/or --class <class>');
 				}
 				if (!['main', 'initial', 'all'].includes(values.group)) {
 					throw new Error('--group must be main, initial or all');
 				}
 				await find(context, {
 					group: values.group,
-					filter: values.filter === undefined ? undefined : new RegExp(values.filter, 'i'),
+					filter: filterPattern === undefined ? undefined : new RegExp(filterPattern, 'i'),
 					className: values.class,
 					scan,
 					limit,
@@ -193,18 +212,46 @@ const info = async (files: BundleAssetFile[]): Promise<void> => {
 const dump = async (
 	files: BundleAssetFile[],
 	matches: (object: ObjectInfo) => boolean,
-	options: { limit: number; maxArray: number },
+	options: {
+		nameFilter: RegExp | undefined;
+		text: boolean;
+		json: boolean;
+		limit: number;
+		maxArray: number;
+	},
 ): Promise<void> => {
-	let printed = 0;
+	const jsonRows: object[] = [];
+	const textRows: { name: string; script: string }[] = [];
+	let matched = 0;
 	for (const asset of files) {
 		for (const object of asset.file.objects) {
-			if (printed >= options.limit) {
-				return;
+			if (matched >= options.limit) {
+				break;
 			}
 			if (!matches(object)) {
 				continue;
 			}
-			printed++;
+			if (options.nameFilter !== undefined) {
+				// oxlint-disable-next-line no-await-in-loop -- peeks name before full decode, up to the limit
+				const objectName = (await asset.peekName(object)) ?? '';
+				if (!options.nameFilter.test(objectName)) {
+					continue;
+				}
+			}
+			matched++;
+			if (options.text) {
+				// oxlint-disable-next-line no-await-in-loop -- objects print in order, up to the limit
+				const value = await asset.read(object);
+				const objectName = typeof value.m_Name === 'string' ? value.m_Name : object.pathId.toString();
+				const script = textContent(value.m_Script);
+				if (script === null) {
+					throw new Error(
+						`object ${object.pathId} (${typeName(object.type) ?? object.classId}) has no m_Script field`,
+					);
+				}
+				textRows.push({ name: objectName, script });
+				continue;
+			}
 			const header = {
 				node: asset.node.path,
 				pathId: object.pathId.toString(),
@@ -219,9 +266,45 @@ const dump = async (
 			} catch (error) {
 				value = { error: errorText(error) };
 			}
-			console.log(JSON.stringify({ ...header, value }, null, '\t'));
+			const row = { ...header, value };
+			if (options.json) {
+				jsonRows.push(row);
+			} else {
+				console.log(JSON.stringify(row, null, '\t'));
+			}
+		}
+		if (matched >= options.limit) {
+			break;
 		}
 	}
+	if (options.json) {
+		console.log(JSON.stringify(jsonRows, null, '\t'));
+	} else if (options.text) {
+		if (textRows.length === 1) {
+			process.stdout.write(textRows[0].script);
+			if (!textRows[0].script.endsWith('\n')) {
+				process.stdout.write('\n');
+			}
+		} else {
+			for (const row of textRows) {
+				console.log(`=== ${row.name} ===`);
+				process.stdout.write(row.script);
+				if (!row.script.endsWith('\n')) {
+					process.stdout.write('\n');
+				}
+			}
+		}
+	}
+};
+
+const textContent = (value: TypeTreeValue | undefined): string | null => {
+	if (typeof value === 'string') {
+		return value;
+	}
+	if (value instanceof Uint8Array) {
+		return new TextDecoder().decode(value);
+	}
+	return null;
 };
 
 /** converts a TypeTree value into JSON-safe data, truncating long arrays */

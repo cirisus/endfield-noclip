@@ -100,10 +100,13 @@ requirements by `&`, each `control=values` (or `always` when ungated). `static` 
   and limit notices go to stderr so `--json` emits one JSON array (`[]` if empty). without `--near`,
   hitting `--limit` stops scanning early; with `--near`, all sources are scanned to keep the
   nearest.
-- **`bundle find --class`**: lists one row per object (bundle, SerializedFile node, path id, class,
-  name, container paths) ready for `bundle dump` or `inspect`. `--filter` matches container paths
-  (combining with `--class` selects objects in matching SerializedFiles). `--group` takes `main`
-  (default), `initial`, or `all`. `--limit` caps output rows; `--scan` caps bundles.
+- **`bundle find`**: searches `m_Container` paths (`bundle find <re>` or `--filter <re>`) and/or
+  objects of a `--class` (listing bundle, SerializedFile node, path id, class, name, and container
+  paths ready for `bundle dump` or `inspect`). `--group` takes `main` (default), `initial`, or
+  `all`; `--limit` caps output rows; `--scan` caps bundles.
+- **`bundle dump`**: dumps objects from one bundle by `--path-id`, `--class`, and/or `--name <re>`.
+  `--text` prints a `TextAsset`'s `m_Script` directly (headers between multiple matches); `--json`
+  wraps the output in a single JSON array.
 - **`audit`**: reads `out/<scene>/debug/` directly (no game install opened) to filter or `--group`
   materials (`--unsupported`, `--undrawn`, `--gap`, `--shader`), geometries, stand-ins, unsupported
   interactives, water, and environments.
