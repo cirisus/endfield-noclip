@@ -92,6 +92,8 @@ export interface ResidentGeometry {
 	positionFormat: 'unorm16x4' | 'float32x4';
 	/** the UV streams' vertex format */
 	uvFormat: 'unorm16x2' | 'float32x2';
+	/** precomputed `positionFormatIndex * 2 + uvFormatIndex` (0..3) for pipeline variant lookup */
+	formatVariant: number;
 	/** each UV set's dequantization */
 	uvTransforms: [uv0: UvTransform, uv1: UvTransform];
 	positionOffset: [x: number, y: number, z: number];

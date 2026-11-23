@@ -24,6 +24,10 @@ export interface MeshBucket {
 	mirrored: boolean;
 	/** whether the instances are outside the view and only draw into the shadow map */
 	castOnly: boolean;
+	/** precomputed face-cull index (0 = none, 1 = back, 2 = front), already swapped for {@link mirrored} */
+	cullIndex: number;
+	/** precomputed `(castOnly ? 0 : 2) + (look.castsShadows ? 0 : 1)` for draw-order sorting */
+	shadowRank: number;
 	/**
 	 * global row indices, grouped by the first shadow layer each instance can cast into (the last group for
 	 * none), so each layer draws a prefix of the bucket; reset every frame
@@ -335,20 +339,32 @@ export class MeshBuckets {
 	bucketOf(slot: ChainSlot, index: number): MeshBucket {
 		const { geometry, submesh, material } = slot;
 		const key = ((geometry * 256 + submesh) * 65_536 + material) * BUCKET_VARIANTS + index;
-		const bucket = this.#buckets.getOrInsertComputed(key, (): MeshBucket => {
+		let bucket = this.#buckets.get(key);
+		if (bucket === undefined) {
 			const blob = this.#geometries.blob(geometry);
 			const item = blob === null ? undefined : this.#stream.get(blob);
 			if (item === undefined) {
 				throw new Error(`geometry ${geometry} has no stream item`);
 			}
-			return {
+			// a slot's material has a look, or the slot wouldn't have been made
+			const look = this.#lookOf(material) ?? unsupportedLook();
+			const mirrored = (index & 1) === 1;
+			const castOnly = (index & 2) === 2;
+			let cullIndex = 0;
+			if (look.cull === 'back') {
+				cullIndex = mirrored ? 2 : 1;
+			} else if (look.cull === 'front') {
+				cullIndex = mirrored ? 1 : 2;
+			}
+			bucket = {
 				geometry: item,
 				submesh,
 				material,
-				// a slot's material has a look, or the slot wouldn't have been made
-				look: this.#lookOf(material) ?? unsupportedLook(),
-				mirrored: (index & 1) === 1,
-				castOnly: (index & 2) === 2,
+				look,
+				mirrored,
+				castOnly,
+				cullIndex,
+				shadowRank: (castOnly ? 0 : 2) + (look.castsShadows ? 0 : 1),
 				rows: Array.from({ length: SHADOW_LAYERS + 1 }, () => []),
 				distances: [],
 				bands: [],
@@ -361,9 +377,16 @@ export class MeshBuckets {
 						? { index: -1, rows: 0, layerRows: Array.from({ length: SHADOW_LAYERS }, () => 0) }
 						: null,
 			};
-		});
+			this.#buckets.set(key, bucket);
+		}
 		slot.buckets[index] = bucket;
-		this.#cachedBy.getOrInsertComputed(bucket, () => []).push(slot);
+		let cached = this.#cachedBy.get(bucket);
+		if (cached === undefined) {
+			cached = [slot];
+			this.#cachedBy.set(bucket, cached);
+		} else {
+			cached.push(slot);
+		}
 		return bucket;
 	}
 

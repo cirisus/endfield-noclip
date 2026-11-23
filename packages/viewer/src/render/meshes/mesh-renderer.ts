@@ -38,14 +38,7 @@ import {
 	type MaterialState,
 } from './material-bindings.ts';
 import { type PhaseDescriber, prepareMeshPipelines } from './mesh-pipelines.ts';
-import {
-	VARIANTS,
-	faceCullOf,
-	stencilPipelineKey,
-	variantKeys,
-	variantOf,
-	withStencil,
-} from './pipeline-variants.ts';
+import { VARIANTS, stencilPipelineKey, variantKeys, withStencil } from './pipeline-variants.ts';
 import { type ResidentSkin, SkinAnimator } from './skin-animation.ts';
 import { type SortedSource, mergeFarToNear } from './sorted-runs.ts';
 import { VertexBindings } from './vertex-bindings.ts';
@@ -559,13 +552,14 @@ export class MeshRenderer {
 			const key = preparedRange.info.order === 'pipelineThenNearest' ? 0 : sortKeyOf(bucket, pipelineKey);
 			const entry = this.#entries[entries];
 			if (entry === undefined) {
-				this.#entries[entries] = { bucket, span, state, pipelineKey, key };
+				this.#entries[entries] = { bucket, span, state, pipelineKey, key, nearest: bucket.nearest };
 			} else {
 				entry.bucket = bucket;
 				entry.span = span;
 				entry.state = state;
 				entry.pipelineKey = pipelineKey;
 				entry.key = key;
+				entry.nearest = bucket.nearest;
 			}
 			preparedRange.entries.push(this.#entries[entries]);
 			entries++;
@@ -805,7 +799,7 @@ export class MeshRenderer {
 		// an effect's group also binds the main pass's outputs, so it's built when its pass encodes
 		const material = info.effect ? null : state.group;
 		const effect = info.effect ? state : null;
-		const variant = variantOf(faceCullOf(bucket), resident.positionFormat, resident.uvFormat);
+		const variant = bucket.cullIndex * 4 + resident.formatVariant;
 		const draw = this.#draws[d];
 		if (draw === undefined) {
 			this.#draws[d] = {

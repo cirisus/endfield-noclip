@@ -28,6 +28,8 @@ export type ParticleWorkerMessage =
 			kind: 'step';
 			seq: number;
 			view: ParticleView;
+			/** number of active emitters packed in {@link ids} and {@link transforms} */
+			count: number;
 			ids: Uint32Array<ArrayBuffer>;
 			transforms: Float32Array<ArrayBuffer>;
 			/** recycled output buffer from the previous result, if any */
@@ -38,8 +40,12 @@ export type ParticleWorkerMessage =
 export interface ParticleWorkerResponse {
 	kind: 'result';
 	seq: number;
-	/** emitter ids evaluated, in the order requested */
+	/** number of emitters evaluated */
+	count: number;
+	/** emitter ids evaluated, in the order requested (returned for ping-pong reuse) */
 	ids: Uint32Array<ArrayBuffer>;
+	/** transforms buffer returned for ping-pong reuse */
+	transforms: Float32Array<ArrayBuffer>;
 	/** row count written per emitter */
 	counts: Uint32Array<ArrayBuffer>;
 	/** packed GPU instance rows concatenated across all emitters, length `sum(counts) * ROW_WORDS` */

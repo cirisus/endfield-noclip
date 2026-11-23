@@ -11,14 +11,6 @@ import type { ListedSpan } from '../instances/instance-renderer.ts';
 
 import type { DrawRange, RangeOrder } from './draw-ranges.ts';
 import type { MaterialState } from './material-bindings.ts';
-import {
-	faceCullIndex,
-	faceCullOf,
-	positionFormatIndex,
-	positionFormatOf,
-	uvFormatIndex,
-	uvFormatOf,
-} from './pipeline-variants.ts';
 
 /** look flags that bail out of the lean `opaqueLit` shader into the full `opaque` uber-shader */
 const COMPLEX_OPAQUE_FLAGS =
@@ -118,15 +110,12 @@ export const drawRangeOf = (
  * @returns the upper part of {@link sortKeyOf}: shadow role, face culling, position format, UV format, and
  *   vertex buffer order, as a small integer
  */
-export const pipelineKeyOf = (bucket: MeshBucket): number =>
-	(((((bucket.castOnly ? 0 : 1) * 2 + (bucket.look.castsShadows ? 0 : 1)) * 4 +
-		faceCullIndex(faceCullOf(bucket))) *
-		2 +
-		positionFormatIndex(positionFormatOf(bucket))) *
-		2 +
-		uvFormatIndex(uvFormatOf(bucket))) *
-		4 +
-	vertexOrderOf(bucket);
+export const pipelineKeyOf = (bucket: MeshBucket): number => {
+	const resident = bucket.geometry.resident;
+	const formatVariant = resident?.kind === 'geometry' ? resident.formatVariant : 0;
+	const order = resident?.kind === 'geometry' ? resident.vertices.order : 3;
+	return ((bucket.shadowRank * 4 + bucket.cullIndex) * 4 + formatVariant) * 4 + order;
+};
 
 /**
  * @returns the bucket's place in the draw order within the opaque, alpha-tested and alpha-blended draws:
@@ -141,12 +130,6 @@ export const sortKeyOf = (bucket: MeshBucket, pipelineKey = pipelineKeyOf(bucket
 	return key * 2 ** 8 + Math.min(bucket.submesh, 2 ** 8 - 1);
 };
 
-/** @returns where a bucket's geometry's vertex buffers sort (`GeometryVertices.order`) */
-const vertexOrderOf = (bucket: MeshBucket): number => {
-	const resident = bucket.geometry.resident;
-	return resident?.kind === 'geometry' ? resident.vertices.order : 3;
-};
-
 /** a bucket queued to draw this frame, with where its rows landed in the visible list */
 export interface DrawEntry {
 	bucket: MeshBucket;
@@ -156,6 +139,8 @@ export interface DrawEntry {
 	pipelineKey: number;
 	/** {@link sortKeyOf} the bucket */
 	key: number;
+	/** cached {@link MeshBucket.nearest} for fast comparator access */
+	nearest: number;
 }
 
 const byBindings = (a: DrawEntry, b: DrawEntry): number => a.key - b.key;
@@ -175,7 +160,7 @@ const byStencilWritesThenBindings = (a: DrawEntry, b: DrawEntry): number =>
  * nearest first, so early depth testing skips more of the shading behind
  */
 const byPipelineThenNearest = (a: DrawEntry, b: DrawEntry): number =>
-	a.pipelineKey - b.pipelineKey || a.bucket.nearest - b.bucket.nearest;
+	a.pipelineKey - b.pipelineKey || a.nearest - b.nearest;
 
 /** the comparator of each {@link RangeOrder} */
 export const COMPARATORS: Record<RangeOrder, (a: DrawEntry, b: DrawEntry) => number> = {

@@ -450,6 +450,7 @@ describe('createParticleWorkerHandler', () => {
 			kind: 'step',
 			seq: 1,
 			view,
+			count: 1,
 			ids: new Uint32Array([1]),
 			transforms,
 			buffer: null,
@@ -468,8 +469,9 @@ describe('createParticleWorkerHandler', () => {
 			kind: 'step',
 			seq: 2,
 			view,
-			ids: new Uint32Array([1]),
-			transforms: new Float32Array(transforms),
+			count: 1,
+			ids: first.ids,
+			transforms: first.transforms,
 			buffer: recycled,
 		});
 		assert.equal(responses.length, 2);

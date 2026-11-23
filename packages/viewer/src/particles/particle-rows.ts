@@ -91,6 +91,8 @@ export class ParticleField {
 	#workerBusy = false;
 	#pendingResult: ParticleWorkerResponse | null = null;
 	#recycledBuffer: ArrayBuffer | null = null;
+	#recycledIds: Uint32Array<ArrayBuffer> | null = null;
+	#recycledTransforms: Float32Array<ArrayBuffer> | null = null;
 	#seq = 0;
 
 	/**
@@ -113,6 +115,8 @@ export class ParticleField {
 				this.#workerBusy = false;
 				if (this.#pendingResult !== null) {
 					this.#recycledBuffer = this.#pendingResult.rows.buffer;
+					this.#recycledIds = this.#pendingResult.ids;
+					this.#recycledTransforms = this.#pendingResult.transforms;
 				}
 				this.#pendingResult = event.data;
 			});
@@ -128,9 +132,9 @@ export class ParticleField {
 			return;
 		}
 		this.#pendingResult = null;
-		const { ids, counts, rows } = result;
+		const { count: n, ids, transforms, counts, rows } = result;
 		let wordOffset = 0;
-		for (let i = 0; i < ids.length; i++) {
+		for (let i = 0; i < n; i++) {
 			const count = counts[i];
 			const words = count * ROW_WORDS;
 			const emitter = this.#emitterById.get(ids[i]);
@@ -148,6 +152,8 @@ export class ParticleField {
 			wordOffset += words;
 		}
 		this.#recycledBuffer = rows.buffer;
+		this.#recycledIds = ids;
+		this.#recycledTransforms = transforms;
 	}
 
 	/**
@@ -167,6 +173,8 @@ export class ParticleField {
 		}
 		this.#pendingResult = null;
 		this.#recycledBuffer = null;
+		this.#recycledIds = null;
+		this.#recycledTransforms = null;
 		this.#workerBusy = false;
 	}
 
@@ -191,7 +199,11 @@ export class ParticleField {
 			this.#prunedAt = frame;
 			this.#prune(frame);
 		}
-		const emitters = this.#emitters.getOrInsertComputed(block, () => new Map());
+		let emitters = this.#emitters.get(block);
+		if (emitters === undefined) {
+			emitters = new Map();
+			this.#emitters.set(block, emitters);
+		}
 		// one emitter per row and system: a renderer's meshes are separate rows
 		const key = row * this.#systems.length + system;
 		let emitter = emitters.get(key);
@@ -313,8 +325,8 @@ export class ParticleField {
 		}
 		const result = this.#pendingResult;
 		if (result !== null) {
-			const { ids, counts, rows } = result;
-			for (let i = 0; i < ids.length; i++) {
+			const { count: n, ids, transforms, counts, rows } = result;
+			for (let i = 0; i < n; i++) {
 				const emitter = this.#emitterById.get(ids[i]);
 				if (emitter !== undefined && counts[i] > emitter.listedCount) {
 					return false;
@@ -323,7 +335,7 @@ export class ParticleField {
 			this.#pendingResult = null;
 			let wordOffset = 0;
 			const padWords = this.#writer.rows;
-			for (let i = 0; i < ids.length; i++) {
+			for (let i = 0; i < n; i++) {
 				const count = counts[i];
 				const words = count * ROW_WORDS;
 				const emitter = this.#emitterById.get(ids[i]);
@@ -351,6 +363,8 @@ export class ParticleField {
 				wordOffset += words;
 			}
 			this.#recycledBuffer = rows.buffer;
+			this.#recycledIds = ids;
+			this.#recycledTransforms = transforms;
 		}
 		for (let i = 0; i < active.length; i++) {
 			active[i].emitter.frame = frame;
@@ -411,8 +425,16 @@ export class ParticleField {
 			return;
 		}
 		const n = active.length;
-		const ids = new Uint32Array(n);
-		const transforms = new Float32Array(n * 12);
+		const recycledIds = this.#recycledIds;
+		const ids =
+			recycledIds !== null && recycledIds.length >= n ? recycledIds : new Uint32Array(Math.max(n, 256));
+		this.#recycledIds = null;
+		const recycledTransforms = this.#recycledTransforms;
+		const transforms =
+			recycledTransforms !== null && recycledTransforms.length >= n * 12
+				? recycledTransforms
+				: new Float32Array(Math.max(n, 256) * 12);
+		this.#recycledTransforms = null;
 		for (let i = 0; i < n; i++) {
 			const { block, row, emitter } = active[i];
 			ids[i] = emitter.id;
@@ -434,6 +456,7 @@ export class ParticleField {
 			kind: 'step',
 			seq: ++this.#seq,
 			view,
+			count: n,
 			ids,
 			transforms,
 			buffer,

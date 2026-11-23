@@ -337,6 +337,7 @@ export class MeshSelector {
 	run(ranges: readonly InstanceRange[], view: MeshView): MeshSelection {
 		const frame = ++this.#frame;
 		this.#particles.beginFrame();
+		this.#textures.beginFrame(frame);
 		const selection = this.selection;
 		selection.buckets.length = 0;
 		selection.boxes.length = 0;
@@ -519,35 +520,39 @@ export class MeshSelector {
 
 	/** @returns what the block's selection reuses, built on first use */
 	#blockOf(instances: ResidentInstances): SelectedBlock {
-		return this.#blocks.getOrInsertComputed(instances, () => {
-			const runs = instances.runs;
-			const runCount = runs.length / 3;
-			const allSlots: ChainSlot[][] = [];
-			const boxes = new Uint8Array(runCount);
-			const origins: (Vec3 | null)[] = [];
-			for (let r = 0; r < runCount; r++) {
-				const chain = runs[r * 3];
-				allSlots.push(this.#buckets.slots(chain));
-				boxes[r] = this.#buckets.drawsBox(chain) ? 1 : 0;
-				origins.push(this.#chains[chain].distanceOrigin);
-			}
-			// the worker bounded the rows; how far each group draws takes the chains' slots, which only this has
-			const { groups, mirrored, segments, groupSegments } = instances.bounds;
-			setGroupReaches(instances.bounds, runs, (chain) => this.#reach(chain));
-			return {
-				groups,
-				mirrored,
-				allSlots,
-				slots: allSlots,
-				filter: -1,
-				boxes,
-				origins,
-				gpuRuns: new Uint8Array(runCount),
-				runCasts: new Uint8Array(runCount),
-				segments,
-				groupSegments,
-			};
-		});
+		let block = this.#blocks.get(instances);
+		if (block !== undefined) {
+			return block;
+		}
+		const runs = instances.runs;
+		const runCount = runs.length / 3;
+		const allSlots: ChainSlot[][] = [];
+		const boxes = new Uint8Array(runCount);
+		const origins: (Vec3 | null)[] = [];
+		for (let r = 0; r < runCount; r++) {
+			const chain = runs[r * 3];
+			allSlots.push(this.#buckets.slots(chain));
+			boxes[r] = this.#buckets.drawsBox(chain) ? 1 : 0;
+			origins.push(this.#chains[chain].distanceOrigin);
+		}
+		// the worker bounded the rows; how far each group draws takes the chains' slots, which only this has
+		const { groups, mirrored, segments, groupSegments } = instances.bounds;
+		setGroupReaches(instances.bounds, runs, (chain) => this.#reach(chain));
+		block = {
+			groups,
+			mirrored,
+			allSlots,
+			slots: allSlots,
+			filter: -1,
+			boxes,
+			origins,
+			gpuRuns: new Uint8Array(runCount),
+			runCasts: new Uint8Array(runCount),
+			segments,
+			groupSegments,
+		};
+		this.#blocks.set(instances, block);
+		return block;
 	}
 
 	/** @returns the chain's reach per metre of size, over every slot it may draw */

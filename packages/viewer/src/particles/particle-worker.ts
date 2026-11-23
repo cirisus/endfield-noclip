@@ -50,8 +50,7 @@ export const createParticleWorkerHandler = (
 				break;
 			}
 			case 'step': {
-				const { seq, view, ids, transforms, buffer } = message;
-				const n = ids.length;
+				const { seq, view, count: n, ids, transforms, buffer } = message;
 				const counts = new Uint32Array(n);
 				let out =
 					buffer !== null && buffer.byteLength >= INITIAL_OUT_WORDS * 4
@@ -83,7 +82,12 @@ export const createParticleWorkerHandler = (
 					offset += words;
 				}
 				const packed = out.subarray(0, offset);
-				post({ kind: 'result', seq, ids, counts, rows: packed }, [ids.buffer, counts.buffer, out.buffer]);
+				post({ kind: 'result', seq, count: n, ids, transforms, counts, rows: packed }, [
+					ids.buffer,
+					transforms.buffer,
+					counts.buffer,
+					out.buffer,
+				]);
 				break;
 			}
 		}

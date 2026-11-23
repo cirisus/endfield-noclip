@@ -89,9 +89,11 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
   modules are skipped ([motion](particles.md#motion)). after an emitter's first synchronous frame,
   per-frame simulation and row packing run on a dedicated Web Worker with ping-pong transferred
   buffers, cutting dense map02 `mesh select` by 47–63%.
-- **zero per-frame hot-path allocation.** selections, buckets, sort scratch, and plane arrays reuse
-  storage across frames; per-bucket texture requests allocate nothing and read flat cached tables in
-  `TextureStore` (which batches shrink copies per commit). the stream manager evicts from a ready
+- **zero per-frame hot-path allocation.** selections, buckets, sort scratch, particle worker
+  buffers, and plane arrays reuse storage across frames; per-bucket texture requests allocate
+  nothing, deduplicate repeated texture requests within a frame, and read flat cached tables in
+  `TextureStore` (which batches shrink copies per commit). geometry format variants and bucket
+  cull/shadow sort keys are precomputed on upload/creation. the stream manager evicts from a ready
   unpinned set (biasing LRU eviction toward textures before geometry/instances) and reads each shard
   blob's byte range once.
 

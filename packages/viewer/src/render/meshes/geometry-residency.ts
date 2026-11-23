@@ -44,6 +44,8 @@ export const uploadGeometry = (
 			(decoded.colors === null ? 0 : GeometryFlags.HasColors),
 		positionFormat: decoded.positionFormat,
 		uvFormat: decoded.uvFormat,
+		formatVariant:
+			(decoded.positionFormat === 'unorm16x4' ? 0 : 2) + (decoded.uvFormat === 'unorm16x2' ? 0 : 1),
 		uvTransforms: decoded.uvTransforms,
 		positionOffset: decoded.positionOffset,
 		positionScale: decoded.positionScale,

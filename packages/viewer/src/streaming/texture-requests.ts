@@ -51,11 +51,23 @@ const requestPieces = (
 const UNSEEN_LEVELS = 2;
 /** the largest level an unseen material's textures load, texels a side */
 const UNSEEN_TEXELS = 256;
+/** `Math.log2(UNSEEN_TEXELS)` */
+const UNSEEN_LOG2 = Math.log2(UNSEEN_TEXELS);
 
-/** requests textures of one texture store, without allocating per request */
+/** requests textures of one texture store, deduplicating repeated requests within a frame */
 export class TextureRequests {
 	#stream: TextureStream;
 	#textures: RequestedTextures;
+	/** current frame from {@link beginFrame}, or -1 when deduplication is off */
+	#frame = -1;
+	/** per texture id: cached 2D entry (`undefined` until first asked) */
+	#entries: (ReadyTexture | null | undefined)[] = [];
+	/** per texture id: cached `Math.log2(Math.max(width, height))` */
+	#log2Side = new Float32Array(0);
+	/** per texture id: last frame requested, finest level requested, and highest priority requested */
+	#reqFrame = new Int32Array(0);
+	#reqLevel = new Uint8Array(0);
+	#reqPriority = new Float32Array(0);
 
 	/**
 	 * @param stream residency
@@ -64,6 +76,76 @@ export class TextureRequests {
 	constructor(stream: TextureStream, textures: RequestedTextures) {
 		this.#stream = stream;
 		this.#textures = textures;
+	}
+
+	/**
+	 * starts a new frame's deduplication window so textures shared by multiple buckets only touch the stream
+	 * when a finer level or higher priority is needed
+	 *
+	 * @param frame the current frame number
+	 */
+	beginFrame(frame: number): void {
+		this.#frame = frame;
+	}
+
+	/** ensures per-texture caches cover `id` */
+	#grow(id: number): void {
+		const next = Math.max(id + 1, this.#reqFrame.length * 2, 1024);
+		const reqFrame = new Int32Array(next).fill(-1);
+		reqFrame.set(this.#reqFrame);
+		this.#reqFrame = reqFrame;
+		const reqLevel = new Uint8Array(next);
+		reqLevel.set(this.#reqLevel);
+		this.#reqLevel = reqLevel;
+		const reqPriority = new Float32Array(next);
+		reqPriority.set(this.#reqPriority);
+		this.#reqPriority = reqPriority;
+		const log2Side = new Float32Array(next);
+		log2Side.set(this.#log2Side);
+		this.#log2Side = log2Side;
+	}
+
+	/** @returns cached 2D streamable entry for `id`, populating `#log2Side[id]` on first lookup */
+	#entry2d(id: number): ReadyTexture | null {
+		let entry = this.#entries[id];
+		if (entry !== undefined) {
+			return entry;
+		}
+		entry = this.#textures.streamable(id, '2d');
+		this.#entries[id] = entry;
+		if (entry !== null) {
+			if (id >= this.#log2Side.length) {
+				this.#grow(id);
+			}
+			this.#log2Side[id] = Math.log2(Math.max(entry.width, entry.height));
+		}
+		return entry;
+	}
+
+	/** dispatches `requestPieces` unless this frame already requested at least as fine a level and priority */
+	#request(id: number, entry: ReadyTexture, level: number, priority: number): void {
+		const frame = this.#frame;
+		if (frame >= 0) {
+			if (id >= this.#reqFrame.length) {
+				this.#grow(id);
+			}
+			if (this.#reqFrame[id] === frame) {
+				if (level >= this.#reqLevel[id] && priority <= this.#reqPriority[id]) {
+					return;
+				}
+				if (level < this.#reqLevel[id]) {
+					this.#reqLevel[id] = level;
+				}
+				if (priority > this.#reqPriority[id]) {
+					this.#reqPriority[id] = priority;
+				}
+			} else {
+				this.#reqFrame[id] = frame;
+				this.#reqLevel[id] = level;
+				this.#reqPriority[id] = priority;
+			}
+		}
+		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
 	}
 
 	/**
@@ -76,7 +158,7 @@ export class TextureRequests {
 	 * @param priority the priority
 	 */
 	forPixels(id: number, pixels: number, uvScale: number, priority: number): void {
-		const entry = this.#textures.streamable(id, '2d');
+		const entry = this.#entry2d(id);
 		if (entry === null) {
 			return;
 		}
@@ -85,7 +167,7 @@ export class TextureRequests {
 			entry.mipCount - 1,
 			Math.max(0, Math.floor(Math.log2(texels / Math.max(pixels, 1)))),
 		);
-		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
+		this.#request(id, entry, level, priority);
 	}
 
 	/**
@@ -100,20 +182,21 @@ export class TextureRequests {
 	 * @param priority the priority
 	 */
 	forUnseen(id: number, pixels: number, uvScale: number, priority: number): void {
-		const entry = this.#textures.streamable(id, '2d');
+		const entry = this.#entry2d(id);
 		if (entry === null) {
 			return;
 		}
 		const side = Math.max(entry.width, entry.height);
+		const log2Side = this.#log2Side[id];
 		const level = Math.min(
 			entry.mipCount - 1,
 			Math.max(
 				0,
 				Math.floor(Math.log2((side * uvScale) / Math.max(pixels, 1))) + UNSEEN_LEVELS,
-				Math.ceil(Math.log2(side / UNSEEN_TEXELS)),
+				Math.ceil(log2Side - UNSEEN_LOG2),
 			),
 		);
-		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
+		this.#request(id, entry, level, priority);
 	}
 
 	/**
@@ -127,17 +210,19 @@ export class TextureRequests {
 	 * @param priority the priority
 	 */
 	forFootprint(id: number, steps: number, uvScale: number, bias: number, priority: number): void {
-		const entry = this.#textures.streamable(id, '2d');
+		const entry = this.#entry2d(id);
 		if (entry === null) {
 			return;
 		}
 		// the level of detail the GPU computes: the footprint in texels of the longer side, which also holds for
 		// the shorter
-		const lod = Math.log2(Math.max(entry.width, entry.height) * uvScale) - steps / 4;
+		const lod =
+			(uvScale === 1 ? this.#log2Side[id] : Math.log2(Math.max(entry.width, entry.height) * uvScale)) -
+			steps * 0.25;
 		// a sampler that blends neighbouring levels reads the finer of the two; one that doesn't rounds
 		const sampled = Math.floor(this.#textures.blendsLevels(id) ? lod : lod + 0.5);
 		const level = Math.min(entry.mipCount - 1, Math.max(0, sampled + Math.ceil(bias)));
-		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
+		this.#request(id, entry, level, priority);
 	}
 
 	/**
@@ -154,7 +239,7 @@ export class TextureRequests {
 		}
 		const entry = this.#textures.streamable(id, kind);
 		if (entry !== null) {
-			requestPieces(this.#stream, this.#textures, id, entry, 0, priority);
+			this.#request(id, entry, 0, priority);
 		}
 		return entry;
 	}
