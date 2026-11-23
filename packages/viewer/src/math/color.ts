@@ -1,5 +1,12 @@
 import type { Color, Vec3 } from '@endfield-noclip/package-format/values';
 
+const SRGB_LUT_SIZE = 256;
+const srgbLut = new Float32Array(SRGB_LUT_SIZE + 1);
+for (let i = 0; i <= SRGB_LUT_SIZE; i++) {
+	const c = i / SRGB_LUT_SIZE;
+	srgbLut[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
 /**
  * converts a sRGB-encoded colour channel (Unity colour fields) to linear
  *
@@ -11,7 +18,14 @@ export const srgbToLinear = (c: number): number => {
 		return c / 12.92;
 	}
 	// HDR values: like Unity's `Mathf.GammaToLinearSpace`, a plain 2.2 power past 1
-	return c < 1 ? ((c + 0.055) / 1.055) ** 2.4 : c ** 2.2;
+	if (c >= 1) {
+		return c ** 2.2;
+	}
+	const x = c * SRGB_LUT_SIZE;
+	const i = x | 0;
+	const f = x - i;
+	const a = srgbLut[i];
+	return a + (srgbLut[i + 1] - a) * f;
 };
 
 /**

@@ -1,6 +1,7 @@
 import {
 	CurveMode,
 	GRAVITY,
+	GradientMode,
 	type MinMaxCurveInfo,
 	type ParticleDragInfo,
 	type ParticleForcesInfo,
@@ -150,6 +151,66 @@ const innerRadius = (shape: ParticleShapeRadius): number =>
 /** @returns whether a MinMaxCurve is always zero */
 const isZeroCurve = (curve: MinMaxCurveInfo): boolean =>
 	curve.mode === CurveMode.Constant && curve.scalar === 0;
+
+/** intervals for tabulated over-lifetime curves and gradients */
+const LUT_INTERVALS = 128;
+
+/** @returns whether two single-curve or constant MinMaxCurves are identical */
+const sameCurve = (a: MinMaxCurveInfo, b: MinMaxCurveInfo): boolean => {
+	if (a === b) {
+		return true;
+	}
+	if (a.mode !== b.mode || a.scalar !== b.scalar) {
+		return false;
+	}
+	if (a.mode === CurveMode.Constant) {
+		return true;
+	}
+	if (a.mode === CurveMode.TwoConstants && b.mode === CurveMode.TwoConstants) {
+		return a.min === b.min;
+	}
+	return false;
+};
+
+/** @returns a 129-sample lookup table for a single-curve MinMaxCurve, or `null` for other modes */
+const tabulateCurve = (curve: MinMaxCurveInfo): Float32Array | null => {
+	if (curve.mode !== CurveMode.Curve) {
+		return null;
+	}
+	const lut = new Float32Array(LUT_INTERVALS + 1);
+	for (let i = 0; i <= LUT_INTERVALS; i++) {
+		lut[i] = evaluateMinMax(curve, i / LUT_INTERVALS, 0);
+	}
+	return lut;
+};
+
+/** samples a {@link tabulateCurve} table at `u` in [0, 1] */
+const sampleLut = (lut: Float32Array, u: number): number => {
+	const clamped = u <= 0 ? 0 : u >= 1 ? 1 : u;
+	const x = clamped * LUT_INTERVALS;
+	const i = x >= LUT_INTERVALS ? LUT_INTERVALS - 1 : x | 0;
+	const f = x - i;
+	const a = lut[i];
+	return a + (lut[i + 1] - a) * f;
+};
+
+/** @returns a 129×4 RGBA lookup table for a single-gradient colorOverLifetime, or `null` for other modes */
+const tabulateGradient = (gradient: ParticleSystemInfo['colorOverLifetime']): Float32Array | null => {
+	if (gradient === null || gradient.mode !== GradientMode.Gradient) {
+		return null;
+	}
+	const lut = new Float32Array((LUT_INTERVALS + 1) * 4);
+	const tmp: [number, number, number, number] = [0, 0, 0, 0];
+	for (let i = 0; i <= LUT_INTERVALS; i++) {
+		evaluateMinMaxGradientInto(tmp, gradient, i / LUT_INTERVALS, 0);
+		const o = i * 4;
+		lut[o] = tmp[0];
+		lut[o + 1] = tmp[1];
+		lut[o + 2] = tmp[2];
+		lut[o + 3] = tmp[3];
+	}
+	return lut;
+};
 
 /**
  * a particle's immutable birth attributes and over-lifetime random draws, computed once when the particle is
@@ -470,6 +531,12 @@ export class ParticleSimulation {
 		| readonly [PreparedIntegral | null, PreparedIntegral | null, PreparedIntegral | null]
 		| null;
 	readonly #splineInt: PreparedIntegral | null;
+	/** whether `sizeOverLifetime` uses the same curve on all three axes */
+	readonly #uniformSizeOver: boolean;
+	/** tabulated `sizeOverLifetime` curves when `CurveMode.Curve`, else `null` per axis */
+	readonly #sizeOverLuts: readonly [Float32Array | null, Float32Array | null, Float32Array | null] | null;
+	/** tabulated `colorOverLifetime` when `GradientMode.Gradient`, else `null` */
+	readonly #colorOverLut: Float32Array | null;
 	/** world down in the emitter's frame, for the current {@link evaluate} */
 	#down: Readonly<Vec3> = ZERO;
 	/** turns a world direction into the emitter's frame, for the current {@link evaluate} */
@@ -601,6 +668,22 @@ export class ParticleSimulation {
 					]
 				: null;
 		this.#splineInt = info.motion.kind === 'spline' ? prepareIntegral(info.motion.speed, null, 0) : null;
+		const sizeOver = info.sizeOverLifetime;
+		this.#uniformSizeOver =
+			sizeOver !== null && sameCurve(sizeOver[0], sizeOver[1]) && sameCurve(sizeOver[0], sizeOver[2]);
+		if (sizeOver === null) {
+			this.#sizeOverLuts = null;
+		} else if (this.#uniformSizeOver) {
+			const lut = tabulateCurve(sizeOver[0]);
+			this.#sizeOverLuts = [lut, lut, lut];
+		} else {
+			this.#sizeOverLuts = [
+				tabulateCurve(sizeOver[0]),
+				tabulateCurve(sizeOver[1]),
+				tabulateCurve(sizeOver[2]),
+			];
+		}
+		this.#colorOverLut = tabulateGradient(info.colorOverLifetime);
 	}
 
 	/** seconds a looping system needs to look as if it had always played */
@@ -1639,9 +1722,20 @@ export class ParticleSimulation {
 			out[at + ParticleFloat.size + 2] = birth.sizeZ;
 		} else {
 			const l = livedAt(age, life);
-			out[at + ParticleFloat.size] = birth.sizeX * evaluateMinMax(over[0], l, birth.growth);
-			out[at + ParticleFloat.size + 1] = birth.sizeY * evaluateMinMax(over[1], l, birth.growth);
-			out[at + ParticleFloat.size + 2] = birth.sizeZ * evaluateMinMax(over[2], l, birth.growth);
+			const luts = this.#sizeOverLuts;
+			if (this.#uniformSizeOver) {
+				const s = luts?.[0] != null ? sampleLut(luts[0], l) : evaluateMinMax(over[0], l, birth.growth);
+				out[at + ParticleFloat.size] = birth.sizeX * s;
+				out[at + ParticleFloat.size + 1] = birth.sizeY * s;
+				out[at + ParticleFloat.size + 2] = birth.sizeZ * s;
+			} else {
+				const s0 = luts?.[0] != null ? sampleLut(luts[0], l) : evaluateMinMax(over[0], l, birth.growth);
+				const s1 = luts?.[1] != null ? sampleLut(luts[1], l) : evaluateMinMax(over[1], l, birth.growth);
+				const s2 = luts?.[2] != null ? sampleLut(luts[2], l) : evaluateMinMax(over[2], l, birth.growth);
+				out[at + ParticleFloat.size] = birth.sizeX * s0;
+				out[at + ParticleFloat.size + 1] = birth.sizeY * s1;
+				out[at + ParticleFloat.size + 2] = birth.sizeZ * s2;
+			}
 		}
 
 		const spinInts = this.#spinInts;
@@ -1675,6 +1769,21 @@ export class ParticleSimulation {
 			out[at + ParticleFloat.color + 1] = birth.colorG;
 			out[at + ParticleFloat.color + 2] = birth.colorB;
 			out[at + ParticleFloat.color + 3] = birth.colorA;
+		} else if (this.#colorOverLut !== null) {
+			const lut = this.#colorOverLut;
+			const u = lived <= 0 ? 0 : lived >= 1 ? 1 : lived;
+			const x = u * LUT_INTERVALS;
+			const i = x >= LUT_INTERVALS ? LUT_INTERVALS - 1 : x | 0;
+			const f = x - i;
+			const o = i * 4;
+			const r0 = lut[o];
+			const g0 = lut[o + 1];
+			const b0 = lut[o + 2];
+			const a0 = lut[o + 3];
+			out[at + ParticleFloat.color] = srgbToLinear(birth.colorR * (r0 + (lut[o + 4] - r0) * f));
+			out[at + ParticleFloat.color + 1] = srgbToLinear(birth.colorG * (g0 + (lut[o + 5] - g0) * f));
+			out[at + ParticleFloat.color + 2] = srgbToLinear(birth.colorB * (b0 + (lut[o + 6] - b0) * f));
+			out[at + ParticleFloat.color + 3] = birth.colorA * (a0 + (lut[o + 7] - a0) * f);
 		} else {
 			const tint = evaluateMinMaxGradientInto(
 				placed.color,
