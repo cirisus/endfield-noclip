@@ -11,7 +11,7 @@ import type { ListedSpan } from '../instances/instance-renderer.ts';
 
 import type { DrawRange, RangeOrder } from './draw-ranges.ts';
 import type { MaterialState } from './material-bindings.ts';
-import { FACE_CULLS, UV_FORMATS, faceCullOf, uvFormatOf } from './pipeline-variants.ts';
+import { faceCullIndex, faceCullOf, uvFormatIndex, uvFormatOf } from './pipeline-variants.ts';
 
 /**
  * @param look a bucket's look
@@ -72,19 +72,26 @@ export const drawRangeOf = (
 };
 
 /**
+ * @returns the upper part of {@link sortKeyOf}: shadow role, face culling, UV format, and vertex buffer
+ *   order, as a small integer
+ */
+export const pipelineKeyOf = (bucket: MeshBucket): number =>
+	((((bucket.castOnly ? 0 : 1) * 2 + (bucket.look.castsShadows ? 0 : 1)) * 4 +
+		faceCullIndex(faceCullOf(bucket))) *
+		2 +
+		uvFormatIndex(uvFormatOf(bucket))) *
+		4 +
+	vertexOrderOf(bucket);
+
+/**
  * @returns the bucket's place in the draw order within the opaque, alpha-tested and alpha-blended draws:
  *   cast-only draws, then the other shadow casters, so shadow passes draw a prefix and the main pass skips
  *   one; then face culling and UV format (one pipeline each), the geometry's vertex buffers (a pool's, so
  *   draws from one pool bind them once), geometry, material and submesh, packed into one number (52 bits) to
  *   keep the sort cheap
  */
-export const sortKeyOf = (bucket: MeshBucket): number => {
-	let key = bucket.castOnly ? 0 : 1;
-	key = key * 2 + (bucket.look.castsShadows ? 0 : 1);
-	key = key * 4 + FACE_CULLS.indexOf(faceCullOf(bucket));
-	key = key * 2 + UV_FORMATS.indexOf(uvFormatOf(bucket));
-	key = key * 4 + vertexOrderOf(bucket);
-	key = key * 2 ** 21 + Math.min(bucket.geometry.blob, 2 ** 21 - 1);
+export const sortKeyOf = (bucket: MeshBucket, pipelineKey = pipelineKeyOf(bucket)): number => {
+	let key = pipelineKey * 2 ** 21 + Math.min(bucket.geometry.blob, 2 ** 21 - 1);
 	key = key * 2 ** 16 + Math.min(bucket.material, 2 ** 16 - 1);
 	return key * 2 ** 8 + Math.min(bucket.submesh, 2 ** 8 - 1);
 };
@@ -99,6 +106,9 @@ const vertexOrderOf = (bucket: MeshBucket): number => {
 export interface DrawEntry {
 	bucket: MeshBucket;
 	span: ListedSpan;
+	state: MaterialState;
+	/** {@link pipelineKeyOf} the bucket */
+	pipelineKey: number;
 	/** {@link sortKeyOf} the bucket */
 	key: number;
 }
@@ -115,15 +125,12 @@ const stencilWriteRank = ({ bucket }: DrawEntry): number => (bucket.look.stencil
 const byStencilWritesThenBindings = (a: DrawEntry, b: DrawEntry): number =>
 	stencilWriteRank(a) - stencilWriteRank(b) || byBindings(a, b);
 
-/** the part of {@link sortKeyOf} above the geometry: the shadow role, the pipeline and the vertex buffers */
-const PIPELINE_KEY = 2 ** 45;
-
 /**
  * draw order for depth-writing draws: as {@link byBindings} up to the pipeline and vertex buffers, then
  * nearest first, so early depth testing skips more of the shading behind
  */
 const byPipelineThenNearest = (a: DrawEntry, b: DrawEntry): number =>
-	Math.floor(a.key / PIPELINE_KEY) - Math.floor(b.key / PIPELINE_KEY) || a.bucket.nearest - b.bucket.nearest;
+	a.pipelineKey - b.pipelineKey || a.bucket.nearest - b.bucket.nearest;
 
 /** the comparator of each {@link RangeOrder} */
 export const COMPARATORS: Record<RangeOrder, (a: DrawEntry, b: DrawEntry) => number> = {

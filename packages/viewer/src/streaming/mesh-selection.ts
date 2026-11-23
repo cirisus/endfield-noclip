@@ -16,7 +16,6 @@ import {
 	ItemFlags,
 	MAX_LIGHT_CASTERS,
 	NO_BUCKET,
-	SlotFlags,
 	addItem,
 	addSlot,
 	gpuCullWork,
@@ -129,8 +128,7 @@ const LOOSE_SEGMENT = 0.25;
  * @param viewportHeight px
  * @returns the most pixels a row in the slot's band can cover: the band's upper edge
  */
-const bandPixels = (slot: ChainSlot, viewportHeight: number): number =>
-	Math.sqrt(slot.maxSquared) * viewportHeight;
+const bandPixels = (slot: ChainSlot, viewportHeight: number): number => slot.maxRelative * viewportHeight;
 
 /**
  * the texture slots the main pass samples by the mesh's UV sets alone, which its mip feedback covers: base
@@ -158,18 +156,8 @@ const slotFilterKey = (view: MeshView): number =>
  * @param first the first shadow layer the rows' bounds reach, {@link SHADOW_LAYERS} for none
  * @returns a bit per shadow layer the slot's rows can cast into
  */
-const casterLayerBits = (slot: ChainSlot, first: number): number => {
-	if (!slot.castsShadows) {
-		return 0;
-	}
-	let bits = 0;
-	for (let layer = first; layer < SHADOW_LAYERS; layer++) {
-		if (layer === SHADOW_LAYERS - 1 ? slot.castsStatic : slot.castsRealtime) {
-			bits |= 1 << layer;
-		}
-	}
-	return bits;
-};
+const casterLayerBits = (slot: ChainSlot, first: number): number =>
+	first >= SHADOW_LAYERS ? 0 : slot.casterBits & (~0 << first);
 
 /** what a resident block's selection reuses from frame to frame */
 interface SelectedBlock {
@@ -707,15 +695,7 @@ export class MeshSelector {
 		const buckets = this.#pair;
 		buckets[0] = (handedness & 1) === 0 ? NO_BUCKET : this.#gpuBucket(target, 0, room);
 		buckets[1] = (handedness & 2) === 0 ? NO_BUCKET : this.#gpuBucket(target, 1, room);
-		addSlot(
-			this.selection.gpu,
-			band,
-			(target.castsShadows ? SlotFlags.Casts : 0) |
-				(target.shadowOnly ? SlotFlags.ShadowOnly : 0) |
-				(target.castsRealtime ? SlotFlags.Realtime : 0) |
-				(target.castsStatic ? SlotFlags.Static : 0),
-			buckets,
-		);
+		addSlot(this.selection.gpu, band, target.gpuFlags, buckets);
 	}
 
 	/**
@@ -748,9 +728,14 @@ export class MeshSelector {
 			this.selection.buckets.push(bucket);
 		}
 		gpu.rows += room.inView;
-		for (let layer = 0; layer < SHADOW_LAYERS; layer++) {
-			if ((room.layers & (1 << layer)) !== 0) {
-				gpu.layerRows[layer] += room.rows;
+		const layers = room.layers;
+		if (layers !== 0) {
+			const rows = room.rows;
+			const layerRows = gpu.layerRows;
+			for (let layer = 0; layer < SHADOW_LAYERS; layer++) {
+				if ((layers & (1 << layer)) !== 0) {
+					layerRows[layer] += rows;
+				}
 			}
 		}
 		if (room.priority > bucket.pixels) {

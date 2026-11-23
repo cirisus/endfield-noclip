@@ -15,7 +15,7 @@ import { MIP_FEEDBACK_LOOKS, MipFeedback, type MipSteps } from '../textures/mip-
 import type { TextureStore } from '../textures/texture-store.ts';
 
 import { DepthPyramid } from './depth-pyramid.ts';
-import { COMPARATORS, type DrawEntry, drawRangeOf, sortKeyOf } from './draw-order.ts';
+import { COMPARATORS, type DrawEntry, drawRangeOf, pipelineKeyOf, sortKeyOf } from './draw-order.ts';
 import {
 	DRAW_RANGES,
 	type DrawPhase,
@@ -30,7 +30,12 @@ import {
 import { type GeometryIndices, GeometryPools, type GeometryVertices } from './geometry-pools.ts';
 import { releaseGeometry, uploadGeometry } from './geometry-residency.ts';
 import { type CullTargets, type CulledBucket, InstanceCuller, type Occlusion } from './instance-culler.ts';
-import { type EffectInputs, type EffectMaterial, MaterialBindings } from './material-bindings.ts';
+import {
+	type EffectInputs,
+	type EffectMaterial,
+	MaterialBindings,
+	type MaterialState,
+} from './material-bindings.ts';
 import { type PhaseDescriber, prepareMeshPipelines } from './mesh-pipelines.ts';
 import {
 	VARIANTS,
@@ -536,13 +541,17 @@ export class MeshRenderer {
 			if (range === null) {
 				continue;
 			}
+			const pipelineKey = pipelineKeyOf(bucket);
+			const key = sortKeyOf(bucket, pipelineKey);
 			const entry = this.#entries[entries];
 			if (entry === undefined) {
-				this.#entries[entries] = { bucket, span, key: sortKeyOf(bucket) };
+				this.#entries[entries] = { bucket, span, state, pipelineKey, key };
 			} else {
 				entry.bucket = bucket;
 				entry.span = span;
-				entry.key = sortKeyOf(bucket);
+				entry.state = state;
+				entry.pipelineKey = pipelineKey;
+				entry.key = key;
 			}
 			this.#range(range).entries.push(this.#entries[entries]);
 			entries++;
@@ -556,8 +565,8 @@ export class MeshRenderer {
 			range.start = d;
 			range.castOnlyEnd = d;
 			range.castersEnd = d;
-			for (const { bucket, span } of range.entries) {
-				if (d >= MAX_DRAWS || !this.#prepareDraw(d, bucket, span, range.info, textures)) {
+			for (const { bucket, span, state } of range.entries) {
+				if (d >= MAX_DRAWS || !this.#prepareDraw(d, bucket, span, range.info, state)) {
 					continue;
 				}
 				// the GPU writes its buckets' draw ids
@@ -710,7 +719,7 @@ export class MeshRenderer {
 		bucket: MeshBucket,
 		span: ListedSpan,
 		info: DrawRangeInfo,
-		textures: TextureStore,
+		state: MaterialState,
 	): boolean {
 		const resident = bucket.geometry.resident;
 		const range = resident?.kind === 'geometry' ? resident.submeshes[bucket.submesh] : undefined;
@@ -718,14 +727,14 @@ export class MeshRenderer {
 			return false;
 		}
 		const look = bucket.look;
-		const lookSlot = this.#lookSlot(bucket.material, look.params);
+		const known = this.#lookSlots[bucket.material];
+		const lookSlot = known > 0 ? known - 1 : this.#lookSlot(bucket.material, look.params);
 		if (lookSlot < 0) {
 			return false;
 		}
 		if (look.motion !== null) {
 			this.#movingLooks.set(bucket.material, look);
 		}
-		const state = this.#materials.state(bucket.material, look, textures);
 		if (resident.skin !== null) {
 			this.#drawnSkins.add(resident.skin);
 		}

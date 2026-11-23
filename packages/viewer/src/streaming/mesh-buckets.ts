@@ -8,7 +8,7 @@ import { sortBand } from '../render/meshes/sorted-runs.ts';
 import { SHADOW_LAYERS } from '../render/shadows/shadow-map.ts';
 
 import type { ContentItem } from './content-item.ts';
-import type { GpuRows } from './gpu-cull-work.ts';
+import { type GpuRows, SlotFlags } from './gpu-cull-work.ts';
 import type { StreamManager } from './stream-manager.ts';
 
 /**
@@ -66,6 +66,8 @@ export interface ChainSlot {
 	lod: number;
 	minSquared: number;
 	maxSquared: number;
+	/** `Math.sqrt(maxSquared)`, precomputed for segment priority capping */
+	maxRelative: number;
 	geometry: number;
 	submesh: number;
 	material: number;
@@ -75,6 +77,10 @@ export interface ChainSlot {
 	castsRealtime: boolean;
 	/** whether it casts into the far layer (`ChainDrawFlags.CastsStatic`) */
 	castsStatic: boolean;
+	/** bitmask of shadow layers this slot can cast into (bits `0..SHADOW_LAYERS-1`) */
+	casterBits: number;
+	/** {@link SlotFlags} precomputed for GPU culling */
+	gpuFlags: number;
 	/**
 	 * what hides the draw: `material` for a material in the unsupported look ({@link
 	 * SlotFilter.unsupportedMaterials}), `stand-in` for a `DrawRole.Unsupported` draw ({@link
@@ -268,16 +274,28 @@ export class MeshBuckets {
 				if (material === null || look === undefined || (shadowOnly ? !castsShadows : !look.drawn)) {
 					continue;
 				}
+				const castsRealtime = castsShadows && layers.realtime;
+				const castsStatic = castsShadows && layers.static;
+				const casterBits =
+					(castsRealtime ? (1 << (SHADOW_LAYERS - 1)) - 1 : 0) | (castsStatic ? 1 << (SHADOW_LAYERS - 1) : 0);
+				const gpuFlags =
+					(castsShadows ? SlotFlags.Casts : 0) |
+					(shadowOnly ? SlotFlags.ShadowOnly : 0) |
+					(castsRealtime ? SlotFlags.Realtime : 0) |
+					(castsStatic ? SlotFlags.Static : 0);
 				slots.push({
 					lod: draw.lod,
 					minSquared: draw.minSquared,
 					maxSquared: draw.maxSquared,
+					maxRelative: Math.sqrt(draw.maxSquared),
 					geometry: draw.geometry,
 					submesh: draw.submesh,
 					material,
 					castsShadows,
-					castsRealtime: castsShadows && layers.realtime,
-					castsStatic: castsShadows && layers.static,
+					castsRealtime,
+					castsStatic,
+					casterBits,
+					gpuFlags,
 					hiddenBy: hiddenByOf(draw.role, look),
 					shadowOnly,
 					gpuCullable: draw.particles === null && (queue === 'opaque' || queue === 'cutout'),

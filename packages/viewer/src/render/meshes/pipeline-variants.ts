@@ -34,9 +34,27 @@ export const VARIANTS: readonly { cull: FaceCull; uvFormat: UvFormat }[] = produ
 	UV_FORMATS,
 ).map(([cull, uvFormat]) => ({ cull, uvFormat }));
 
+/** @returns index of `cull` in {@link FACE_CULLS} */
+export const faceCullIndex = (cull: FaceCull): number => {
+	switch (cull) {
+		case 'none': {
+			return 0;
+		}
+		case 'back': {
+			return 1;
+		}
+		case 'front': {
+			return 2;
+		}
+	}
+};
+
+/** @returns index of `uvFormat` in {@link UV_FORMATS} */
+export const uvFormatIndex = (uvFormat: UvFormat): number => (uvFormat === 'unorm16x2' ? 0 : 1);
+
 /** @returns the index of a face culling and UV format in {@link VARIANTS} */
 export const variantOf = (cull: FaceCull, uvFormat: UvFormat): number =>
-	FACE_CULLS.indexOf(cull) * UV_FORMATS.length + UV_FORMATS.indexOf(uvFormat);
+	faceCullIndex(cull) * UV_FORMATS.length + uvFormatIndex(uvFormat);
 
 /** @returns the cache keys of a phase's pipelines, by {@link variantOf} */
 export const variantKeys = (phase: string): string[] =>

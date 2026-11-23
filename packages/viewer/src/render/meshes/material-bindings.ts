@@ -67,7 +67,7 @@ export class MaterialBindings {
 	/** material bind groups by material id, over their slots' binding versions (-1 for the fallback) */
 	#materialGroups = new BindGroupCache<number>();
 	/** by material id */
-	#states = new Map<number, MaterialState>();
+	#states: (MaterialState | undefined)[] = [];
 	/** scratch for the versions a material group is looked up by */
 	#versions: number[] = SLOTS.map(() => -1);
 	/** effect bind groups by material id, over their slots' and volume's binding versions and the inputs' */
@@ -111,7 +111,7 @@ export class MaterialBindings {
 	/** forgets every material's state and bind groups (when a package is unloaded) */
 	release(): void {
 		this.#materialGroups.clear();
-		this.#states.clear();
+		this.#states.length = 0;
 		this.#effectGroups.clear();
 	}
 
@@ -122,7 +122,7 @@ export class MaterialBindings {
 	 * @returns the material's state, derived again only after one of its textures' bindings changed
 	 */
 	state(material: number, look: MaterialLook, textures: TextureStore): MaterialState {
-		const cached = this.#states.get(material);
+		const cached = this.#states[material];
 		if (cached !== undefined && cached.version === textures.version) {
 			return cached;
 		}
@@ -155,7 +155,7 @@ export class MaterialBindings {
 			alphaReady: slots[(look.flags & LookFlags.AlphaNormal) !== 0 ? 1 : 0] !== null,
 			complete,
 		};
-		this.#states.set(material, state);
+		this.#states[material] = state;
 		return state;
 	}
 
