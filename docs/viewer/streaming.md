@@ -53,10 +53,15 @@ camera-to-bounds distance (`hlodRing`). because packages omit per-cluster
 | conditional (other)   | draws while `detail` is on within `detailDistance` of its tile (scene-state content, facilities)                                             |
 | global refs           | pinned, drawn whenever resident, never requested, no radius limit                                                                            |
 
-- **hysteresis.** refined nodes and conditional tiles stay active until 20 m past their load ring
-  (the game's `unloadDirtyDistance`), and reached dynamic blocks stay active until
+- **hysteresis and cross-fade.** refined nodes and conditional tiles stay active until 20 m past
+  their load ring (the game's `unloadDirtyDistance`), and reached dynamic blocks stay active until
   `min(10, span / 30)` m past each edge of their reach rectangle (matching the game's
   `min(3 · cell + 20, 3.2 · cell)` dynamic-grid unload square), preventing boundary thrashing.
+  crossing a ring or reach boundary dissolves over 0.35 s: opaque and cutout meshes dither in/out
+  with complementary `gradient_noise` thresholds (`list_fade` in the top byte of each visible-list
+  entry; non-fading opaque draws stay on the early-Z prepass while fading buckets switch to
+  `mesh/prepass-fade`), and transparent meshes and scene effects scale alpha. transitions snap on
+  camera jumps (> 64 m) or when animation is paused.
 - **no holes.** a node keeps drawing its own HLOD until all refinement targets are resident.
   disabled HLOD tiers are refined past.
 - **empty leaves.** with `detail` on, a leaf refines even if it has no detail blocks, because a

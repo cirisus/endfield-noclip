@@ -268,7 +268,8 @@ fn fx_soft_body_normal(at: vec2f, packing: f32) -> vec3f {
 
 @vertex
 fn vs_effect(v: EffectIn, @builtin(instance_index) ii: u32) -> EffectOut {
-	let row = effect_rows[effect_list[ii]];
+	let entry = effect_list[ii];
+	let row = effect_rows[list_row(entry)];
 	let draw_id = effect_draw_ids[ii];
 	let offset = effect_draws[draw_id][0];
 	let scale = effect_draws[draw_id][1];
@@ -284,7 +285,8 @@ fn vs_effect(v: EffectIn, @builtin(instance_index) ii: u32) -> EffectOut {
 	let inverse = transpose(inverse3(m));
 	let flags = bitcast<u32>(offset.w);
 	let uv = sheet_uv(row.sheet, vec4f(v.uv0 * uv0.xy + uv0.zw, v.uv1 * uv1.xy + uv1.zw));
-	let color = select(vec4f(1.0), v.color, (flags & FX_HAS_COLORS) != 0u) * unpack4x8unorm(row.color);
+	var color = select(vec4f(1.0), v.color, (flags & FX_HAS_COLORS) != 0u) * unpack4x8unorm(row.color);
+	color.a *= fade_opacity(list_fade(entry));
 	var normal = oct_decode(v.normal);
 	let motion = fx_row(id, FX_OFFSET_MODE).x;
 	if (motion == FX_MOTION_SOFT_BODY) {

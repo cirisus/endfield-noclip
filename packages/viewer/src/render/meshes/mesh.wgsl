@@ -199,11 +199,14 @@ struct VertexOut {
 	@location(7) color: vec4f,
 	// the camera-relative object origin, which the leaves' transmission fades out by
 	@location(8) @interpolate(flat) origin: vec3f,
+	// transition fade code from `list_fade` (0 = opaque)
+	@location(9) @interpolate(flat) fade: u32,
 }
 
 @vertex
 fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
-	let row = rows[list[ii]];
+	let entry = list[ii];
+	let row = rows[list_row(entry)];
 	let draw_id = draw_ids[ii];
 	let draw = draws[draw_id];
 	let look = looks[look_slot(draw)];
@@ -238,6 +241,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	out.object_y = p.y;
 	out.color = select(vec4f(1.0), v.color, (flags & HAS_COLORS) != 0u) * unpack4x8unorm(row.color);
 	out.origin = origin;
+	out.fade = list_fade(entry);
 	return out;
 }
 
@@ -255,7 +259,7 @@ struct CutoutDepthIn {
 
 // the camera-relative position of a vertex of list entry `ii`; `position.w` is the geometry's sway weight
 fn instance_rel(position: vec4f, ii: u32, draw: Draw, look: Look) -> vec3f {
-	let row = rows[list[ii]];
+	let row = rows[list_row(list[ii])];
 	let p = draw.offset.xyz + position.xyz * draw.scale.xyz;
 	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
 	let rel = row_basis(row.t0, row.t1, row.t2, row.info) * p + origin;
@@ -371,12 +375,37 @@ fn vs_depth(v: DepthIn, @builtin(instance_index) ii: u32) -> @builtin(position) 
 @fragment
 fn fs_depth() {}
 
+// depth prepass for opaque draws holding fading instances: kept separate from fs_depth so non-fading opaque
+// draws keep early-Z
+struct FadeDepthOut {
+	@builtin(position) @invariant position: vec4f,
+	@location(0) @interpolate(flat) fade: u32,
+}
+
+@vertex
+fn vs_depth_fade(v: DepthIn, @builtin(instance_index) ii: u32) -> FadeDepthOut {
+	let draw = draws[draw_ids[ii]];
+	let look = looks[look_slot(draw)];
+	var out: FadeDepthOut;
+	out.position = frame.view_proj * vec4f(instance_rel(v.position, ii, draw, look), 1.0);
+	out.fade = list_fade(list[ii]);
+	return out;
+}
+
+@fragment
+fn fs_depth_fade(in: FadeDepthOut) {
+	if (fade_discard(in.fade, in.position.xy)) {
+		discard;
+	}
+}
+
 // what fs_cutout_depth reads, at VertexOut's locations so vs_main can feed it too
 struct CutoutDepthVaryings {
 	@builtin(position) position: vec4f,
 	@location(3) uv: vec4f,
 	@location(4) @interpolate(flat) draw: u32,
 	@location(7) color: vec4f,
+	@location(9) @interpolate(flat) fade: u32,
 }
 
 struct CutoutDepthOut {
@@ -385,6 +414,7 @@ struct CutoutDepthOut {
 	@location(4) @interpolate(flat) draw: u32,
 	// the instance's colour (a particle's), without the mesh's vertex colours, whose stream these passes don't bind
 	@location(7) color: vec4f,
+	@location(9) @interpolate(flat) fade: u32,
 }
 
 @vertex
@@ -392,7 +422,8 @@ fn vs_cutout_depth(v: CutoutDepthIn, @builtin(instance_index) ii: u32) -> Cutout
 	let draw_id = draw_ids[ii];
 	let draw = draws[draw_id];
 	let look = looks[look_slot(draw)];
-	let row = rows[list[ii]];
+	let entry = list[ii];
+	let row = rows[list_row(entry)];
 	let m = row_basis(row.t0, row.t1, row.t2, row.info);
 	let flags = bitcast<u32>(draw.offset.w);
 	let uv = vec4f(v.uv0 * draw.uv0.xy + draw.uv0.zw, v.uv1 * draw.uv1.xy + draw.uv1.zw);
@@ -403,6 +434,7 @@ fn vs_cutout_depth(v: CutoutDepthIn, @builtin(instance_index) ii: u32) -> Cutout
 	out.uv = sheet_uv(row.sheet, uv);
 	out.draw = draw_id;
 	out.color = unpack4x8unorm(row.color);
+	out.fade = list_fade(entry);
 	return out;
 }
 
@@ -658,7 +690,7 @@ fn fs_transparent(in: VertexOut) -> @location(0) vec4f {
 	} else if ((flags & BASE_MAP) != 0u) {
 		alpha = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT).a;
 	}
-	alpha = saturate(alpha * look.emissive2.w);
+	alpha = saturate(alpha * look.emissive2.w) * fade_opacity(in.fade);
 	// premultiplied glass (detail2.z) adds its whole radiance and lets its opacity only dim what's behind
 	let color = shaded.radiance.rgb * select(alpha, 1.0, look.detail2.z > 0.5);
 	let uv = in.position.xy / frame.render_size.xy;
@@ -1339,6 +1371,9 @@ fn erosion_surface(
 // (`DitherRow` in special-looks.ts), which keeps a fraction of the pixels equal to the scaled alpha
 @fragment
 fn fs_cutout_depth(in: CutoutDepthVaryings) {
+	if (fade_discard(in.fade, in.position.xy)) {
+		discard;
+	}
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);

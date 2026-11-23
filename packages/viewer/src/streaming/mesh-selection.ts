@@ -18,6 +18,7 @@ import type { Plane } from '../scene/camera.ts';
 
 import {
 	type GpuCullWork,
+	ITEM_FADE_SHIFT,
 	ITEM_WORDS,
 	ItemFlags,
 	MAX_LIGHT_CASTERS,
@@ -270,6 +271,8 @@ export class MeshSelector {
 	#ox = 0;
 	#oy = 0;
 	#oz = 0;
+	/** the current range's 8-bit transition fade code (0 = opaque) */
+	#fade = 0;
 	/** what each resident block's selection reuses, built on its first selection */
 	readonly #blocks = new WeakMap<ResidentInstances, SelectedBlock>();
 	/** per chain, its reach per metre of size ({@link chainReach}), `NaN` until first asked */
@@ -388,11 +391,12 @@ export class MeshSelector {
 		const reachScale = pixelFactor / viewportHeight;
 		const filter = slotFilterKey(view);
 
-		for (const { item, first, count } of ranges) {
+		for (const { item, first, count, fade } of ranges) {
 			const instances = item.resident;
 			if (instances?.kind !== 'instances') {
 				continue;
 			}
+			this.#fade = fade;
 			const ox = (this.#ox = instances.origin[0] - eye[0]);
 			const oy = (this.#oy = instances.origin[1] - eye[1]);
 			const oz = (this.#oz = instances.origin[2] - eye[2]);
@@ -661,7 +665,12 @@ export class MeshSelector {
 				segment.nearest = nearest;
 				segment.layer = segmentLayer;
 				segment.high = high;
-				addItem(work, instances.alloc.start + first, rows, group.inside ? ItemFlags.Inside : 0);
+				addItem(
+					work,
+					instances.alloc.start + first,
+					rows,
+					(group.inside ? ItemFlags.Inside : 0) | (this.#fade << ITEM_FADE_SHIFT),
+				);
 				this.#addSlot(slot, slot);
 				if (work.items[(work.itemCount - 1) * ITEM_WORDS + 3] === 0) {
 					work.itemCount--;
@@ -699,7 +708,12 @@ export class MeshSelector {
 				continue;
 			}
 			const rows = end - first;
-			addItem(work, instances.alloc.start + first, rows, group.inside ? ItemFlags.Inside : 0);
+			addItem(
+				work,
+				instances.alloc.start + first,
+				rows,
+				(group.inside ? ItemFlags.Inside : 0) | (this.#fade << ITEM_FADE_SHIFT),
+			);
 			const segment = this.#segment;
 			segment.rows = rows;
 			segment.handedness = segments[at + SegmentFloat.handedness];
@@ -848,11 +862,15 @@ export class MeshSelector {
 			bucket.frame = this.#frame;
 			bucket.pixels = 0;
 			bucket.nearest = Infinity;
+			bucket.fading = false;
 			gpu.index = work.buckets.length;
 			gpu.rows = 0;
 			gpu.layerRows.fill(0);
 			work.buckets.push(bucket);
 			this.selection.buckets.push(bucket);
+		}
+		if (this.#fade !== 0) {
+			bucket.fading = true;
 		}
 		gpu.rows += room.inView;
 		const layers = room.layers;
@@ -992,6 +1010,8 @@ export class MeshSelector {
 						continue;
 					}
 				}
+				const fade = this.#fade;
+				const fadeBits = fade << 24;
 				const group = shadowLayers === null ? SHADOW_LAYERS : firstShadowLayer(shadowLayers, x, y, z, radius);
 				const mirrored = mirroredRow[i] === 1 ? 1 : 0;
 				for (let p = 0; p < pendingCount; p++) {
@@ -1008,7 +1028,11 @@ export class MeshSelector {
 						bucket.bands.length = 0;
 						bucket.pixels = 0;
 						bucket.nearest = Infinity;
+						bucket.fading = false;
 						buckets.push(bucket);
+					}
+					if (fade !== 0) {
+						bucket.fading = true;
 					}
 					// listed rows draw into a prefix of the layers: a static caster only from the far layer on, and a
 					// realtime one into the far layer too. the transparent pass's rows draw no shadows
@@ -1021,7 +1045,7 @@ export class MeshSelector {
 					const groupRows = bucket.rows[slotGroup];
 					const listed = groupRows.length;
 					if (slot.particles === null) {
-						groupRows.push(row);
+						groupRows.push((row | fadeBits) >>> 0);
 					} else {
 						const particles = this.#particles.rows(instances, i, slot.particles, frame, view.particles);
 						this.selection.particles = true;
@@ -1029,7 +1053,7 @@ export class MeshSelector {
 							this.selection.shadowParticles = true;
 						}
 						for (const particle of particles) {
-							groupRows.push(particle);
+							groupRows.push((particle | fadeBits) >>> 0);
 						}
 					}
 					if (slot.sorted) {

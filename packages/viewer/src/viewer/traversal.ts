@@ -26,6 +26,8 @@ export interface TraversalInput {
 	index: number;
 	/** the animation clock, s */
 	time: number;
+	/** elapsed time since the previous frame, s (0 when animations are paused, snapping transitions) */
+	dt: number;
 	/** water volumes' current offsets, by volume */
 	waterOffsets: Float32Array;
 	/** write the selection for the renderers too: the frame renders */
@@ -50,6 +52,8 @@ export class Traversal {
 	 * still
 	 */
 	movingShown = false;
+	/** whether any HLOD/detail, conditional, or dynamic-reach transition is currently cross-fading */
+	fadingShown = false;
 	/** lowers material texture resolution while the stream budget is full */
 	readonly textureReduction = new TextureReduction();
 	/** the frustum planes, rewritten each traversal */
@@ -115,7 +119,9 @@ export class Traversal {
 			casters: shadows
 				? offscreenCasters(planes, environment.sunDirection, renderer.lights.shadows.casterSpheres())
 				: null,
+			dt: input.dt,
 		};
+		const prevFading = this.fadingShown;
 		const selection = scene.selector.run(
 			view,
 			{
@@ -126,6 +132,7 @@ export class Traversal {
 			input.focusCells,
 		);
 		this.visited = selection.visited;
+		this.fadingShown = selection.fading;
 		// spinning and riding rows move before instances are culled and listed by where they are
 		this.movingShown = this.#moveRows(selection.instances, input.time);
 		times.span('tree');
@@ -210,6 +217,7 @@ export class Traversal {
 			poseChanged ||
 			stream.version !== this.#shadowVersion ||
 			(this.movingShown && input.time !== this.#shadowTime) ||
+			(prevFading && !this.fadingShown) ||
 			(meshSelection?.shadowParticles ?? false)
 		) {
 			pose[0] = eye[0];

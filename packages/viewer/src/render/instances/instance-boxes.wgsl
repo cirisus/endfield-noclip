@@ -63,7 +63,7 @@ struct Box {
 fn load_box(ii: u32) -> Box {
 	var index = ii;
 	if (USE_LIST) {
-		index = list[ii];
+		index = list_row(list[ii]);
 	}
 	let row = rows[index];
 	var box: Box;

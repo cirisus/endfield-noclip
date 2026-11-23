@@ -7,7 +7,14 @@ import { Camera } from '../scene/camera.ts';
 import type { TileNode, TileTree } from '../scene/tile-tree.ts';
 
 import type { ContentItem } from './content-item.ts';
-import { Selector, type SelectionOptions, hlodRing, reachUnloadMargin } from './selection.ts';
+import {
+	Selector,
+	type SelectionOptions,
+	encodeFadeIn,
+	encodeFadeOut,
+	hlodRing,
+	reachUnloadMargin,
+} from './selection.ts';
 
 it('streams conditional scenery independently of coarse HLOD and never requests hidden variants', () => {
 	// groups: 0 with condition 0, 1 with condition 1, 2 with condition 2, 3 always loaded
@@ -88,7 +95,7 @@ it('streams conditional scenery independently of coarse HLOD and never requests 
 		terrainPixels: 3,
 		hlodTiers: [true, true, true],
 	};
-	const view = { camera: new Camera(), planes: [], pixelFactor: 100, casters: null };
+	const view = { camera: new Camera(), planes: [], pixelFactor: 100, casters: null, dt: 0 };
 	// condition 0 holds; the camera is inside the root, which refines past its HLOD
 	selector.setGroupsShown([true, false, false, true]);
 	selector.run(view, options, null);
@@ -163,7 +170,7 @@ it('drops the HLOD of a nearby leaf with no detail instead of overlaying the sce
 	};
 	const near = new Camera();
 	near.position = [32, 32, -10];
-	const view = { camera: near, planes: [], pixelFactor: 1000, casters: null };
+	const view = { camera: near, planes: [], pixelFactor: 1000, casters: null, dt: 0 };
 	// 4 m of error 10 m away spans 400 px: the leaf refines into its (empty) detail
 	assert.equal(selector.run(view, options, null).instances.length, 0);
 	// with detail off the cluster is all there is to show
@@ -255,7 +262,7 @@ it('keeps drawing the HLOD in place of a refinement still loading, then the refi
 	};
 	const camera = new Camera();
 	camera.position = [64, 32, -10];
-	const view = { camera, planes: [], pixelFactor: 1000, casters: null };
+	const view = { camera, planes: [], pixelFactor: 1000, casters: null, dt: 0 };
 	const ranges = (): [blob: number, first: number, count: number][] =>
 		selector.run(view, options, null).instances.map(({ item, first, count }) => [item.blob, first, count]);
 	assert.deepEqual(ranges(), [[1, 10, 1]]);
@@ -320,7 +327,7 @@ it('streams what is near the camera first, then the focused cells, then the rest
 		hlodTiers: [true, true, true],
 	};
 	selector.run(
-		{ camera: new Camera(), planes: [], pixelFactor: 1000, casters: null },
+		{ camera: new Camera(), planes: [], pixelFactor: 1000, casters: null, dt: 0 },
 		options,
 		new Set(['focus']),
 	);
@@ -407,7 +414,7 @@ it('applies 20 m unload hysteresis to conditional tiles and dynamic-grid hystere
 		const camera = new Camera();
 		camera.position = [x, 32, z];
 		return selector
-			.run({ camera, planes: [], pixelFactor: 1000, casters: null }, options, null)
+			.run({ camera, planes: [], pixelFactor: 1000, casters: null, dt: 0 }, options, null)
 			.instances.map(({ item }) => item.blob);
 	};
 
@@ -424,4 +431,105 @@ it('applies 20 m unload hysteresis to conditional tiles and dynamic-grid hystere
 	assert.deepEqual(blobsAt(98, 50), [1, 2]);
 	assert.deepEqual(blobsAt(100, 50), [1]);
 	assert.deepEqual(blobsAt(98, 50), [1]);
+});
+
+it('cross-fades HLOD and detail with complementary fade codes, reverses mid-fade, and snaps on jumps', () => {
+	// fade-in and fade-out codes partition [0, 128) with no overlap or gap
+	for (const p of [0.05, 0.25, 0.5, 0.75, 0.95]) {
+		const fadeIn = encodeFadeIn(p);
+		const fadeOut = encodeFadeOut(1 - p);
+		assert.ok(fadeIn >= 1 && fadeIn <= 127);
+		assert.ok(fadeOut >= 129 && fadeOut <= 255);
+		assert.equal(fadeIn + (fadeOut - 128), 128);
+	}
+	assert.equal(encodeFadeIn(1), 0);
+	assert.equal(encodeFadeOut(1), 0);
+
+	const leaf: TileNode = {
+		index: 0,
+		level: 0,
+		x: 0,
+		z: 0,
+		minX: 0,
+		minZ: 0,
+		size: 64,
+		bounds: { min: [0, 0, 0], max: [64, 64, 64] },
+		geometricError: 4,
+		quadrants: [null, null, null, null],
+		terrain: null,
+		surface: null,
+		terrainSplat: null,
+		detail: [{ kind: ContentKind.Detail, tier: 0, group: 0, blob: 2, first: 0, count: 1, reach: null }],
+		hlod: [{ kind: ContentKind.Hlod, tier: 0, group: 0, blob: 1, first: 0, count: 1, reach: null }],
+		conditional: [],
+		cellId: null,
+	};
+	const tree: TileTree = {
+		nodes: [leaf],
+		roots: [leaf],
+		byId: new Map(),
+		terrainLeafLevel: -1,
+		terrainRootLevel: Infinity,
+		reached: [],
+	};
+	const items = new Map([1, 2].map((blob) => [blob, { blob } as ContentItem]));
+	const selector = new Selector(
+		tree,
+		{
+			want: (blob) => items.get(blob) ?? null,
+			get: (blob) => items.get(blob),
+			markUsed: () => true,
+			isReady: () => true,
+		},
+		[],
+		64,
+	);
+	selector.setGroupsShown([true]);
+	const options: SelectionOptions = {
+		terrain: false,
+		terrainSurface: false,
+		terrainSplat: false,
+		instances: true,
+		detail: true,
+		global: true,
+		detailDistance: 160,
+		terrainPixels: 3,
+		hlodTiers: [true, true, true],
+	};
+	const step = (distance: number, dt: number) => {
+		const camera = new Camera();
+		camera.position = [32, 32, -distance];
+		const sel = selector.run({ camera, planes: [], pixelFactor: 1000, casters: null, dt }, options, null);
+		return {
+			fading: sel.fading,
+			rows: sel.instances.map(({ item, fade }) => [item.blob, fade]),
+		};
+	};
+
+	// initial frame outside ring: HLOD only, opaque
+	assert.deepEqual(step(170, 0.05), { fading: false, rows: [[1, 0]] });
+	// cross into 160 m: detail fades in, HLOD fades out with complementary codes
+	const entering = step(155, 0.05);
+	assert.equal(entering.fading, true);
+	assert.equal(entering.rows.length, 2);
+	assert.equal(entering.rows[0][0], 2);
+	assert.equal(entering.rows[1][0], 1);
+	assert.equal(entering.rows[0][1] + (entering.rows[1][1] - 128), 128);
+
+	// advance until fade finishes (0.35 s total, clamped to 0.1 s per step)
+	for (let i = 0; i < 4; i++) {
+		step(155, 0.1);
+	}
+	assert.deepEqual(step(155, 0.05), { fading: false, rows: [[2, 0]] });
+
+	// cross past 180 m (160 + 20 m slack): HLOD fades in, detail fades out
+	const leaving = step(185, 0.05);
+	assert.equal(leaving.fading, true);
+	assert.equal(leaving.rows.length, 2);
+	assert.equal(leaving.rows[0][0], 1);
+	assert.equal(leaving.rows[1][0], 2);
+	assert.equal(leaving.rows[0][1] + (leaving.rows[1][1] - 128), 128);
+
+	// large camera jump snaps active fades immediately
+	assert.deepEqual(step(300, 0.05), { fading: false, rows: [[1, 0]] });
 });

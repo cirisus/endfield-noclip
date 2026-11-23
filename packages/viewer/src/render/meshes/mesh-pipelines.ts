@@ -209,6 +209,13 @@ export const prepareMeshPipelines = (
 	const shadeLit: GPUFragmentState = { module, entryPoint: 'fs_opaque_lit', targets: format.targets };
 	const depthOnly: GPUFragmentState = { module, entryPoint: 'fs_depth', targets: noColor };
 	describeMesh(PHASES.prepass, { fragment: depthOnly, depthStencil: depthWrite });
+	describe({ ...PHASES.prepass, key: 'mesh/prepass-fade' }, (cullMode, uvFormat) => ({
+		layout: meshPipelineLayout,
+		vertex: { ...meshVertex(module, uvFormat, 'position'), entryPoint: 'vs_depth_fade' },
+		primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
+		fragment: { module, entryPoint: 'fs_depth_fade', targets: noColor },
+		depthStencil: depthWrite,
+	}));
 	// each mask draws through a stencil variant; this one only completes the phase
 	describeMesh(PHASES.stencilMask, { fragment: depthOnly, depthStencil: depthTest });
 	describeMesh(PHASES.opaqueLit, { fragment: shadeLit, depthStencil: depthEqual });

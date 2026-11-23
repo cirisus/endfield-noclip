@@ -49,6 +49,8 @@ export interface MeshBucket {
 	nearest: number;
 	/** last frame the bucket had rows */
 	frame: number;
+	/** whether any row added to the bucket this frame is cross-fading */
+	fading: boolean;
 	/** for a bucket whose rows the GPU culls, what it gathered this frame; `null` for one of listed {@link rows} */
 	gpu: GpuRows | null;
 }
@@ -351,6 +353,7 @@ export class MeshBuckets {
 				pixels: 0,
 				nearest: Infinity,
 				frame: -1,
+				fading: false,
 				gpu:
 					index >= 4
 						? { index: -1, rows: 0, layerRows: Array.from({ length: SHADOW_LAYERS }, () => 0) }

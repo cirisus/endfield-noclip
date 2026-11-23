@@ -103,6 +103,8 @@ interface PreparedDraw {
 	distances: readonly number[];
 	/** for a draw of the transparent pass, its instances' sort bands (`MeshBucket.bands`) */
 	bands: readonly number[];
+	/** whether any instance in this draw is cross-fading (`MeshBucket.fading`) */
+	fading: boolean;
 }
 
 /** what {@link MeshRenderer} last bound while encoding a pass, so it binds only what changes */
@@ -110,6 +112,7 @@ interface EncodeState {
 	phase: DrawPhase | null;
 	keys: readonly string[];
 	variant: number;
+	fading: boolean;
 	stencil: LookStencil | null;
 	reference: number;
 	vertices: GeometryVertices | null;
@@ -219,6 +222,8 @@ export class MeshRenderer {
 	#describers: Map<string, PhaseDescriber>;
 	/** each phase's variant keys by phase key */
 	#phaseKeys = new Map<string, readonly string[]>();
+	/** variant keys for the fading opaque depth prepass (`mesh/prepass-fade`) */
+	readonly #prepassFadeKeys = variantKeys('mesh/prepass-fade');
 	/** the passes whose pipelines have all compiled */
 	#compiledPasses = new Set<MeshPass>();
 	#skins: SkinAnimator;
@@ -812,6 +817,7 @@ export class MeshRenderer {
 				stencil: look.stencil,
 				distances: bucket.distances,
 				bands: bucket.bands,
+				fading: bucket.fading,
 			};
 		} else {
 			draw.geometry = resident;
@@ -833,6 +839,7 @@ export class MeshRenderer {
 			draw.stencil = look.stencil;
 			draw.distances = bucket.distances;
 			draw.bands = bucket.bands;
+			draw.fading = bucket.fading;
 		}
 		if (!bucket.castOnly && gpu === null) {
 			this.instanceCount += span.count;
@@ -961,6 +968,13 @@ export class MeshRenderer {
 				}
 			}
 		}
+		if (which === 'prepass') {
+			for (const key of this.#prepassFadeKeys) {
+				if (this.#pipelines.get(key) === undefined) {
+					return false;
+				}
+			}
+		}
 		this.#compiledPasses.add(which);
 		return true;
 	}
@@ -986,6 +1000,7 @@ export class MeshRenderer {
 			phase: null,
 			keys: [],
 			variant: -1,
+			fading: false,
 			stencil: null,
 			reference: -1,
 			vertices: null,
@@ -1059,20 +1074,23 @@ export class MeshRenderer {
 			state.phase = phase;
 			state.keys = this.#variantKeys(phase);
 			state.variant = -1;
+			state.fading = false;
 			state.stencil = null;
 			state.vertices = null;
 			state.material = null;
 		}
-		if (draw.variant !== state.variant || draw.stencil !== state.stencil) {
+		const useFade = phase.key === 'mesh/prepass' && draw.fading;
+		if (draw.variant !== state.variant || useFade !== state.fading || draw.stencil !== state.stencil) {
+			const keys = useFade ? this.#prepassFadeKeys : state.keys;
 			if (draw.stencil === null) {
-				const pipeline = this.#pipelines.get(state.keys[draw.variant]);
+				const pipeline = this.#pipelines.get(keys[draw.variant]);
 				if (pipeline === undefined) {
 					return null;
 				}
 				pass.setPipeline(pipeline);
 			} else {
 				// a variant still compiling skips its draws; the next draw picks a pipeline again
-				const pipeline = this.#stencilPipeline(phase, state.keys, draw.variant, draw.stencil);
+				const pipeline = this.#stencilPipeline(phase, keys, draw.variant, draw.stencil);
 				if (pipeline === undefined) {
 					state.variant = -1;
 					return false;
@@ -1084,6 +1102,7 @@ export class MeshRenderer {
 				}
 			}
 			state.variant = draw.variant;
+			state.fading = useFade;
 			state.stencil = draw.stencil;
 		}
 		if ((phase.textured || state.material === null) && draw.material !== state.material) {

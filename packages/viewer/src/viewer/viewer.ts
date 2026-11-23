@@ -688,6 +688,7 @@ export class Viewer {
 			resized ||
 			options.continuous ||
 			compiled ||
+			(options.animate && traversal.fadingShown) ||
 			(scene !== null && scene.stream.version !== traversal.seenVersion) ||
 			// a local light's shadow tile waits for its casters to be selected and drawn
 			renderer.lights.shadows.pending;
@@ -745,6 +746,7 @@ export class Viewer {
 				focusCells: this.#focusCells,
 				index: this.#frame,
 				time: this.#time,
+				dt: options.animate ? dt : 0,
 				waterOffsets: this.#waterLevels.offsets,
 				prepare: render,
 				times: this.#times,

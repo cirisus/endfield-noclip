@@ -1003,6 +1003,37 @@ fn row_placement(word: u32) -> u32 {
 	return word >> BLOCK_SLOT_BITS;
 }
 
+// visible-list entries pack a 24-bit global row index in the low bits and an 8-bit transition fade code in
+// the top bits: 0 = opaque, 1..127 = fading in (code / 128), 129..255 = fading out ((code - 128) / 128).
+// fading-in and fading-out ranges use complementary noise thresholds so HLOD/detail cross-fades leave no holes
+const LIST_ROW_MASK = 0x00ffffffu;
+
+fn list_row(entry: u32) -> u32 {
+	return entry & LIST_ROW_MASK;
+}
+
+fn list_fade(entry: u32) -> u32 {
+	return entry >> 24u;
+}
+
+fn fade_opacity(code: u32) -> f32 {
+	if (code == 0u) {
+		return 1.0;
+	}
+	return f32(select(code, code - 128u, code >= 128u)) / 128.0;
+}
+
+fn fade_discard(code: u32, px: vec2f) -> bool {
+	if (code == 0u) {
+		return false;
+	}
+	let n = gradient_noise(px + frame.params.w);
+	if (code < 128u) {
+		return n >= f32(code) / 128.0;
+	}
+	return n < 1.0 - f32(code - 128u) / 128.0;
+}
+
 // the 3×3 part of an instance row's transform (rows t0–t2). a billboard row's (`RowBillboard` in
 // instance-rows.ts, info bits 30–31) is relative to the camera's rotation (1), or to its heading about the
 // vertical (2), so it turns to face the camera about its origin

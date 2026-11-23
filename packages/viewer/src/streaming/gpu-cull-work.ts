@@ -18,11 +18,14 @@ import type { MeshBucket } from './mesh-buckets.ts';
  */
 export const ITEM_WORDS = 4;
 
-/** an item's flags, above its row count */
+/** an item's flags, above its row count (bits 16..23 carry the 8-bit transition fade code) */
 export const ItemFlags = {
 	/** its rows' group is wholly in view, so no row needs the frustum test */
 	Inside: 1 << 8,
 } as const;
+
+/** bit shift of the 8-bit transition fade code inside an item's packed count/flags word */
+export const ITEM_FADE_SHIFT = 16;
 
 /**
  * u32 per slot: its LOD band (`minSquared`, `maxSquared` as f32), {@link SlotFlags}, then its bucket's GPU

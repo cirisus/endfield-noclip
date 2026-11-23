@@ -195,7 +195,8 @@ fn test_row(row: u32, flags: u32) -> Tested {
 	let basis = mat3x3f(rows[at].xyz, rows[at + 1u].xyz, rows[at + 2u].xyz);
 	out.mirrored = select(0u, 1u, determinant(basis) < 0.0);
 	out.layer = first_layer(p, radius);
-	out.occluded = out.in_view && view.occlusion != 0u && occluded(p, radius);
+	// fading rows bypass occlusion culling so newly-appearing detail isn't hidden behind last frame's HLOD
+	out.occluded = out.in_view && view.occlusion != 0u && (flags & 0x00ff0000u) == 0u && occluded(p, radius);
 	out.drawn = true;
 	return out;
 }
@@ -236,6 +237,7 @@ fn cs_write(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index
 	if (!tested.drawn) {
 		return;
 	}
+	let list_entry = row | ((packed & 0x00ff0000u) << 8u);
 	let slots = view.slots_at + work[at + 2u] * SLOT_WORDS;
 	for (var s = 0u; s < work[at + 3u]; s++) {
 		let slot = slots + s * SLOT_WORDS;
@@ -252,13 +254,13 @@ fn cs_write(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index
 			continue;
 		}
 		if (tested.in_view && !tested.occluded && (flags & SLOT_SHADOW_ONLY) == 0u) {
-			append(bucket, 0u, row);
+			append(bucket, 0u, list_entry);
 		}
 		if (casts) {
 			for (var layer = tested.layer; layer < SHADOW_LAYERS; layer++) {
 				let takes = select(SLOT_REALTIME, SLOT_STATIC, layer == SHADOW_LAYERS - 1u);
 				if ((flags & takes) != 0u && tested.squared > SHADOW_MIN_SQUARED[layer]) {
-					append(bucket, 1u + layer, row);
+					append(bucket, 1u + layer, list_entry);
 				}
 			}
 		}

@@ -228,8 +228,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     then discard.
   - [puddles](viewer/terrain.md#puddles): stop past leaf splat distance, ignore parallax height, no
     ripples.
-- **transitions & depth offsets**: HLOD/detail, LOD, and mip swaps pop without cross-fade;
-  ground-blend and decal meshes z-fight (no depth offsets applied).
+- **transitions & depth offsets**: per-instance LOD and mip swaps pop without cross-fade
+  (HLOD/detail, conditional, and dynamic-reach boundaries cross-fade over 0.35 s); ground-blend and
+  decal meshes z-fight (no depth offsets applied).
 
 ## water
 
