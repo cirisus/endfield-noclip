@@ -1,12 +1,12 @@
+import { checkedEnum, enumGuard, viewOf } from './binary.ts';
 import {
-	viewOf,
-	checkHeader,
-	enumGuard,
-	checkedEnum,
-	checkLength,
-	writeHeader,
-	type HeaderShape,
-} from './binary.ts';
+	checkStride,
+	decodeContainer,
+	encodeContainer,
+	fourcc,
+	requireSection,
+	type ContainerSectionInput,
+} from './container.ts';
 import { PackageFormatError } from './errors.ts';
 import type { Bounds, Rect } from './values.ts';
 
@@ -42,6 +42,20 @@ export const CONTENT_KIND_NAMES: Record<ContentKind, string> = {
 	[ContentKind.TerrainSplat]: 'terrainSplat',
 };
 
+/** game streaming layer a content ref or instance block belongs to */
+export const StreamingLayer = {
+	Default: 0,
+	Tiny: 1,
+	Lighting: 2,
+	Hlod0: 3,
+	Hlod1: 4,
+	Hlod2: 5,
+	Persistent: 6,
+	Dynamic: 7,
+} as const;
+
+export type StreamingLayer = (typeof StreamingLayer)[keyof typeof StreamingLayer];
+
 /**
  * the tile hierarchy: a forest of quadtrees on one unbounded grid. level `l` tiles are `rootSize / 2^l`
  * across and tile `(l, x, z)` covers `[origin.x + x·size, +size) × [origin.z + z·size, +size)`; `x`, `z` may
@@ -68,6 +82,8 @@ export interface ContentRef {
 	kind: ContentKind;
 	/** HLOD tier for {@link ContentKind.Hlod}; 0 otherwise */
 	tier: number;
+	/** optional streaming layer (defaults to {@link StreamingLayer.Default}) */
+	streamingLayer?: StreamingLayer;
 	/**
 	 * index into `StatesInfo.groups`: who owns the content and when it loads. terrain uses an always-shown
 	 * group
@@ -91,6 +107,8 @@ export interface TreeNode {
 	level: number;
 	x: number;
 	z: number;
+	/** index of parent node in {@link Tree.nodes}, or `-1` for roots (auto-computed on encode if omitted) */
+	parent?: number;
 	/** bounds of everything the node and its descendants draw, including overhang past the tile */
 	bounds: Bounds;
 	/**
@@ -118,141 +136,194 @@ export interface Tree {
 	reaches: Rect[];
 }
 
-/** 'EFTR' */
-const TREE_HEADER: HeaderShape = {
-	magic: 0x52_54_46_45,
-	version: 3,
-	size: 24,
-	label: 'package tree',
-};
+const MAGIC = fourcc('EFTR');
+const MAJOR_VERSION = 2;
+const TAG_NODE = fourcc('NODE');
+const TAG_REFS = fourcc('REFS');
+const TAG_GLOB = fourcc('GLOB');
+const TAG_RCHS = fourcc('RCHS');
+const KNOWN_TAGS = new Set([TAG_NODE, TAG_REFS, TAG_GLOB, TAG_RCHS]);
 
-const NODE_SIZE = 48;
+const NODE_SIZE = 52;
 const REF_SIZE = 24;
 const REACH_SIZE = 16;
-/** a `null` reach, as encoded */
 const NONE = 0xff_ff_ff_ff;
 
 const isContentKind = enumGuard(ContentKind);
+const isStreamingLayer = enumGuard(StreamingLayer);
+
+const encodeRefs = (refs: readonly ContentRef[], reachCount: number): Uint8Array => {
+	const buf = new Uint8Array(refs.length * REF_SIZE);
+	const view = viewOf(buf);
+	for (const [i, ref] of refs.entries()) {
+		if (ref.reach !== null && ref.reach >= reachCount) {
+			throw new RangeError(`a ref's reach ${ref.reach} runs past the reach table`);
+		}
+		const at = i * REF_SIZE;
+		view.setUint8(at, ref.kind);
+		view.setUint8(at + 1, ref.tier);
+		view.setUint8(at + 2, ref.streamingLayer ?? StreamingLayer.Default);
+		view.setUint32(at + 4, ref.group, true);
+		view.setUint32(at + 8, ref.blob, true);
+		view.setUint32(at + 12, ref.first, true);
+		view.setUint32(at + 16, ref.count, true);
+		view.setUint32(at + 20, ref.reach ?? NONE, true);
+	}
+	return buf;
+};
+
+const decodeRefs = (data: Uint8Array, count: number, stride: number, reachCount: number): ContentRef[] => {
+	const view = viewOf(data);
+	const refs: ContentRef[] = [];
+	for (let i = 0; i < count; i++) {
+		const at = i * stride;
+		const reach = view.getUint32(at + 20, true);
+		if (reach !== NONE && reach >= reachCount) {
+			throw new PackageFormatError(`a ref's reach ${reach} runs past the reach table`);
+		}
+		const layer = checkedEnum(isStreamingLayer, view.getUint8(at + 2), 'streaming layer');
+		refs.push({
+			kind: checkedEnum(isContentKind, view.getUint8(at), 'content kind'),
+			tier: view.getUint8(at + 1),
+			...(layer !== StreamingLayer.Default ? { streamingLayer: layer } : {}),
+			group: view.getUint32(at + 4, true),
+			blob: view.getUint32(at + 8, true),
+			first: view.getUint32(at + 12, true),
+			count: view.getUint32(at + 16, true),
+			reach: reach === NONE ? null : reach,
+		});
+	}
+	return refs;
+};
 
 /**
- * tree.bin; the layout is in docs/package-format.md (binary encodings).
+ * encodes `tree.bin` as an `EFTR` v2 TLV container
  *
  * @param tree nodes, refs and reaches
  * @returns the encoded file
  * @throws {RangeError} if a node's ref slice runs past `refs`, or a ref's reach past `reaches`
  */
 export const encodeTree = (tree: Tree): Uint8Array => {
-	const refCount = tree.refs.length + tree.global.length;
-	const out = new Uint8Array(
-		TREE_HEADER.size + tree.nodes.length * NODE_SIZE + refCount * REF_SIZE + tree.reaches.length * REACH_SIZE,
-	);
-	const view = viewOf(out);
-	writeHeader(view, TREE_HEADER);
-	view.setUint32(8, tree.nodes.length, true);
-	view.setUint32(12, tree.refs.length, true);
-	view.setUint32(16, tree.global.length, true);
-	view.setUint32(20, tree.reaches.length, true);
-
-	let at = TREE_HEADER.size;
-	for (const node of tree.nodes) {
+	const nodeIndex = new Map<string, number>();
+	for (const [i, node] of tree.nodes.entries()) {
+		nodeIndex.set(`${node.level}/${node.x}/${node.z}`, i);
+	}
+	const nodeBuf = new Uint8Array(tree.nodes.length * NODE_SIZE);
+	const nv = viewOf(nodeBuf);
+	for (const [i, node] of tree.nodes.entries()) {
 		if (node.refFirst + node.refCount > tree.refs.length) {
 			throw new RangeError(`node ${node.level}/${node.x}/${node.z} refs run past the ref table`);
 		}
-		view.setInt32(at, node.x, true);
-		view.setInt32(at + 4, node.z, true);
-		view.setUint8(at + 8, node.level);
-		for (let i = 0; i < 3; i++) {
-			view.setFloat32(at + 12 + i * 4, node.bounds.min[i], true);
-			view.setFloat32(at + 24 + i * 4, node.bounds.max[i], true);
+		const parent =
+			node.parent ??
+			(node.level > 0
+				? (nodeIndex.get(`${node.level - 1}/${Math.floor(node.x / 2)}/${Math.floor(node.z / 2)}`) ?? -1)
+				: -1);
+		const at = i * NODE_SIZE;
+		nv.setInt32(at, node.x, true);
+		nv.setInt32(at + 4, node.z, true);
+		nv.setInt32(at + 8, parent, true);
+		nv.setUint8(at + 12, node.level);
+		for (let axis = 0; axis < 3; axis++) {
+			nv.setFloat32(at + 16 + axis * 4, node.bounds.min[axis], true);
+			nv.setFloat32(at + 28 + axis * 4, node.bounds.max[axis], true);
 		}
-		view.setFloat32(at + 36, node.geometricError, true);
-		view.setUint32(at + 40, node.refFirst, true);
-		view.setUint32(at + 44, node.refCount, true);
-		at += NODE_SIZE;
+		nv.setFloat32(at + 40, node.geometricError, true);
+		nv.setUint32(at + 44, node.refFirst, true);
+		nv.setUint32(at + 48, node.refCount, true);
 	}
-	for (const ref of [...tree.refs, ...tree.global]) {
-		if (ref.reach !== null && ref.reach >= tree.reaches.length) {
-			throw new RangeError(`a ref's reach ${ref.reach} runs past the reach table`);
+
+	const sections: ContainerSectionInput[] = [
+		{ tag: TAG_NODE, required: true, data: nodeBuf, count: tree.nodes.length, stride: NODE_SIZE },
+		{
+			tag: TAG_REFS,
+			required: true,
+			data: encodeRefs(tree.refs, tree.reaches.length),
+			count: tree.refs.length,
+			stride: REF_SIZE,
+		},
+		{
+			tag: TAG_GLOB,
+			required: true,
+			data: encodeRefs(tree.global, tree.reaches.length),
+			count: tree.global.length,
+			stride: REF_SIZE,
+		},
+	];
+	if (tree.reaches.length > 0) {
+		const reachBuf = new Uint8Array(tree.reaches.length * REACH_SIZE);
+		const rv = viewOf(reachBuf);
+		for (const [i, reach] of tree.reaches.entries()) {
+			const at = i * REACH_SIZE;
+			rv.setFloat32(at, reach.minX, true);
+			rv.setFloat32(at + 4, reach.minZ, true);
+			rv.setFloat32(at + 8, reach.maxX, true);
+			rv.setFloat32(at + 12, reach.maxZ, true);
 		}
-		view.setUint8(at, ref.kind);
-		view.setUint8(at + 1, ref.tier);
-		view.setUint32(at + 4, ref.group, true);
-		view.setUint32(at + 8, ref.blob, true);
-		view.setUint32(at + 12, ref.first, true);
-		view.setUint32(at + 16, ref.count, true);
-		view.setUint32(at + 20, ref.reach ?? NONE, true);
-		at += REF_SIZE;
+		sections.push({
+			tag: TAG_RCHS,
+			required: false,
+			data: reachBuf,
+			count: tree.reaches.length,
+			stride: REACH_SIZE,
+		});
 	}
-	for (const reach of tree.reaches) {
-		view.setFloat32(at, reach.minX, true);
-		view.setFloat32(at + 4, reach.minZ, true);
-		view.setFloat32(at + 8, reach.maxX, true);
-		view.setFloat32(at + 12, reach.maxZ, true);
-		at += REACH_SIZE;
-	}
-	return out;
+	return encodeContainer({ magic: MAGIC, majorVersion: MAJOR_VERSION, sections });
 };
 
 /**
+ * decodes `tree.bin` (`EFTR` v2 TLV container)
+ *
  * @param data tree.bin
  * @returns its nodes, refs and reaches
  * @throws {PackageFormatError} on a bad header, length or reach index
  */
 export const decodeTree = (data: Uint8Array): Tree => {
-	const view = viewOf(data);
-	checkHeader(view, TREE_HEADER);
-	const nodeCount = view.getUint32(8, true);
-	const refCount = view.getUint32(12, true);
-	const globalCount = view.getUint32(16, true);
-	const reachCount = view.getUint32(20, true);
-	checkLength(
-		data,
-		TREE_HEADER.size + nodeCount * NODE_SIZE + (refCount + globalCount) * REF_SIZE + reachCount * REACH_SIZE,
-		'package tree',
-	);
-
-	const nodes: TreeNode[] = [];
-	let at = TREE_HEADER.size;
-	for (let i = 0; i < nodeCount; i++) {
-		const f = (offset: number): number => view.getFloat32(at + offset, true);
-		nodes.push({
-			level: view.getUint8(at + 8),
-			x: view.getInt32(at, true),
-			z: view.getInt32(at + 4, true),
-			bounds: { min: [f(12), f(16), f(20)], max: [f(24), f(28), f(32)] },
-			geometricError: f(36),
-			refFirst: view.getUint32(at + 40, true),
-			refCount: view.getUint32(at + 44, true),
-		});
-		at += NODE_SIZE;
+	const container = decodeContainer(data, {
+		magic: MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: KNOWN_TAGS,
+		label: 'package tree',
+	});
+	const nodeSec = requireSection(container, TAG_NODE, 'package tree');
+	const refSec = requireSection(container, TAG_REFS, 'package tree');
+	const globSec = requireSection(container, TAG_GLOB, 'package tree');
+	const reachSec = container.sections.get(TAG_RCHS);
+	checkStride(nodeSec, NODE_SIZE, 'NODE');
+	checkStride(refSec, REF_SIZE, 'REFS');
+	checkStride(globSec, REF_SIZE, 'GLOB');
+	if (reachSec !== undefined) {
+		checkStride(reachSec, REACH_SIZE, 'RCHS');
 	}
-	const readRefs = (count: number): ContentRef[] => {
-		const refs: ContentRef[] = [];
-		for (let i = 0; i < count; i++) {
-			const reach = view.getUint32(at + 20, true);
-			if (reach !== NONE && reach >= reachCount) {
-				throw new PackageFormatError(`a ref's reach ${reach} runs past the reach table`);
-			}
-			refs.push({
-				kind: checkedEnum(isContentKind, view.getUint8(at), 'content kind'),
-				tier: view.getUint8(at + 1),
-				group: view.getUint32(at + 4, true),
-				blob: view.getUint32(at + 8, true),
-				first: view.getUint32(at + 12, true),
-				count: view.getUint32(at + 16, true),
-				reach: reach === NONE ? null : reach,
-			});
-			at += REF_SIZE;
-		}
-		return refs;
-	};
-	const refs = readRefs(refCount);
-	const global = readRefs(globalCount);
+	const reachCount = reachSec?.count ?? 0;
+
+	const nv = viewOf(nodeSec.data);
+	const nodes: TreeNode[] = [];
+	for (let i = 0; i < nodeSec.count; i++) {
+		const at = i * nodeSec.stride;
+		const f = (offset: number): number => nv.getFloat32(at + offset, true);
+		const parent = nv.getInt32(at + 8, true);
+		nodes.push({
+			level: nv.getUint8(at + 12),
+			x: nv.getInt32(at, true),
+			z: nv.getInt32(at + 4, true),
+			...(parent >= 0 ? { parent } : {}),
+			bounds: { min: [f(16), f(20), f(24)], max: [f(28), f(32), f(36)] },
+			geometricError: f(40),
+			refFirst: nv.getUint32(at + 44, true),
+			refCount: nv.getUint32(at + 48, true),
+		});
+	}
+	const refs = decodeRefs(refSec.data, refSec.count, refSec.stride, reachCount);
+	const global = decodeRefs(globSec.data, globSec.count, globSec.stride, reachCount);
 	const reaches: Rect[] = [];
-	for (let i = 0; i < reachCount; i++) {
-		const f = (offset: number): number => view.getFloat32(at + offset, true);
-		reaches.push({ minX: f(0), minZ: f(4), maxX: f(8), maxZ: f(12) });
-		at += REACH_SIZE;
+	if (reachSec !== undefined) {
+		const rv = viewOf(reachSec.data);
+		for (let i = 0; i < reachSec.count; i++) {
+			const at = i * reachSec.stride;
+			const f = (offset: number): number => rv.getFloat32(at + offset, true);
+			reaches.push({ minX: f(0), minZ: f(4), maxX: f(8), maxZ: f(12) });
+		}
 	}
 	return { nodes, refs, global, reaches };
 };

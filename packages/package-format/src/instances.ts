@@ -1,15 +1,17 @@
+import { checkedEnum, enumGuard, viewOf } from './binary.ts';
 import {
-	viewOf,
-	checkHeader,
-	enumGuard,
-	checkedEnum,
-	checkLength,
-	f32Section,
-	u32Section,
-	TABLE_HEADER_SIZE,
-	writeHeader,
-	type HeaderShape,
-} from './binary.ts';
+	checkStride,
+	decodeContainer,
+	decodeSparseSection,
+	encodeContainer,
+	encodeSparseSection,
+	fourcc,
+	requireSection,
+	sectionF32,
+	sectionU32,
+	type ContainerSection,
+	type ContainerSectionInput,
+} from './container.ts';
 import { PackageFormatError } from './errors.ts';
 
 /** how a draw of a LOD chain is used */
@@ -84,6 +86,8 @@ export interface ChainDraw {
 	maxSquared: number;
 	/** {@link ChainDrawFlags} */
 	flags: number;
+	/** optional transparent sorting band byte (defaults to 0) */
+	sortingBand?: number;
 	/**
 	 * the renderer's sorting layer (its place in the layer order) and order within it, i16 each; 0 where the
 	 * game records none (static scenery). the transparent pass draws lower layers, then lower orders, first,
@@ -95,6 +99,8 @@ export interface ChainDraw {
 
 /** a LOD-chain template shared by every instance with the same ordered draws */
 export interface Chain {
+	/** optional 64-bit canonical content hash (for shard-local chain palettes) */
+	contentHash?: bigint;
 	/** {@link ChainFlags} */
 	flags: number;
 	draws: ChainDraw[];
@@ -195,48 +201,48 @@ export const DECAL_PLACEMENT_FLOATS = 8;
  */
 export const SPIN_FLOATS = 7;
 
-/** the row sections of an instance block, in encoded order, and their 32-bit values per row */
-const ROW_SECTIONS = [
-	{ key: 'decals', words: DECAL_PLACEMENT_FLOATS },
-	{ key: 'spins', words: SPIN_FLOATS },
-	{ key: 'floaters', words: 1 },
-	{ key: 'rides', words: 1 },
-] as const satisfies readonly { key: keyof InstanceBlock; words: number }[];
+const MAJOR_VERSION = 2;
+const CHAINS_MAGIC = fourcc('EFCH');
+const INSTANCES_MAGIC = fourcc('EFIN');
 
-const CHAIN_SIZE = 8;
+const TAG_CHNS = fourcc('CHNS');
+const TAG_DRWS = fourcc('DRWS');
+const TAG_DORG = fourcc('DORG');
+const CHAINS_TAGS = new Set([TAG_CHNS, TAG_DRWS, TAG_DORG]);
+
+const TAG_HEAD = fourcc('HEAD');
+const TAG_XFRM = fourcc('XFRM');
+const TAG_BNDS = fourcc('BNDS');
+const TAG_DECL = fourcc('DECL');
+const TAG_SPIN = fourcc('SPIN');
+const TAG_FLOT = fourcc('FLOT');
+const TAG_RIDE = fourcc('RIDE');
+const TAG_PATH = fourcc('PATH');
+const INSTANCES_TAGS = new Set([
+	TAG_HEAD,
+	TAG_CHNS,
+	TAG_XFRM,
+	TAG_BNDS,
+	TAG_DECL,
+	TAG_SPIN,
+	TAG_FLOT,
+	TAG_RIDE,
+	TAG_PATH,
+]);
+
+const CHAIN_SIZE = 16;
 const DRAW_SIZE = 32;
-const ORIGIN_SIZE = 12;
-/** a `null` reference, as encoded */
-const NONE = 0xff_ff_ff_ff;
-/** where the header's path count is, after the row sections' counts */
-const PATH_COUNT_AT = 24 + ROW_SECTIONS.length * 4;
-const INSTANCE_HEADER_SIZE = PATH_COUNT_AT + 4;
-/** bytes of a path before its frames: `f32 frameRate, u32 frameCount` */
+const DORG_SIZE = 16;
+const HEAD_SIZE = 24;
 const PATH_HEADER_SIZE = 8;
-/** bytes per instance row across the per-row sections */
-const INSTANCE_ROW_SIZE = 4 + 48 + 24;
-
-/** 'EFCH' */
-const CHAINS_HEADER: HeaderShape = {
-	magic: 0x48_43_46_45,
-	version: 7,
-	size: TABLE_HEADER_SIZE,
-	label: 'chain table',
-};
-/** 'EFIN' */
-const INSTANCES_HEADER: HeaderShape = {
-	magic: 0x4e_49_46_45,
-	version: 7,
-	size: INSTANCE_HEADER_SIZE,
-	label: 'instance block',
-};
+const NONE = 0xff_ff_ff_ff;
 
 const isDrawRole = enumGuard(DrawRole);
 
 const hasDistanceOrigin = (flags: number): boolean => (flags & ChainFlags.CameraDistance) !== 0;
 
 /**
- * tables/chains.bin; the layout is in docs/package-format.md (binary encodings).
+ * encodes `tables/chains.bin` as an `EFCH` v2 TLV container
  *
  * @param chains chain templates in id order
  * @returns the encoded table
@@ -245,20 +251,15 @@ const hasDistanceOrigin = (flags: number): boolean => (flags & ChainFlags.Camera
  */
 export const encodeChains = (chains: readonly Chain[]): Uint8Array => {
 	const drawCount = chains.reduce((sum, chain) => sum + chain.draws.length, 0);
-	const originCount = chains.filter((chain) => hasDistanceOrigin(chain.flags)).length;
-	const out = new Uint8Array(
-		TABLE_HEADER_SIZE + chains.length * CHAIN_SIZE + drawCount * DRAW_SIZE + originCount * ORIGIN_SIZE,
-	);
-	const view = viewOf(out);
-	writeHeader(view, CHAINS_HEADER);
-	view.setUint32(8, chains.length, true);
-	view.setUint32(12, drawCount, true);
+	const origins: { index: number; origin: [number, number, number] }[] = [];
+	const chainBuf = new Uint8Array(chains.length * CHAIN_SIZE);
+	const cv = viewOf(chainBuf);
+	const drawBuf = new Uint8Array(drawCount * DRAW_SIZE);
+	const dv = viewOf(drawBuf);
 
-	let chainAt = TABLE_HEADER_SIZE;
-	let drawAt = TABLE_HEADER_SIZE + chains.length * CHAIN_SIZE;
-	let originAt = drawAt + drawCount * DRAW_SIZE;
 	let firstDraw = 0;
-	for (const chain of chains) {
+	let drawAt = 0;
+	for (const [c, chain] of chains.entries()) {
 		if (chain.draws.length > 0xff_ff) {
 			throw new RangeError(`chain has ${chain.draws.length} draws, more than a u16 counts`);
 		}
@@ -266,99 +267,187 @@ export const encodeChains = (chains: readonly Chain[]): Uint8Array => {
 			throw new RangeError('a chain has a distance origin exactly when it has the CameraDistance flag');
 		}
 		if (chain.distanceOrigin !== null) {
-			for (let i = 0; i < 3; i++) {
-				view.setFloat32(originAt + i * 4, chain.distanceOrigin[i], true);
-			}
-			originAt += ORIGIN_SIZE;
+			origins.push({ index: c, origin: chain.distanceOrigin });
 		}
-		view.setUint32(chainAt, firstDraw, true);
-		view.setUint16(chainAt + 4, chain.draws.length, true);
-		view.setUint8(chainAt + 6, chain.flags);
-		chainAt += CHAIN_SIZE;
+		const at = c * CHAIN_SIZE;
+		cv.setBigUint64(at, chain.contentHash ?? 0n, true);
+		cv.setUint32(at + 8, firstDraw, true);
+		cv.setUint16(at + 12, chain.draws.length, true);
+		cv.setUint8(at + 14, chain.flags);
 		for (const draw of chain.draws) {
-			view.setUint32(drawAt, draw.geometry, true);
-			view.setUint32(drawAt + 4, draw.material ?? NONE, true);
-			view.setUint32(drawAt + 8, draw.particles ?? NONE, true);
-			view.setUint16(drawAt + 12, draw.submesh, true);
-			view.setUint8(drawAt + 14, draw.lod);
-			view.setUint8(drawAt + 15, draw.role);
-			view.setFloat32(drawAt + 16, draw.minSquared, true);
-			view.setFloat32(drawAt + 20, draw.maxSquared, true);
-			view.setUint8(drawAt + 24, draw.flags);
-			view.setInt16(drawAt + 26, draw.sortingLayer, true);
-			view.setInt16(drawAt + 28, draw.sortingOrder, true);
+			dv.setUint32(drawAt, draw.geometry, true);
+			dv.setUint32(drawAt + 4, draw.material ?? NONE, true);
+			dv.setUint32(drawAt + 8, draw.particles ?? NONE, true);
+			dv.setUint16(drawAt + 12, draw.submesh, true);
+			dv.setUint8(drawAt + 14, draw.lod);
+			dv.setUint8(drawAt + 15, draw.role);
+			dv.setFloat32(drawAt + 16, draw.minSquared, true);
+			dv.setFloat32(drawAt + 20, draw.maxSquared, true);
+			dv.setUint8(drawAt + 24, draw.flags);
+			dv.setUint8(drawAt + 25, draw.sortingBand ?? 0);
+			dv.setInt16(drawAt + 26, draw.sortingLayer, true);
+			dv.setInt16(drawAt + 28, draw.sortingOrder, true);
 			drawAt += DRAW_SIZE;
 		}
 		firstDraw += chain.draws.length;
 	}
-	return out;
+
+	const sections: ContainerSectionInput[] = [
+		{ tag: TAG_CHNS, required: true, data: chainBuf, count: chains.length, stride: CHAIN_SIZE },
+		{ tag: TAG_DRWS, required: true, data: drawBuf, count: drawCount, stride: DRAW_SIZE },
+	];
+	if (origins.length > 0) {
+		const dorgBuf = new Uint8Array(origins.length * DORG_SIZE);
+		const ov = viewOf(dorgBuf);
+		for (const [i, { index, origin }] of origins.entries()) {
+			const at = i * DORG_SIZE;
+			ov.setUint32(at, index, true);
+			ov.setFloat32(at + 4, origin[0], true);
+			ov.setFloat32(at + 8, origin[1], true);
+			ov.setFloat32(at + 12, origin[2], true);
+		}
+		sections.push({
+			tag: TAG_DORG,
+			required: true,
+			data: dorgBuf,
+			count: origins.length,
+			stride: DORG_SIZE,
+		});
+	}
+	return encodeContainer({ magic: CHAINS_MAGIC, majorVersion: MAJOR_VERSION, sections });
 };
 
 const indexOf = (value: number): number | null => (value === NONE ? null : value);
 
 /**
+ * decodes `tables/chains.bin` (`EFCH` v2 TLV container)
+ *
  * @param data tables/chains.bin
  * @returns the chain templates
  * @throws {PackageFormatError} on a bad header, length or draw range
  */
 export const decodeChains = (data: Uint8Array): Chain[] => {
-	const view = viewOf(data);
-	checkHeader(view, CHAINS_HEADER);
-	const chainCount = view.getUint32(8, true);
-	const drawCount = view.getUint32(12, true);
-	let originCount = 0;
-	if (data.length >= TABLE_HEADER_SIZE + chainCount * CHAIN_SIZE) {
-		for (let c = 0; c < chainCount; c++) {
-			originCount += Number(hasDistanceOrigin(view.getUint8(TABLE_HEADER_SIZE + c * CHAIN_SIZE + 6)));
+	const container = decodeContainer(data, {
+		magic: CHAINS_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: CHAINS_TAGS,
+		label: 'chain table',
+	});
+	const chainSec = requireSection(container, TAG_CHNS, 'chain table');
+	const drawSec = requireSection(container, TAG_DRWS, 'chain table');
+	const dorgSec = container.sections.get(TAG_DORG);
+	checkStride(chainSec, CHAIN_SIZE, 'CHNS');
+	checkStride(drawSec, DRAW_SIZE, 'DRWS');
+	if (dorgSec !== undefined) {
+		checkStride(dorgSec, DORG_SIZE, 'DORG');
+	}
+
+	const origins = new Map<number, [number, number, number]>();
+	if (dorgSec !== undefined) {
+		const ov = viewOf(dorgSec.data);
+		for (let i = 0; i < dorgSec.count; i++) {
+			const at = i * dorgSec.stride;
+			origins.set(ov.getUint32(at, true), [
+				ov.getFloat32(at + 4, true),
+				ov.getFloat32(at + 8, true),
+				ov.getFloat32(at + 12, true),
+			]);
 		}
 	}
-	checkLength(
-		data,
-		TABLE_HEADER_SIZE + chainCount * CHAIN_SIZE + drawCount * DRAW_SIZE + originCount * ORIGIN_SIZE,
-		'chain table',
-	);
 
-	const drawsAt = TABLE_HEADER_SIZE + chainCount * CHAIN_SIZE;
-	let originAt = drawsAt + drawCount * DRAW_SIZE;
+	const cv = viewOf(chainSec.data);
+	const dv = viewOf(drawSec.data);
 	const chains: Chain[] = [];
-	for (let c = 0; c < chainCount; c++) {
-		const at = TABLE_HEADER_SIZE + c * CHAIN_SIZE;
-		const first = view.getUint32(at, true);
-		const count = view.getUint16(at + 4, true);
-		if (first + count > drawCount) {
+	for (let c = 0; c < chainSec.count; c++) {
+		const at = c * chainSec.stride;
+		const contentHash = cv.getBigUint64(at, true);
+		const first = cv.getUint32(at + 8, true);
+		const count = cv.getUint16(at + 12, true);
+		const flags = cv.getUint8(at + 14);
+		if (first + count > drawSec.count) {
 			throw new PackageFormatError(`chain ${c} draws run past the draw table`);
 		}
 		const draws: ChainDraw[] = [];
 		for (let d = first; d < first + count; d++) {
-			const drawAt = drawsAt + d * DRAW_SIZE;
+			const drawAt = d * drawSec.stride;
+			const sortingBand = dv.getUint8(drawAt + 25);
 			draws.push({
-				geometry: view.getUint32(drawAt, true),
-				material: indexOf(view.getUint32(drawAt + 4, true)),
-				particles: indexOf(view.getUint32(drawAt + 8, true)),
-				submesh: view.getUint16(drawAt + 12, true),
-				lod: view.getUint8(drawAt + 14),
-				role: checkedEnum(isDrawRole, view.getUint8(drawAt + 15), 'draw role'),
-				minSquared: view.getFloat32(drawAt + 16, true),
-				maxSquared: view.getFloat32(drawAt + 20, true),
-				flags: view.getUint8(drawAt + 24),
-				sortingLayer: view.getInt16(drawAt + 26, true),
-				sortingOrder: view.getInt16(drawAt + 28, true),
+				geometry: dv.getUint32(drawAt, true),
+				material: indexOf(dv.getUint32(drawAt + 4, true)),
+				particles: indexOf(dv.getUint32(drawAt + 8, true)),
+				submesh: dv.getUint16(drawAt + 12, true),
+				lod: dv.getUint8(drawAt + 14),
+				role: checkedEnum(isDrawRole, dv.getUint8(drawAt + 15), 'draw role'),
+				minSquared: dv.getFloat32(drawAt + 16, true),
+				maxSquared: dv.getFloat32(drawAt + 20, true),
+				flags: dv.getUint8(drawAt + 24),
+				...(sortingBand !== 0 ? { sortingBand } : {}),
+				sortingLayer: dv.getInt16(drawAt + 26, true),
+				sortingOrder: dv.getInt16(drawAt + 28, true),
 			});
 		}
-		const flags = view.getUint8(at + 6);
-		let distanceOrigin: Chain['distanceOrigin'] = null;
-		if (hasDistanceOrigin(flags)) {
-			const f = (i: number): number => view.getFloat32(originAt + i * 4, true);
-			distanceOrigin = [f(0), f(1), f(2)];
-			originAt += ORIGIN_SIZE;
+		const distanceOrigin = origins.get(c) ?? null;
+		if (hasDistanceOrigin(flags) !== (distanceOrigin !== null)) {
+			throw new PackageFormatError(`chain ${c} CameraDistance flag disagrees with DORG`);
 		}
-		chains.push({ flags, draws, distanceOrigin });
+		chains.push({
+			...(contentHash !== 0n ? { contentHash } : {}),
+			flags,
+			draws,
+			distanceOrigin,
+		});
 	}
 	return chains;
 };
 
+const bytesOf = (a: Uint32Array | Float32Array): Uint8Array =>
+	new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+
+const readSparseF32 = (
+	section: ContainerSection | undefined,
+	words: number,
+	rowCount: number,
+	label: string,
+): RowSection<Float32Array> => {
+	if (section === undefined) {
+		return { rows: new Uint32Array(0), values: new Float32Array(0) };
+	}
+	const { rows, values, stride } = decodeSparseSection(section, words * 4, rowCount, label);
+	if (stride === words * 4 && (values.byteOffset & 3) === 0) {
+		return { rows, values: new Float32Array(values.buffer, values.byteOffset, rows.length * words) };
+	}
+	const out = new Float32Array(rows.length * words);
+	const v = viewOf(values);
+	for (let i = 0; i < rows.length; i++) {
+		for (let w = 0; w < words; w++) {
+			out[i * words + w] = v.getFloat32(i * stride + w * 4, true);
+		}
+	}
+	return { rows, values: out };
+};
+
+const readSparseU32 = (
+	section: ContainerSection | undefined,
+	rowCount: number,
+	label: string,
+): RowSection<Uint32Array> => {
+	if (section === undefined) {
+		return { rows: new Uint32Array(0), values: new Uint32Array(0) };
+	}
+	const { rows, values, stride } = decodeSparseSection(section, 4, rowCount, label);
+	if (stride === 4 && (values.byteOffset & 3) === 0) {
+		return { rows, values: new Uint32Array(values.buffer, values.byteOffset, rows.length) };
+	}
+	const out = new Uint32Array(rows.length);
+	const v = viewOf(values);
+	for (let i = 0; i < rows.length; i++) {
+		out[i] = v.getUint32(i * stride, true);
+	}
+	return { rows, values: out };
+};
+
 /**
- * an instance block; the layout is in docs/package-format.md (instance block).
+ * encodes an instance block (`.inst`) as an `EFIN` v2 TLV container
  *
  * @param block rows
  * @returns the encoded block
@@ -370,15 +459,6 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
 	if (block.transforms.length !== count * 12 || block.bounds.length !== count * 6) {
 		throw new RangeError('instance block sections differ in length');
 	}
-	for (const { key, words } of ROW_SECTIONS) {
-		const { rows, values } = block[key];
-		if (values.length !== rows.length * words) {
-			throw new RangeError(`instance block ${key} differ in length`);
-		}
-		if (!areAscendingRows(rows, count)) {
-			throw new RangeError(`instance block ${key} rows must be ascending rows of the block`);
-		}
-	}
 	if (block.rides.values.some((path) => path >= block.paths.length)) {
 		throw new RangeError('an instance block ride names a path the block lacks');
 	}
@@ -387,121 +467,136 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
 			throw new RangeError('an instance block path needs whole frames and a frame rate above 0');
 		}
 	}
-	const sectionsEnd = sectionsSize(
-		count,
-		ROW_SECTIONS.map(({ key }) => block[key].rows.length),
-	);
-	const out = new Uint8Array(
-		sectionsEnd + block.paths.reduce((sum, path) => sum + PATH_HEADER_SIZE + path.offsets.byteLength, 0),
-	);
-	const view = viewOf(out);
-	writeHeader(view, INSTANCES_HEADER);
-	view.setUint32(8, count, true);
-	for (let i = 0; i < 3; i++) {
-		view.setFloat32(12 + i * 4, block.origin[i], true);
-	}
-	const parts: (Uint32Array | Float32Array)[] = [block.chains, block.transforms, block.bounds];
-	for (const [i, { key }] of ROW_SECTIONS.entries()) {
-		view.setUint32(24 + i * 4, block[key].rows.length, true);
-		parts.push(block[key].rows, block[key].values);
-	}
-	view.setUint32(PATH_COUNT_AT, block.paths.length, true);
-	let at = INSTANCE_HEADER_SIZE;
-	const put = (part: Uint32Array | Float32Array): void => {
-		out.set(new Uint8Array(part.buffer, part.byteOffset, part.byteLength), at);
-		at += part.byteLength;
+
+	const head = new Uint8Array(HEAD_SIZE);
+	const hv = viewOf(head);
+	hv.setFloat32(0, block.origin[0], true);
+	hv.setFloat32(4, block.origin[1], true);
+	hv.setFloat32(8, block.origin[2], true);
+	hv.setUint32(12, count, true);
+
+	const sections: ContainerSectionInput[] = [
+		{ tag: TAG_HEAD, required: true, data: head },
+		{ tag: TAG_CHNS, required: true, data: bytesOf(block.chains), count, stride: 4 },
+		{ tag: TAG_XFRM, required: true, data: bytesOf(block.transforms), count, stride: 48 },
+		{ tag: TAG_BNDS, required: true, data: bytesOf(block.bounds), count, stride: 24 },
+	];
+
+	const addSparse = (
+		tag: number,
+		sec: RowSection<Float32Array | Uint32Array>,
+		words: number,
+		required: boolean,
+	): void => {
+		if (sec.rows.length === 0) {
+			if (sec.values.length !== 0) {
+				throw new RangeError('instance block sparse section has values without rows');
+			}
+			return;
+		}
+		for (const row of sec.rows) {
+			if (row >= count) {
+				throw new RangeError('instance block sparse row index past block count');
+			}
+		}
+		sections.push({
+			tag,
+			required,
+			data: encodeSparseSection(sec.rows, bytesOf(sec.values), words * 4),
+			count: sec.rows.length,
+			stride: words * 4,
+		});
 	};
-	parts.forEach(put);
-	for (const { frameRate, offsets } of block.paths) {
-		view.setFloat32(at, frameRate, true);
-		view.setUint32(at + 4, offsets.length / 3, true);
-		at += PATH_HEADER_SIZE;
-		put(offsets);
+
+	addSparse(TAG_DECL, block.decals, DECAL_PLACEMENT_FLOATS, false);
+	addSparse(TAG_SPIN, block.spins, SPIN_FLOATS, false);
+	addSparse(TAG_FLOT, block.floaters, 1, false);
+	addSparse(TAG_RIDE, block.rides, 1, false);
+
+	if (block.paths.length > 0) {
+		const pathBytes = block.paths.reduce((sum, p) => sum + PATH_HEADER_SIZE + p.offsets.byteLength, 0);
+		const pathBuf = new Uint8Array(pathBytes);
+		const pv = viewOf(pathBuf);
+		let at = 0;
+		for (const { frameRate, offsets } of block.paths) {
+			pv.setFloat32(at, frameRate, true);
+			pv.setUint32(at + 4, offsets.length / 3, true);
+			at += PATH_HEADER_SIZE;
+			pathBuf.set(bytesOf(offsets), at);
+			at += offsets.byteLength;
+		}
+		sections.push({ tag: TAG_PATH, required: false, data: pathBuf, count: block.paths.length });
 	}
-	return out;
+
+	return encodeContainer({ magic: INSTANCES_MAGIC, majorVersion: MAJOR_VERSION, sections });
 };
 
-const areAscendingRows = (rows: Uint32Array, count: number): boolean =>
-	rows.every((row, i) => row < count && (i === 0 || row > rows[i - 1]));
-
-/** @returns the bytes of an instance block up to its paths */
-const sectionsSize = (count: number, sectionRows: readonly number[]): number =>
-	INSTANCE_HEADER_SIZE +
-	count * INSTANCE_ROW_SIZE +
-	ROW_SECTIONS.reduce((sum, { words }, i) => sum + sectionRows[i] * (4 + words * 4), 0);
-
 /**
+ * decodes an instance block (`.inst`, `EFIN` v2 TLV container)
+ *
  * @param data an instance block
- * @returns its rows, copied into aligned arrays
+ * @returns its rows (zero-copy views when 4-byte aligned)
  * @throws {PackageFormatError} on a bad header or length, a row section whose rows aren't ascending rows of
  *   the block, a ride naming no path, or a path without frames or a frame rate above 0
  */
 export const decodeInstanceBlock = (data: Uint8Array): InstanceBlock => {
-	const view = viewOf(data);
-	checkHeader(view, INSTANCES_HEADER);
-	const count = view.getUint32(8, true);
-	const sectionRows = ROW_SECTIONS.map((_, i) => view.getUint32(24 + i * 4, true));
-	const pathCount = view.getUint32(PATH_COUNT_AT, true);
-	const sectionsEnd = sectionsSize(count, sectionRows);
-	if (data.byteLength < sectionsEnd) {
-		throw new PackageFormatError(`instance block is ${data.byteLength} bytes, shorter than its rows`);
+	const container = decodeContainer(data, {
+		magic: INSTANCES_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: INSTANCES_TAGS,
+		label: 'instance block',
+	});
+	const head = requireSection(container, TAG_HEAD, 'instance block');
+	if (head.byteLength < HEAD_SIZE) {
+		throw new PackageFormatError('instance block HEAD is too short');
+	}
+	const hv = viewOf(head.data);
+	const origin: [number, number, number] = [
+		hv.getFloat32(0, true),
+		hv.getFloat32(4, true),
+		hv.getFloat32(8, true),
+	];
+	const count = hv.getUint32(12, true);
+
+	const chains = sectionU32(requireSection(container, TAG_CHNS, 'instance block'));
+	const transforms = sectionF32(requireSection(container, TAG_XFRM, 'instance block'));
+	const bounds = sectionF32(requireSection(container, TAG_BNDS, 'instance block'));
+	if (chains.length !== count || transforms.length !== count * 12 || bounds.length !== count * 6) {
+		throw new PackageFormatError('instance block core sections disagree with rowCount');
 	}
 
-	let at = INSTANCE_HEADER_SIZE;
-	const chains = u32Section(data, at, count);
-	at += count * 4;
-	const transforms = f32Section(data, at, count * 12);
-	at += count * 48;
-	const bounds = f32Section(data, at, count * 6);
-	at += count * 24;
-	let section = 0;
-	const readSection = <Values extends Float32Array | Uint32Array>(
-		read: (data: Uint8Array, at: number, count: number) => Values,
-	): RowSection<Values> => {
-		const { key, words } = ROW_SECTIONS[section];
-		const length = sectionRows[section];
-		section++;
-		const rows = u32Section(data, at, length);
-		at += length * 4;
-		const values = read(data, at, length * words);
-		at += length * words * 4;
-		if (!areAscendingRows(rows, count)) {
-			throw new PackageFormatError(`instance block ${key} rows aren’t ascending rows of the block`);
-		}
-		return { rows, values };
-	};
-	// in ROW_SECTIONS order
-	const decals = readSection(f32Section);
-	const spins = readSection(f32Section);
-	const floaters = readSection(u32Section);
-	const rides = readSection(u32Section);
+	const decals = readSparseF32(container.sections.get(TAG_DECL), DECAL_PLACEMENT_FLOATS, count, 'DECL');
+	const spins = readSparseF32(container.sections.get(TAG_SPIN), SPIN_FLOATS, count, 'SPIN');
+	const floaters = readSparseU32(container.sections.get(TAG_FLOT), count, 'FLOT');
+	const rides = readSparseU32(container.sections.get(TAG_RIDE), count, 'RIDE');
+
 	const paths: RowPath[] = [];
-	for (let p = 0; p < pathCount; p++) {
-		if (at + PATH_HEADER_SIZE > data.byteLength) {
-			throw new PackageFormatError('instance block paths run past its end');
+	const pathSec = container.sections.get(TAG_PATH);
+	if (pathSec !== undefined) {
+		const pv = viewOf(pathSec.data);
+		let at = 0;
+		for (let p = 0; p < pathSec.count; p++) {
+			if (at + PATH_HEADER_SIZE > pathSec.byteLength) {
+				throw new PackageFormatError('instance block paths run past its end');
+			}
+			const frameRate = pv.getFloat32(at, true);
+			const frames = pv.getUint32(at + 4, true);
+			at += PATH_HEADER_SIZE;
+			if (frames === 0 || !(frameRate > 0) || at + frames * 12 > pathSec.byteLength) {
+				throw new PackageFormatError(`instance block path ${p} is malformed`);
+			}
+			const raw = pathSec.data.subarray(at, at + frames * 12);
+			const offsets =
+				(raw.byteOffset & 3) === 0
+					? new Float32Array(raw.buffer, raw.byteOffset, frames * 3)
+					: new Float32Array(raw.slice().buffer);
+			paths.push({ frameRate, offsets });
+			at += frames * 12;
 		}
-		const frameRate = view.getFloat32(at, true);
-		const frames = view.getUint32(at + 4, true);
-		at += PATH_HEADER_SIZE;
-		if (frames === 0 || !(frameRate > 0) || at + frames * 12 > data.byteLength) {
-			throw new PackageFormatError(`instance block path ${p} is malformed`);
-		}
-		paths.push({ frameRate, offsets: f32Section(data, at, frames * 3) });
-		at += frames * 12;
 	}
-	checkLength(data, at, 'instance block');
-	if (rides.values.some((path) => path >= pathCount)) {
+
+	if (rides.values.some((path) => path >= paths.length)) {
 		throw new PackageFormatError('an instance block ride names a path the block lacks');
 	}
-	return {
-		origin: [view.getFloat32(12, true), view.getFloat32(16, true), view.getFloat32(20, true)],
-		chains,
-		transforms,
-		bounds,
-		decals,
-		spins,
-		floaters,
-		rides,
-		paths,
-	};
+	return { origin, chains, transforms, bounds, decals, spins, floaters, rides, paths };
 };

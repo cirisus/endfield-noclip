@@ -1,12 +1,12 @@
+import { align4, enumGuard, viewOf } from './binary.ts';
 import {
-	align4,
-	viewOf,
-	checkHeader,
-	enumGuard,
-	checkLength,
-	writeHeader,
-	type HeaderShape,
-} from './binary.ts';
+	checkStride,
+	decodeContainer,
+	encodeContainer,
+	fourcc,
+	requireSection,
+	type ContainerSectionInput,
+} from './container.ts';
 import type { UnconvertedEntry } from './entries.ts';
 import { PackageFormatError } from './errors.ts';
 import type { Bounds } from './values.ts';
@@ -206,27 +206,25 @@ export interface ReadyGeometry {
 	animationFrames: number | null;
 }
 
-/** 'EFGM' */
-const GEOMETRY_HEADER: HeaderShape = {
-	magic: 0x4d_47_46_45,
-	version: 2,
-	size: 32,
-	label: 'geometry blob',
-};
+const MAGIC = fourcc('EFGM');
+const MAJOR_VERSION = 2;
+const TAG_HEAD = fourcc('HEAD');
+const TAG_STRM = fourcc('STRM');
+const TAG_SUBM = fourcc('SUBM');
+const TAG_VBUF = fourcc('VBUF');
+const TAG_IBUF = fourcc('IBUF');
+const TAG_ANIM = fourcc('ANIM');
+const KNOWN_TAGS = new Set([TAG_HEAD, TAG_STRM, TAG_SUBM, TAG_VBUF, TAG_IBUF, TAG_ANIM]);
 
-const GEOMETRY_HEADER_SIZE = GEOMETRY_HEADER.size;
-
-const GEOMETRY_STREAM_SIZE = 32;
-
-const GEOMETRY_SUBMESH_SIZE = 40;
-
+const HEAD_SIZE = 16;
+const STREAM_SIZE = 36;
+const SUBMESH_SIZE = 40;
 const ANIMATION_HEADER_SIZE = 32;
 
 const isGeometryVertexFormat = enumGuard(GeometryVertexFormat);
 
 /**
- * the layout is in docs/package-format.md (geometry blob). payloads follow the records in record order, then
- * the index payload and the animation (absent when its length is 0), each starting 4-byte aligned.
+ * encodes a geometry blob (`.mesh`) as an `EFGM` v2 TLV container
  *
  * @param blob the container; payloads are stored as given
  * @returns the encoded blob
@@ -246,142 +244,162 @@ export const encodeGeometryBlob = (blob: GeometryBlob): Uint8Array => {
 	) {
 		throw new RangeError('geometry animation counts are out of range or disagree with its matrices');
 	}
-	const animationLength = animation === null ? 0 : ANIMATION_HEADER_SIZE + animation.matrices.byteLength;
-	const tables =
-		GEOMETRY_HEADER_SIZE +
-		blob.streams.length * GEOMETRY_STREAM_SIZE +
-		blob.submeshes.length * GEOMETRY_SUBMESH_SIZE;
-	const size =
-		blob.streams.reduce((sum, stream) => sum + align4(stream.data.byteLength), tables) +
-		align4(blob.indices.byteLength) +
-		animationLength;
-	const out = new Uint8Array(size);
-	const view = viewOf(out);
-	writeHeader(view, GEOMETRY_HEADER);
-	view.setUint16(6, blob.flags, true);
-	view.setUint32(8, blob.vertexCount, true);
-	view.setUint32(12, blob.indexCount, true);
-	view.setUint16(16, blob.streams.length, true);
-	view.setUint16(18, blob.submeshes.length, true);
-	view.setUint32(20, blob.indices.byteLength, true);
-	view.setUint32(24, animationLength, true);
 
-	let at = GEOMETRY_HEADER_SIZE;
-	for (const stream of blob.streams) {
-		view.setUint8(at, stream.attribute);
-		view.setUint8(at + 1, stream.format);
-		view.setUint8(at + 2, stream.flags);
-		view.setUint32(at + 4, stream.data.byteLength, true);
-		for (let i = 0; i < 3; i++) {
-			view.setFloat32(at + 8 + i * 4, stream.offset[i], true);
-			view.setFloat32(at + 20 + i * 4, stream.scale[i], true);
+	const head = new Uint8Array(HEAD_SIZE);
+	const hv = viewOf(head);
+	hv.setUint16(0, blob.flags, true);
+	hv.setUint32(4, blob.vertexCount, true);
+	hv.setUint32(8, blob.indexCount, true);
+
+	const vbufSize = blob.streams.reduce((sum, s) => sum + align4(s.data.byteLength), 0);
+	const vbuf = new Uint8Array(vbufSize);
+	const strmBuf = new Uint8Array(blob.streams.length * STREAM_SIZE);
+	const sv = viewOf(strmBuf);
+	let vAt = 0;
+	for (const [i, stream] of blob.streams.entries()) {
+		const at = i * STREAM_SIZE;
+		sv.setUint8(at, stream.attribute);
+		sv.setUint8(at + 1, stream.format);
+		sv.setUint8(at + 2, stream.flags);
+		sv.setUint32(at + 4, vAt, true);
+		sv.setUint32(at + 8, stream.data.byteLength, true);
+		for (let axis = 0; axis < 3; axis++) {
+			sv.setFloat32(at + 12 + axis * 4, stream.offset[axis], true);
+			sv.setFloat32(at + 24 + axis * 4, stream.scale[axis], true);
 		}
-		at += GEOMETRY_STREAM_SIZE;
+		vbuf.set(stream.data, vAt);
+		vAt += align4(stream.data.byteLength);
 	}
-	for (const submesh of blob.submeshes) {
-		view.setUint32(at, submesh.firstIndex, true);
-		view.setUint32(at + 4, submesh.indexCount, true);
-		view.setUint32(at + 8, submesh.baseVertex, true);
-		view.setUint32(at + 12, submesh.vertexCount, true);
-		for (let i = 0; i < 3; i++) {
-			view.setFloat32(at + 16 + i * 4, submesh.bounds.min[i], true);
-			view.setFloat32(at + 28 + i * 4, submesh.bounds.max[i], true);
+
+	const submBuf = new Uint8Array(blob.submeshes.length * SUBMESH_SIZE);
+	const mv = viewOf(submBuf);
+	for (const [i, submesh] of blob.submeshes.entries()) {
+		const at = i * SUBMESH_SIZE;
+		mv.setUint32(at, submesh.firstIndex, true);
+		mv.setUint32(at + 4, submesh.indexCount, true);
+		mv.setUint32(at + 8, submesh.baseVertex, true);
+		mv.setUint32(at + 12, submesh.vertexCount, true);
+		for (let axis = 0; axis < 3; axis++) {
+			mv.setFloat32(at + 16 + axis * 4, submesh.bounds.min[axis], true);
+			mv.setFloat32(at + 28 + axis * 4, submesh.bounds.max[axis], true);
 		}
-		at += GEOMETRY_SUBMESH_SIZE;
 	}
-	for (const stream of blob.streams) {
-		out.set(stream.data, at);
-		at += align4(stream.data.byteLength);
-	}
-	out.set(blob.indices, at);
-	at += align4(blob.indices.byteLength);
+
+	const sections: ContainerSectionInput[] = [
+		{ tag: TAG_HEAD, required: true, data: head },
+		{ tag: TAG_STRM, required: true, data: strmBuf, count: blob.streams.length, stride: STREAM_SIZE },
+		{ tag: TAG_SUBM, required: true, data: submBuf, count: blob.submeshes.length, stride: SUBMESH_SIZE },
+		{ tag: TAG_VBUF, required: true, data: vbuf },
+		{ tag: TAG_IBUF, required: true, data: blob.indices },
+	];
+
 	if (animation !== null) {
-		view.setUint16(at, animation.boneCount, true);
-		view.setUint16(at + 2, animation.frameCount, true);
-		view.setFloat32(at + 4, animation.frameRate, true);
-		for (let i = 0; i < 3; i++) {
-			view.setFloat32(at + 8 + i * 4, animation.offset[i], true);
-			view.setFloat32(at + 20 + i * 4, animation.scale[i], true);
+		const animBuf = new Uint8Array(ANIMATION_HEADER_SIZE + animation.matrices.byteLength);
+		const av = viewOf(animBuf);
+		av.setUint16(0, animation.boneCount, true);
+		av.setUint16(2, animation.frameCount, true);
+		av.setFloat32(4, animation.frameRate, true);
+		for (let axis = 0; axis < 3; axis++) {
+			av.setFloat32(8 + axis * 4, animation.offset[axis], true);
+			av.setFloat32(20 + axis * 4, animation.scale[axis], true);
 		}
-		at += ANIMATION_HEADER_SIZE;
-		out.set(
+		animBuf.set(
 			new Uint8Array(animation.matrices.buffer, animation.matrices.byteOffset, animation.matrices.byteLength),
-			at,
+			ANIMATION_HEADER_SIZE,
 		);
+		sections.push({ tag: TAG_ANIM, required: false, data: animBuf });
 	}
-	return out;
+
+	return encodeContainer({ magic: MAGIC, majorVersion: MAJOR_VERSION, sections });
 };
 
 /**
+ * decodes a geometry blob (`.mesh`, `EFGM` v2 TLV container)
+ *
  * @param data a geometry blob
  * @returns its container; payloads are views into `data`
  * @throws {PackageFormatError} on a bad header, an unknown vertex format or a length mismatch
  */
 export const decodeGeometryBlob = (data: Uint8Array): GeometryBlob => {
-	const view = viewOf(data);
-	checkHeader(view, GEOMETRY_HEADER);
-	const streamCount = view.getUint16(16, true);
-	const submeshCount = view.getUint16(18, true);
-	const indexLength = view.getUint32(20, true);
-	const animationLength = view.getUint32(24, true);
-	let at = GEOMETRY_HEADER_SIZE;
-	let payloadAt =
-		GEOMETRY_HEADER_SIZE + streamCount * GEOMETRY_STREAM_SIZE + submeshCount * GEOMETRY_SUBMESH_SIZE;
-	if (payloadAt > data.byteLength) {
-		throw new PackageFormatError('geometry blob tables run past its end');
+	const container = decodeContainer(data, {
+		magic: MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: KNOWN_TAGS,
+		label: 'geometry blob',
+	});
+	const head = requireSection(container, TAG_HEAD, 'geometry blob');
+	if (head.byteLength < HEAD_SIZE) {
+		throw new PackageFormatError('geometry blob HEAD is too short');
 	}
+	const hv = viewOf(head.data);
+	const flags = hv.getUint16(0, true);
+	const vertexCount = hv.getUint32(4, true);
+	const indexCount = hv.getUint32(8, true);
 
+	const strmSec = requireSection(container, TAG_STRM, 'geometry blob');
+	const submSec = requireSection(container, TAG_SUBM, 'geometry blob');
+	const vbufSec = requireSection(container, TAG_VBUF, 'geometry blob');
+	const ibufSec = requireSection(container, TAG_IBUF, 'geometry blob');
+	checkStride(strmSec, STREAM_SIZE, 'STRM');
+	checkStride(submSec, SUBMESH_SIZE, 'SUBM');
+
+	const sv = viewOf(strmSec.data);
 	const streams: GeometryStream[] = [];
-	for (let s = 0; s < streamCount; s++) {
-		const format = view.getUint8(at + 1);
+	for (let s = 0; s < strmSec.count; s++) {
+		const at = s * strmSec.stride;
+		const format = sv.getUint8(at + 1);
 		if (!isGeometryVertexFormat(format)) {
 			throw new PackageFormatError(`geometry stream ${s} has unknown vertex format ${format}`);
 		}
-		const length = view.getUint32(at + 4, true);
-		if (payloadAt + length > data.byteLength) {
-			throw new PackageFormatError(`geometry stream ${s} runs past the blob`);
+		const offset = sv.getUint32(at + 4, true);
+		const length = sv.getUint32(at + 8, true);
+		if (offset + length > vbufSec.byteLength) {
+			throw new PackageFormatError(`geometry stream ${s} runs past VBUF`);
 		}
-		const f = (offset: number): number => view.getFloat32(at + offset, true);
+		const f = (o: number): number => sv.getFloat32(at + o, true);
 		streams.push({
-			attribute: view.getUint8(at),
+			attribute: sv.getUint8(at),
 			format,
-			flags: view.getUint8(at + 2),
-			offset: [f(8), f(12), f(16)],
-			scale: [f(20), f(24), f(28)],
-			data: data.subarray(payloadAt, payloadAt + length),
+			flags: sv.getUint8(at + 2),
+			offset: [f(12), f(16), f(20)],
+			scale: [f(24), f(28), f(32)],
+			data: vbufSec.data.subarray(offset, offset + length),
 		});
-		payloadAt += align4(length);
-		at += GEOMETRY_STREAM_SIZE;
 	}
+
+	const mv = viewOf(submSec.data);
 	const submeshes: GeometrySubmesh[] = [];
-	for (let s = 0; s < submeshCount; s++) {
-		const f = (offset: number): number => view.getFloat32(at + offset, true);
+	for (let s = 0; s < submSec.count; s++) {
+		const at = s * submSec.stride;
+		const f = (o: number): number => mv.getFloat32(at + o, true);
 		submeshes.push({
-			firstIndex: view.getUint32(at, true),
-			indexCount: view.getUint32(at + 4, true),
-			baseVertex: view.getUint32(at + 8, true),
-			vertexCount: view.getUint32(at + 12, true),
+			firstIndex: mv.getUint32(at, true),
+			indexCount: mv.getUint32(at + 4, true),
+			baseVertex: mv.getUint32(at + 8, true),
+			vertexCount: mv.getUint32(at + 12, true),
 			bounds: { min: [f(16), f(20), f(24)], max: [f(28), f(32), f(36)] },
 		});
-		at += GEOMETRY_SUBMESH_SIZE;
 	}
-	const indicesAt = payloadAt;
-	payloadAt += align4(indexLength);
-	checkLength(data, payloadAt + animationLength, 'geometry blob');
+
 	let animation: SkinAnimation | null = null;
-	if (animationLength > 0) {
-		const boneCount = view.getUint16(payloadAt, true);
-		const frameCount = view.getUint16(payloadAt + 2, true);
+	const animSec = container.sections.get(TAG_ANIM);
+	if (animSec !== undefined) {
+		if (animSec.byteLength < ANIMATION_HEADER_SIZE) {
+			throw new PackageFormatError('geometry ANIM section is too short');
+		}
+		const av = viewOf(animSec.data);
+		const boneCount = av.getUint16(0, true);
+		const frameCount = av.getUint16(2, true);
 		const count = boneCount * frameCount * 12;
-		if (animationLength !== ANIMATION_HEADER_SIZE + count * 4) {
+		if (animSec.byteLength !== ANIMATION_HEADER_SIZE + count * 4) {
 			throw new PackageFormatError('geometry animation length disagrees with its counts');
 		}
-		const f = (offset: number): number => view.getFloat32(payloadAt + offset, true);
-		// a copy: the payload's offset in the blob needn't suit a Float32Array
-		const matrices = new Float32Array(count);
-		new Uint8Array(matrices.buffer).set(
-			data.subarray(payloadAt + ANIMATION_HEADER_SIZE, payloadAt + animationLength),
-		);
+		const f = (o: number): number => av.getFloat32(o, true);
+		const raw = animSec.data.subarray(ANIMATION_HEADER_SIZE, animSec.byteLength);
+		const matrices =
+			(raw.byteOffset & 3) === 0
+				? new Float32Array(raw.buffer, raw.byteOffset, count)
+				: new Float32Array(raw.slice().buffer);
 		animation = {
 			boneCount,
 			frameCount,
@@ -391,13 +409,14 @@ export const decodeGeometryBlob = (data: Uint8Array): GeometryBlob => {
 			matrices,
 		};
 	}
+
 	return {
-		flags: view.getUint16(6, true),
-		vertexCount: view.getUint32(8, true),
-		indexCount: view.getUint32(12, true),
+		flags,
+		vertexCount,
+		indexCount,
 		streams,
 		submeshes,
-		indices: data.subarray(indicesAt, indicesAt + indexLength),
+		indices: ibufSec.data,
 		animation,
 	};
 };

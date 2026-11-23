@@ -56,6 +56,8 @@ const TAG_BLBS = fourcc('BLBS');
 const TAG_GRPS = fourcc('GRPS');
 const KNOWN_TAGS = new Set([TAG_KEYS, TAG_BLBS, TAG_GRPS]);
 
+const bytesOf = (a: Uint32Array): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+
 /**
  * encodes `tables/irradiance.bin` as an `EFIV` v2 TLV container
  *
@@ -73,7 +75,6 @@ export const encodeIrradianceTable = (table: IrradianceTable): Uint8Array => {
 			throw new RangeError('irradiance table: keys must be ascending');
 		}
 	}
-	const bytesOf = (a: Uint32Array): Uint8Array => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
 	return encodeContainer({
 		magic: MAGIC,
 		majorVersion: MAJOR_VERSION,

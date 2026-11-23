@@ -73,6 +73,7 @@ describe('tree', () => {
 					level: 1,
 					x: -2,
 					z: 1,
+					parent: 0,
 					bounds: { min: [-4096, 0, 2048], max: [-2048, 1, 4096] },
 					geometricError: 128,
 					refFirst: 2,
@@ -603,11 +604,11 @@ describe('geometry blobs', () => {
 			animation: null,
 		};
 		const encoded = encodeGeometryBlob(blob);
-		assert.equal(encoded.byteLength % 4, 0);
+		assert.equal(encoded.byteLength % 16, 0);
 		assert.deepEqual(decodeGeometryBlob(encoded), blob);
-		assert.throws(() => decodeGeometryBlob(encoded.subarray(0, encoded.byteLength - 4)), PackageFormatError);
+		assert.throws(() => decodeGeometryBlob(encoded.subarray(0, encoded.byteLength - 16)), PackageFormatError);
 		const badFormat = encoded.slice();
-		badFormat[32 + 1] = 200;
+		badFormat[sectionOffset(encoded, 'STRM') + 1] = 200;
 		assert.throws(() => decodeGeometryBlob(badFormat), /unknown vertex format/);
 	});
 

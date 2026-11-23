@@ -136,12 +136,19 @@ export const buildTileTree = (manifest: PackageManifest, tree: Tree): TileTree =
 	const roots: TileNode[] = [];
 	let terrainLeafLevel = -1;
 	let terrainRootLevel = Infinity;
-	for (const node of nodes) {
+	for (let i = 0; i < nodes.length; i++) {
+		const node = nodes[i];
 		if (node.terrain !== null) {
 			terrainLeafLevel = Math.max(terrainLeafLevel, node.level);
 			terrainRootLevel = Math.min(terrainRootLevel, node.level);
 		}
-		const parent = node.level === 0 ? undefined : byId.get(tileId(tileAncestor(node, node.level - 1)));
+		const parentIndex = tree.nodes[i].parent;
+		const parent =
+			parentIndex !== undefined && parentIndex >= 0
+				? nodes[parentIndex]
+				: node.level === 0
+					? undefined
+					: byId.get(tileId(tileAncestor(node, node.level - 1)));
 		if (parent === undefined) {
 			roots.push(node);
 			continue;
