@@ -1,5 +1,6 @@
 import { parseArgs } from 'node:util';
 
+import { writeDds } from '@endfield-noclip/formats/binary/dds';
 import { writeKtx2 } from '@endfield-noclip/formats/binary/ktx2';
 import {
 	isWaterGlobalConfig,
@@ -62,9 +63,9 @@ export const usage = `usage:
                                                       shader-declared properties, textures and packed surface description
   inspect shader <object|name-re> [--prop re] [--type t,…] [--flag f,…] [--group initial|main|all] [--json]
                                                       shader tags and declared properties (defaults and flags)
-  inspect mesh <object> [--name re]                   vertex channels, submeshes, bounds, skinning
-  inspect texture <object> [--name re] [-o file.ktx2] [--zstd n]
-                                                      format, dimensions, mips, sampler; -o writes KTX2
+  inspect mesh <object> [--name re] [--vertices n]    vertex channels, submeshes, bounds, color/UV ranges, skinning
+  inspect texture <object> [--name re] [-o file.ktx2|file.dds] [--layer n] [--mip n] [--zstd n]
+                                                      format, dimensions, mips, sampler; -o writes KTX2 or DX10 DDS
   inspect water-config <object> [--name re]           surface WaterConfig or Global_Water_Config as JSON
 
 <object> is <bundle> [--path-id=N] [--name re], an asset path, or a path hash (as \`scene find\` prints them).
@@ -84,6 +85,9 @@ const OPTIONS = {
 	'effect-lod': { type: 'string', default: 'camera' },
 	json: { type: 'boolean', default: false },
 	output: { type: 'string', short: 'o' },
+	layer: { type: 'string' },
+	mip: { type: 'string' },
+	vertices: { type: 'string' },
 	zstd: { type: 'string' },
 } as const;
 
@@ -152,7 +156,21 @@ export const run = async (args: string[]): Promise<void> => {
 			case 'mesh': {
 				const ref = await resolveTarget(UnityClass.Mesh);
 				const mesh = await loadMesh(resolver, ref);
-				console.log(JSON.stringify({ object: objectKey(ref), ...meshSummary(mesh) }, null, '\t'));
+				const vertexCount = parseOptionalInteger(values.vertices, '--vertices');
+				if (vertexCount !== undefined && vertexCount < 0) {
+					throw new Error('--vertices must be a non-negative integer');
+				}
+				console.log(
+					JSON.stringify(
+						{
+							object: objectKey(ref),
+							...meshSummary(mesh),
+							...(vertexCount === undefined ? {} : { vertices: sampleMeshVertices(mesh, vertexCount) }),
+						},
+						null,
+						'\t',
+					),
+				);
 				break;
 			}
 			case 'texture': {
@@ -160,7 +178,15 @@ export const run = async (args: string[]): Promise<void> => {
 				const texture = await loadTexture(resolver, ref);
 				console.log(JSON.stringify({ object: objectKey(ref), ...textureSummary(texture) }, null, '\t'));
 				if (values.output !== undefined) {
-					const bytes = encodeKtx2(texture, parseOptionalInteger(values.zstd, '--zstd'));
+					const layer = parseOptionalInteger(values.layer, '--layer');
+					const mip = parseOptionalInteger(values.mip, '--mip');
+					const isDds = values.output.toLowerCase().endsWith('.dds');
+					if (!isDds && (layer !== undefined || mip !== undefined)) {
+						throw new Error('--layer and --mip are only supported with .dds output');
+					}
+					const bytes = isDds
+						? writeDds(texture, { layer, mip })
+						: encodeKtx2(texture, parseOptionalInteger(values.zstd, '--zstd'));
 					await saveFile(values.output, bytes);
 					console.error(`wrote ${bytes.length} bytes to ${values.output}`);
 				}
@@ -735,6 +761,68 @@ const materialJson = async (
 	};
 };
 
+const round4 = (n: number): number => +n.toFixed(4);
+
+const attributeRange = (
+	data: Float32Array,
+	dimension: number,
+	vertexCount: number,
+): { min: number[]; max: number[]; constant: boolean } | null => {
+	if (vertexCount === 0 || dimension === 0) {
+		return null;
+	}
+	const min = Array.from({ length: dimension }, () => Infinity);
+	const max = Array.from({ length: dimension }, () => -Infinity);
+	for (let i = 0; i < vertexCount; i++) {
+		const base = i * dimension;
+		for (let c = 0; c < dimension; c++) {
+			const v = data[base + c];
+			if (v < min[c]) {
+				min[c] = v;
+			}
+			if (v > max[c]) {
+				max[c] = v;
+			}
+		}
+	}
+	const constant = min.every((v, c) => v === max[c]);
+	return { min: min.map(round4), max: max.map(round4), constant };
+};
+
+const sampleMeshVertices = (mesh: DecodedMesh, limit: number): object[] => {
+	const count = Math.min(limit, mesh.vertexCount);
+	const out: object[] = [];
+	for (let i = 0; i < count; i++) {
+		const row: Record<string, unknown> = {
+			index: i,
+			position: [
+				round4(mesh.positions[i * 3]),
+				round4(mesh.positions[i * 3 + 1]),
+				round4(mesh.positions[i * 3 + 2]),
+			],
+		};
+		if (mesh.normals !== null) {
+			row.normal = [
+				round4(mesh.normals[i * 3]),
+				round4(mesh.normals[i * 3 + 1]),
+				round4(mesh.normals[i * 3 + 2]),
+			];
+		}
+		if (mesh.colors !== null) {
+			const d = mesh.colors.dimension;
+			row.color = Array.from({ length: d }, (_, c) => round4(mesh.colors!.data[i * d + c]));
+		}
+		for (const [uvIndex, uv] of mesh.uvs.entries()) {
+			if (uv !== null) {
+				const d = uv.dimension;
+				row[`uv${uvIndex}`] = Array.from({ length: d }, (_, c) => round4(uv.data[i * d + c]));
+			}
+		}
+		out.push(row);
+	}
+	return out;
+};
+
 const meshSummary = (mesh: DecodedMesh) => ({
 	name: mesh.name,
 	vertexCount: mesh.vertexCount,
@@ -750,7 +838,13 @@ const meshSummary = (mesh: DecodedMesh) => ({
 	normals: mesh.normals === null ? null : mesh.packedNormals === null ? 'float' : 'packed',
 	tangents: mesh.tangents !== null,
 	colors: mesh.colors?.dimension ?? null,
+	...(mesh.colors === null
+		? {}
+		: { colorStats: attributeRange(mesh.colors.data, mesh.colors.dimension, mesh.vertexCount) }),
 	uvs: mesh.uvs.map((uv) => uv?.dimension ?? null),
+	uvRanges: mapDefined(mesh.uvs, (uv, channel) =>
+		uv === null ? undefined : { channel, ...attributeRange(uv.data, uv.dimension, mesh.vertexCount) },
+	),
 	skin: mesh.skin,
 });
 
@@ -923,12 +1017,12 @@ const findShadersByName = async (
 				try {
 					const ref: ObjectRef = { bundleIndex: resolver.bundleIndex(bundlePath), file, info };
 					// oxlint-disable-next-line no-await-in-loop -- few shaders per bundle
-					const summary = await loadShaderSummary(resolver, ref);
-					if (pattern.test(summary.name)) {
+					const shader = await loadShaderSummary(resolver, ref);
+					if (pattern.test(shader.name)) {
 						found.push({
 							bundle: resolver.manifest.bundleName(ref.bundleIndex),
 							object: objectKey(ref),
-							summary,
+							summary: shader,
 						});
 					}
 				} catch {
@@ -998,8 +1092,8 @@ const inspectShader = async (
 
 	const filteringProps =
 		options.propFilter !== undefined || options.types !== undefined || options.flagMask !== 0;
-	const rows = mapDefined(shaders, ({ bundle, object, summary }) => {
-		const properties = summary.properties.filter((prop) => {
+	const rows = mapDefined(shaders, ({ bundle, object, summary: shader }) => {
+		const properties = shader.properties.filter((prop) => {
 			if (options.propFilter !== undefined && !options.propFilter.test(prop.name)) {
 				return false;
 			}
@@ -1015,12 +1109,12 @@ const inspectShader = async (
 			return undefined;
 		}
 		return {
-			name: summary.name,
+			name: shader.name,
 			object,
 			bundle,
-			renderQueue: summary.renderQueue ?? null,
-			tags: summary.tags,
-			totalProperties: summary.properties.length,
+			renderQueue: shader.renderQueue ?? null,
+			tags: shader.tags,
+			totalProperties: shader.properties.length,
 			properties: properties.map((prop) => ({
 				name: prop.name,
 				type: SHADER_TYPE_NAMES[prop.type] ?? String(prop.type),
