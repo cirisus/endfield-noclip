@@ -3,6 +3,7 @@ import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import {
 	DECAL_PLACEMENT_FLOATS,
 	type InstanceBlock,
+	RowFlags,
 	type RowPath,
 	SPIN_FLOATS,
 } from '@endfield-noclip/package-format/instances';
@@ -127,6 +128,7 @@ export class InstanceBlockBuilder {
 		const chains = new Uint32Array(count);
 		const transforms = new Float32Array(count * 12);
 		const bounds = new Float32Array(count * 6);
+		const rowFlags = new Uint8Array(count);
 		const decalRows = new Uint32Array(this.#placements.size);
 		const placements = new Float32Array(this.#placements.size * DECAL_PLACEMENT_FLOATS);
 		const spinRows = new Uint32Array(this.#spins.size);
@@ -143,12 +145,23 @@ export class InstanceBlockBuilder {
 			const i = order[out];
 			const hash = hashOf(i);
 			chains[out] = paletteIndex.getOrInsertComputed(hash, () => paletteList.push(hash) - 1);
+			const mBase = out * 12;
 			for (let k = 0; k < 12; k++) {
-				transforms[out * 12 + k] = this.#matrices[i * 12 + k];
+				transforms[mBase + k] = this.#matrices[i * 12 + k];
 			}
-			transforms[out * 12 + 3] -= origin[0];
-			transforms[out * 12 + 7] -= origin[1];
-			transforms[out * 12 + 11] -= origin[2];
+			transforms[mBase + 3] -= origin[0];
+			transforms[mBase + 7] -= origin[1];
+			transforms[mBase + 11] -= origin[2];
+			const det =
+				transforms[mBase] *
+					(transforms[mBase + 5] * transforms[mBase + 10] - transforms[mBase + 6] * transforms[mBase + 9]) -
+				transforms[mBase + 1] *
+					(transforms[mBase + 4] * transforms[mBase + 10] - transforms[mBase + 6] * transforms[mBase + 8]) +
+				transforms[mBase + 2] *
+					(transforms[mBase + 4] * transforms[mBase + 9] - transforms[mBase + 5] * transforms[mBase + 8]);
+			if (det < 0) {
+				rowFlags[out] = RowFlags.Mirrored;
+			}
 			for (let k = 0; k < 6; k++) {
 				bounds[out * 6 + k] = this.#bounds[i * 6 + k];
 			}
@@ -190,6 +203,7 @@ export class InstanceBlockBuilder {
 				chains,
 				transforms,
 				bounds,
+				rowFlags,
 				decals: { rows: decalRows, values: placements },
 				spins: { rows: spinRows, values: spins },
 				floaters: { rows: Uint32Array.from(floaterRows), values: Uint32Array.from(floaterVolumes) },

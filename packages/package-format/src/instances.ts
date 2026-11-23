@@ -111,6 +111,24 @@ export interface Chain {
 	distanceOrigin: [x: number, y: number, z: number] | null;
 }
 
+/** pre-baked per-row flags in `.inst` (`FLAG` section) */
+export const RowFlags = {
+	/** transform has negative 3×3 determinant (mirrored handedness) */
+	Mirrored: 1 << 0,
+	/** row draws a facing billboard */
+	BillboardFacing: 1 << 1,
+	/** row draws an upright billboard */
+	BillboardUpright: 1 << 2,
+	/** row references a motion clip in `MOTN` */
+	HasMotion: 1 << 3,
+} as const;
+
+/** values per row in `MOTN` sparse section: `[animBlob, float32Bits(phaseOffset)]` */
+export const MOTION_WORDS = 2;
+
+/** floats per row in `LODG` sparse section: `[refCenter.x, refCenter.y, refCenter.z, refSize]` */
+export const LOD_GROUP_FLOATS = 4;
+
 /**
  * an instance block, struct-of-arrays. rows reference chains; transforms are relative to `origin` so that f32
  * keeps sub-millimetre precision anywhere in the world
@@ -133,6 +151,10 @@ export interface InstanceBlock {
 	transforms: Float32Array;
 	/** 6 floats per row: world AABB centre (relative to `origin`) then half-extents, from the game */
 	bounds: Float32Array;
+	/** optional pre-baked {@link RowFlags} per row (`FLAG` section) */
+	rowFlags?: Uint8Array;
+	/** optional HLOD cluster id per row (`HLOD` section), linking to `tree.bin` `HLOD` */
+	hlodClusters?: Uint32Array;
 	/** the rect decal rows and their placements, {@link DECAL_PLACEMENT_FLOATS} each */
 	decals: RowSection;
 	/** the spinning rows and their spins, {@link SPIN_FLOATS} each */
@@ -146,6 +168,12 @@ export interface InstanceBlock {
 	rides: RowSection<Uint32Array>;
 	/** the paths the block's {@link rides} name */
 	paths: RowPath[];
+	/** optional sparse `.anim` motion clip bindings (`MOTN` section: 2 u32 words per row) */
+	motions?: RowSection<Uint32Array>;
+	/** optional sparse static `LODGroup` reference spheres (`LODG` section: 4 f32 per row) */
+	lodGroups?: RowSection<Float32Array>;
+	/** optional sparse assembly node bindings (`ASMB` section: 1 u32 node id per row) */
+	assemblyNodes?: RowSection<Uint32Array>;
 }
 
 /**
@@ -220,22 +248,32 @@ const TAG_HEAD = fourcc('HEAD');
 const TAG_PLTT = fourcc('PLTT');
 const TAG_XFRM = fourcc('XFRM');
 const TAG_BNDS = fourcc('BNDS');
+const TAG_FLAG = fourcc('FLAG');
+const TAG_HLOD = fourcc('HLOD');
 const TAG_DECL = fourcc('DECL');
 const TAG_SPIN = fourcc('SPIN');
 const TAG_FLOT = fourcc('FLOT');
 const TAG_RIDE = fourcc('RIDE');
 const TAG_PATH = fourcc('PATH');
+const TAG_MOTN = fourcc('MOTN');
+const TAG_LODG = fourcc('LODG');
+const TAG_ASMB = fourcc('ASMB');
 const INSTANCES_TAGS = new Set([
 	TAG_HEAD,
 	TAG_PLTT,
 	TAG_CHNS,
 	TAG_XFRM,
 	TAG_BNDS,
+	TAG_FLAG,
+	TAG_HLOD,
 	TAG_DECL,
 	TAG_SPIN,
 	TAG_FLOT,
 	TAG_RIDE,
 	TAG_PATH,
+	TAG_MOTN,
+	TAG_LODG,
+	TAG_ASMB,
 ]);
 
 const CHAIN_SIZE = 16;
@@ -451,25 +489,34 @@ const readSparseF32 = (
 	return { rows, values: out };
 };
 
-const readSparseU32 = (
+const readSparseU32Words = (
 	section: ContainerSection | undefined,
+	words: number,
 	rowCount: number,
 	label: string,
 ): RowSection<Uint32Array> => {
 	if (section === undefined) {
 		return { rows: new Uint32Array(0), values: new Uint32Array(0) };
 	}
-	const { rows, values, stride } = decodeSparseSection(section, 4, rowCount, label);
-	if (stride === 4 && (values.byteOffset & 3) === 0) {
-		return { rows, values: new Uint32Array(values.buffer, values.byteOffset, rows.length) };
+	const { rows, values, stride } = decodeSparseSection(section, words * 4, rowCount, label);
+	if (stride === words * 4 && (values.byteOffset & 3) === 0) {
+		return { rows, values: new Uint32Array(values.buffer, values.byteOffset, rows.length * words) };
 	}
-	const out = new Uint32Array(rows.length);
+	const out = new Uint32Array(rows.length * words);
 	const v = viewOf(values);
 	for (let i = 0; i < rows.length; i++) {
-		out[i] = v.getUint32(i * stride, true);
+		for (let w = 0; w < words; w++) {
+			out[i * words + w] = v.getUint32(i * stride + w * 4, true);
+		}
 	}
 	return { rows, values: out };
 };
+
+const readSparseU32 = (
+	section: ContainerSection | undefined,
+	rowCount: number,
+	label: string,
+): RowSection<Uint32Array> => readSparseU32Words(section, 1, rowCount, label);
 
 /**
  * encodes an instance block (`.inst`) as an `EFIN` v2 TLV container
@@ -517,6 +564,24 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
 		{ tag: TAG_XFRM, required: true, data: bytesOf(block.transforms), count, stride: 48 },
 		{ tag: TAG_BNDS, required: true, data: bytesOf(block.bounds), count, stride: 24 },
 	];
+	if (block.rowFlags !== undefined) {
+		if (block.rowFlags.length !== count) {
+			throw new RangeError('instance block rowFlags disagrees with row count');
+		}
+		sections.push({ tag: TAG_FLAG, required: false, data: block.rowFlags, count, stride: 1 });
+	}
+	if (block.hlodClusters !== undefined) {
+		if (block.hlodClusters.length !== count) {
+			throw new RangeError('instance block hlodClusters disagrees with row count');
+		}
+		sections.push({
+			tag: TAG_HLOD,
+			required: false,
+			data: bytesOf(block.hlodClusters),
+			count,
+			stride: 4,
+		});
+	}
 
 	const addSparse = (
 		tag: number,
@@ -548,6 +613,15 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
 	addSparse(TAG_SPIN, block.spins, SPIN_FLOATS, false);
 	addSparse(TAG_FLOT, block.floaters, 1, false);
 	addSparse(TAG_RIDE, block.rides, 1, false);
+	if (block.motions !== undefined) {
+		addSparse(TAG_MOTN, block.motions, MOTION_WORDS, false);
+	}
+	if (block.lodGroups !== undefined) {
+		addSparse(TAG_LODG, block.lodGroups, LOD_GROUP_FLOATS, false);
+	}
+	if (block.assemblyNodes !== undefined) {
+		addSparse(TAG_ASMB, block.assemblyNodes, 1, false);
+	}
 
 	if (block.paths.length > 0) {
 		const pathBytes = block.paths.reduce((sum, p) => sum + PATH_HEADER_SIZE + p.offsets.byteLength, 0);
@@ -638,10 +712,35 @@ export const decodeInstanceBlock = (
 		}
 	}
 
+	const flagSec = container.sections.get(TAG_FLAG);
+	let rowFlags: Uint8Array | undefined;
+	if (flagSec !== undefined) {
+		if (flagSec.count !== count || flagSec.byteLength < count) {
+			throw new PackageFormatError('instance block FLAG disagrees with rowCount');
+		}
+		rowFlags = flagSec.data.subarray(0, count);
+	}
+	const hlodSec = container.sections.get(TAG_HLOD);
+	let hlodClusters: Uint32Array | undefined;
+	if (hlodSec !== undefined) {
+		hlodClusters = sectionU32(hlodSec);
+		if (hlodClusters.length !== count) {
+			throw new PackageFormatError('instance block HLOD disagrees with rowCount');
+		}
+	}
+
 	const decals = readSparseF32(container.sections.get(TAG_DECL), DECAL_PLACEMENT_FLOATS, count, 'DECL');
 	const spins = readSparseF32(container.sections.get(TAG_SPIN), SPIN_FLOATS, count, 'SPIN');
 	const floaters = readSparseU32(container.sections.get(TAG_FLOT), count, 'FLOT');
 	const rides = readSparseU32(container.sections.get(TAG_RIDE), count, 'RIDE');
+	const motnSec = container.sections.get(TAG_MOTN);
+	const motions =
+		motnSec === undefined ? undefined : readSparseU32Words(motnSec, MOTION_WORDS, count, 'MOTN');
+	const lodgSec = container.sections.get(TAG_LODG);
+	const lodGroups =
+		lodgSec === undefined ? undefined : readSparseF32(lodgSec, LOD_GROUP_FLOATS, count, 'LODG');
+	const asmbSec = container.sections.get(TAG_ASMB);
+	const assemblyNodes = asmbSec === undefined ? undefined : readSparseU32(asmbSec, count, 'ASMB');
 
 	const paths: RowPath[] = [];
 	const pathSec = container.sections.get(TAG_PATH);
@@ -677,10 +776,15 @@ export const decodeInstanceBlock = (
 		chains,
 		transforms,
 		bounds,
+		...(rowFlags !== undefined ? { rowFlags } : {}),
+		...(hlodClusters !== undefined ? { hlodClusters } : {}),
 		decals,
 		spins,
 		floaters,
 		rides,
 		paths,
+		...(motions !== undefined ? { motions } : {}),
+		...(lodGroups !== undefined ? { lodGroups } : {}),
+		...(assemblyNodes !== undefined ? { assemblyNodes } : {}),
 	};
 };

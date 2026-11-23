@@ -417,14 +417,18 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 			return { response: { id: request.id, kind: request.kind, data }, transfer: [data] };
 		}
 		case 'instances': {
-			const built = buildInstanceRows(decodeInstanceBlock(raw, chainIndex), request.rowKinds ?? []);
-			const bounds = buildRowBounds({
-				rowsF32: new Float32Array(built.rows.buffer),
-				cull: built.cull,
-				runs: built.runs,
-				spins: built.spins,
-				rides: built.rides,
-			});
+			const block = decodeInstanceBlock(raw, chainIndex);
+			const built = buildInstanceRows(block, request.rowKinds ?? []);
+			const bounds = buildRowBounds(
+				{
+					rowsF32: new Float32Array(built.rows.buffer),
+					cull: built.cull,
+					runs: built.runs,
+					spins: built.spins,
+					rides: built.rides,
+				},
+				block.rowFlags,
+			);
 			const transfer: Transferable[] = [
 				bounds.groups.buffer,
 				bounds.mirrored.buffer,

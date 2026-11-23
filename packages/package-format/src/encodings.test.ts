@@ -525,6 +525,26 @@ describe('instance blocks', () => {
 		assert.equal(remapped.palette, undefined);
 	});
 
+	it('round-trips optional FLAG, HLOD, MOTN, LODG, and ASMB sections on an instance block', () => {
+		const encoded = encodeInstanceBlock({
+			...block(3),
+			rowFlags: Uint8Array.of(0, 1, 8),
+			hlodClusters: Uint32Array.of(10, 10, 20),
+			motions: { rows: Uint32Array.of(2), values: Uint32Array.of(99, 0x3f_80_00_00) },
+			lodGroups: { rows: Uint32Array.of(0, 2), values: Float32Array.of(1, 2, 3, 4, 5, 6, 7, 8) },
+			assemblyNodes: { rows: Uint32Array.of(1), values: Uint32Array.of(42) },
+		});
+		const decoded = decodeInstanceBlock(encoded);
+		assert.deepEqual(decoded.rowFlags, Uint8Array.of(0, 1, 8));
+		assert.deepEqual(decoded.hlodClusters, Uint32Array.of(10, 10, 20));
+		assert.deepEqual(decoded.motions, { rows: Uint32Array.of(2), values: Uint32Array.of(99, 0x3f_80_00_00) });
+		assert.deepEqual(decoded.lodGroups, {
+			rows: Uint32Array.of(0, 2),
+			values: Float32Array.of(1, 2, 3, 4, 5, 6, 7, 8),
+		});
+		assert.deepEqual(decoded.assemblyNodes, { rows: Uint32Array.of(1), values: Uint32Array.of(42) });
+	});
+
 	it('finds a path’s offset at a time, blending frames and wrapping to the loop', () => {
 		const path = { frameRate: 2, offsets: Float32Array.of(0, 0, 0, 4, 0, 0, 4, 2, 0) };
 		const at = (time: number) => pathOffset(path, time, [0, 0, 0]);

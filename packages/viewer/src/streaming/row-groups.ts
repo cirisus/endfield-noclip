@@ -317,10 +317,20 @@ export interface RowBounds {
 
 /**
  * @param rows the block's rows
+ * @param rowFlags optional pre-baked `RowFlags` per row from `.inst` `FLAG` section (bit 0 = mirrored)
  * @returns the block's {@link RowBounds}, its groups reaching any distance until {@link setGroupReaches}
  */
-export const buildRowBounds = (rows: GroupedRows): RowBounds => {
-	const mirrored = mirroredRows(rows.rowsF32, rows.cull.length / CULL_FLOATS);
+export const buildRowBounds = (rows: GroupedRows, rowFlags?: Uint8Array): RowBounds => {
+	const count = rows.cull.length / CULL_FLOATS;
+	let mirrored: Uint8Array<ArrayBuffer>;
+	if (rowFlags !== undefined && rowFlags.length === count) {
+		mirrored = new Uint8Array(count);
+		for (let i = 0; i < count; i++) {
+			mirrored[i] = rowFlags[i] & 1;
+		}
+	} else {
+		mirrored = mirroredRows(rows.rowsF32, count);
+	}
 	const swept = sweptCentersOf(rows.spins, rows.rides);
 	return {
 		groups: buildRowGroupsFromSwept(rows.rowsF32, rows.cull, swept),

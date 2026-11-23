@@ -121,6 +121,15 @@ export interface TreeNode {
 	refCount: number;
 }
 
+/** an HLOD cluster hierarchy link in `tree.bin` (`HLOD` section) */
+export interface HlodClusterLink {
+	clusterId: number;
+	/** parent cluster id, or `-1` for top-tier clusters */
+	parentCluster: number;
+	childCount: number;
+	unloadMask: number;
+}
+
 /** decoded tree.bin */
 export interface Tree {
 	/** coarse to fine: by level, then z, then x */
@@ -134,6 +143,8 @@ export interface Tree {
 	global: ContentRef[];
 	/** world x, z rectangles {@link ContentRef.reach} names, `[min, max)` on each axis; a bound may be infinite */
 	reaches: Rect[];
+	/** optional explicit HLOD cluster links (additive `HLOD` section) */
+	hlodClusters?: HlodClusterLink[];
 }
 
 const MAGIC = fourcc('EFTR');
@@ -142,11 +153,13 @@ const TAG_NODE = fourcc('NODE');
 const TAG_REFS = fourcc('REFS');
 const TAG_GLOB = fourcc('GLOB');
 const TAG_RCHS = fourcc('RCHS');
-const KNOWN_TAGS = new Set([TAG_NODE, TAG_REFS, TAG_GLOB, TAG_RCHS]);
+const TAG_HLOD = fourcc('HLOD');
+const KNOWN_TAGS = new Set([TAG_NODE, TAG_REFS, TAG_GLOB, TAG_RCHS, TAG_HLOD]);
 
 const NODE_SIZE = 52;
 const REF_SIZE = 24;
 const REACH_SIZE = 16;
+const HLOD_SIZE = 16;
 const NONE = 0xff_ff_ff_ff;
 
 const isContentKind = enumGuard(ContentKind);
@@ -268,6 +281,24 @@ export const encodeTree = (tree: Tree): Uint8Array => {
 			stride: REACH_SIZE,
 		});
 	}
+	if (tree.hlodClusters !== undefined && tree.hlodClusters.length > 0) {
+		const hlodBuf = new Uint8Array(tree.hlodClusters.length * HLOD_SIZE);
+		const hv = viewOf(hlodBuf);
+		for (const [i, link] of tree.hlodClusters.entries()) {
+			const at = i * HLOD_SIZE;
+			hv.setUint32(at, link.clusterId, true);
+			hv.setInt32(at + 4, link.parentCluster, true);
+			hv.setUint32(at + 8, link.childCount, true);
+			hv.setUint32(at + 12, link.unloadMask, true);
+		}
+		sections.push({
+			tag: TAG_HLOD,
+			required: false,
+			data: hlodBuf,
+			count: tree.hlodClusters.length,
+			stride: HLOD_SIZE,
+		});
+	}
 	return encodeContainer({ magic: MAGIC, majorVersion: MAJOR_VERSION, sections });
 };
 
@@ -325,5 +356,23 @@ export const decodeTree = (data: Uint8Array): Tree => {
 			reaches.push({ minX: f(0), minZ: f(4), maxX: f(8), maxZ: f(12) });
 		}
 	}
-	return { nodes, refs, global, reaches };
+	const hlodSec = container.sections.get(TAG_HLOD);
+	let hlodClusters: HlodClusterLink[] | undefined;
+	if (hlodSec !== undefined) {
+		checkStride(hlodSec, HLOD_SIZE, 'HLOD');
+		const hv = viewOf(hlodSec.data);
+		hlodClusters = [];
+		for (let i = 0; i < hlodSec.count; i++) {
+			const at = i * hlodSec.stride;
+			hlodClusters.push({
+				clusterId: hv.getUint32(at, true),
+				parentCluster: hv.getInt32(at + 4, true),
+				childCount: hv.getUint32(at + 8, true),
+				unloadMask: hv.getUint32(at + 12, true),
+			});
+		}
+	}
+	return hlodClusters === undefined
+		? { nodes, refs, global, reaches }
+		: { nodes, refs, global, reaches, hlodClusters };
 };
