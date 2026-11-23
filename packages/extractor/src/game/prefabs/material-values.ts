@@ -4,10 +4,10 @@ import type { ClipMaterialValue } from '@endfield-noclip/formats/unity/animation
 import { parseMaterial } from '@endfield-noclip/formats/unity/material';
 
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
-import { PER_DRAW_EMISSIVE_ALBEDO } from '../materials/material-values.ts';
+import { PER_DRAW_EMISSIVE_ALBEDO, PER_DRAW_EMISSIVE_COLOR } from '../materials/material-values.ts';
 
 import { lengthTextureTransform, type LengthTiling } from './adjust-length.ts';
-import { type EmissiveColors, overriddenEmission } from './emissive-override.ts';
+import type { EmissiveColors } from './emissive-override.ts';
 import type { MaterialValues } from './prefab.ts';
 import type { PlayedMaterials } from './renderer-walk.ts';
 
@@ -78,9 +78,9 @@ const byHash = (names: Iterable<string>): Map<number, string> =>
  * @param material one of the renderer's materials
  * @param sources.values the values the pose's clips set
  * @param sources.tilings textures whose tiling follows a length the pose sets
- * @param sources.emissive the colours the renderer's `AnimationProperties_Emissive` writes, or `null`: its
- *   emission colour is folded into `_EmissiveColor` after the clips' values, and an albedo tint that tints
- *   anything is set as {@link PER_DRAW_EMISSIVE_ALBEDO}
+ * @param sources.emissive the colours the renderer's `AnimationProperties_Emissive` writes, or `null`:
+ *   non-zero-alpha overrides pass through as {@link PER_DRAW_EMISSIVE_COLOR} and
+ *   {@link PER_DRAW_EMISSIVE_ALBEDO} so the Lit describer mixes them after linearizing `_EmissiveColor`
  * @param sources.played the floats a looping clip keeps changing, or `null`; they're among `values` too, at
  *   the clip's end
  * @returns the replaced values by name, or `null` when none of this material's are replaced
@@ -126,10 +126,8 @@ export const posedMaterialValues = async (
 		}
 	}
 	if (emissive !== null) {
-		const name = '_EmissiveColor';
-		const saved = colors[name] ?? record.colors[name];
-		if (saved !== undefined) {
-			colors[name] = overriddenEmission(saved, emissive.color);
+		if (emissive.color[3] !== 0) {
+			colors[PER_DRAW_EMISSIVE_COLOR] = emissive.color;
 		}
 		if (emissive.albedo[3] !== 0) {
 			colors[PER_DRAW_EMISSIVE_ALBEDO] = emissive.albedo;

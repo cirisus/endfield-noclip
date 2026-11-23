@@ -4,7 +4,12 @@ import { describe, it } from 'node:test';
 import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 
 import { describeMaterial } from '../material-describe.ts';
-import { type MaterialValues, readerOf, type ShaderEntry } from '../material-values.ts';
+import {
+	type MaterialValues,
+	PER_DRAW_EMISSIVE_COLOR,
+	readerOf,
+	type ShaderEntry,
+} from '../material-values.ts';
 
 import { keywordsNotDrawn, surfaceGaps } from './surface-keywords.ts';
 import { vatOf } from './vat-animation.ts';
@@ -335,6 +340,49 @@ describe('dithered effects', () => {
 		assert.equal(gamma.emission?.color[1], 1);
 		assert.ok(Math.abs((gamma.emission?.color[2] ?? 0) - ((0.5 + 0.055) / 1.055) ** 2.4) < 1e-6);
 		assert.ok(Math.abs((gamma.emission?.channels?.[0][0] ?? 0) - 3 ** 2.2) < 1e-6);
+	});
+	it('mixes per-draw emission overrides after linearizing [Gamma] _EmissiveColor and keeps its alpha', () => {
+		const litEffect = shaderEntry({
+			name: 'HGRP/LitEffect',
+			family: 'litEffect',
+			colors: { _EmissiveColor: [0, 0, 0, 1] },
+			gammaColors: ['_EmissiveColor', '_EmissiveColorG', '_EmissiveColorB', '_EmissiveColorA'],
+		});
+		// Wuling switch (`M_anm_map02_switch+1_001_01`): black saved `_EmissiveColor`, linear per-draw override
+		const full = describeMaterial(
+			values({
+				keywords: ['_EMISSIVE_MASK'],
+				floats: { _EmissiveMaskChannel: 3 },
+				colors: { [PER_DRAW_EMISSIVE_COLOR]: [16.86, 2.22, 2.66, 1] },
+			}),
+			litEffect,
+		);
+		assert.equal(full.kind, 'lit');
+		if (full.kind !== 'lit') {
+			return;
+		}
+		assert.deepEqual(full.emission?.color, [16.86, 2.22, 2.66]);
+
+		// partial override mixes into the already-linearized material colour and keeps its alpha (sweep depth)
+		const partial = describeMaterial(
+			values({
+				keywords: ['_EMISSIVE_MASK', '_EMISSIVE_ANIM_SWEEP'],
+				floats: { _EmissiveMaskChannel: 3 },
+				colors: {
+					_EmissiveColor: [2, 0, 0, 0.5],
+					[PER_DRAW_EMISSIVE_COLOR]: [0, 4, 0, 0.5],
+				},
+			}),
+			litEffect,
+		);
+		assert.equal(partial.kind, 'lit');
+		if (partial.kind !== 'lit') {
+			return;
+		}
+		// sweep keeps (1 - alpha) = 0.5 of the mixed colour
+		assert.ok(Math.abs((partial.emission?.color[0] ?? 0) - 2 ** 2.2 * 0.25) < 1e-6);
+		assert.ok(Math.abs((partial.emission?.color[1] ?? 0) - 1) < 1e-6);
+		assert.equal(partial.emission?.color[2], 0);
 	});
 });
 

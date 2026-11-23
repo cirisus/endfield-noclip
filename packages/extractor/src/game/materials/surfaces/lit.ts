@@ -17,8 +17,10 @@ import {
 	linearRgb,
 	type MaterialReader,
 	PER_DRAW_EMISSIVE_ALBEDO,
+	PER_DRAW_EMISSIVE_COLOR,
 	scaleRgb,
 	unsupported,
+	type Vec4,
 } from '../material-values.ts';
 
 import { grassInputsOf, leafInputsOf, trunkInputsOf } from './foliage.ts';
@@ -132,7 +134,20 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 
 	let emission: LitEmission | null = null;
 	{
-		const emissive = reader.hdrColor('_EmissiveColor');
+		const baseEmissive = reader.hdrColor('_EmissiveColor');
+		// the per-draw emission override (`_m7`, written via `SetCustomPerDrawData`) is already linear, so mix it
+		// after `hdrColor` linearizes any `[Gamma]` `_EmissiveColor`; keep the material's alpha (pulse/sweep depth)
+		const override = color(PER_DRAW_EMISSIVE_COLOR);
+		let emissive: Vec4 | undefined = baseEmissive;
+		if (baseEmissive !== undefined && override !== undefined) {
+			const w = override[3];
+			emissive = [
+				baseEmissive[0] + (override[0] - baseEmissive[0]) * w,
+				baseEmissive[1] + (override[1] - baseEmissive[1]) * w,
+				baseEmissive[2] + (override[2] - baseEmissive[2]) * w,
+				baseEmissive[3],
+			];
+		}
 		const channel = float('_EmissiveMaskChannel', 0);
 		let source: LitEmission['source'] | null = null;
 		if (has('_EMISSIVE_MAP')) {

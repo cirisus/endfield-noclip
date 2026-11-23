@@ -11,6 +11,7 @@ import type { MaterialClassification } from '../../game/materials/material-class
 import {
 	type MaterialValues,
 	PER_DRAW_EMISSIVE_ALBEDO,
+	PER_DRAW_EMISSIVE_COLOR,
 	type ShaderEntry,
 	type ShaderFamily,
 } from '../../game/materials/material-values.ts';
@@ -153,7 +154,7 @@ export const convertMaterial = (
 	const colors: Record<string, Vec4> = {};
 	const vectors: Record<string, Vec4> = {};
 	for (const [name, value] of Object.entries(record.colors)) {
-		if (declaresNothing || name === PER_DRAW_EMISSIVE_ALBEDO) {
+		if (declaresNothing || name === PER_DRAW_EMISSIVE_COLOR || name === PER_DRAW_EMISSIVE_ALBEDO) {
 			colors[name] = value;
 		} else if (Object.hasOwn(defaults.colors, name)) {
 			if (!sameVector(defaults.colors[name], value)) {

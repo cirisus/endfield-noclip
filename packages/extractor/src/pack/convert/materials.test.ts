@@ -10,6 +10,7 @@ import {
 } from '@endfield-noclip/formats/unity/material';
 
 import { classifyHgrpMaterial } from '../../game/materials/material-classify.ts';
+import { PER_DRAW_EMISSIVE_ALBEDO, PER_DRAW_EMISSIVE_COLOR } from '../../game/materials/material-values.ts';
 
 import { convertMaterial, ShaderTable } from './materials.ts';
 
@@ -141,5 +142,26 @@ describe('convertMaterial', () => {
 		);
 		assert.deepEqual(material.slots, {});
 		assert.equal(normalMapUv, null);
+	});
+
+	it('preserves per-draw emissive overrides not declared by the shader', () => {
+		const interned = new ShaderTable().intern(shader, 'lit');
+		const { material } = convertMaterial(
+			{
+				...record,
+				colors: {
+					...record.colors,
+					[PER_DRAW_EMISSIVE_COLOR]: [16.86, 2.22, 2.66, 1],
+					[PER_DRAW_EMISSIVE_ALBEDO]: [0.47, 0.16, 0.16, 1],
+				},
+			},
+			classifyHgrpMaterial(record, shader),
+			interned,
+			() => undefined,
+		);
+		assert.deepEqual(material.colors, {
+			[PER_DRAW_EMISSIVE_COLOR]: [16.86, 2.22, 2.66, 1],
+			[PER_DRAW_EMISSIVE_ALBEDO]: [0.47, 0.16, 0.16, 1],
+		});
 	});
 });

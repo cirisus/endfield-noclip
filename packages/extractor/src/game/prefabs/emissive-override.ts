@@ -85,18 +85,3 @@ export const readEmissiveConfig = async (
 	const albedo = baseRef === null ? NO_ALBEDO : colorField(await resolver.read(baseRef), 'baseColor');
 	return { color, albedo };
 };
-
-/**
- * the emission colour a Lit draw ends up with under a per-draw override, as the shader mixes it: the
- * override's colour replaces the material's by the override's alpha, and the material's alpha (its pulse or
- * sweep depth) stays
- *
- * @param material the material's `_EmissiveColor`, as saved or as a pose sets it
- * @param override the override's colour
- * @returns a new colour
- */
-export const overriddenEmission = (material: readonly number[], override: Rgba): Rgba => {
-	const weight = override[3];
-	const mix = (i: number): number => material[i] + (override[i] - material[i]) * weight;
-	return [mix(0), mix(1), mix(2), material[3]];
-};

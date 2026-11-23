@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { overriddenEmission, readEmissiveOverride } from './emissive-override.ts';
+import { readEmissiveOverride } from './emissive-override.ts';
 
 // the water drone targets' component (int_waterdrone_floating_target_postmodel) and material
 // (M_anm_map02_machine+1_003_02, `_EMISSIVE_ANIM_SWEEP`)
@@ -25,16 +25,5 @@ describe('readEmissiveOverride', () => {
 		assert.deepEqual(read.colors.color, [0, 1, 0.16790390014648438, 1]);
 		// at alpha 0 the albedo tint tints nothing
 		assert.deepEqual(read.colors.albedo, [1, 0.04339611530303955, 0.04339611530303955, 0]);
-	});
-});
-
-describe('overriddenEmission', () => {
-	it('replaces a black emission colour by the override at alpha 1, keeping the sweep depth', () => {
-		assert.deepEqual(overriddenEmission([0, 0, 0, 0], [0, 1, 0.25, 1]), [0, 1, 0.25, 0]);
-		assert.deepEqual(overriddenEmission([2, 2, 2, 1], [0, 1, 0.25, 1]), [0, 1, 0.25, 1]);
-	});
-
-	it('mixes by the override alpha', () => {
-		assert.deepEqual(overriddenEmission([2, 0, 0, 0.5], [0, 2, 0, 0.5]), [1, 1, 0, 0.5]);
 	});
 });

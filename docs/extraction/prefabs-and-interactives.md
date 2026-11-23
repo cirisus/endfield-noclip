@@ -70,15 +70,16 @@ component kind means adding one reader, step, or candidate source.
 - **raft wakes**: the two wake subtrees named by a root `InteractiveSummonTeamPostmodelMono` only
   show while moving ([bamboo rafts](../game-data/interactives.md#bamboo-rafts)) and are omitted (not
   stand-ins).
-- **emission overrides**: an enabled `AnimationProperties_Emissive` on an active GameObject folds
-  its colour into listed renderers' `_EmissiveColor`
+- **emission overrides**: an enabled `AnimationProperties_Emissive` on an active GameObject passes
+  non-zero-alpha colours to listed renderers as `perDraw.emissiveColor` (`PER_DRAW_EMISSIVE_COLOR`)
+  and `perDraw.emissiveAlbedoColor` (`PER_DRAW_EMISSIVE_ALBEDO`)
   ([emission](../game-data/materials.md#emission),
   [emissive-override.ts](../../packages/extractor/src/game/prefabs/emissive-override.ts)), creating
   a material variant. emissive configs set by settled view states
   ([emission view states set](../game-data/interactives.md#emission-view-states-set)) override saved
-  colours (last config along each layer's path wins). any non-trivial albedo tint passes through as
-  `perDraw.emissiveAlbedoColor` (`PER_DRAW_EMISSIVE_ALBEDO`), which the Lit describer turns into
-  `LitEmission.albedoTint`. breathing animation isn't read.
+  colours (last config along each layer's path wins). the Lit describer mixes
+  `PER_DRAW_EMISSIVE_COLOR` after linearizing any `[Gamma]` `_EmissiveColor` and turns
+  `PER_DRAW_EMISSIVE_ALBEDO` into `LitEmission.albedoTint`. breathing animation isn't read.
 - **resolution**: prefabs resolve from their StringPathHash key, which must match exactly one
   manifest path.
 - **other prefab contents**: environment volumes

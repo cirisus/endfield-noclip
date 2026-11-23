@@ -110,8 +110,15 @@ export interface MaterialValues {
 }
 
 /**
+ * the colour name a renderer's per-draw `emissiveColor` takes among its material variant's
+ * {@link MaterialValues.colors}: per-draw data (`_m7`), not a shader property, so no shader declares it and
+ * Unity never runs `[Gamma]` linearization on it
+ */
+export const PER_DRAW_EMISSIVE_COLOR = 'perDraw.emissiveColor';
+
+/**
  * the colour name a renderer's per-draw `emissiveAlbedoColor` takes among its material variant's
- * {@link MaterialValues.colors}: per-draw data, not a property, so no shader declares it
+ * {@link MaterialValues.colors}: per-draw data (`_m9`), not a property, so no shader declares it
  */
 export const PER_DRAW_EMISSIVE_ALBEDO = 'perDraw.emissiveAlbedoColor';
 

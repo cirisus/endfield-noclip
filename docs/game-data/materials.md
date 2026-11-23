@@ -100,8 +100,9 @@ any property flagged `[Gamma]` (`ShaderPropertyFlags` bit 5, `0x20`) is still co
   rock (`M_interactive_hongshan_obstaclerock+1_001_01`) keeps red cracks lit (`alpha = 0`) and
   sweeps a 2.1 grey glow from G (`alpha = 1`).
 - **per-draw emission**: each draw carries a runtime emission colour that replaces `_EmissiveColor`
-  by its alpha. static scenery stores 0; GameObject renderers set it from interactive configs or
-  VFX.
+  by its alpha. static scenery stores 0; GameObject renderers set it from interactive configs or VFX
+  via `Renderer.SetCustomPerDrawData` (raw linear floats, bypassing Unity's `[Gamma]`
+  material-property linearization on `HGRP/LitEffect`).
 - **`AnimationProperties_Emissive`**: a VFX playable that starts on enable and writes
   `emissiveColor` to every renderer in `affectRenderers` (`_EmissiveColor.a` still sets pulse/sweep
   depth). water drone targets (`int_waterdrone_floating_target_postmodel`,
