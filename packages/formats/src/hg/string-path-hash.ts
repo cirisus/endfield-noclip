@@ -152,11 +152,28 @@ export class StringPathHashTable {
 		// a single lookup scans once without allocating a full length map; repeated lookups index the table
 		if (this.#byLength === undefined && this.#lengthScans === 0) {
 			this.#lengthScans++;
-			this.#forEachBucket((bucket, at, length) => {
-				if (length === byteLength) {
-					checkBucket(bucket, at);
+			const slotTotal = this.count;
+			for (let s = 0; s < slotTotal; s++) {
+				const slotAt = SLOTS_START + s * 8;
+				const offset = dv.getUint32(slotAt, true);
+				const slotCount = dv.getUint32(slotAt + 4, true);
+				if (slotCount === 0) {
+					continue;
 				}
-			});
+				if (offset + slotCount * BUCKET_SIZE > fileLen) {
+					throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+				}
+				for (let i = 0; i < slotCount; i++) {
+					const bucket = offset + i * BUCKET_SIZE;
+					const at = stringsOffset + dv.getUint32(bucket + 12, true);
+					if (at + 4 > fileLen) {
+						throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+					}
+					if (dv.getUint32(at, true) === byteLength) {
+						checkBucket(bucket, at);
+					}
+				}
+			}
 			return hashes;
 		}
 		for (const bucket of this.#bucketsByLength().get(byteLength) ?? []) {
@@ -185,20 +202,6 @@ export class StringPathHashTable {
 		}
 	}
 
-	/** visits every bucket in slot order, passing its offset, its string's offset, and its string's byte length */
-	#forEachBucket(visit: (bucket: number, stringAt: number, byteLength: number) => void): void {
-		const dv = this.#view.view;
-		const stringsOffset = this.#stringsOffset;
-		const fileLen = this.#view.length;
-		for (const bucket of this.#buckets()) {
-			const at = stringsOffset + dv.getUint32(bucket + 12, true);
-			if (at + 4 > fileLen) {
-				throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
-			}
-			visit(bucket, at, dv.getUint32(at, true));
-		}
-	}
-
 	/**
 	 * one pass over every bucket on first indexed use, so each later scan for a path visits only the buckets
 	 * whose path has its length (a few bytes per bucket)
@@ -208,14 +211,35 @@ export class StringPathHashTable {
 	#bucketsByLength(): Map<number, number[]> {
 		if (this.#byLength === undefined) {
 			const byLength = new Map<number, number[]>();
-			this.#forEachBucket((bucket, _at, length) => {
-				let list = byLength.get(length);
-				if (list === undefined) {
-					list = [];
-					byLength.set(length, list);
+			const dv = this.#view.view;
+			const stringsOffset = this.#stringsOffset;
+			const fileLen = this.#view.length;
+			const slotTotal = this.count;
+			for (let s = 0; s < slotTotal; s++) {
+				const slotAt = SLOTS_START + s * 8;
+				const offset = dv.getUint32(slotAt, true);
+				const slotCount = dv.getUint32(slotAt + 4, true);
+				if (slotCount === 0) {
+					continue;
 				}
-				list.push(bucket);
-			});
+				if (offset + slotCount * BUCKET_SIZE > fileLen) {
+					throw new FormatError(`string path hash bucket at 0x${offset.toString(16)} is out of bounds`);
+				}
+				for (let i = 0; i < slotCount; i++) {
+					const bucket = offset + i * BUCKET_SIZE;
+					const at = stringsOffset + dv.getUint32(bucket + 12, true);
+					if (at + 4 > fileLen) {
+						throw new FormatError(`string path hash string at 0x${at.toString(16)} is out of bounds`);
+					}
+					const length = dv.getUint32(at, true);
+					let list = byLength.get(length);
+					if (list === undefined) {
+						list = [];
+						byLength.set(length, list);
+					}
+					list.push(bucket);
+				}
+			}
 			this.#byLength = byLength;
 		}
 		return this.#byLength;
