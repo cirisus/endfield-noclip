@@ -57,8 +57,9 @@ by role:
     `_BreathingMinAlpha` and 1 by `saturate((cos(t · _BreathingSpeed) · 0.5 + 0.5)^_BreathingPower)`
     (`t` = time scaled/offset by two per-draw values).
   - **Fresnel**: `f = saturate(N·V + _FresnelBias)^_FresnelPower` (flipped by `_FresnelFlip`; `N` is
-    unflipped vertex normal on back faces too). fades alpha by `_FresnelAffectOpacity` and mixes
-    colour toward `_FresnelColor.rgb` by `_FresnelColor.w · f` before exposure.
+    unflipped vertex normal on back faces too). runs before `_USE_EDGECOLOR` and brightening: mixes
+    colour toward `_FresnelColor.rgb` by `_FresnelColor.w · f` and fades the clamped alpha by
+    `_FresnelAffectOpacity`.
   - **`_USE_SOFTBLEND`**: fades alpha within `_SoftDistance` m of scene depth behind.
 - **lighting (`_USE_LIGHTING`)**: treats colour as albedo (divided by post exposure under
   `_IgnorePostExposure`), lit by one per-renderer L1 irradiance probe, shadowed sun (no `1/π`,
@@ -85,7 +86,7 @@ by role:
 
 ### edge colour
 
-`_USE_EDGECOLOR` highlights depth intersections after dissolve and before brightening:
+`_USE_EDGECOLOR` highlights depth intersections after dissolve and Fresnel, and before brightening:
 
 ```
 e = _EdgeColor.a · saturate(_EdgeDistance / max(d, 0.001) − _EdgeDistanceOffset)

@@ -749,6 +749,19 @@ fn fx_stack_layer(in: EffectOut, bases: FxBases, front: bool) -> vec4f {
 	var unmasked = 0.0;
 	var combined = fx_combine(id, bases, tint, in.custom, in.color, false, vec2f(0.0), &unmasked);
 	let depth = dot(in.rel, frame.view_forward.xyz);
+	// the Fresnel term mixes the colour towards the Fresnel colour and fades the clamped alpha, before
+	// `_USE_EDGECOLOR` and brightening (as VFXBaseV2 orders them)
+	let fresnel_row = fx_row(id, FX_FRESNEL);
+	if (fresnel_row.x > 0.0) {
+		let n = fx_fresnel_normal(in, bases, front);
+		let f = pow(saturate(dot(normalize(-in.rel), n) + fresnel_row.y), fresnel_row.x);
+		let fresnel = mix(1.0 - f, f, fresnel_row.z);
+		let fresnel_color = fx_row(id, FX_FRESNEL_COLOR);
+		combined = vec4f(
+			mix(combined.rgb, fresnel_color.rgb, fresnel_color.w * fresnel),
+			saturate(combined.a) * mix(1.0, fresnel, fresnel_row.w),
+		);
+	}
 	// `_USE_EDGECOLOR` marks where the surface nears what lies behind it: mode 1 adds the edge colour and the tint
 	// alpha by its strength, 0 multiplies the colour by the edge colour and the alpha by the strength
 	let edge_row = fx_row(id, FX_EDGE);
@@ -766,16 +779,6 @@ fn fx_stack_layer(in: EffectOut, bases: FxBases, front: bool) -> vec4f {
 	let emission = fx_row(id, FX_EMISSION);
 	if (emission.w > 0.0) {
 		color += fx_slot_sample(id, u32(emission.w), bases).rgb * emission.rgb;
-	}
-	// the Fresnel term fades the alpha below, and mixes the colour towards the Fresnel colour before the exposure
-	let fresnel_row = fx_row(id, FX_FRESNEL);
-	var fresnel = 1.0;
-	if (fresnel_row.x > 0.0) {
-		let n = fx_fresnel_normal(in, bases, front);
-		let f = pow(saturate(dot(normalize(-in.rel), n) + fresnel_row.y), fresnel_row.x);
-		fresnel = mix(1.0 - f, f, fresnel_row.z);
-		let fresnel_color = fx_row(id, FX_FRESNEL_COLOR);
-		color = mix(color, fresnel_color.rgb, fresnel_color.w * fresnel);
 	}
 	// `_IgnorePostExposure` divides out the post exposure, before the lighting when the colour is an albedo
 	color = clamp(color * mix(1.0, frame.ambient.y, soft.z), vec3f(0.0), vec3f(1000.0));
@@ -799,9 +802,7 @@ fn fx_stack_layer(in: EffectOut, bases: FxBases, front: bool) -> vec4f {
 	if (soft.x > 0.0) {
 		soft_fade = saturate((fx_scene_depth(vec2i(in.position.xy)) - depth + soft.y) / soft.x);
 	}
-	let alpha = saturate(
-		saturate(combined.a) * mix(1.0, fresnel, fresnel_row.w) * soft_fade * fx_near_fade(id, depth),
-	);
+	let alpha = saturate(saturate(combined.a) * soft_fade * fx_near_fade(id, depth));
 	// VFXDitherAlpha's `_DitherAlphaExp`; 1 for the other stack looks
 	return vec4f(color, pow(alpha, fx_row(id, FX_DECAL).w));
 }
