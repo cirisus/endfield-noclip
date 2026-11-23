@@ -10,6 +10,7 @@ import { CELL_SIZE } from '@endfield-noclip/formats/endfield/map-config';
 import {
 	hasMonoComponents,
 	MonoComponentType,
+	type MonoObject,
 	readMonoObjects,
 } from '@endfield-noclip/formats/endfield/mono-objects';
 import {
@@ -73,41 +74,26 @@ export interface SceneVolumes {
 /** chunk files read at once */
 const READ_CONCURRENCY = 16;
 
-const VOLUME_COMPONENTS = BigInt(MonoComponentType.HGEnvironmentVolume | MonoComponentType.Volume);
+export const VOLUME_COMPONENTS = BigInt(MonoComponentType.HGEnvironmentVolume | MonoComponentType.Volume);
 
 /**
- * reads the environment and post volumes of a scene's default-area chunks (Init with its paired Streaming
- * file), each once, with the scene states whose files hold them
+ * deduplicates and tags environment and post volumes read from default-area chunk files, in input file order
  *
- * @param world world index
- * @param scene streaming scene
- * @param filter optional chunk-file predicate (in addition to `file.scene === scene && file.area === 0`)
- * @returns the volumes, in chunk-file order
+ * @param perFile per chunk file, its decoded Mono objects (must be in filename order for deterministic
+ *   dedupe)
+ * @returns the deduplicated volumes with the scene states whose files hold them
  */
-export const loadSceneVolumes = async (
-	world: WorldIndex,
-	scene: string,
-	filter?: (file: ChunkFile) => boolean,
-): Promise<SceneVolumes> => {
-	const files = (await world.chunkFiles()).filter(
-		(file) => file.scene === scene && file.area === 0 && (filter === undefined || filter(file)),
-	);
-	const perFile = await mapPool(files, READ_CONCURRENCY, async (file) => {
-		const init = await world.readInitPayload(file);
-		if (!hasMonoComponents(init, VOLUME_COMPONENTS)) {
-			return [];
-		}
-		return readMonoObjects(init, await world.readStreamingPayload(file));
-	});
-
+export const collectSceneVolumes = (
+	perFile: readonly { file: ChunkFile; objects: readonly MonoObject[] }[],
+): SceneVolumes => {
 	const volumes: SceneVolumes = { environment: [], post: [] };
 	// a volume is repeated in every cell chunk it overlaps; the files' scene state ids are collected per volume
 	const fileStates = new Map<number, Set<number>>();
-	for (const [i, objects] of perFile.entries()) {
+	for (const { file, objects } of perFile) {
 		for (const object of objects) {
 			const known = fileStates.get(object.id);
 			if (known !== undefined) {
-				known.add(files[i].sceneState);
+				known.add(file.sceneState);
 				continue;
 			}
 			const environment = readEnvironmentVolume(object);
@@ -115,7 +101,7 @@ export const loadSceneVolumes = async (
 			if (environment === undefined && post === undefined) {
 				continue;
 			}
-			const states = new Set([files[i].sceneState]);
+			const states = new Set([file.sceneState]);
 			fileStates.set(object.id, states);
 			const tag = levelTagOf(object.id);
 			// scene states are filled in below, once every file was seen
@@ -141,6 +127,33 @@ export const loadSceneVolumes = async (
 		}
 	}
 	return volumes;
+};
+
+/**
+ * reads the environment and post volumes of a scene's default-area chunks (Init with its paired Streaming
+ * file), each once, with the scene states whose files hold them
+ *
+ * @param world world index
+ * @param scene streaming scene
+ * @param filter optional chunk-file predicate (in addition to `file.scene === scene && file.area === 0`)
+ * @returns the volumes, in chunk-file order
+ */
+export const loadSceneVolumes = async (
+	world: WorldIndex,
+	scene: string,
+	filter?: (file: ChunkFile) => boolean,
+): Promise<SceneVolumes> => {
+	const files = (await world.chunkFiles()).filter(
+		(file) => file.scene === scene && file.area === 0 && (filter === undefined || filter(file)),
+	);
+	const perFile = await mapPool(files, READ_CONCURRENCY, async (file) => {
+		const init = await world.readInitPayload(file);
+		if (!hasMonoComponents(init, VOLUME_COMPONENTS)) {
+			return { file, objects: [] };
+		}
+		return { file, objects: readMonoObjects(init, await world.readStreamingPayload(file)) };
+	});
+	return collectSceneVolumes(perFile);
 };
 
 /**

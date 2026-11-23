@@ -28,7 +28,7 @@ import {
 	loadTerrainSurfacesData,
 	type TerrainSceneIndex,
 } from '../game/world/terrain-source.ts';
-import type { ChunkFile, WorldIndex } from '../game/world/world-index.ts';
+import type { ChunkContent, ChunkFile, WorldIndex } from '../game/world/world-index.ts';
 
 import { squareOverlapsRect } from './instances/bounds.ts';
 import { HLOD_NAME, type HlodLayout, type HlodSample, layoutHlodGrid } from './instances/hlod-cells.ts';
@@ -68,6 +68,8 @@ export interface SceneIndex {
 	subset: Subset;
 	/** the scene's chunk files in processing order; debug rows index into it */
 	files: ChunkFile[];
+	/** Global chunks already decoded while fitting the HLOD grid, consumed by `collectStaticChunks` */
+	globalChunks: Map<string, ChunkContent>;
 	/** the MapConfig's scene states, their conditions noted in {@link game} */
 	sceneStates: SceneStateDefinition[];
 	/** the quests, missions and variables the scene's conditions read */
@@ -137,13 +139,15 @@ export const indexScene = async (
 				(a.name < b.name ? -1 : 1),
 		);
 	const terrainGrid = treeGrid(surface);
-	// HLOD clusters sit in Global chunks only, which are small
+	// HLOD clusters sit in Global chunks only, which are small; keep the decoded chunks for `collectStaticChunks`
+	const globalChunks = new Map<string, ChunkContent>();
 	const hlod = layoutHlodGrid(
 		includeHlod
 			? await hlodSamples(
 					world,
 					files.filter((file) => file.cell === null),
 					partition,
+					globalChunks,
 				)
 			: [],
 		terrainGrid,
@@ -167,6 +171,7 @@ export const indexScene = async (
 		hlod,
 		subset: buildSubset(selection, partition, grid),
 		files,
+		globalChunks,
 		sceneStates,
 		game,
 		variables,
@@ -212,11 +217,14 @@ const hlodSamples = async (
 	world: WorldIndex,
 	files: readonly ChunkFile[],
 	partition: LevelPartition | undefined,
+	globalChunks: Map<string, ChunkContent>,
 ): Promise<HlodSample[]> => {
 	const samples: HlodSample[] = [];
 	const seen = new Set<number>();
 	const chunks = await Promise.all(files.map((file) => world.readChunkContent(file, partition)));
-	for (const { entities, hlodClusters } of chunks) {
+	for (const [i, content] of chunks.entries()) {
+		globalChunks.set(files[i].name, content);
+		const { entities, hlodClusters } = content;
 		for (const entity of entities) {
 			const name = hlodClusters.has(entity.id) ? HLOD_NAME.exec(entity.name) : null;
 			if (name === null || entity.bounds === null || seen.has(entity.id)) {

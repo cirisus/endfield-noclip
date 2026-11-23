@@ -1,9 +1,13 @@
+import type { MonoObject } from '@endfield-noclip/formats/endfield/mono-objects';
+import type { WaterGlobalBinding, WaterSurface } from '@endfield-noclip/formats/endfield/water';
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import type { ChainDraw } from '@endfield-noclip/package-format/instances';
 import { type TileKey, tileAt, tileId } from '@endfield-noclip/package-format/tiles';
 
+import { collectSceneVolumes, type SceneVolumes } from '../../game/environment.ts';
 import type { Visibility } from '../../game/state/scene-control.ts';
-import type { ChunkSource, WorldIndex } from '../../game/world/world-index.ts';
+import { collectSceneWater, type SceneWater } from '../../game/water/water-source.ts';
+import type { ChunkFile, ChunkSource, WorldIndex } from '../../game/world/world-index.ts';
 import { orderedPool } from '../../pool.ts';
 import { chunkEntityPlacement } from '../instances/chains.ts';
 import type { CollectedRow } from '../instances/collector.ts';
@@ -55,14 +59,28 @@ interface StaticRows {
 	hlod: RegExpExecArray | null;
 }
 
+/** what {@link collectStaticChunks} produces besides rows filed into {@link PackContent} */
+export interface StaticChunkSummary {
+	/** how many HLOD clusters' bounds centres lie in the tile they're filed under */
+	hlodNameMatches: number;
+	/** environment and post-processing volumes of the scene's default-area chunks */
+	chunkVolumes: SceneVolumes;
+	/** placed water surfaces and global config bindings of the scene's Global chunks */
+	sceneWater: SceneWater;
+}
+
 /**
- * reads every chunk file of the scene, in order, and files each entity, foliage instance and light
+ * reads every chunk file of the scene, in order, and files each entity, foliage instance and light, while
+ * collecting chunk environment/post volumes and Global-chunk water in the same pass
  *
  * @param world the world index
  * @param content the pack's content; rows, lights, counts and skipped entities are added
- * @returns how many HLOD clusters' bounds centres lie in the tile they're filed under
+ * @returns HLOD name-match tally, chunk environment volumes and Global-chunk water
  */
-export const collectStaticChunks = async (world: WorldIndex, content: PackContent): Promise<number> => {
+export const collectStaticChunks = async (
+	world: WorldIndex,
+	content: PackContent,
+): Promise<StaticChunkSummary> => {
 	const { scene, collector, controls, seen } = content;
 	const { grid, subset } = scene;
 	// listed in the report even at zero
@@ -77,6 +95,12 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 	const unresolvedHlod: HlodCluster[] = [];
 	/** bounds of always-loaded detail instances by `tileId/levelTag` */
 	const detailBounds = new Map<string, Aabb[]>();
+	const volumeFiles: { file: ChunkFile; objects: readonly MonoObject[] }[] = [];
+	const waterFiles: {
+		file: ChunkFile;
+		surfaces: readonly WaterSurface[];
+		globals: readonly WaterGlobalBinding[];
+	}[] = [];
 
 	const addHlod = (cluster: HlodCluster, key: TileKey): void => {
 		const [x, , z] = cluster.row.bounds.center;
@@ -145,10 +169,23 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 	await orderedPool(
 		scene.files,
 		READ_AHEAD + 1,
-		(file) => world.readChunkContent(file, scene.partition),
+		async (file) => {
+			const cached = scene.globalChunks.get(file.name);
+			if (cached !== undefined) {
+				scene.globalChunks.delete(file.name);
+				return cached;
+			}
+			return world.readChunkContent(file, scene.partition);
+		},
 		(read, file, fileIndex) => {
 			if (read instanceof Error) {
 				throw read;
+			}
+			if (read.monoObjects.length > 0) {
+				volumeFiles.push({ file, objects: read.monoObjects });
+			}
+			if (read.waterSurfaces.length > 0 || read.waterGlobals.length > 0) {
+				waterFiles.push({ file, surfaces: read.waterSurfaces, globals: read.waterGlobals });
 			}
 			for (const light of read.lights) {
 				if (subset.includesPoint(light.levelTag, light.position)) {
@@ -300,8 +337,15 @@ export const collectStaticChunks = async (world: WorldIndex, content: PackConten
 		});
 		addHlod(cluster, key);
 	}
-	return hlodNameMatches;
+	return {
+		hlodNameMatches,
+		chunkVolumes: collectSceneVolumes(volumeFiles.toSorted(byFileName)),
+		sceneWater: collectSceneWater(waterFiles.toSorted(byFileName)),
+	};
 };
+
+const byFileName = (a: { file: ChunkFile }, b: { file: ChunkFile }): number =>
+	a.file.name < b.file.name ? -1 : a.file.name > b.file.name ? 1 : 0;
 
 /** @returns why a rect decal makes no row: no material, or no decal cube in the install */
 export const decalSkipReason = (material: bigint | null | undefined): string =>

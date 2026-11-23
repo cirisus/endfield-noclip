@@ -6,6 +6,7 @@ import {
 	type FoliageGrid,
 } from '@endfield-noclip/formats/endfield/foliage-grids';
 import {
+	ChunkObjectKind,
 	parseInitChunk,
 	readChunkEntities,
 	StreamingLayer,
@@ -22,6 +23,12 @@ import {
 } from '@endfield-noclip/formats/endfield/level-partition';
 import { parseMapConfig, type MapConfig } from '@endfield-noclip/formats/endfield/map-config';
 import { parseMissionRuntime, type MissionRuntime } from '@endfield-noclip/formats/endfield/mission-runtime';
+import {
+	hasMonoComponents,
+	MonoComponentType,
+	type MonoObject,
+	readMonoObjects,
+} from '@endfield-noclip/formats/endfield/mono-objects';
 import { parseStreamAreas, type StreamAreaTable } from '@endfield-noclip/formats/endfield/stream-area';
 import {
 	parseStreamingChunk,
@@ -30,6 +37,13 @@ import {
 	type HlodLink,
 	type StreamingChunk,
 } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
+import {
+	readWaterGlobalBindings,
+	readWaterSurfaces,
+	WATER_SURFACE_COMPONENT,
+	type WaterGlobalBinding,
+	type WaterSurface,
+} from '@endfield-noclip/formats/endfield/water';
 import type { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
 import { unpackHgPayload } from '@endfield-noclip/formats/hg/payload';
 import { isSparkBean, parseSparkTable, type SparkValue } from '@endfield-noclip/formats/hg/spark-buffer';
@@ -76,6 +90,23 @@ export interface ChunkFile {
 /** where a chunk file sits in the game's load conditions: its scene state and stream area */
 export type ChunkSource = Pick<ChunkFile, 'sceneState' | 'area'>;
 
+/** everything the packer reads from one chunk file pair (Init + Streaming) in a single pass */
+export interface ChunkContent {
+	entities: IndexedEntity[];
+	lights: ChunkLight[];
+	foliage: FoliageGrid[];
+	decalMaterials: Map<number, bigint>;
+	waterDecalMeshes: Map<number, bigint>;
+	hlodClusters: Map<number, HlodLink>;
+	/** environment and post-processing Mono objects, populated for default-area chunks that carry them */
+	monoObjects: MonoObject[];
+	/** placed water surfaces, populated for Global chunks */
+	waterSurfaces: WaterSurface[];
+	/** global water config bindings, populated for Global chunks */
+	waterGlobals: WaterGlobalBinding[];
+}
+
+const VOLUME_MONO_COMPONENTS = BigInt(MonoComponentType.HGEnvironmentVolume | MonoComponentType.Volume);
 /** an entity read from a chunk, with its membership */
 export interface IndexedEntity extends ChunkEntity {
 	source: ChunkFile;
@@ -435,18 +466,9 @@ export class WorldIndex {
 	 * @throws {Error} if the chunk has foliage grids, decals or HLOD-layer entities but no StreamingChunkData
 	 *   sibling
 	 */
-	async readChunkContent(
-		file: ChunkFile,
-		partition: LevelPartition | undefined,
-	): Promise<{
-		entities: IndexedEntity[];
-		lights: ChunkLight[];
-		foliage: FoliageGrid[];
-		decalMaterials: Map<number, bigint>;
-		waterDecalMeshes: Map<number, bigint>;
-		hlodClusters: Map<number, HlodLink>;
-	}> {
-		const chunk = parseInitChunk(await this.readInitPayload(file));
+	async readChunkContent(file: ChunkFile, partition: LevelPartition | undefined): Promise<ChunkContent> {
+		const initBytes = await this.readInitPayload(file);
+		const chunk = parseInitChunk(initBytes);
 		const lights = readChunkLights(chunk);
 		const entities = indexEntities(chunk, file, partition);
 		const foliaged = hasFoliageGrids(chunk.rows);
@@ -465,15 +487,26 @@ export class WorldIndex {
 				hlodIds.push(entity.id);
 			}
 		}
+		const hasVolumes = file.area === 0 && hasMonoComponents(initBytes, VOLUME_MONO_COMPONENTS);
+		const hasWater =
+			file.cell === null &&
+			chunk.groups.some((group) => group.columns.some((column) => column.id === WATER_SURFACE_COMPONENT));
+		const hasWaterGlobal =
+			file.cell === null && chunk.objects.some((object) => object.kind === ChunkObjectKind.Mono);
+		const needsStreaming =
+			foliaged || decalIds.length > 0 || hlodIds.length > 0 || hasWater || hasWaterGlobal;
+		let streamingBytes: Uint8Array | null = null;
 		let streaming: StreamingChunk | null = null;
-		if (foliaged || decalIds.length > 0 || hlodIds.length > 0) {
-			const data = await this.readStreamingPayload(file);
-			if (data === null) {
+		if (needsStreaming || hasVolumes) {
+			streamingBytes = await this.readStreamingPayload(file);
+			if (streamingBytes === null && needsStreaming) {
 				throw new Error(
-					`${file.name} has foliage grids, decals or HLOD-layer entities but no StreamingChunkData`,
+					`${file.name} has foliage grids, decals, water or HLOD-layer entities but no StreamingChunkData`,
 				);
 			}
-			streaming = parseStreamingChunk(data);
+			if (streamingBytes !== null) {
+				streaming = parseStreamingChunk(streamingBytes);
+			}
 		}
 		const foliage = foliaged && streaming !== null ? readFoliageGrids(chunk.rows, streaming.raw) : [];
 		const decalMaterials = new Map<number, bigint>();
@@ -499,7 +532,21 @@ export class WorldIndex {
 				}
 			}
 		}
-		return { entities, lights, foliage, decalMaterials, waterDecalMeshes, hlodClusters };
+		const monoObjects = hasVolumes ? readMonoObjects(initBytes, streamingBytes) : [];
+		const waterSurfaces = hasWater && streaming !== null ? readWaterSurfaces(chunk, streaming) : [];
+		const waterGlobals =
+			hasWaterGlobal && streaming !== null ? readWaterGlobalBindings(chunk, streaming) : [];
+		return {
+			entities,
+			lights,
+			foliage,
+			decalMaterials,
+			waterDecalMeshes,
+			hlodClusters,
+			monoObjects,
+			waterSurfaces,
+			waterGlobals,
+		};
 	}
 
 	/**

@@ -27,7 +27,7 @@ import {
 	loadWaterGlobalConfig,
 	loadWaterSurfaceConfig,
 	type LoadedWaterConfig,
-	readSceneWater,
+	type SceneWater,
 	type SourcedWaterSurface,
 } from '../../game/water/water-source.ts';
 import { type ScriptWaterLevel, waterActionTarget } from '../../game/water/water-volume-scripts.ts';
@@ -268,6 +268,8 @@ export interface WaterVolumeInput {
 
 /** what {@link planWater} needs from the packer */
 export interface WaterPlanOptions {
+	/** placed water surfaces and global bindings collected from the scene's Global chunk files */
+	sceneWater: SceneWater;
 	/** whether the package's subset keeps content with this level tag centred at world x, z */
 	includes: (tag: number, x: number, z: number) => boolean;
 	/** whether the package is a subset; full packages keep every sector */
@@ -288,18 +290,15 @@ export interface WaterPlanOptions {
  * reads the scene's water and loads the configs and global maps the subset needs
  *
  * @param context world index and asset resolver
- * @param scene streaming scene
- * @param options subset predicate and the packer's interning hooks
+ * @param options subset predicate, collected chunk water and the packer's interning hooks
  * @returns the table with pending texture ids, the textures to convert and debug rows
  */
 export const planWater = async (
 	context: Pick<Context, 'world' | 'resolver'>,
-	scene: string,
 	options: WaterPlanOptions,
 ): Promise<WaterPlan> => {
 	const { world } = context;
-	// every surface and global binding sits in a Global chunk (checked over all scenes of the current client)
-	const water = await readSceneWater(world, scene, (file) => file.cell === null);
+	const water = options.sceneWater;
 	const selected = selectSurfaces(water.surfaces, options.includes);
 	const plan: WaterPlan = {
 		table: { global: null, configs: [], surfaces: [], volumes: [] },

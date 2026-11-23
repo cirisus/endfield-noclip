@@ -41,6 +41,46 @@ export interface SceneWater {
 const READ_CONCURRENCY = 16;
 
 /**
+ * deduplicates water surfaces and global config bindings read from chunk files, in input file order
+ *
+ * @param perFile per chunk file, its surfaces and global bindings (in filename order for deterministic
+ *   dedupe)
+ * @returns the deduplicated placements
+ */
+export const collectSceneWater = (
+	perFile: readonly {
+		file: ChunkFile;
+		surfaces: readonly WaterSurface[];
+		globals: readonly WaterGlobalBinding[];
+	}[],
+): SceneWater => {
+	const surfaces: SourcedWaterSurface[] = [];
+	const globals: WaterGlobalBinding[] = [];
+	const seen = new Set<number>();
+	const byId = new Map<number, SourcedWaterSurface>();
+	for (const read of perFile) {
+		const { sceneState, area } = read.file;
+		for (const surface of read.surfaces) {
+			const known = byId.get(surface.id);
+			if (known === undefined) {
+				const sourced = Object.assign({ ...surface }, { source: read.file, sources: [{ sceneState, area }] });
+				byId.set(surface.id, sourced);
+				surfaces.push(sourced);
+			} else {
+				known.sources.push({ sceneState, area });
+			}
+		}
+		for (const binding of read.globals) {
+			if (!seen.has(binding.id)) {
+				seen.add(binding.id);
+				globals.push(binding);
+			}
+		}
+	}
+	return { surfaces, globals };
+};
+
+/**
  * reads the water surfaces and global config bindings of a scene. the installed client keeps surfaces in
  * Global chunks, but every chunk file is scanned unless `filter` narrows it.
  *
@@ -82,34 +122,7 @@ export const readSceneWater = async (
 			globals: hasGlobal ? readWaterGlobalBindings(init, streaming) : [],
 		};
 	});
-
-	const surfaces: SourcedWaterSurface[] = [];
-	const globals: WaterGlobalBinding[] = [];
-	const seen = new Set<number>();
-	const byId = new Map<number, SourcedWaterSurface>();
-	for (const read of perFile) {
-		if (read === null) {
-			continue;
-		}
-		const { sceneState, area } = read.file;
-		for (const surface of read.surfaces) {
-			const known = byId.get(surface.id);
-			if (known === undefined) {
-				const sourced = Object.assign(surface, { source: read.file, sources: [{ sceneState, area }] });
-				byId.set(surface.id, sourced);
-				surfaces.push(sourced);
-			} else {
-				known.sources.push({ sceneState, area });
-			}
-		}
-		for (const binding of read.globals) {
-			if (!seen.has(binding.id)) {
-				seen.add(binding.id);
-				globals.push(binding);
-			}
-		}
-	}
-	return { surfaces, globals };
+	return collectSceneWater(perFile.filter((entry) => entry !== null));
 };
 
 // #endregion

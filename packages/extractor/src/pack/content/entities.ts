@@ -1,10 +1,11 @@
 import type { Context } from '../../context.ts';
 import { poseDecorationModels } from '../../game/dynamic/decoration-animators.ts';
 import { type DynamicStructures, loadDynamicStructures } from '../../game/dynamic/dynamic-structures.ts';
-import type { SceneEnvironmentVolume } from '../../game/environment.ts';
+import type { SceneEnvironmentVolume, SceneVolumes } from '../../game/environment.ts';
 import { loadPlacedVolumes, type PlacedPrefab } from '../../game/prefabs/prefab-environment.ts';
 import { PrefabRoots } from '../../game/prefabs/prefab-root.ts';
 import type { DraftControl } from '../../game/state/scene-control.ts';
+import type { SceneWater } from '../../game/water/water-source.ts';
 import { readWaterVolumes } from '../../game/water/water-volumes.ts';
 import { defaultValues } from '../states.ts';
 import type { CabinRoomGroup } from '../tables/irradiance.ts';
@@ -28,6 +29,10 @@ export interface SceneEntities extends Pick<
 > {
 	/** how many HLOD clusters' bounds centres lie in the tile they're filed under */
 	hlodNameMatches: number;
+	/** environment and post-processing volumes collected from the scene's chunk files */
+	chunkVolumes: SceneVolumes;
+	/** placed water surfaces and global bindings collected from the scene's Global chunk files */
+	sceneWater: SceneWater;
 	/** environment volumes that placed prefabs carry */
 	placedVolumes: SceneEnvironmentVolume[];
 	/** Dijiang's cabin slots, with the group that shows their built cabin */
@@ -50,7 +55,7 @@ export const collectEntities = async (
 	progressions: readonly DraftControl[],
 ): Promise<SceneEntities> => {
 	const { scene, controls } = content;
-	const hlodNameMatches = await collectStaticChunks(context.world, content);
+	const { hlodNameMatches, chunkVolumes, sceneWater } = await collectStaticChunks(context.world, content);
 	const sources = await collectPlacementSources(context, content);
 	const { scriptWater, waterDrivers, placements, fireSeed, unsupported, cabinRooms } = sources.interactives;
 
@@ -79,6 +84,8 @@ export const collectEntities = async (
 		fireSeed,
 		unsupported,
 		hlodNameMatches,
+		chunkVolumes,
+		sceneWater,
 		placedVolumes,
 		cabinRooms: cabinRooms.map(({ control, levelTag, position, roomType }) => ({
 			group: controls.group(levelTag, controls.condition({ alternatives: [[{ control, mask: 2 }]] })),

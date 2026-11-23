@@ -156,12 +156,13 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		const [environments, water] = await Promise.all([
 			planEnvironments(
 				context,
-				scene.id,
 				scene.partition?.levels ?? [],
 				defaultSceneStates(scene.sceneStates, scene.game),
+				entities.chunkVolumes,
 				entities.placedVolumes,
 			),
-			planWater(context, scene.id, {
+			planWater(context, {
+				sceneWater: entities.sceneWater,
 				includes: (tag, x, z) => scene.subset.includesEntity(tag, x, z),
 				subset: scene.subset.info !== null,
 				geometry: (hash) => {

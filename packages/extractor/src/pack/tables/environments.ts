@@ -35,7 +35,6 @@ import {
 	type LoadedPhase,
 	type LoadedVolumeProfile,
 	loadLevelPhases,
-	loadSceneVolumes,
 	loadVolumeProfile,
 	resolveLevelEnvironment,
 	resolveLevelPost,
@@ -173,18 +172,18 @@ type ReportProblem = (problem: EnvironmentProblem) => void;
  * resolves every level's environment and loads the phases and profiles involved
  *
  * @param context world index and asset resolver
- * @param scene streaming scene
  * @param levels the scene's levels
  * @param enabled MapConfig scene state indices active by default; level base environments are chosen among
  *   the volumes they load
+ * @param chunkVolumes environment and post volumes collected from the scene's default-area chunk files
  * @param placed volumes that placed prefabs carry (`loadPlacedVolumes`), alongside the chunk volumes
  * @returns the deduplicated profiles, per-level indices and the textures to convert
  */
 export const planEnvironments = async (
 	context: Pick<Context, 'world' | 'resolver'>,
-	scene: string,
 	levels: readonly PartitionLevel[],
 	enabled: ReadonlySet<number>,
+	chunkVolumes: SceneVolumes,
 	placed: readonly SceneEnvironmentVolume[],
 ): Promise<EnvironmentPlan> => {
 	const plan: EnvironmentPlan = {
@@ -202,11 +201,7 @@ export const planEnvironments = async (
 	if (levels.length === 0) {
 		return plan;
 	}
-	const [chunkVolumes, pathOf, resolver] = await Promise.all([
-		loadSceneVolumes(context.world, scene),
-		context.world.pathLookup(),
-		context.resolver(),
-	]);
+	const [pathOf, resolver] = await Promise.all([context.world.pathLookup(), context.resolver()]);
 	const volumes: SceneVolumes = { ...chunkVolumes, environment: [...chunkVolumes.environment, ...placed] };
 	const reported = new Set<string>();
 	const report: ReportProblem = (problem) => {
