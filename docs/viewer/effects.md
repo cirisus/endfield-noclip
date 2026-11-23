@@ -151,6 +151,11 @@ VFXWater draws via `water_sheet` (`effect.wgsl`,
   rotation texture in slot 5 (`fx_soft_body_normal` in `vs_effect`), bounds/frame count in
   `WaterSheetRow.softMin`. collides with flipbook motion vectors and normal map (unsupported if
   combined, or if particle-driven).
+- **refraction (`WaterSheetSurface.refract`)**: `WaterSheetFlags.Refract` packs `_RefractTint`
+  (linear) × `_RefractBrightness` and `_RefractThickness` into `WaterSheetRow.refract` and `_IoR`
+  into `WaterSheetRow.misc.w`. when a refracting sheet is in view
+  (`MeshRenderer.transparentReadsBackground`), the frame graph copies the composited scene
+  (including water) into `fx_background` before the transparent pass.
 
 ## six-way smoke
 

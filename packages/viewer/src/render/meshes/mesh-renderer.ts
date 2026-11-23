@@ -25,6 +25,7 @@ import {
 	type MeshPass,
 	PAIRED_PASSES,
 	PASS_PHASES,
+	SORTED_RANGES,
 	type SurfacePass,
 } from './draw-ranges.ts';
 import { type GeometryIndices, GeometryPools, type GeometryVertices } from './geometry-pools.ts';
@@ -145,6 +146,8 @@ export class MeshRenderer {
 	triangles = 0;
 	/** draws whose base colour texture was bound */
 	texturedDraws = 0;
+	/** whether any prepared draw in the transparent pass reads `fx_background` (`MaterialLook.readsBackground`) */
+	transparentReadsBackground = false;
 
 	#device: GPUDevice;
 	#pipelines: PipelineCache;
@@ -511,6 +514,7 @@ export class MeshRenderer {
 		this.instanceCount = 0;
 		this.triangles = 0;
 		this.texturedDraws = 0;
+		this.transparentReadsBackground = false;
 		this.#drawnSkins.clear();
 		this.#movingLooks.clear();
 	}
@@ -744,6 +748,9 @@ export class MeshRenderer {
 		}
 		if (look.motion !== null) {
 			this.#movingLooks.set(bucket.material, look);
+		}
+		if (look.readsBackground && SORTED_RANGES.has(info.range)) {
+			this.transparentReadsBackground = true;
 		}
 		if (resident.skin !== null) {
 			this.#drawnSkins.add(resident.skin);

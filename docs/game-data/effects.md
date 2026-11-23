@@ -454,6 +454,11 @@ dynamic streaming chunks), [WaterDecal](water.md#waterdecal) foam boxes, particl
   see-through lobes.
 - **sun shadow**: sampled 0.5 m along normal from 4-tap sharp cascades, or tent-filtered cached far
   map alone when `_directional_shadow_asm_only > 0` (e.g. Si's Painting `*_asm` ink falls).
+- **refraction (`VFX_WATER_REFRACT`)**: samples the opaque-scene copy at
+  `screenUV + (refract(−V, N, _IoR) · _RefractThickness · opacity)` projected into view `xy`, tints
+  it by `mix(1, _RefractTint · _RefractBrightness, opacity)`, mixes toward the fogged premultiplied
+  sheet by `opacity`, and writes alpha `1` (replacing the pixel under `One, OneMinusSrcAlpha`). used
+  by Wuling City's liquid falls (`M_fxmap_water_waterfall_812`/`813`).
 - **output**: `_IgnorePostExposure` divides out post exposure (including lit share). `_BlendMode` 1
   adds, as in VFXBaseV2.
 

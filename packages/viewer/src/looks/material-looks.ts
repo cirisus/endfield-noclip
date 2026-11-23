@@ -237,6 +237,7 @@ const surfaceLook = (entry: ReadyMaterial): MaterialLook => {
 			return effectMaterialLook(waterSheetLook(surface), {
 				queue: 'effect',
 				cull: entry.cull,
+				readsBackground: surface.refract !== null,
 			});
 		}
 		case 'sixWaySmoke': {
@@ -346,6 +347,7 @@ const effectMaterialLook = (
 		box = false,
 		cull,
 		stencil = null,
+		readsBackground = false,
 	}: {
 		/** one of the effect queues */
 		queue: LookQueue;
@@ -353,6 +355,7 @@ const effectMaterialLook = (
 		box?: boolean;
 		cull: MaterialCull;
 		stencil?: LookStencil | null;
+		readsBackground?: boolean;
 	},
 ): MaterialLook => ({
 	drawn: true,
@@ -360,6 +363,7 @@ const effectMaterialLook = (
 	queue,
 	cull: box ? 'front' : cull,
 	castsShadows: false,
+	readsBackground,
 	textures: effect.textures,
 	uvScales: effect.uvScales,
 	volumeTexture: effect.volumeTexture,

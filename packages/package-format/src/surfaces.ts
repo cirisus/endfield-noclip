@@ -1168,6 +1168,12 @@ export interface WaterSheetSurface {
 	 * normal map
 	 */
 	softBody: WaterSheetSoftBody | null;
+	/**
+	 * `VFX_WATER_REFRACT`: refracts the scene behind along the refracted view ray (`ior`, `thickness`), tinting
+	 * it by `tint` (`_RefractTint` linearized times `_RefractBrightness`) and replacing the pixel instead of
+	 * alpha-blending; `null` without the keyword
+	 */
+	refract: { ior: number; thickness: number; tint: Rgb } | null;
 }
 
 /** a VFXWater sheet's soft-body animation, whose shading reads the animated normals */

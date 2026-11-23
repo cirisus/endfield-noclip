@@ -1787,9 +1787,30 @@ describe('VFXWater', () => {
 		);
 		assert.deepEqual([sheet.mainAsAlpha, sheet.maskAsAlpha, sheet.vertexColor], [true, true, true]);
 		assert.deepEqual(sheet.soft, { distance: 3, bias: 0 });
-		assert.equal(describeMaterial(material({ keywords: ['VFX_WATER_REFRACT'] }), water).kind, 'unsupported');
+		assert.equal(describeMaterial(material({ keywords: ['_USE_VERTOFFSET'] }), water).kind, 'unsupported');
 		assert.equal(sheet.softBody, null);
+		assert.equal(sheet.refract, null);
 		assert.equal(sheet.farShadowOnly, false);
+	});
+
+	it('reads VFX_WATER_REFRACT’s IOR, thickness and linearized tint times brightness', () => {
+		// Wuling City's liquid falls (`M_fxmap_water_waterfall_813`)
+		const water = shader('HGRP/Effect/VFXWater', 'water', { textures: { _MainTex: 'white' } });
+		const sheet = ofKind(
+			describeMaterial(
+				material({
+					keywords: ['VFX_WATER_REFRACT'],
+					floats: { _IoR: 0.35, _RefractThickness: 0.05, _RefractBrightness: 2 },
+					colors: { _RefractTint: [0.5, 1, 1, 1] },
+				}),
+				water,
+			),
+			'waterSheet',
+		);
+		assert.ok(sheet.refract !== null);
+		assert.deepEqual([sheet.refract.ior, sheet.refract.thickness], [0.35, 0.05]);
+		assert.ok(Math.abs(sheet.refract.tint[0] - ((0.5 + 0.055) / 1.055) ** 2.4 * 2) < 1e-6);
+		assert.deepEqual(sheet.refract.tint.slice(1), [2, 2]);
 	});
 
 	it('shadows a sheet from the far map alone where its material asks', () => {

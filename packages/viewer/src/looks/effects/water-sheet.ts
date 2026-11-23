@@ -41,9 +41,11 @@ export const WaterSheetRow = {
 	subsurface: 116,
 	/**
 	 * the `VertexMotion` (the soft body's, or none), `_IndirectSaturation`, 1 when shadowed from the far map
-	 * alone, 0
+	 * alone, `_IoR` (`VFX_WATER_REFRACT`)
 	 */
 	misc: 120,
+	/** `VFX_WATER_REFRACT`: `_RefractTint` (linear) times `_RefractBrightness`, then `_RefractThickness` */
+	refract: 128,
 	/** a soft body's offset minimum and frame count, in the stack's reveal rows, which sheets don't have */
 	softMin: 160,
 	/**
@@ -74,6 +76,8 @@ export const WaterSheetFlags = {
 	VertexOpacity: 1 << 10,
 	FresnelOpacity: 1 << 11,
 	VertexColor: 1 << 12,
+	/** `VFX_WATER_REFRACT`: refracts the composited scene behind (`WaterSheetRow.refract`) */
+	Refract: 1 << 13,
 } as const;
 
 /**
@@ -126,7 +130,8 @@ export const waterSheetLook = (sheet: WaterSheetSurface): EffectLook => {
 		(sheet.maskAsAlpha ? WaterSheetFlags.MaskAsAlpha : 0) |
 		(sheet.vertexOpacity ? WaterSheetFlags.VertexOpacity : 0) |
 		(sheet.fresnelOpacity ? WaterSheetFlags.FresnelOpacity : 0) |
-		(sheet.vertexColor ? WaterSheetFlags.VertexColor : 0);
+		(sheet.vertexColor ? WaterSheetFlags.VertexColor : 0) |
+		(sheet.refract !== null ? WaterSheetFlags.Refract : 0);
 	params.set(sheet.tint, EffectRow.tint);
 	params.set([flags, sheet.additive ? 1 : 0, sheet.useLighting, sheet.randomUv], WaterSheetRow.flags);
 	params.set([sheet.disturbBias, ...sheet.disturb, 0], WaterSheetRow.disturb);
@@ -151,12 +156,16 @@ export const waterSheetLook = (sheet: WaterSheetSurface): EffectLook => {
 		params.set([...softBody.min, softBody.frameCount], WaterSheetRow.softMin);
 		params.set([...softBody.range, softBody.rotationPacked ? 1 : 2], WaterSheetRow.softRange);
 	}
+	const { refract } = sheet;
+	if (refract !== null) {
+		params.set([...refract.tint, refract.thickness], WaterSheetRow.refract);
+	}
 	params.set(
 		[
 			softBody === null ? VertexMotion.None : VertexMotion.SoftBody,
 			sheet.indirectSaturation,
 			sheet.farShadowOnly ? 1 : 0,
-			0,
+			refract?.ior ?? 0,
 		],
 		WaterSheetRow.misc,
 	);

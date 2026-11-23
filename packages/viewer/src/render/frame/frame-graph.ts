@@ -421,6 +421,9 @@ export const encodeFrame = (
 	if (sceneFrame !== null) {
 		// as the game, glass and effects after the water, far to near over the scene, each fogging itself
 		if (meshes.has('transparent')) {
+			if (meshes.transparentReadsBackground) {
+				post.copyComposite(encoder, scene);
+			}
 			const pass = beginPass(
 				encoder,
 				{
@@ -430,7 +433,7 @@ export const encodeFrame = (
 				},
 				sceneFrame,
 			);
-			draws += meshes.encodeEffectPass('transparent', pass, scene);
+			draws += meshes.encodeEffectPass('transparent', pass, { ...scene, background: scene.radiance });
 			pass.end();
 		}
 		if (meshes.has('multiply')) {

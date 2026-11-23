@@ -315,10 +315,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - **VFXRefract** ([game-data](game-data/effects.md#refraction)): no saturation, Fresnel mask,
     trail, or mesh UV1 custom data; scene copy includes water/fog (unchecked). Deep Dale Street
     fog-wall haze, balloon glitch, and Valley Pass fire-column haze unverified.
-  - **VFXWater**: missing `VFX_WATER_REFRACT`, punctual lights, matcaps, `VFX_WATER_SIMPLE_LIGHT`
-    probe (uses full lighting), `_UseVertexColorAlphaAsDissolveWeight`, and 4-tap normal-offset
-    sun-shadow lookup. soft bodies with flipbook/normal-map/particle data stay unsupported (frame
-    offset = 0); waterwheel pouring water unverified.
+  - **VFXWater**: missing punctual lights, matcaps, `VFX_WATER_SIMPLE_LIGHT` probe (uses full
+    lighting), `_UseVertexColorAlphaAsDissolveWeight`, and 4-tap normal-offset sun-shadow lookup.
+    soft bodies with flipbook/normal-map/particle data stay unsupported (frame offset = 0);
+    waterwheel pouring water and `VFX_WATER_REFRACT` liquid falls unverified in game.
   - **six-way smoke** ([game-data](game-data/effects.md#six-way-smoke)): no shadow ramp, local
     lights, or main texture; UV1 mask/dissolve unsupported on meshes; unverified in game (including
     Valley Pass fire column and its screen-space blend).

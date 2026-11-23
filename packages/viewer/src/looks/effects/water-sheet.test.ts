@@ -68,6 +68,7 @@ const sheet: WaterSheetSurface = {
 	ignorePostExposure: 1,
 	near: null,
 	softBody: null,
+	refract: null,
 };
 
 test('a water sheet lays out its frames, motion vectors and normals, and keeps its own rows', () => {
@@ -144,4 +145,20 @@ test('a soft-body sheet binds its rotation and position textures for the vertex 
 	);
 	// the sheet's own surface rows are where the stack keeps its soft body's
 	assert.ok(Math.abs(look.params[WaterSheetRow.surface] - 0.6) < 1e-6);
+});
+
+test('a refracting sheet flags VFX_WATER_REFRACT, packs its tint, thickness and IOR, and asks for the background', () => {
+	// Wuling City's liquid falls (`M_fxmap_water_waterfall_813`)
+	const [plain] = materialLooks({ entries: [described(sheet)] });
+	assert.equal(plain.readsBackground, false);
+	const [look] = materialLooks({
+		entries: [described({ ...sheet, refract: { ior: 0.35, thickness: 0.05, tint: [1.5, 2, 2] } })],
+	});
+	assert.equal(look.readsBackground, true);
+	assert.notEqual(look.params[WaterSheetRow.flags] & WaterSheetFlags.Refract, 0);
+	assert.deepEqual(
+		[...look.params.subarray(WaterSheetRow.refract, WaterSheetRow.refract + 4)],
+		[1.5, 2, 2, Math.fround(0.05)],
+	);
+	assert.ok(Math.abs(look.params[WaterSheetRow.misc + 3] - 0.35) < 1e-6);
 });

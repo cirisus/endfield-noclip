@@ -128,6 +128,11 @@ export interface MaterialLook {
 	cull: MaterialCull;
 	/** whether the material draws into shadow maps */
 	castsShadows: boolean;
+	/**
+	 * whether the effect samples the composited scene's copy (`fx_background`) during the transparent pass, so
+	 * the frame graph copies it before that pass runs (`VFX_WATER_REFRACT`)
+	 */
+	readsBackground: boolean;
 	/** texture per {@link SLOTS} entry; `null` slots bind white */
 	textures: TextureRef[];
 	/** largest UV scale of each slot, for picking the mip level to stream */
@@ -362,6 +367,7 @@ export const emptyLook = ({ drawn }: { drawn: boolean }): MaterialLook => ({
 	queue: 'opaque',
 	cull: 'none',
 	castsShadows: true,
+	readsBackground: false,
 	...emptySlots(),
 	flags: 0,
 	stencil: null,

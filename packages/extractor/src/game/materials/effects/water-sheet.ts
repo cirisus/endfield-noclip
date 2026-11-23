@@ -36,6 +36,7 @@ const WATER_KEYWORDS = new Set([
 	'_USE_SEQUENCE_FRAME_MV',
 	'_USE_SEQUENCE_FRAME_NORMAL',
 	'VFX_WATER_SIMPLE_LIGHT',
+	'VFX_WATER_REFRACT',
 	'_VAT_SOFTBODY',
 ]);
 
@@ -47,7 +48,7 @@ const sheetTexture = (value: EffectTexture | null | 'uv'): EffectTexture | null 
  * `HGRP/Effect/VFXWater`, the sheets of falling water (`docs/game-data/effects.md#waterfalls`)
  *
  * @param reader the material's properties
- * @returns its surface, or `unsupported` for features the viewer doesn't draw (refraction, a vertex offset)
+ * @returns its surface, or `unsupported` for features the viewer doesn't draw (a vertex offset)
  */
 export const describeWaterSheet = (reader: MaterialReader): WaterSheetSurface | UnsupportedSurface => {
 	const { float, colorOrVector: color, has } = reader;
@@ -185,6 +186,13 @@ export const describeWaterSheet = (reader: MaterialReader): WaterSheetSurface | 
 		ignorePostExposure: float('_IgnorePostExposure', 1),
 		near: nearFadeOf(reader),
 		softBody,
+		refract: has('VFX_WATER_REFRACT')
+			? {
+					ior: float('_IoR', 0.8),
+					thickness: float('_RefractThickness', 0.01),
+					tint: scaleRgb(linearRgb(color('_RefractTint') ?? [1, 1, 1, 1]), float('_RefractBrightness', 1)),
+				}
+			: null,
 	};
 };
 

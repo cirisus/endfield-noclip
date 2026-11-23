@@ -957,6 +957,7 @@ const WS_SEQUENCE_TINT = 27u;
 const WS_SURFACE = 28u;
 const WS_SUBSURFACE = 29u;
 const WS_MISC = 30u;
+const WS_REFRACT = 32u;
 // a soft body's offset minimum and frame count, and its range and rotation packing (`WaterSheetRow.softMin`)
 const WS_SOFT_MIN = 40u;
 const WS_SOFT_RANGE = 41u;
@@ -975,6 +976,7 @@ const WS_MASK_AS_ALPHA = 512u;
 const WS_VERTEX_OPACITY = 1024u;
 const WS_FRESNEL_OPACITY = 2048u;
 const WS_VERTEX_COLOR = 4096u;
+const WS_REFRACT_ON = 8192u;
 
 // the particle's custom data, for `ws_sample`; the water sheet and six-way smoke set it from their input
 var<private> ws_custom: vec4f;
@@ -1165,6 +1167,20 @@ fn water_sheet(in: EffectOut, front: bool, dx: vec2f, dy: vec2f, rel_dx: vec3f, 
 	let sun = (specular * n_dot_l + subsurface * through + lit * n_dot_l) * frame.sun_color.rgb * (frame.sun.w / PI) *
 		visibility;
 	let shaded = indirect + unlit + sun;
+
+	// `VFX_WATER_REFRACT`: refracts the composited scene behind along the refracted view ray, tints it by the
+	// opacity, mixes in the fogged premultiplied sheet, and replaces the pixel (`alpha = 1`)
+	if ((flags & WS_REFRACT_ON) != 0u) {
+		let screen_uv = in.position.xy / frame.render_size.xy;
+		let refract_row = fx_row(id, WS_REFRACT);
+		let shift = refract(-v, n, fx_row(id, WS_MISC).w) * (refract_row.w * alpha);
+		let refract_uv = screen_uv + vec2f(dot(shift, frame.view_right.xyz), dot(shift, frame.view_up.xyz));
+		let behind = textureSampleLevel(fx_background, fx_background_samp, refract_uv, 0.0).rgb;
+		let tinted = behind * mix(vec3f(1.0), refract_row.rgb, alpha);
+		// `_BlendMode` 1 drops fog in-scatter, keeping transmittance on the surface share
+		let surface = fog_premultiplied(shaded * alpha, select(alpha, 0.0, ws.y >= 0.5), in.rel, screen_uv);
+		return EffectAccumulated(vec4f(mix(tinted, surface, alpha), 1.0));
+	}
 
 	// `_BlendMode` 1 adds the layer rather than blending it over
 	if (ws.y >= 0.5) {
