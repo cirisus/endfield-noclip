@@ -58,6 +58,8 @@ export interface PackOptions extends SceneSelection {
 	zstdLevel: number;
 	/** zstd level of textures, terrain surface pages and layer textures */
 	textureZstdLevel: number;
+	/** optional max packed texture edge in texels (drops top mip pieces; reuses full cache) */
+	maxTextureSize?: number | null;
 	/** convert geometry, materials and textures; without, their table entries stay `pending` */
 	convertAssets: boolean;
 	/** worker threads converting meshes and textures */
@@ -285,6 +287,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 					archives: layout.assets,
 					geometryZstdLevel: options.zstdLevel,
 					textureZstdLevel: options.textureZstdLevel,
+					maxTextureSize: options.maxTextureSize ?? null,
 					materialConcurrency: MATERIAL_CONCURRENCY,
 					log: options.log,
 				});
@@ -361,11 +364,12 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				format: PACKAGE_FORMAT,
 				version: PACKAGE_VERSION,
 				minReaderVersion: PACKAGE_VERSION,
-				features: [],
+				features: options.maxTextureSize ? ['lite-textures'] : [],
 				requiredFeatures: [],
 				source: scene.source,
 				scene: { id: scene.id, name: scene.names.get(scene.id) ?? null },
 				subset: scene.subset.info,
+				maxTextureSize: options.maxTextureSize ?? null,
 				tree: scene.grid,
 				terrain:
 					scene.terrain === null || terrain === null

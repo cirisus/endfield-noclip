@@ -92,6 +92,8 @@ export interface AssetConversionInput {
 	geometryZstdLevel: number;
 	/** zstd level for texture blobs */
 	textureZstdLevel: number;
+	/** optional max packed texture edge in texels (omits top mip piece blobs) */
+	maxTextureSize?: number | null;
 	/** materials decoded at once */
 	materialConcurrency: number;
 	log: (line: string) => void;
@@ -953,23 +955,40 @@ const finishTextures = async (
 			JSON.stringify(result.entry.sampler),
 			() => out.samplers.push(result.entry.sampler) - 1,
 		);
+		const maxSize = input.maxTextureSize ?? null;
+		let { width, height, mipCount } = result.entry;
+		let droppedMips = 0;
+		let keptPieces = pieces;
+		if (maxSize !== null && result.entry.kind !== '3d' && Math.max(width, height) > maxSize) {
+			keptPieces = [...pieces];
+			while (keptPieces.length > 1 && Math.max(width, height) > maxSize) {
+				const top = keptPieces.pop()!;
+				droppedMips += top.levelCount;
+				width = Math.max(1, width >> top.levelCount);
+				height = Math.max(1, height >> top.levelCount);
+			}
+			mipCount = Math.max(1, mipCount - droppedMips);
+		}
+		const entryShape = { ...result.entry, width, height, mipCount };
 		out.entries.push({
 			status: 'ready',
-			...result.entry,
+			...entryShape,
+			...(droppedMips > 0 ? { droppedMips } : {}),
 			sampler,
-			pieces: pieces.map((piece, i) => {
-				const { width, height } = textureLevelLayout(result.entry, piece.firstLevel);
-				const group = i === 0 && piece.levelCount > 1 ? 'tail' : String(Math.max(width, height));
+			pieces: keptPieces.map((piece, i) => {
+				const firstLevel = piece.firstLevel - droppedMips;
+				const { width: lw, height: lh } = textureLevelLayout(entryShape, firstLevel);
+				const group = i === 0 && piece.levelCount > 1 ? 'tail' : String(Math.max(lw, lh));
 				out.pieces[group] ??= { count: 0, stored: 0, raw: 0 };
 				// a texture's pieces sit together under its tail's hash, coarse to fine
 				const placement: BlobPlacement = {
 					kind: BlobKind.Texture,
 					stem,
-					locality: `${pieces[0].blob.hash}.${i.toString(16).padStart(2, '0')}`,
+					locality: `${keptPieces[0].blob.hash}.${i.toString(16).padStart(2, '0')}`,
 				};
 				return {
 					blob: commit(input.store, piece.blob, placement, out.pieces[group]),
-					firstLevel: piece.firstLevel,
+					firstLevel,
 					levelCount: piece.levelCount,
 				};
 			}),

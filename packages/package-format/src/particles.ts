@@ -416,6 +416,11 @@ export interface ParticleSystemInfo {
 	 * (none for {@link ParticleRenderMode.None}). `null` on every other entry
 	 */
 	trail: ParticleTrailInfo | null;
+	/**
+	 * 32-bit RNG seed salt shared by all entries emitted from the same Unity `ParticleSystem` (e.g. multi-mesh
+	 * entries and trails), avoiding runtime `JSON.stringify` inference
+	 */
+	seedSalt?: number;
 }
 
 /**

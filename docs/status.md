@@ -555,8 +555,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   both by path hash (static) and object (prefab) convert and store twice.
 - **prefab LODGroups**: switch on per-renderer bounds rather than LODGroup size/reference point,
   without cross-fade or game LOD bias.
-- **textures**: no `--max-texture-size` lite-package option
-  ([textures](package-format.md#textures-tex)); formats without WebGPU equivalents fail
+- **textures**: formats without WebGPU equivalents fail
   ([asset classes](extraction.md#asset-classes)).
 - **instance blocks**: full f32 rows could shrink ~50% with meshopt filters or quantization
   ([instance block](package-format.md#instance-block-inst-efin)).

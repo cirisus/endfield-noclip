@@ -2,6 +2,15 @@ import { createHash } from 'node:crypto';
 
 import type { ParticleSystemInfo, ParticlesTable } from '@endfield-noclip/package-format/particles';
 
+const fnv1a32 = (text: string): number => {
+	let hash = 0x81_1c_9d_c5;
+	for (let i = 0; i < text.length; i++) {
+		hash ^= text.charCodeAt(i);
+		hash = Math.imul(hash, 0x01_00_01_93);
+	}
+	return hash >>> 0;
+};
+
 /** the particles table, with equal systems sharing one entry */
 export class ParticleTable {
 	readonly #systems: ParticleSystemInfo[] = [];
@@ -15,7 +24,10 @@ export class ParticleTable {
 	intern(system: ParticleSystemInfo): number {
 		return this.#ids.getOrInsertComputed(JSON.stringify(system), (json) => {
 			this.#keys.push(createHash('sha256').update(json).digest('hex').slice(0, 32));
-			return this.#systems.push(system) - 1;
+			const seedSalt =
+				system.seedSalt ??
+				fnv1a32(JSON.stringify({ ...system, mesh: 0, pivot: null, trail: null, seedSalt: undefined }));
+			return this.#systems.push({ ...system, seedSalt }) - 1;
 		});
 	}
 

@@ -21,10 +21,10 @@ export const summary = 'build a viewer package for a scene, level or world recta
 
 /** command usage, available without opening the install */
 export const usage = `usage:
-  pack <scene> [-o <dir>] [--level <id>] [--bounds xmin,xmax,zmin,zmax] [--zstd-level n]
-       [--texture-zstd-level n] [--jobs n] [--cache <dir> | --no-cache] [--no-assets] [--json]
-  pack --existing [-o <outDir>] [--zstd-level n] [--texture-zstd-level n] [--jobs n]
-       [--cache <dir> | --no-cache] [--no-assets] [--json]
+  pack <scene> [-o <dir>] [--level <id>] [--bounds xmin,xmax,zmin,zmax] [--max-texture-size px]
+       [--zstd-level n] [--texture-zstd-level n] [--jobs n] [--cache <dir> | --no-cache] [--no-assets] [--json]
+  pack --existing [-o <outDir>] [--max-texture-size px] [--zstd-level n] [--texture-zstd-level n]
+       [--jobs n] [--cache <dir> | --no-cache] [--no-assets] [--json]
 
 writes the package for one streaming scene (e.g. map02), or with --existing repacks every package already
 under out/ (preserving each package's scene, --level and --bounds from its manifest) using one install
@@ -51,6 +51,7 @@ interface PackTarget {
 	outDir: string;
 	level: string | null;
 	bounds: Rect | null;
+	maxTextureSize?: number | null;
 }
 
 const discoverExistingPackages = async (outRoot: string): Promise<PackTarget[]> => {
@@ -73,6 +74,7 @@ const discoverExistingPackages = async (outRoot: string): Promise<PackTarget[]> 
 				outDir,
 				level: pkg.manifest.subset?.level ?? null,
 				bounds: pkg.manifest.subset?.bounds ?? null,
+				maxTextureSize: pkg.manifest.maxTextureSize ?? null,
 			});
 		} finally {
 			// oxlint-disable-next-line no-await-in-loop -- paired with open above
@@ -94,6 +96,7 @@ export const run = async (args: string[]): Promise<void> => {
 			existing: { type: 'boolean', default: false },
 			'zstd-level': { type: 'string', default: '19' },
 			'texture-zstd-level': { type: 'string', default: '9' },
+			'max-texture-size': { type: 'string' },
 			jobs: {
 				type: 'string',
 				default: String(Math.max(1, Math.min(MAX_DEFAULT_JOBS, availableParallelism() - 1))),
@@ -107,6 +110,13 @@ export const run = async (args: string[]): Promise<void> => {
 	const [scene] = positionals;
 	const zstdLevel = parseZstdLevel(values['zstd-level'], '--zstd-level');
 	const textureZstdLevel = parseZstdLevel(values['texture-zstd-level'], '--texture-zstd-level');
+	const maxTextureSize =
+		values['max-texture-size'] === undefined
+			? null
+			: parseInteger(values['max-texture-size'], '--max-texture-size');
+	if (maxTextureSize !== null && maxTextureSize < 1) {
+		throw new Error(`--max-texture-size must be at least 1, got ${values['max-texture-size']}`);
+	}
 	const jobs = parseInteger(values.jobs, '--jobs');
 	if (jobs < 1) {
 		throw new Error(`--jobs must be at least 1, got ${values.jobs}`);
@@ -161,6 +171,7 @@ export const run = async (args: string[]): Promise<void> => {
 				bounds: target.bounds,
 				zstdLevel,
 				textureZstdLevel,
+				maxTextureSize: maxTextureSize ?? target.maxTextureSize ?? null,
 				jobs,
 				cacheDir,
 				convertAssets: !values['no-assets'],

@@ -101,8 +101,9 @@ export class ParticleField {
 	 */
 	constructor(table: ParticlesTable, store: ParticleRowStore) {
 		this.#systems = table.systems;
-		this.#salts = table.systems.map((system) =>
-			hashText(JSON.stringify({ ...system, mesh: 0, pivot: null, trail: null })),
+		this.#salts = table.systems.map(
+			(system) =>
+				system.seedSalt ?? hashText(JSON.stringify({ ...system, mesh: 0, pivot: null, trail: null })),
 		);
 		this.#store = store;
 		this.#sentSystems = new Uint8Array(table.systems.length);
