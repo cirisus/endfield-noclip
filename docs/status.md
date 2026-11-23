@@ -337,8 +337,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     scenery unchecked); quality fields (`settingLodLevel`, `platformLayer`) ignored; missing band
     info treated as on (unchecked).
   - non-dynamic prefabs band all settings by camera (game's per-setting driver untraced); dynamic
-    structures follow LOD proxy without unload hysteresis, fall back to last band on gaps, and leave
-    unlisted saved-off roots off.
+    structures follow LOD proxy, fall back to last band on gaps, and leave unlisted saved-off roots
+    off.
 - **particles** ([game-data](game-data/particles.md#particle-systems),
   [viewer](viewer/particles.md#particles)):
   - **frozen mesh particles**: lose start colour, drift, and spin; take midpoint of random
@@ -393,8 +393,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **streaming layers** ([world](game-data/world.md#streaming-layers)): read but unapplied (`Tiny`/
   `Lighting` draw to `Default` radius; global HLOD-layer scenery draws at any distance).
 - **dynamic structures** ([load grids](game-data/world.md#dynamic-load-grids)): load around camera
-  (not player), without ~10 m unload hysteresis or per-row radius test. facilities and Dijiang cabin
-  scenes (no `fb_main` grid) draw within `detailDistance`.
+  (not player), without per-row radius test. facilities and Dijiang cabin scenes (no `fb_main` grid)
+  draw within `detailDistance`.
 - **straddling HLOD tiers** (e.g. `dung02_dg002` HLOD1): filed under one of the two straddled tiles
   ([tile tree](package-format.md#tile-tree)).
 - **billboards** ([assets](game-data/assets.md#billboards)): mesh renderers only (skinned meshes and

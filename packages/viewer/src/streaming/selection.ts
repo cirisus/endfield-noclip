@@ -116,11 +116,25 @@ export const hlodRing = (tier: number | null, detailDistance: number, leaf: bool
 };
 
 /**
- * a node refined last frame stays refined until the camera is this far past its ring, m: the game removes
- * cells only after the centre moved 20 m (`docs/game-data/world.md#streaming-layers`), and without it a
- * camera hovering at a ring swaps HLOD and detail, and refetches them, every frame
+ * a node refined or conditional tile shown last frame stays active until the camera is this far past its load
+ * radius, m: the game runs its static unload pass only after the streaming centre moved 20 m
+ * (`unloadDirtyDistance` in `docs/game-data/world.md#streaming-layers`), and without it a camera hovering at
+ * a ring swaps and refetches every frame
  */
 const UNREFINE_SLACK = 20;
+/**
+ * maximum per-side unload hysteresis of a dynamic `fb_main` reach rectangle, m: the game unloads a cell once
+ * the centre leaves a square of side `min(3 · cell + 20, 3.2 · cell)` around the cell centre, which is
+ * `min(10, 0.1 · cell)` m past each edge of its `3 · cell` load rectangle
+ * (`docs/game-data/world.md#dynamic-load-grids`)
+ */
+const REACH_UNLOAD_MARGIN = 10;
+
+/**
+ * @param span width or depth of a load reach rectangle, m
+ * @returns per-side unload hysteresis along that axis, m
+ */
+export const reachUnloadMargin = (span: number): number => Math.min(REACH_UNLOAD_MARGIN, span / 30);
 /** start morphing at this fraction of a level's range */
 const MORPH_START = 0.7;
 /** priority multiplier for content in the focused area */
@@ -153,6 +167,10 @@ export class Selector {
 	#frame = 0;
 	/** by node index: the last frame its instances refined */
 	#refinedFrame: Int32Array;
+	/** by node index: the last frame its conditional subtree was within the detail radius */
+	#conditionalFrame: Int32Array;
+	/** by `TileTree.reached` index: the last frame the camera was inside its reach */
+	#reachedFrame: Int32Array;
 	/** coarsest nodes that hold a terrain page, collected once from the tree */
 	readonly #terrainRoots: TileNode[] = [];
 
@@ -173,6 +191,8 @@ export class Selector {
 		this.#global = global;
 		this.#rootSize = rootSize;
 		this.#refinedFrame = new Int32Array(tree.nodes.length).fill(-2);
+		this.#conditionalFrame = new Int32Array(tree.nodes.length).fill(-2);
+		this.#reachedFrame = new Int32Array(tree.reached.length).fill(-2);
 		const collect = (node: TileNode): void => {
 			if (node.terrain !== null) {
 				this.#terrainRoots.push(node);
@@ -253,13 +273,15 @@ export class Selector {
 		this.selection.visited++;
 		const eye = view.camera.position;
 		const distance = Math.max(distanceToBox(node.bounds.min, node.bounds.max, eye), 1);
-		if (distance >= options.detailDistance) {
+		const slack = this.#conditionalFrame[node.index] === this.#frame - 1 ? UNREFINE_SLACK : 0;
+		if (distance >= options.detailDistance + slack) {
 			return;
 		}
 		const inView = this.#inView(node, view, distance);
 		if (inView === null) {
 			return;
 		}
+		this.#conditionalFrame[node.index] = this.#frame;
 		for (const ref of node.conditional) {
 			if (!this.#shows(ref)) {
 				continue;
@@ -295,9 +317,13 @@ export class Selector {
 		for (let i = 0; i < reached.length; i++) {
 			const entry = reached[i];
 			const r = entry.reach;
-			if (ex < r.minX || ex > r.maxX || ez < r.minZ || ez > r.maxZ) {
+			const shown = this.#reachedFrame[i] === this.#frame - 1;
+			const mx = shown ? reachUnloadMargin(r.maxX - r.minX) : 0;
+			const mz = shown ? reachUnloadMargin(r.maxZ - r.minZ) : 0;
+			if (ex < r.minX - mx || ex > r.maxX + mx || ez < r.minZ - mz || ez > r.maxZ + mz) {
 				continue;
 			}
+			this.#reachedFrame[i] = this.#frame;
 			const refs = entry.refs;
 			for (let j = 0; j < refs.length; j++) {
 				const { node, ref } = refs[j];

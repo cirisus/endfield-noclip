@@ -7,7 +7,7 @@ import { Camera } from '../scene/camera.ts';
 import type { TileNode, TileTree } from '../scene/tile-tree.ts';
 
 import type { ContentItem } from './content-item.ts';
-import { Selector, type SelectionOptions, hlodRing } from './selection.ts';
+import { Selector, type SelectionOptions, hlodRing, reachUnloadMargin } from './selection.ts';
 
 it('streams conditional scenery independently of coarse HLOD and never requests hidden variants', () => {
 	// groups: 0 with condition 0, 1 with condition 1, 2 with condition 2, 3 always loaded
@@ -271,7 +271,7 @@ it('keeps drawing the HLOD in place of a refinement still loading, then the refi
 it('streams what is near the camera first, then the focused cells, then the rest by screen error', () => {
 	// conditional tiles 200 m, 300 m and 600 m from the camera; the 300 m one is in the focused cell
 	const tile = (blob: number, minX: number, cellId: string | null): TileNode => ({
-		index: blob,
+		index: blob - 1,
 		level: 0,
 		x: 0,
 		z: 0,
@@ -337,4 +337,91 @@ it('refines each HLOD tier inside the next finer tier radius, and leaves without
 	assert.equal(hlodRing(1, 800, false), 800);
 	assert.equal(hlodRing(null, 256, true), 256);
 	assert.equal(hlodRing(null, 256, false), Infinity);
+});
+
+it('applies 20 m unload hysteresis to conditional tiles and dynamic-grid hysteresis to reached content', () => {
+	const leaf: TileNode = {
+		index: 0,
+		level: 0,
+		x: 0,
+		z: 0,
+		minX: 0,
+		minZ: 0,
+		size: 64,
+		bounds: { min: [0, 0, 0], max: [64, 64, 64] },
+		geometricError: 4,
+		quadrants: [null, null, null, null],
+		terrain: null,
+		surface: null,
+		terrainSplat: null,
+		detail: [],
+		hlod: [],
+		conditional: [
+			{ kind: ContentKind.Conditional, tier: 0, group: 0, blob: 1, first: 0, count: 1, reach: null },
+		],
+		cellId: null,
+	};
+	const reachedRef: ContentRef = {
+		kind: ContentKind.Conditional,
+		tier: 0,
+		group: 0,
+		blob: 2,
+		first: 0,
+		count: 1,
+		reach: 0,
+	};
+	const tree: TileTree = {
+		nodes: [leaf],
+		roots: [leaf],
+		byId: new Map(),
+		terrainLeafLevel: -1,
+		terrainRootLevel: Infinity,
+		// level-0 cell (32 m): 3 * 32 = 96 m wide, unload margin = min(10, 96 / 30) = 3.2 m
+		reached: [{ reach: { minX: 0, minZ: 0, maxX: 96, maxZ: 96 }, refs: [{ node: leaf, ref: reachedRef }] }],
+	};
+	const items = new Map([1, 2].map((blob) => [blob, { blob } as ContentItem]));
+	const selector = new Selector(
+		tree,
+		{
+			want: (blob) => items.get(blob) ?? null,
+			get: (blob) => items.get(blob),
+			markUsed: () => true,
+			isReady: () => true,
+		},
+		[],
+		64,
+	);
+	selector.setGroupsShown([true]);
+	const options: SelectionOptions = {
+		terrain: false,
+		terrainSurface: false,
+		terrainSplat: false,
+		instances: true,
+		detail: true,
+		global: true,
+		detailDistance: 160,
+		terrainPixels: 3,
+		hlodTiers: [true, true, true],
+	};
+	const blobsAt = (x: number, z: number): number[] => {
+		const camera = new Camera();
+		camera.position = [x, 32, z];
+		return selector
+			.run({ camera, planes: [], pixelFactor: 1000, casters: null }, options, null)
+			.instances.map(({ item }) => item.blob);
+	};
+
+	// conditional tile: loads inside 160 m, stays shown up to 180 m, drops past 180 m, doesn't reload at 170 m
+	assert.deepEqual(blobsAt(32, -150), [1]);
+	assert.deepEqual(blobsAt(32, -170), [1]);
+	assert.deepEqual(blobsAt(32, -185), []);
+	assert.deepEqual(blobsAt(32, -170), []);
+
+	// reached rect [0, 96] x [0, 96]: margin is 3.2 m per side (level-0 cell), capped at 10 m for larger cells
+	assert.equal(reachUnloadMargin(96), 3.2);
+	assert.equal(reachUnloadMargin(384), 10);
+	assert.deepEqual(blobsAt(50, 50), [1, 2]);
+	assert.deepEqual(blobsAt(98, 50), [1, 2]);
+	assert.deepEqual(blobsAt(100, 50), [1]);
+	assert.deepEqual(blobsAt(98, 50), [1]);
 });
