@@ -307,7 +307,8 @@ export const encodeFrame = (
 			encoder,
 			(pass) => pass.setBindGroup(0, lightShadowFrame.group, [lightShadowFrame.offset]),
 			(pass) =>
-				(settings.terrain ? systems.terrain.encodeShadow(pass, far) : 0) + meshes.encodeShadow(pass, far),
+				(settings.terrain ? systems.terrain.encodeLightShadow(pass, far) : 0) +
+				meshes.encodeLightShadow(pass, far),
 		);
 	}
 

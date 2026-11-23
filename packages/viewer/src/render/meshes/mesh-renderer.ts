@@ -261,11 +261,13 @@ export class MeshRenderer {
 		{
 			instances,
 			format,
+			shadow,
 			fog,
 			features,
 		}: {
 			instances: { readonly bindGroup: GPUBindGroup; readonly buffers: Omit<CullTargets, 'drawIds'> };
 			format: MainPassFormat;
+			shadow: { format: GPUTextureFormat; unclippedDepth: boolean };
 			fog: { uniforms: GPUBuffer; froxels: GPUTextureView; sampler: GPUSampler };
 			features: { indirectFirstInstance: boolean };
 		},
@@ -301,6 +303,7 @@ export class MeshRenderer {
 			layouts,
 			pipelines,
 			format,
+			shadow,
 		);
 		this.#describers = describers;
 		this.#materials = new MaterialBindings(device, materialLayout, effectLayout);
@@ -925,6 +928,17 @@ export class MeshRenderer {
 	 */
 	encodeShadow(pass: GPURenderPassEncoder, layer: number): number {
 		return this.#encode('shadow', pass, layer);
+	}
+
+	/**
+	 * draws this frame's meshes into a local-light shadow tile.
+	 *
+	 * @param pass a local-light shadow pass, with group 0 bound
+	 * @param layer the shadow layer whose casters are drawn (the far static layer)
+	 * @returns draw calls issued
+	 */
+	encodeLightShadow(pass: GPURenderPassEncoder, layer: number): number {
+		return this.#encode('lightShadow', pass, layer);
 	}
 
 	/** @returns the cache keys of a phase's pipeline variants, by {@link variantOf} */

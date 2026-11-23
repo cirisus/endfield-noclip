@@ -118,7 +118,7 @@ export class Renderer {
 			Math.ceil(FRAME_UNIFORM_BYTES / alignment) * alignment * (2 + SHADOW_LAYERS),
 			3,
 		);
-		this.shadows = new ShadowMap(device);
+		this.shadows = new ShadowMap(device, { depthClipControl: gfx.features.depthClipControl });
 		this.irradiance = new IrradianceVolume(device, this.pipelines);
 		this.lights = new LocalLights(device);
 		this.bindings = new FrameBindings(device, {
@@ -134,6 +134,7 @@ export class Renderer {
 		this.terrain = new TerrainRenderer(device, layouts, this.pipelines, format, {
 			capacity: TERRAIN_SLOTS,
 			bc: gfx.features.textureCompressionBc,
+			shadow: this.shadows,
 		});
 		this.instances = new InstanceRenderer(device, layouts, this.pipelines, format, INSTANCE_ROWS);
 		this.fog = new VolumetricFog(device, this.pipelines, layouts.frame);
@@ -142,6 +143,7 @@ export class Renderer {
 		this.meshes = new MeshRenderer(device, layouts, this.pipelines, {
 			instances: this.instances,
 			format,
+			shadow: this.shadows,
 			fog: this.post.fogInputs,
 			features: gfx.features,
 		});

@@ -56,7 +56,7 @@ export class FrameBindings {
 			.createTexture({
 				label: 'shadow placeholder',
 				size: [1, 1, 1],
-				format: SHADOW_FORMAT,
+				format: sources.shadows.format,
 				usage: GPUTextureUsage.TEXTURE_BINDING,
 			})
 			.createView({ dimension: '2d-array' });

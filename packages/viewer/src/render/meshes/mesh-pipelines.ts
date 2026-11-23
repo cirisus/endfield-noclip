@@ -14,7 +14,7 @@ import {
 } from '../frame/render-targets.ts';
 import { postCommonSource } from '../post/shader-source.ts';
 import normalMapWgsl from '../shaders/common/normal-map.wgsl?raw';
-import { SHADOW_DEPTH_STATE } from '../shadows/shadow-map.ts';
+import { SHADOW_DEPTH_STATE, shadowDepthState } from '../shadows/shadow-map.ts';
 import { fogSource } from '../sky/fog-source.ts';
 
 import { type DrawPhase, PHASES, type VertexStreams } from './draw-ranges.ts';
@@ -158,6 +158,7 @@ export const prepareMeshPipelines = (
 	layouts: BindLayouts,
 	pipelines: PipelineCache,
 	format: MainPassFormat,
+	shadow: { format: GPUTextureFormat; unclippedDepth: boolean },
 ): MeshPipelines => {
 	const describers = new Map<string, PhaseDescriber>();
 	/** registers a phase's descriptor and compiles its pipeline for every face culling and UV format */
@@ -179,11 +180,12 @@ export const prepareMeshPipelines = (
 	const describeMesh = (
 		phase: DrawPhase,
 		stages: Pick<GPURenderPipelineDescriptor, 'fragment' | 'depthStencil'>,
+		unclippedDepth = false,
 	): void => {
 		describe(phase, (cullMode, uvFormat) => ({
 			layout: meshPipelineLayout,
 			vertex: meshVertex(module, uvFormat, phase.streams),
-			primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
+			primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode, unclippedDepth },
 			...stages,
 		}));
 	};
@@ -220,8 +222,15 @@ export const prepareMeshPipelines = (
 		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 		depthStencil: depthTest,
 	});
-	describeMesh(PHASES.shadowOpaque, { depthStencil: SHADOW_DEPTH_STATE });
-	describeMesh(PHASES.shadowCutout, {
+	const sunShadowDepth = shadowDepthState(shadow.format);
+	describeMesh(PHASES.shadowOpaque, { depthStencil: sunShadowDepth }, shadow.unclippedDepth);
+	describeMesh(
+		PHASES.shadowCutout,
+		{ fragment: { module, entryPoint: 'fs_cutout_depth', targets: [] }, depthStencil: sunShadowDepth },
+		shadow.unclippedDepth,
+	);
+	describeMesh(PHASES.lightShadowOpaque, { depthStencil: SHADOW_DEPTH_STATE });
+	describeMesh(PHASES.lightShadowCutout, {
 		fragment: { module, entryPoint: 'fs_cutout_depth', targets: [] },
 		depthStencil: SHADOW_DEPTH_STATE,
 	});

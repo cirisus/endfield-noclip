@@ -132,10 +132,31 @@ export const PHASES = {
 		streams: 'position',
 	},
 	shadowCutout: { key: 'mesh/shadow/cutout', range: 'cutout', textured: true, shadow: true, streams: 'uv' },
+	lightShadowOpaqueLit: {
+		key: 'mesh/light-shadow/opaque',
+		range: 'opaqueLit',
+		textured: false,
+		shadow: true,
+		streams: 'position',
+	},
+	lightShadowOpaque: {
+		key: 'mesh/light-shadow/opaque',
+		range: 'opaque',
+		textured: false,
+		shadow: true,
+		streams: 'position',
+	},
+	lightShadowCutout: {
+		key: 'mesh/light-shadow/cutout',
+		range: 'cutout',
+		textured: true,
+		shadow: true,
+		streams: 'uv',
+	},
 } as const satisfies Record<string, DrawPhase>;
 
 /** the passes that draw meshes */
-export type MeshPass = SurfacePass | EffectPass | 'shadow';
+export type MeshPass = SurfacePass | EffectPass | 'shadow' | 'lightShadow';
 
 /** passes over the main pass's targets */
 export type SurfacePass = 'prepass' | 'main';
@@ -174,6 +195,7 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// of the scene, then those it tests behind it, then those it doesn't test
 	waterFoam: [PHASES.waterFoam, PHASES.waterFoamBehind, PHASES.waterFoamThrough],
 	shadow: [PHASES.shadowOpaqueLit, PHASES.shadowOpaque, PHASES.shadowCutout],
+	lightShadow: [PHASES.lightShadowOpaqueLit, PHASES.lightShadowOpaque, PHASES.lightShadowCutout],
 };
 
 /**

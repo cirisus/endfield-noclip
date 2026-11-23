@@ -6,7 +6,15 @@ import type { CasterVolume } from '../../streaming/selection.ts';
 
 /** shadow map edge, texels */
 const SHADOW_SIZE = 2048;
+/** depth format of the local-light shadow atlas (and of the sun shadow map without `depth-clip-control`) */
 export const SHADOW_FORMAT: GPUTextureFormat = 'depth32float';
+/**
+ * 16-bit depth format used by the sun shadow map when `depth-clip-control` clamps far casters to the near
+ * plane
+ */
+const SUN_SHADOW_FORMAT_16: GPUTextureFormat = 'depth16unorm';
+/** extra depth margin towards the sun when `unclippedDepth` clamps casters past the near plane, m */
+const CLAMPED_CASTER_MARGIN = 64;
 /** depth layers: the sharp cascades, then the far layer */
 export const SHADOW_LAYERS = 4;
 /**
@@ -63,13 +71,17 @@ export const offscreenCasters = (
 	lights,
 });
 
-/** depth state of the shadow pass's pipelines: standard depth, casters biased along their slope against acne */
-export const SHADOW_DEPTH_STATE: GPUDepthStencilState = {
-	format: SHADOW_FORMAT,
+/** depth state of a shadow pass's pipelines: standard depth, casters biased along their slope against acne */
+export const shadowDepthState = (format: GPUTextureFormat): GPUDepthStencilState => ({
+	format,
 	depthWriteEnabled: true,
 	depthCompare: 'less',
+	depthBias: format === 'depth16unorm' ? 1 : 0,
 	depthBiasSlopeScale: 1.5,
-};
+});
+
+/** depth state of the local-light shadow pass's pipelines */
+export const SHADOW_DEPTH_STATE: GPUDepthStencilState = shadowDepthState(SHADOW_FORMAT);
 
 /** one layer's matrices (column-major) and bounds */
 interface ShadowLayer {
@@ -100,6 +112,9 @@ export interface ShadowLayerVolumes {
 
 /** owns the shadow map and fits its layers */
 export class ShadowMap {
+	readonly format: GPUTextureFormat;
+	/** whether shadow pipelines clamp depth past the near plane (`depth-clip-control`) */
+	readonly unclippedDepth: boolean;
 	readonly texture: GPUTexture;
 	/** sampled view of all layers */
 	readonly view: GPUTextureView;
@@ -129,12 +144,17 @@ export class ShadowMap {
 		return PENUMBRA_SPLITS.map((split) => (2 * softness) / split);
 	}
 
-	/** @param device the device */
-	constructor(device: GPUDevice) {
+	/**
+	 * @param device the device
+	 * @param options `depthClipControl` enables 16-bit depth with near-plane clamping
+	 */
+	constructor(device: GPUDevice, { depthClipControl = false }: { depthClipControl?: boolean } = {}) {
+		this.unclippedDepth = depthClipControl;
+		this.format = depthClipControl ? SUN_SHADOW_FORMAT_16 : SHADOW_FORMAT;
 		this.texture = device.createTexture({
 			label: 'shadow map',
 			size: [SHADOW_SIZE, SHADOW_SIZE, SHADOW_LAYERS],
-			format: SHADOW_FORMAT,
+			format: this.format,
 			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 		});
 		this.view = this.texture.createView({ dimension: '2d-array' });
@@ -164,7 +184,7 @@ export class ShadowMap {
 
 	/** @returns bytes of the shadow map */
 	get bytes(): number {
-		return SHADOW_SIZE * SHADOW_SIZE * 4 * SHADOW_LAYERS;
+		return SHADOW_SIZE * SHADOW_SIZE * (this.format === 'depth16unorm' ? 2 : 4) * SHADOW_LAYERS;
 	}
 
 	/**
@@ -216,7 +236,7 @@ export class ShadowMap {
 				x[1] * sx + y[1] * sy + z[1] * sz - eye[1],
 				x[2] * sx + y[2] * sy + z[2] * sz - eye[2],
 			];
-			const back = radius + CASTER_REACH;
+			const back = radius + (this.unclippedDepth ? CLAMPED_CASTER_MARGIN : CASTER_REACH);
 			const depthRange = back + radius;
 			const layer = this.layers[i];
 			layer.sphere = [c[0], c[1], c[2], radius * radius];

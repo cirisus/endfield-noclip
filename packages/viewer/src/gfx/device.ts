@@ -12,6 +12,8 @@ export interface GfxFeatures {
 	timestampQuery: boolean;
 	/** the `depth32float-stencil8` format, which gives the main pass a stencil buffer */
 	depth32floatStencil8: boolean;
+	/** clamping depth past the near plane instead of clipping, which lets sun shadows use 16-bit depth */
+	depthClipControl: boolean;
 	/**
 	 * a render pass's colour targets may take {@link MIP_FEEDBACK_TARGET_BYTES} a sample, over WebGPU's default
 	 * of 32, which gives the main pass its mip feedback target
@@ -58,6 +60,7 @@ export const createGfxDevice = async (onLost: (reason: string) => void): Promise
 		indirectFirstInstance: has('indirect-first-instance'),
 		timestampQuery: has('timestamp-query'),
 		depth32floatStencil8: has('depth32float-stencil8'),
+		depthClipControl: has('depth-clip-control'),
 		mipFeedbackTarget: adapter.limits.maxColorAttachmentBytesPerSample >= MIP_FEEDBACK_TARGET_BYTES,
 	};
 	const requiredFeatures: GPUFeatureName[] = [];
@@ -75,6 +78,9 @@ export const createGfxDevice = async (onLost: (reason: string) => void): Promise
 	}
 	if (features.depth32floatStencil8) {
 		requiredFeatures.push('depth32float-stencil8');
+	}
+	if (features.depthClipControl) {
+		requiredFeatures.push('depth-clip-control');
 	}
 
 	const limits = adapter.limits;

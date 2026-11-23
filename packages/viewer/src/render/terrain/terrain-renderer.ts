@@ -34,7 +34,12 @@ import { describeFill, describeWire } from '../frame/fill-and-wire.ts';
 import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
 import type { MainPassFormat } from '../frame/render-targets.ts';
 import { wgslConst } from '../shaders/wgsl-const.ts';
-import { SHADOW_DEPTH_STATE, SHADOW_LAYERS, type ShadowLayerVolumes } from '../shadows/shadow-map.ts';
+import {
+	SHADOW_DEPTH_STATE,
+	SHADOW_LAYERS,
+	type ShadowLayerVolumes,
+	shadowDepthState,
+} from '../shadows/shadow-map.ts';
 
 import terrainWgsl from './terrain.wgsl?raw';
 
@@ -50,6 +55,7 @@ const PATCH_FLOATS = 20;
 const FILL_KEY = 'terrain/fill';
 const WIRE_KEY = 'terrain/wire';
 const SHADOW_KEY = 'terrain/shadow';
+const LIGHT_SHADOW_KEY = 'terrain/light-shadow';
 
 /** splat page slots; leaves within `DETAIL_DISTANCE` need a few dozen */
 const DETAIL_SLOTS = 256;
@@ -181,7 +187,7 @@ export class TerrainRenderer {
 		layouts: BindLayouts,
 		pipelines: PipelineCache,
 		format: MainPassFormat,
-		options: { capacity: number; bc: boolean },
+		options: { capacity: number; bc: boolean; shadow: { format: GPUTextureFormat; unclippedDepth: boolean } },
 	) {
 		this.#device = device;
 		this.#pipelines = pipelines;
@@ -263,6 +269,13 @@ export class TerrainRenderer {
 			describeWire(format, { layout, vertex, fragment: { module, entryPoint: 'fs_wire', targets } }),
 		);
 		void pipelines.prepare(SHADOW_KEY, () => ({
+			layout,
+			vertex,
+			fragment: { module, entryPoint: 'fs_shadow', targets: [] },
+			primitive: { topology: 'triangle-list', unclippedDepth: options.shadow.unclippedDepth },
+			depthStencil: shadowDepthState(options.shadow.format),
+		}));
+		void pipelines.prepare(LIGHT_SHADOW_KEY, () => ({
 			layout,
 			vertex,
 			fragment: { module, entryPoint: 'fs_shadow', targets: [] },
@@ -683,6 +696,17 @@ export class TerrainRenderer {
 	 */
 	encodeShadow(pass: GPURenderPassEncoder, layer: number): number {
 		return this.#encode(pass, SHADOW_KEY, this.#fillIndices, this.#fillCount, this.#layerEnds[layer]);
+	}
+
+	/**
+	 * draws the terrain into a local-light shadow tile.
+	 *
+	 * @param pass a local-light shadow pass, with group 0 bound
+	 * @param layer the shadow layer whose patches are drawn
+	 * @returns draw calls issued
+	 */
+	encodeLightShadow(pass: GPURenderPassEncoder, layer: number): number {
+		return this.#encode(pass, LIGHT_SHADOW_KEY, this.#fillIndices, this.#fillCount, this.#layerEnds[layer]);
 	}
 
 	/**
