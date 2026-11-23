@@ -42,8 +42,12 @@ water G-buffer + fullscreen light pass):
   water, matching the game's camera depth ([WaterDecal](../game-data/water.md#waterdecal); unchecked
   against an in-game shot).
 - **lighting and reflections**: binds the main pass's frame group (sun shadows, irradiance volume,
-  sky reflection). because water draws after composite, it marches SSR separately using the same
-  march ([`ssr-trace.wgsl`](../../packages/viewer/src/render/water/ssr-trace.wgsl)).
+  sky reflection scaled by `envLightSpecularIntensity` alone, matching the game). because water
+  draws after composite, it marches SSR separately using the same march
+  ([`ssr-trace.wgsl`](../../packages/viewer/src/render/water/ssr-trace.wgsl)) and samples last
+  frame's resolved HDR scene (reprojected through the previous camera, falling back to the opaque
+  copy on the first frame or off-screen hits) so reflections include transparent effects and
+  particles such as waterfall mist and sheets.
 
 divergences from the game:
 

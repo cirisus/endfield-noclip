@@ -163,6 +163,23 @@ export class TemporalAA {
 	}
 
 	/**
+	 * reads last frame's resolved history and its reprojection uniforms, before {@link encode} overwrites the
+	 * other buffer.
+	 *
+	 * @param out target array for {@link CAMERA_HISTORY_FLOATS} reprojection floats
+	 * @param eye this frame's camera position
+	 * @returns the previous history view, or `null` when no valid history exists yet
+	 */
+	previous(out: Float32Array, eye: readonly [number, number, number]): GPUTextureView | null {
+		const sized = this.#sized;
+		this.#camera.readPrevious(out, [eye[0], eye[1], eye[2]]);
+		if (sized === null || !this.#camera.valid) {
+			return null;
+		}
+		return sized.views[1 - this.#camera.index];
+	}
+
+	/**
 	 * resolves this frame into one of the {@link histories}, which the next frame then reads.
 	 *
 	 * @param encoder this frame's encoder, after the scene is composited

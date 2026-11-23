@@ -17,6 +17,7 @@ import type { WaterContext, WaterRenderer } from '../water/water-renderer.ts';
 import { AmbientOcclusion } from './ambient-occlusion.ts';
 import { AutoExposure } from './auto-exposure.ts';
 import { Bloom } from './bloom.ts';
+import { CAMERA_HISTORY_FLOATS } from './camera-history.ts';
 import { Composite } from './composite.ts';
 import { LensFlares } from './lens-flare.ts';
 import { LightShafts } from './light-shafts.ts';
@@ -73,6 +74,7 @@ export class PostProcess {
 	#lightShafts: LightShafts;
 	#lensFlares: LensFlares;
 	#taa: TemporalAA;
+	#waterReprojection = new Float32Array(CAMERA_HISTORY_FLOATS);
 	#autoExposure: AutoExposure;
 	#bloom: Bloom;
 	#tonemap: Tonemap;
@@ -409,9 +411,12 @@ export class PostProcess {
 		const water = input.water;
 		let waterContext: WaterContext | null = null;
 		if (settings.debugView === 'lit' && water.active) {
+			const reflectionScene = this.#taa.previous(this.#waterReprojection, camera.position);
 			waterContext = {
 				scene,
 				background: scene.radiance,
+				reflectionScene,
+				reprojection: this.#waterReprojection,
 				frame: input.frameGroup,
 				postUniforms: this.#skyLayoutGroups.uniforms,
 				sky: this.#skyLayoutGroups.sky,

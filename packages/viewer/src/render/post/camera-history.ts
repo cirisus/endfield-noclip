@@ -24,6 +24,26 @@ export class CameraHistory {
 		return this.#index;
 	}
 
+	/** @returns whether the history holds a frame of the current view and targets */
+	get valid(): boolean {
+		return this.#valid;
+	}
+
+	/**
+	 * writes last frame's reprojection uniforms without advancing or recording the current frame:
+	 * `previousViewProj` (16 floats), then `eye - previousEye` and 0 when valid (else 1).
+	 *
+	 * @param out target array, written from index 0 for {@link CAMERA_HISTORY_FLOATS} floats
+	 * @param eye this frame's camera position
+	 */
+	readPrevious(out: Float32Array, eye: Vec3): void {
+		out.set(this.#previousViewProj, 0);
+		out[16] = eye[0] - this.#previousEye[0];
+		out[17] = eye[1] - this.#previousEye[1];
+		out[18] = eye[2] - this.#previousEye[2];
+		out[19] = this.#valid ? 0 : 1;
+	}
+
 	/** drops the history, so the next frame doesn't read it (a cut, a resize) */
 	reset(): void {
 		this.#valid = false;

@@ -6,7 +6,7 @@ import { BindGroupCache } from '../../gfx/bind-group-cache.ts';
 import { createBufferWithData, createUniformBuffer } from '../../gfx/buffers.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { placeholder } from '../../gfx/placeholders.ts';
-import { LINEAR_REPEAT_MIPMAPPED, sampler } from '../../gfx/samplers.ts';
+import { LINEAR_CLAMP, LINEAR_REPEAT_MIPMAPPED, sampler } from '../../gfx/samplers.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
 import { GeometryFlags } from '../../looks/look.ts';
 import { type Plane, boxInFrustum } from '../../scene/camera.ts';
@@ -38,8 +38,8 @@ import waterWgsl from './water.wgsl?raw';
 const SURFACE_FLOATS = 20;
 /** floats of `Config` in water.wgsl */
 const CONFIG_FLOATS = 56;
-/** floats of the `water` uniform in water.wgsl */
-const PARAM_FLOATS = 12;
+/** floats of the `water` uniform in water.wgsl (3 base vec4s + 5 reprojection vec4s) */
+const PARAM_FLOATS = 32;
 const MAX_SURFACES = 4096;
 /** priority of the surfaces' geometry at 1 m, and of their textures */
 const PRIORITY = 1e5;
@@ -61,8 +61,15 @@ interface WaterLayouts {
 /** what the water pass reads from the main pass and the post chain */
 export interface WaterContext {
 	scene: SceneTextures;
-	/** a copy of the composited scene, which the pass refracts and reflects */
+	/** a copy of the composited scene, which the pass refracts (and reflects when no previous frame exists) */
 	background: GPUTextureView;
+	/**
+	 * last frame's resolved HDR scene (including transparents and particles), which water SSR reflects, or
+	 * `null`
+	 */
+	reflectionScene: GPUTextureView | null;
+	/** last frame's camera reprojection (16 floats view-proj + 3 eye delta + 1 invalid flag) */
+	reprojection: Float32Array;
 	/** the main pass's frame group and its uniforms' dynamic offset */
 	frame: { group: GPUBindGroup; offset: number };
 	/** groups of {@link WaterLayouts.uniforms} and {@link WaterLayouts.sky} */
@@ -148,6 +155,7 @@ export class WaterRenderer {
 	#params: GPUBuffer;
 	#paramData = new Float32Array(PARAM_FLOATS);
 	#repeat: GPUSampler;
+	#clamp: GPUSampler;
 	#noNormals: GPUTextureView;
 	#noFlow: GPUTextureView;
 	#table: WaterTable | null = null;
@@ -187,6 +195,8 @@ export class WaterRenderer {
 				{ binding: 7, visibility: fragment, buffer: { type: 'uniform' } },
 				texture(8, 'float'),
 				texture(10, 'float'),
+				texture(11, 'float'),
+				{ binding: 12, visibility: fragment, sampler: { type: 'filtering' } },
 				texture(14, 'depth'),
 			],
 		});
@@ -226,6 +236,7 @@ export class WaterRenderer {
 		});
 		this.#params = createUniformBuffer(device, 'water params', this.#paramData.byteLength);
 		this.#repeat = sampler(device, { ...LINEAR_REPEAT_MIPMAPPED, maxAnisotropy: 4 });
+		this.#clamp = sampler(device, LINEAR_CLAMP);
 		this.#noFlow = placeholder(device, 'black', '2d');
 		this.#noNormals = placeholder(device, 'black', '2d-array');
 		this.#noFoam = placeholder(device, 'black', '2d');
@@ -363,8 +374,19 @@ export class WaterRenderer {
 			return null;
 		}
 		const foam = this.#foamTargets?.foamView ?? this.#noFoam;
-		const parts = [context.version, context.background, this.#normals, this.#flow, this.#caustics, foam];
-		return this.#groups.get(waterDepth, parts, () => this.#createGroup(context, waterDepth, configs, foam));
+		const reflectionScene = context.reflectionScene ?? context.background;
+		const parts = [
+			context.version,
+			context.background,
+			reflectionScene,
+			this.#normals,
+			this.#flow,
+			this.#caustics,
+			foam,
+		];
+		return this.#groups.get(waterDepth, parts, () =>
+			this.#createGroup(context, waterDepth, configs, foam, reflectionScene),
+		);
 	}
 
 	/** @returns group 2 over the current textures */
@@ -373,6 +395,7 @@ export class WaterRenderer {
 		waterDepth: GPUTextureView,
 		configs: GPUBuffer,
 		foam: GPUTextureView,
+		reflectionScene: GPUTextureView,
 	): GPUBindGroup {
 		return this.#device.createBindGroup({
 			label: 'water',
@@ -389,6 +412,8 @@ export class WaterRenderer {
 				// the flow map's placeholder stands in; the shader skips caustics without the map
 				{ binding: 8, resource: this.#caustics?.view ?? this.#noFlow },
 				{ binding: 10, resource: foam },
+				{ binding: 11, resource: reflectionScene },
+				{ binding: 12, resource: this.#clamp },
 				{ binding: 14, resource: waterDepth },
 			],
 		});
@@ -470,11 +495,9 @@ export class WaterRenderer {
 		if (pipeline === undefined || !this.active) {
 			return;
 		}
-		const foamed = context.foam;
-		if (this.#paramData[6] !== (foamed ? 1 : 0)) {
-			this.#paramData[6] = foamed ? 1 : 0;
-			this.#device.queue.writeBuffer(this.#params, 0, this.#paramData);
-		}
+		this.#paramData[6] = context.foam ? 1 : 0;
+		this.#paramData.set(context.reprojection, 12);
+		this.#device.queue.writeBuffer(this.#params, 0, this.#paramData);
 		const group = this.#bindGroup(context, context.scene.waterDepth);
 		if (group === null) {
 			return;

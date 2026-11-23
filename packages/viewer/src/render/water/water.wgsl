@@ -58,12 +58,17 @@ struct Config {
 @group(2) @binding(6) var repeat_sampler: sampler;
 // [0]: x = 1 with wave normals, y = 1 with a flow map, z = flow map size (m), w = 1 with a caustic map;
 // [1]: the flow map's centre (world xz), z = 1 with foam boxes drawn into `foam_texture`, w unused;
-// [2]: the sun as the atmosphere fog takes it (raw colour, pre-exposed), w unused
-@group(2) @binding(7) var<uniform> water: array<vec4f, 3>;
+// [2]: the sun as the atmosphere fog takes it (raw colour, pre-exposed), w unused;
+// [3..6]: last frame's camera-relative view-projection (columns 0..3);
+// [7]: this frame's eye minus last frame's (m), w = 1 when `reflection_scene` has no valid previous frame
+@group(2) @binding(7) var<uniform> water: array<vec4f, 8>;
 @group(2) @binding(8) var caustic_map: texture_2d<f32>;
 // the foam the WaterDecal boxes leave on the surface (`fs_water_foam` in effect.wgsl): rgb to add, alpha what's
 // left of the water's own foam
 @group(2) @binding(10) var foam_texture: texture_2d<f32>;
+// last frame's resolved HDR scene (including transparents and particles), which water SSR reflects
+@group(2) @binding(11) var reflection_scene: texture_2d<f32>;
+@group(2) @binding(12) var clamp_sampler: sampler;
 // the nearest water surface's depth, which only that surface shades
 @group(2) @binding(14) var water_depth_texture: texture_depth_2d;
 
@@ -342,13 +347,31 @@ fn fs_water(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) v
 	if (frame.ambient.z > 0.5) {
 		sky = textureSampleLevel(reflection_map, reflection_sampler, r, roughness * frame.ambient.w).rgb;
 	}
-	sky *= reflection_normalisation(irradiance, n) * frame.ambient.x * c.surface.w;
+	// HGRP/WaterRendering scales sky reflections by `_GraphicsFeaturesGlobalParam0.z` (= 1) × `envLightSpecularIntensity`
+	sky *= reflection_normalisation(irradiance, n) * c.surface.w;
 	var reflection = sky;
 	var found = 0.0;
 	if (post.reflections.x > 0.5) {
 		let hit = ssr_trace(in.rel, r, n, in.position.xy);
 		if (hit.confidence > 0.0) {
-			reflection = mix(sky, textureLoad(background, vec2i(hit.uv * size), 0).rgb, hit.confidence);
+			var reflected = textureLoad(background, vec2i(hit.uv * size), 0).rgb;
+			if (water[7].w < 0.5) {
+				let hit_depth = ssr_device_depth(hit.uv);
+				var prev_uv = hit.uv;
+				if (hit_depth > 0.0) {
+					let hit_rel = view_ray(hit.uv) * view_depth(hit_depth);
+					let prev_vp = mat4x4f(water[3], water[4], water[5], water[6]);
+					let clip = prev_vp * vec4f(hit_rel + water[7].xyz, 1.0);
+					if (clip.w > 0.0) {
+						let ndc = clip.xy / clip.w;
+						prev_uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+					}
+				}
+				if (all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0))) {
+					reflected = textureSampleLevel(reflection_scene, clamp_sampler, prev_uv, 0.0).rgb;
+				}
+			}
+			reflection = mix(sky, reflected, hit.confidence);
 			found = hit.confidence;
 		}
 	}
