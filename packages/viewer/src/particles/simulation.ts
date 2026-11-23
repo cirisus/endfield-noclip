@@ -1705,7 +1705,9 @@ export class ParticleSimulation {
 			path.age = moved;
 			path.life = life;
 			path.growth = birth.growth;
-			if (clamp?.kind === 'limit' || motion.forces !== null) {
+			const dragWithVelocity =
+				clamp?.kind === 'drag' && (this.#hasLinear || this.#hasRadial || this.#hasOrbital);
+			if (clamp?.kind === 'limit' || motion.forces !== null || dragWithVelocity) {
 				this.#steppedPath(clamp, velocity, path, position, moving);
 			} else {
 				this.#freePath(clamp, velocity, path, birth, position, moving);

@@ -979,7 +979,13 @@ export const readParticleSystem = (
 		}
 	}
 
-	const trail = readTrail(system, forces !== null || clamp?.kind === 'limit', ringBuffer);
+	const hasVelocityTerms =
+		velocity !== null &&
+		(velocity.linear.some((c) => curveReach(c) > 0) ||
+			velocity.orbital.some((c) => curveReach(c) > 0) ||
+			curveReach(velocity.radial) > 0);
+	const stepped = forces !== null || clamp?.kind === 'limit' || (clamp?.kind === 'drag' && hasVelocityTerms);
+	const trail = readTrail(system, stepped, ringBuffer);
 	if (renderMode === ParticleRenderMode.None && typeof trail === 'string') {
 		return { reason: trail };
 	}

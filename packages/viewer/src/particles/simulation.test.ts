@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
 	type MinMaxCurveInfo,
+	type ParticleClampInfo,
 	ParticleMeshPlacement,
 	ParticleMeshSpawn,
 	ParticleShapeKind,
@@ -399,6 +400,53 @@ describe('ParticleSimulation', () => {
 		assert.ok(Math.abs(ramped.position[2] + 9.81 / 12) < 1e-6, `${ramped.position[2]}`);
 		const [steady] = falling(constant(2));
 		assert.ok(Math.abs(steady.position[2] + 9.81 / 4) < 1e-6, `${steady.position[2]}`);
+	});
+
+	it('steps drag against velocity-module orbital motion instead of spinning undragged', () => {
+		// Jingyu waterfall splashes (`shuihua`): strong orbitalX + drag with dampen=0; Unity applies drag to the
+		// combined velocity (own + orbital) and subtracts it from own velocity
+		const orbital = (clamp: ParticleClampInfo | null) =>
+			system({
+				looping: false,
+				startLifetime: constant(2),
+				rate: constant(0),
+				bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+				startSpeed: constant(0),
+				gravityModifier: constant(0),
+				startSize: [constant(2), constant(2), constant(2)],
+				shape: {
+					kind: ParticleShapeKind.Box,
+					position: [0, 5, 0],
+					rotation: [0, 0, 0],
+					scale: [0, 0, 0],
+					randomDirection: 0,
+					sphericalDirection: 0,
+					randomPosition: 0,
+				},
+				velocity: {
+					linear: [constant(0), constant(0), constant(0)],
+					linearInWorld: false,
+					orbital: [constant(10), constant(0), constant(0)],
+					orbitalOffset: [0, 0, 0],
+					radial: constant(0),
+					speedModifier: constant(1),
+				},
+				clamp,
+			});
+		const [undragged] = run(orbital(null), 1);
+		const [dragged] = run(
+			orbital({ kind: 'drag', amount: constant(0.1), bySize: true, byVelocity: true }),
+			1,
+		);
+		// undragged orbits at r = 5 m around x (10 rad ≈ 1.6 turns, landing at y = 5·cos(10) ≈ -4.2); with s²
+		// drag on combined speed, drag brakes the orbital motion so the particle spirals inward and stays on +y
+		assert.ok(Math.abs(Math.hypot(undragged.position[1], undragged.position[2]) - 5) < 1e-3);
+		assert.ok(undragged.position[1] < 0, `expected undragged y < 0, got ${undragged.position[1]}`);
+		assert.ok(dragged.position[1] > 0, `expected dragged y > 0, got ${dragged.position[1]}`);
+		assert.ok(
+			Math.hypot(dragged.position[1], dragged.position[2]) < 4,
+			`expected dragged radius < 4, got ${Math.hypot(dragged.position[1], dragged.position[2])}`,
+		);
 	});
 });
 

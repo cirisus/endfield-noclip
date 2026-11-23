@@ -70,16 +70,16 @@ system, index):
 - **speed modifier curve (`modifierAt`)**: replaces `m · a` with `∫ m dτ`, integrates velocity
   curves times `m(τ)`, and integrates fall as `∫ g τ m(τ) dτ`. systems combining a speed-modifier
   curve with drag and no speed limit become stand-ins.
-- **drag (`dragged`, `draggedFall` in `motion.ts`)**: without speed limit or force fields, slows
-  start velocity by `k` or `k v²` per second (`k` scaled by `π (startSize / 2)²` if size-scaled);
-  fall accelerates at `max(0, g − k)` or approaches terminal speed `√(g / k)`. velocity-module terms
-  and orbits are undragged; speed modifier scales the result.
-- **stepped path (`steppedPath`)**: used when a speed limit or force fields are active. steps at 30
-  Hz (max 600 steps, coarser beyond) from birth on first draw or rewind, otherwise from last frame.
-  each step: add gravity → `applyForces` (sphere fields term-by-term with viewer randoms) → clamp
-  total speed (including velocity-module linear, `ω × r` orbit, and radial terms; viewer random
-  limit) → apply drag (using current X size on own velocity) → advance by
-  `totalVel * modifier(age)`.
+- **drag (`dragged`, `draggedFall` in `motion.ts`)**: without speed limit, force fields, or
+  velocity-module linear/orbital/radial terms, slows start velocity by `k` or `k v²` per second (`k`
+  scaled by `π (startSize / 2)²` if size-scaled); fall accelerates at `max(0, g − k)` or approaches
+  terminal speed `√(g / k)`. speed modifier scales the result.
+- **stepped path (`steppedPath`)**: used when a speed limit, force fields, or drag alongside
+  velocity-module terms are active. steps at 30 Hz (max 600 steps, coarser beyond) from birth on
+  first draw or rewind, otherwise from last frame. each step: add gravity → `applyForces` (sphere
+  fields term-by-term with viewer randoms) → clamp total speed (including velocity-module linear,
+  `ω × r` orbit, and radial terms; viewer random limit) → apply drag (using current X size on
+  combined speed, subtracted from own velocity) → advance by `totalVel * modifier(age)`.
 - **splines**: [spline movers](../game-data/particles.md#spline-movers) ignore the above, placing
   particles at `splinePoint(∫ speed dτ) + shapeStart` until past the end. spin uses rotation over
   lifetime with independent per-axis randoms (game shares one).
