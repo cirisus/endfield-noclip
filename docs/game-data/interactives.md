@@ -238,14 +238,17 @@ applying it replaces the component's saved fields ([emission](materials.md#emiss
 
 - `emissiveColor` ← `colorConfig` (required)
 - `emissiveAlbedoColor` ← `baseColorConfig` with its alpha, or white at alpha 0 if absent (no tint)
-- breathes once per `cycleDuration` seconds unless `cycleConfig` is constant
+- `breathFrequency` ← `1 / cycleDuration` and `breathIntensity` ← `clamp(cycleIntensity, 0, 1)` when
+  `cycleConfig` has `!isConst`, `cycleDuration > 0`, and `cycleIntensity > 0` (else `0, 0`;
+  `cycleCurve` is unused, and breathing only takes effect on `_EMISSIVE_ANIM_SWEEP` materials)
 
-Wuling interactives share two constant-cycle configs:
+Wuling interactives share three configs:
 
-| config                              | `emissiveColor`    | `emissiveAlbedoColor`     |
-| ----------------------------------- | ------------------ | ------------------------- |
-| `IntEmissiveConfig_Disabled_Wuling` | (1.11, 1.84, 1.59) | (0.15, 0.25, 0.27, a = 1) |
-| `IntEmissiveConfig_On_Wuling`       | (0, 7.34, 2.70)    | (0, 0.55, 0.24)           |
+| config                               | `emissiveColor`     | `emissiveAlbedoColor`     | breathing        |
+| ------------------------------------ | ------------------- | ------------------------- | ---------------- |
+| `IntEmissiveConfig_Available_Wuling` | (16.86, 2.22, 2.66) | (0.47, 0.16, 0.16, a = 1) | 3 s, intensity 1 |
+| `IntEmissiveConfig_Disabled_Wuling`  | (1.11, 1.84, 1.59)  | (0.15, 0.25, 0.27, a = 1) | constant         |
+| `IntEmissiveConfig_On_Wuling`        | (0, 7.34, 2.70)     | (0, 0.55, 0.24)           | constant         |
 
 - water hydrants (`int_water_hydrant_postmodel`) apply the disabled config to their root in `off`
   and the on config while working.

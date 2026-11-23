@@ -4,7 +4,11 @@ import type { ClipMaterialValue } from '@endfield-noclip/formats/unity/animation
 import { parseMaterial } from '@endfield-noclip/formats/unity/material';
 
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
-import { PER_DRAW_EMISSIVE_ALBEDO, PER_DRAW_EMISSIVE_COLOR } from '../materials/material-values.ts';
+import {
+	PER_DRAW_EMISSIVE_ALBEDO,
+	PER_DRAW_EMISSIVE_BREATH,
+	PER_DRAW_EMISSIVE_COLOR,
+} from '../materials/material-values.ts';
 
 import { lengthTextureTransform, type LengthTiling } from './adjust-length.ts';
 import type { EmissiveColors } from './emissive-override.ts';
@@ -131,6 +135,9 @@ export const posedMaterialValues = async (
 		}
 		if (emissive.albedo[3] !== 0) {
 			colors[PER_DRAW_EMISSIVE_ALBEDO] = emissive.albedo;
+		}
+		if (emissive.breath !== null) {
+			colors[PER_DRAW_EMISSIVE_BREATH] = [emissive.breath.frequency, emissive.breath.intensity, 0, 0];
 		}
 	}
 	if (Object.keys(floats).length + Object.keys(colors).length + Object.keys(textures).length === 0) {

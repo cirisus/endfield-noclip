@@ -10,7 +10,11 @@ import {
 } from '@endfield-noclip/formats/unity/material';
 
 import { classifyHgrpMaterial } from '../../game/materials/material-classify.ts';
-import { PER_DRAW_EMISSIVE_ALBEDO, PER_DRAW_EMISSIVE_COLOR } from '../../game/materials/material-values.ts';
+import {
+	PER_DRAW_EMISSIVE_ALBEDO,
+	PER_DRAW_EMISSIVE_BREATH,
+	PER_DRAW_EMISSIVE_COLOR,
+} from '../../game/materials/material-values.ts';
 
 import { convertMaterial, ShaderTable } from './materials.ts';
 
@@ -153,6 +157,7 @@ describe('convertMaterial', () => {
 					...record.colors,
 					[PER_DRAW_EMISSIVE_COLOR]: [16.86, 2.22, 2.66, 1],
 					[PER_DRAW_EMISSIVE_ALBEDO]: [0.47, 0.16, 0.16, 1],
+					[PER_DRAW_EMISSIVE_BREATH]: [1 / 3, 1, 0, 0],
 				},
 			},
 			classifyHgrpMaterial(record, shader),
@@ -162,6 +167,7 @@ describe('convertMaterial', () => {
 		assert.deepEqual(material.colors, {
 			[PER_DRAW_EMISSIVE_COLOR]: [16.86, 2.22, 2.66, 1],
 			[PER_DRAW_EMISSIVE_ALBEDO]: [0.47, 0.16, 0.16, 1],
+			[PER_DRAW_EMISSIVE_BREATH]: [1 / 3, 1, 0, 0],
 		});
 	});
 });

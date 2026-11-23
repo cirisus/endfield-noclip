@@ -200,9 +200,9 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 			break;
 		}
 	}
-	if (emission?.pulse != null) {
+	if (emission !== null && (emission.pulse !== null || emission.breath !== null)) {
 		if (parallaxRowsFree) {
-			emissivePulseParams(look, emission.pulse);
+			emissivePulseParams(look, emission.pulse, emission.breath);
 		} else {
 			look.gaps.push('emission pulse: a glow or layer holds its rows');
 		}
@@ -318,20 +318,31 @@ const vertexOffsetParams = (look: MaterialLook, offset: LitVertexOffset): void =
 };
 
 /**
- * where `_EMISSIVE_ANIM`'s pulse keeps its inputs. a look without parallax or layer maps leaves their rows
- * free; mesh.wgsl pulses emission when the interval is positive
+ * where `_EMISSIVE_ANIM`'s pulse and per-draw breathing keep their inputs. a look without parallax or layer
+ * maps leaves their rows free; mesh.wgsl pulses emission when the interval is positive and breathes it when
+ * the breathing frequency is positive
  */
 export const EmissivePulseRow = {
 	/** pulse cycles per second, phase offset (`_EmissiveAnimRandom`), interval, minimum brightness */
 	pulse: LookRow.parallax,
-	/** how much the pulse dims the emission (`_EmissiveColor.a`) */
+	/** how much the pulse dims the emission (`_EmissiveColor.a`), followed by breathing frequency and intensity */
 	strength: LookRow.parallax2,
 } as const;
 
-/** `_EMISSIVE_ANIM`'s pulse (docs/game-data/materials.md#emission) */
-const emissivePulseParams = (look: MaterialLook, pulse: NonNullable<LitEmission['pulse']>): void => {
-	look.params.set([pulse.rate, pulse.phase, pulse.interval, pulse.minimum], EmissivePulseRow.pulse);
-	look.params[EmissivePulseRow.strength] = pulse.depth;
+/** `_EMISSIVE_ANIM`'s pulse and per-draw breathing (docs/game-data/materials.md#emission) */
+const emissivePulseParams = (
+	look: MaterialLook,
+	pulse: LitEmission['pulse'],
+	breath: LitEmission['breath'],
+): void => {
+	if (pulse !== null) {
+		look.params.set([pulse.rate, pulse.phase, pulse.interval, pulse.minimum], EmissivePulseRow.pulse);
+		look.params[EmissivePulseRow.strength] = pulse.depth;
+	}
+	if (breath !== null) {
+		look.params[EmissivePulseRow.strength + 1] = breath.frequency;
+		look.params[EmissivePulseRow.strength + 2] = breath.intensity;
+	}
 };
 
 // #endregion

@@ -1,6 +1,14 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { arrayField, asPPtr, colorField, type PPtr, pptrField } from '@endfield-noclip/formats/unity/values';
+import {
+	arrayField,
+	asPPtr,
+	booleanField,
+	colorField,
+	numberField,
+	type PPtr,
+	pptrField,
+} from '@endfield-noclip/formats/unity/values';
 
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
 
@@ -18,6 +26,8 @@ export interface EmissiveColors {
 	 * strength is at least 0.1
 	 */
 	albedo: Rgba;
+	/** per-draw breathing (`_m8.xy`) applied on `_EMISSIVE_ANIM_SWEEP` materials, or `null` when still */
+	breath: { frequency: number; intensity: number } | null;
 }
 
 /**
@@ -30,6 +40,13 @@ export interface EmissiveOverride {
 	colors: EmissiveColors;
 }
 
+/** @returns breathing parameters when both frequency and intensity are positive, else `null` */
+const breathingOf = (
+	frequency: number,
+	intensity: number,
+): { frequency: number; intensity: number } | null =>
+	frequency > 0 && intensity > 0 ? { frequency, intensity: Math.min(Math.max(intensity, 0), 1) } : null;
+
 /**
  * @param ref a MonoBehaviour
  * @returns whether its serialized fields are an `AnimationProperties_Emissive`'s, without reading the object
@@ -38,16 +55,17 @@ export const isEmissiveOverrideType = (ref: ObjectRef): boolean =>
 	hasTypeFields(ref.info.type, 'affectRenderers', 'emissiveColor', 'emissiveAlbedoColor', 'breathFrequency');
 
 /**
- * reads the resting colours of an `AnimationProperties_Emissive`. its breathing isn't read
+ * reads the resting colours and breathing of an `AnimationProperties_Emissive`
  *
  * @param data the component's fields (see {@link isEmissiveOverrideType})
- * @returns the renderers it lists and the colours it gives them
+ * @returns the renderers it lists and the per-draw values it gives them
  */
 export const readEmissiveOverride = (data: TypeTreeObject): EmissiveOverride => ({
 	renderers: arrayField(data, 'affectRenderers').map((pointer) => asPPtr(pointer)),
 	colors: {
 		color: colorField(data, 'emissiveColor'),
 		albedo: colorField(data, 'emissiveAlbedoColor'),
+		breath: breathingOf(numberField(data, 'breathFrequency'), numberField(data, 'breathIntensity')),
 	},
 });
 
@@ -62,13 +80,12 @@ const NO_ALBEDO: Rgba = [1, 1, 1, 0];
 
 /**
  * reads an `InteractiveEmissiveConfig`, which an interactive's view states apply to an
- * `AnimationProperties_Emissive` in place of its saved colours, and the colour assets it points to. its
- * cycle, which breathes the emission unless it's constant, isn't read
+ * `AnimationProperties_Emissive` in place of its saved values, and the colour and cycle assets it points to
  *
  * @param resolver bundle reader
  * @param ref the config's MonoBehaviour
- * @returns the colours it sets on the component: its base colour asset's as the albedo tint, or white at
- *   alpha 0 without one
+ * @returns the values it sets on the component: its base colour asset's as the albedo tint (or white at alpha
+ *   0 without one) and its breathing cycle when non-constant
  * @throws {FormatError} if it has no colour asset, which the game requires
  */
 export const readEmissiveConfig = async (
@@ -83,5 +100,16 @@ export const readEmissiveConfig = async (
 	const color = colorField(await resolver.read(colorRef), 'emissiveColor');
 	const baseRef = await resolver.resolve(ref, pptrField(config, 'baseColorConfig'));
 	const albedo = baseRef === null ? NO_ALBEDO : colorField(await resolver.read(baseRef), 'baseColor');
-	return { color, albedo };
+	const cycleRef = await resolver.resolve(ref, pptrField(config, 'cycleConfig'));
+	let breath: EmissiveColors['breath'] = null;
+	if (cycleRef !== null) {
+		const cycle = await resolver.read(cycleRef);
+		const isConst = booleanField(cycle, 'isConst');
+		const duration = numberField(cycle, 'cycleDuration');
+		const intensity = numberField(cycle, 'cycleIntensity');
+		if (!isConst && duration > 1e-6 && intensity > 0) {
+			breath = breathingOf(1 / duration, intensity);
+		}
+	}
+	return { color, albedo, breath };
 };

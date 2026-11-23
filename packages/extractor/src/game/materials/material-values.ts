@@ -122,6 +122,12 @@ export const PER_DRAW_EMISSIVE_COLOR = 'perDraw.emissiveColor';
  */
 export const PER_DRAW_EMISSIVE_ALBEDO = 'perDraw.emissiveAlbedoColor';
 
+/**
+ * the colour name a renderer's per-draw breathing (`_m8.xy`: `[frequency, intensity, 0, 0]`) takes among its
+ * material variant's {@link MaterialValues.colors}: per-draw data, not a property, so no shader declares it
+ */
+export const PER_DRAW_EMISSIVE_BREATH = 'perDraw.emissiveBreath';
+
 /** a material's properties, resolved against its shader's defaults */
 export interface MaterialReader {
 	readonly material: MaterialValues;

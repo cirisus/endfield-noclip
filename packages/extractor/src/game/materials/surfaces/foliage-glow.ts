@@ -71,6 +71,7 @@ export const describeFoliageGlow = (reader: MaterialReader): LitSurface | Unsupp
 						ignorePostExposure: float('_IgnorePostExposure', 1),
 						albedoTint: null,
 						pulse: null,
+						breath: null,
 					},
 		overlay,
 		sway: null,

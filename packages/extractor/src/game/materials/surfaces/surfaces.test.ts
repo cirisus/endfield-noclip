@@ -6,6 +6,7 @@ import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 import { describeMaterial } from '../material-describe.ts';
 import {
 	type MaterialValues,
+	PER_DRAW_EMISSIVE_BREATH,
 	PER_DRAW_EMISSIVE_COLOR,
 	readerOf,
 	type ShaderEntry,
@@ -362,8 +363,10 @@ describe('dithered effects', () => {
 			return;
 		}
 		assert.deepEqual(full.emission?.color, [16.86, 2.22, 2.66]);
+		assert.equal(full.emission?.breath, null);
 
-		// partial override mixes into the already-linearized material colour and keeps its alpha (sweep depth)
+		// partial override mixes into the already-linearized material colour and keeps its alpha (sweep depth);
+		// per-draw breathing runs only on `_EMISSIVE_ANIM_SWEEP` materials
 		const partial = describeMaterial(
 			values({
 				keywords: ['_EMISSIVE_MASK', '_EMISSIVE_ANIM_SWEEP'],
@@ -371,6 +374,7 @@ describe('dithered effects', () => {
 				colors: {
 					_EmissiveColor: [2, 0, 0, 0.5],
 					[PER_DRAW_EMISSIVE_COLOR]: [0, 4, 0, 0.5],
+					[PER_DRAW_EMISSIVE_BREATH]: [1 / 3, 1, 0, 0],
 				},
 			}),
 			litEffect,
@@ -383,6 +387,7 @@ describe('dithered effects', () => {
 		assert.ok(Math.abs((partial.emission?.color[0] ?? 0) - 2 ** 2.2 * 0.25) < 1e-6);
 		assert.ok(Math.abs((partial.emission?.color[1] ?? 0) - 1) < 1e-6);
 		assert.equal(partial.emission?.color[2], 0);
+		assert.deepEqual(partial.emission?.breath, { frequency: 1 / 3, intensity: 1 });
 	});
 });
 
@@ -533,6 +538,7 @@ describe('glowing foliage', () => {
 			ignorePostExposure: 1,
 			albedoTint: null,
 			pulse: null,
+			breath: null,
 		});
 		assert.deepEqual(surface.overlay, {
 			kind: 'flowGlow',

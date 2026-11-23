@@ -248,6 +248,7 @@ test('pulsing emission takes the free parallax rows; a surface with a glow keeps
 		ignorePostExposure: 1,
 		albedoTint: null,
 		pulse: { rate: 1 / Math.PI, phase: 0, interval: 1, minimum: 0, depth: 1 },
+		breath: { frequency: 1 / 3, intensity: 1 },
 	};
 	const glow = {
 		kind: 'parallax' as const,
@@ -279,7 +280,10 @@ test('pulsing emission takes the free parallax rows; a surface with a glow keeps
 	assert.equal(flat.textures[5], 6);
 	const pulse = Array.from(pulsing.params.subarray(EmissivePulseRow.pulse, EmissivePulseRow.pulse + 4));
 	assert.deepEqual(pulse, [1 / Math.PI, 0, 1, 0].map(Math.fround));
-	assert.equal(pulsing.params[EmissivePulseRow.strength], 1);
+	assert.deepEqual(
+		Array.from(pulsing.params.subarray(EmissivePulseRow.strength, EmissivePulseRow.strength + 3)),
+		[1, Math.fround(1 / 3), 1],
+	);
 	assert.deepEqual(
 		Array.from(pulsing.params.subarray(LookRow.emissive, LookRow.emissive + 3)),
 		[23.97, 23.97, 23.97].map(Math.fround),
@@ -350,6 +354,7 @@ test("the emissive map's G, B and A colours take the rows effect looks keep for 
 						ignorePostExposure: 1,
 						albedoTint: null,
 						pulse: null,
+						breath: null,
 					},
 				}),
 			),
@@ -375,6 +380,7 @@ test('a per-draw albedo tint takes its own row; without one the row tints nothin
 		albedoAffect: 0,
 		ignorePostExposure: 1,
 		pulse: null,
+		breath: null,
 	};
 	const textures = { base: slot(1), normal: null, mro: null, emissive: null };
 	// a water hydrant's lamps under IntEmissiveConfig_Disabled_Wuling

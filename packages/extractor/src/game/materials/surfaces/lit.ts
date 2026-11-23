@@ -17,6 +17,7 @@ import {
 	linearRgb,
 	type MaterialReader,
 	PER_DRAW_EMISSIVE_ALBEDO,
+	PER_DRAW_EMISSIVE_BREATH,
 	PER_DRAW_EMISSIVE_COLOR,
 	scaleRgb,
 	unsupported,
@@ -179,6 +180,13 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 			// the per-draw albedo tint (HDR, as stored); the map variants also scale it by `_EnableEmissiveAlbedo`
 			const albedo = color(PER_DRAW_EMISSIVE_ALBEDO);
 			const weight = (albedo?.[3] ?? 0) * (source === 'map' ? float('_EnableEmissiveAlbedo', 0) : 1);
+			// per-draw breathing (`_m8.xy`) runs only in `_EMISSIVE_ANIM_SWEEP` shaders, scaling `_m7.xyz`
+			const breathRaw =
+				sweep && override !== undefined && override[3] > 0 ? color(PER_DRAW_EMISSIVE_BREATH) : undefined;
+			const breath =
+				breathRaw !== undefined && breathRaw[0] > 0 && breathRaw[1] > 0
+					? { frequency: breathRaw[0], intensity: breathRaw[1] }
+					: null;
 			emission = {
 				color: resting(emissive, 1),
 				source,
@@ -200,6 +208,7 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 								depth: emissive[3],
 							}
 						: null,
+				breath,
 			};
 		}
 	}

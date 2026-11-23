@@ -281,6 +281,17 @@ export interface LitEmission {
 		/** how much it dims the emission (`_EmissiveColor.a`) */
 		depth: number;
 	} | null;
+	/**
+	 * per-draw breathing from `AnimationProperties_Emissive` (`_m8.xy`) on `_EMISSIVE_ANIM_SWEEP` materials:
+	 * multiplies the primary emissive colour by `mix(1, cos(2π · frequency · t) · 0.5 + 0.5, intensity)`.
+	 * `null` when still
+	 */
+	breath: {
+		/** cycles per second (`1 / cycleDuration`) */
+		frequency: number;
+		/** 0–1 (`clamp(cycleIntensity, 0, 1)`) */
+		intensity: number;
+	} | null;
 }
 
 /** one tri-channel mask channel */

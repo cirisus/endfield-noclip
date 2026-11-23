@@ -19,11 +19,15 @@ const TARGET = {
 };
 
 describe('readEmissiveOverride', () => {
-	it('reads the listed renderers and the resting colours', () => {
+	it('reads the listed renderers, resting colours and breathing', () => {
 		const read = readEmissiveOverride(TARGET);
 		assert.equal(read.renderers.length, 2);
 		assert.deepEqual(read.colors.color, [0, 1, 0.16790390014648438, 1]);
 		// at alpha 0 the albedo tint tints nothing
 		assert.deepEqual(read.colors.albedo, [1, 0.04339611530303955, 0.04339611530303955, 0]);
+		assert.equal(read.colors.breath, null);
+
+		const breathing = readEmissiveOverride({ ...TARGET, breathFrequency: 0.5, breathIntensity: 1.5 });
+		assert.deepEqual(breathing.colors.breath, { frequency: 0.5, intensity: 1 });
 	});
 });

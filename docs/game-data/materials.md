@@ -111,7 +111,9 @@ any property flagged `[Gamma]` (`ShaderPropertyFlags` bit 5, `0x20`) is still co
   - `emissiveAlbedoColor`: where emission strength (remapped mask or `_EmissiveMap.r`) ≥ 0.1,
     multiplies albedo by `mix(1, rgb, alpha)` (× `_EnableEmissiveAlbedo` in map variants; 0 on
     targets). albedo-following emission (`_AlbedoAffectEmissive` 0) uses the tinted albedo.
-  - `breathFrequency` and `breathIntensity` (0 on targets).
+  - `breathFrequency` and `breathIntensity` (written to per-draw `_m8.xy`, with `-time` in `_m8.w`).
+    only `_EMISSIVE_ANIM_SWEEP` shaders read `_m8.xyw`, scaling the per-draw emission colour by
+    `mix(1, cos(((time + _m8.w) · breathFrequency) · 2π) · 0.5 + 0.5, breathIntensity)`.
   - interactive view states can replace these via an emissive config
     ([emission view states set](interactives.md#emission-view-states-set)).
 - **tower lamps**: `M_module_tylight+1_001_03` cubes emit white; their coloured glow comes from one

@@ -968,18 +968,24 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	}
 
 	var emission = vec3f(0.0);
+	// a vertex offset's textures in the parallax slots leave the pulse and breathing their rows
+	let pulse_rows = (flags & (PARALLAX_MAP | LAYER_BLEND)) == 0u || (flags & VERTEX_OFFSET) != 0u;
+	var emissive_color = look.emissive.rgb;
+	if (pulse_rows && look.parallax2.y > 0.0) {
+		emissive_color *= mix(1.0, cos(frame.eye.w * look.parallax2.y * 6.2831853) * 0.5 + 0.5, look.parallax2.z);
+	}
 	// the emission's strength: the map's R or the remapped mask channel
 	var strength = 0.0;
 	if ((flags & EMISSIVE_MAP) != 0u && !layer_mask_map && !tri_in_glow) {
 		// R scales the emissive colour; G, B and A add colours of their own (zero unless `_EmissiveType` is set)
 		let channels = look.emissive_channels;
 		strength = glow.r;
-		emission = look.emissive.rgb * glow.r + channels[0].rgb * glow.g + channels[1].rgb * glow.b
+		emission = emissive_color * glow.r + channels[0].rgb * glow.g + channels[1].rgb * glow.b
 			+ channels[2].rgb * glow.a;
 	}
 	if ((flags & EMISSIVE_MASK) != 0u) {
 		strength = saturate((map_channel(flags, mro, look.emissive2.y, base_a, packed, mask) - 0.05) / 0.9);
-		emission = look.emissive.rgb * strength;
+		emission = emissive_color * strength;
 	}
 	// a per-draw albedo tint darkens or tints the emitting parts, and so the emission that follows the albedo
 	let tinted = look.emissive_albedo.w * step(0.1, strength);
@@ -988,8 +994,6 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	// (docs/game-data/materials.md#emission)
 	let tint = mix(s.albedo, vec3f(1.0), look.emissive2.x);
 	s.emission = emission * tint * mix(1.0, frame.ambient.y, look.emissive2.z);
-	// a vertex offset's textures in the parallax slots leave the pulse its rows
-	let pulse_rows = (flags & (PARALLAX_MAP | LAYER_BLEND)) == 0u || (flags & VERTEX_OFFSET) != 0u;
 	if (pulse_rows && look.parallax.z > 0.0) {
 		s.emission *= mix(1.0, emissive_pulse(look), look.parallax2.x);
 	}
