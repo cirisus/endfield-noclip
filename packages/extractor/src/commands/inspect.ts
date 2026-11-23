@@ -27,6 +27,8 @@ import {
 	jsonReplacer,
 	need as needArg,
 	parseHash,
+	parseNumber,
+	parseNumbers,
 	parseOptionalInteger,
 	parsePathId,
 	save as saveFile,
@@ -63,14 +65,15 @@ export const usage = `usage:
                                                       shader-declared properties, textures and packed surface description
   inspect shader <object|name-re> [--prop re] [--type t,…] [--flag f,…] [--group initial|main|all] [--json]
                                                       shader tags and declared properties (defaults and flags)
-  inspect mesh <object> [--name re] [--vertices n]    vertex channels, submeshes, bounds, color/UV ranges, skinning
+  inspect mesh <object> [--name re] [--vertices [n]] [--submesh n] [--near x,y,z] [--radius m]
+                                                      vertex channels, submesh bounds, color/UV ranges, skinning, vertex samples
   inspect texture <object> [--name re] [-o file.ktx2|file.dds] [--layer n] [--mip n] [--zstd n]
                                                       format, dimensions, mips, sampler; -o writes KTX2 or DX10 DDS
   inspect water-config <object> [--name re]           surface WaterConfig or Global_Water_Config as JSON
 
-<object> is <bundle> [--path-id=N] [--name re], an asset path, or a path hash (as \`scene find\` prints them).
-<bundle> is a hex id, main/<hex>.ab or initial/<hex>.ab; omitting --path-id picks the unique matching
-object in the bundle. negative path ids need --path-id=-N.`;
+<object> is <bundle> [--path-id=N] [--name re], an asset path, a unique filename/basename, or a path hash
+(as \`scene find\` prints them). <bundle> is a hex id, main/<hex>.ab or initial/<hex>.ab; omitting --path-id
+picks the unique matching object in the bundle. negative path ids need --path-id=-N.`;
 
 const OPTIONS = {
 	config: { type: 'string' },
@@ -88,12 +91,34 @@ const OPTIONS = {
 	layer: { type: 'string' },
 	mip: { type: 'string' },
 	vertices: { type: 'string' },
+	submesh: { type: 'string' },
+	near: { type: 'string' },
+	radius: { type: 'string' },
 	zstd: { type: 'string' },
 } as const;
 
+const DEFAULT_VERTEX_SAMPLE = '20';
+
+/** lets `--vertices` be passed without a count (defaulting to 20) while still accepting `--vertices 10` */
+const normalizeBareVertices = (args: readonly string[]): string[] => {
+	const out: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === '--vertices') {
+			const next = args[i + 1];
+			if (next === undefined || !/^\d+$/.test(next)) {
+				out.push(`--vertices=${DEFAULT_VERTEX_SAMPLE}`);
+				continue;
+			}
+		}
+		out.push(arg);
+	}
+	return out;
+};
+
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
-		args: separatePositionals(args, OPTIONS),
+		args: separatePositionals(normalizeBareVertices(args), OPTIONS),
 		allowPositionals: true,
 		options: OPTIONS,
 	});
@@ -160,12 +185,21 @@ export const run = async (args: string[]): Promise<void> => {
 				if (vertexCount !== undefined && vertexCount < 0) {
 					throw new Error('--vertices must be a non-negative integer');
 				}
+				const submesh = parseOptionalInteger(values.submesh, '--submesh');
+				if (submesh !== undefined && (submesh < 0 || submesh >= mesh.submeshes.length)) {
+					throw new Error(`--submesh must be 0..${mesh.submeshes.length - 1}, got ${submesh}`);
+				}
+				const near = values.near === undefined ? undefined : parseNumbers(values.near, 3, '--near');
+				const radius = values.radius === undefined ? 2 : parseNumber(values.radius, '--radius');
+				const sampleLimit = vertexCount ?? (near !== undefined || submesh !== undefined ? 20 : undefined);
 				console.log(
 					JSON.stringify(
 						{
 							object: objectKey(ref),
 							...meshSummary(mesh),
-							...(vertexCount === undefined ? {} : { vertices: sampleMeshVertices(mesh, vertexCount) }),
+							...(sampleLimit === undefined
+								? {}
+								: { vertices: sampleMeshVertices(mesh, sampleLimit, { submesh, near, radius }) }),
 						},
 						null,
 						'\t',
@@ -239,14 +273,54 @@ const resolveObjectArg = async (
 		return ref;
 	}
 	const hashes = await context.world.hashesOf(target);
-	if (hashes.length !== 1) {
+	if (hashes.length === 1) {
+		return resolver.findUnique({ hash: hashes[0], path: target }, classId);
+	}
+	if (hashes.length > 1) {
 		throw new Error(
-			hashes.length === 0
-				? `${target} is not in StringPathHash`
-				: `${target} has ${hashes.length} path hashes; pass one of ${hashes.map(hashText).join(', ')}`,
+			`${target} has ${hashes.length} path hashes; pass one of ${hashes.map(hashText).join(', ')}`,
 		);
 	}
-	return resolver.findUnique({ hash: hashes[0], path: target }, classId);
+	// fall back to matching by filename / suffix in StringPathHash
+	const lower = target.toLowerCase();
+	const suffix = `/${lower}`;
+	const hasSlash = lower.includes('/');
+	const [main, initial] = await Promise.all([context.world.pathHash(), context.world.initPathHash()]);
+	const matches: { hash: bigint; path: string }[] = [];
+	const seen = new Set<string>();
+	for (const table of [main, initial]) {
+		for (const [entryHash, path] of table.entries((candidate) => {
+			const c = candidate.toLowerCase();
+			if (c === lower || c.endsWith(suffix)) {
+				return true;
+			}
+			if (!hasSlash) {
+				const base = c.slice(c.lastIndexOf('/') + 1);
+				const stem = base.includes('.') ? base.slice(0, base.lastIndexOf('.')) : base;
+				return stem === lower;
+			}
+			return false;
+		})) {
+			const key = `${entryHash}:${path}`;
+			if (!seen.has(key)) {
+				seen.add(key);
+				matches.push({ hash: entryHash, path });
+			}
+		}
+	}
+	if (matches.length === 1) {
+		return resolver.findUnique({ hash: matches[0].hash, path: matches[0].path }, classId);
+	}
+	if (matches.length === 0) {
+		throw new Error(`${target} is not in StringPathHash`);
+	}
+	const sample = matches
+		.slice(0, 10)
+		.map((m) => `  ${hashText(m.hash)}  ${m.path}`)
+		.join('\n');
+	throw new Error(
+		`${target} matched ${matches.length} paths in StringPathHash; pass a full path or hash:\n${sample}`,
+	);
 };
 
 /** resolves one or more Material targets (supporting `--all` and `--name` on bundle arguments) */
@@ -509,16 +583,7 @@ const inspectPrefab = async (
 											kind: renderer.motion.kind,
 											duration: renderer.motion.skin.frameCount / renderer.motion.skin.frameRate,
 										},
-							particles:
-								renderer.particles === null
-									? null
-									: {
-											mode: renderer.particles.renderMode,
-											rate: renderer.particles.rate,
-											bursts: renderer.particles.bursts.length,
-											trails: renderer.particles.trail !== null,
-											moving: renderer.particles.emitterMotion !== undefined,
-										},
+							particles: renderer.particles,
 							billboard: renderer.billboard,
 							sizes: renderer.sizes,
 							distances: renderer.distances,
@@ -596,9 +661,25 @@ const inspectPrefab = async (
 				tags.push(`motion:${r.motion.kind}(${r.motion.duration.toFixed(2)}s)`);
 			}
 			if (r.particles !== null) {
-				tags.push(
-					`particles:${r.particles.mode}${r.particles.trails ? '+trails' : ''}${r.particles.moving ? '+moving' : ''}`,
-				);
+				const p = r.particles;
+				const parts: string[] = [String(p.renderMode)];
+				if (p.stretch !== null) {
+					parts.push(
+						`stretch(${p.stretch.lengthScale}/${p.stretch.velocityScale}${p.stretch.freeform ? ',freeform' : ''})`,
+					);
+				}
+				if (p.motion.kind === 'spline') {
+					parts.push('spline');
+				} else if (p.motion.clamp !== null) {
+					parts.push(`clamp(${p.motion.clamp.kind})`);
+				}
+				if (p.trail !== null) {
+					parts.push('trails');
+				}
+				if (p.emitterMotion !== undefined) {
+					parts.push('moving');
+				}
+				tags.push(`particles:${parts.join('+')}`);
 			}
 			if (r.billboard !== null) {
 				tags.push('billboard');
@@ -789,10 +870,38 @@ const attributeRange = (
 	return { min: min.map(round4), max: max.map(round4), constant };
 };
 
-const sampleMeshVertices = (mesh: DecodedMesh, limit: number): object[] => {
-	const count = Math.min(limit, mesh.vertexCount);
+const sampleMeshVertices = (
+	mesh: DecodedMesh,
+	limit: number,
+	options: { submesh?: number; near?: readonly number[]; radius?: number } = {},
+): object[] => {
+	let indices: number[];
+	if (options.submesh !== undefined) {
+		const sm = mesh.submeshes[options.submesh];
+		const seen = new Set<number>();
+		indices = [];
+		for (let i = sm.firstIndex; i < sm.firstIndex + sm.indexCount; i++) {
+			const v = mesh.indices[i];
+			if (!seen.has(v)) {
+				seen.add(v);
+				indices.push(v);
+			}
+		}
+	} else {
+		indices = Array.from({ length: mesh.vertexCount }, (_, i) => i);
+	}
+	if (options.near !== undefined) {
+		const [nx, ny, nz] = options.near;
+		const maxR2 = (options.radius ?? 2) ** 2;
+		indices = indices.filter((i) => {
+			const dx = mesh.positions[i * 3] - nx;
+			const dy = mesh.positions[i * 3 + 1] - ny;
+			const dz = mesh.positions[i * 3 + 2] - nz;
+			return dx * dx + dy * dy + dz * dz <= maxR2;
+		});
+	}
 	const out: object[] = [];
-	for (let i = 0; i < count; i++) {
+	for (const i of indices.slice(0, limit)) {
 		const row: Record<string, unknown> = {
 			index: i,
 			position: [
@@ -823,13 +932,55 @@ const sampleMeshVertices = (mesh: DecodedMesh, limit: number): object[] => {
 	return out;
 };
 
+const submeshBounds = (mesh: DecodedMesh, firstIndex: number, indexCount: number) => {
+	if (indexCount === 0) {
+		return null;
+	}
+	let minX = Infinity;
+	let minY = Infinity;
+	let minZ = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	let maxZ = -Infinity;
+	for (let i = firstIndex; i < firstIndex + indexCount; i++) {
+		const v = mesh.indices[i] * 3;
+		const x = mesh.positions[v];
+		const y = mesh.positions[v + 1];
+		const z = mesh.positions[v + 2];
+		if (x < minX) {
+			minX = x;
+		}
+		if (y < minY) {
+			minY = y;
+		}
+		if (z < minZ) {
+			minZ = z;
+		}
+		if (x > maxX) {
+			maxX = x;
+		}
+		if (y > maxY) {
+			maxY = y;
+		}
+		if (z > maxZ) {
+			maxZ = z;
+		}
+	}
+	return { min: [round4(minX), round4(minY), round4(minZ)], max: [round4(maxX), round4(maxY), round4(maxZ)] };
+};
+
 const meshSummary = (mesh: DecodedMesh) => ({
 	name: mesh.name,
 	vertexCount: mesh.vertexCount,
 	triangles: mesh.submeshes.reduce((sum, s) => sum + (s.topology === 0 ? s.indexCount / 3 : 0), 0),
 	indexFormat: mesh.indices instanceof Uint16Array ? 'u16' : 'u32',
 	bounds: mesh.bounds,
-	submeshes: mesh.submeshes,
+	submeshes: mesh.submeshes.map((sm) => ({
+		firstIndex: sm.firstIndex,
+		indexCount: sm.indexCount,
+		topology: sm.topology,
+		bounds: submeshBounds(mesh, sm.firstIndex, sm.indexCount),
+	})),
 	channels: mapDefined(mesh.channels, (c) =>
 		c.dimension > 0
 			? `${c.channel}: stream ${c.stream} +${c.offset} format ${c.format} ×${c.dimension}${c.packing ? ` packing ${c.packing}` : ''}`
