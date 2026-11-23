@@ -48,6 +48,7 @@ export const CORE_PATHS = {
 	textures: 'tables/textures.bin.zst',
 	water: 'tables/water.json.zst',
 	lights: 'tables/lights.bin.zst',
+	luts: 'tables/luts.bin.zst',
 	particles: 'tables/particles.json.zst',
 	environment: 'tables/environment.json.zst',
 	irradiance: 'tables/irradiance.bin',

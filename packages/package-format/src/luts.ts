@@ -51,15 +51,51 @@ export interface ParticleShapeMeshLut {
 	hasColor: boolean;
 	/** `vertexCount × 3` f32 positions */
 	positions: Float32Array;
-	/** `vertexCount × 3` f32 unit normals */
-	normals: Float32Array;
-	/** `vertexCount × 4` linear RGBA8 colors when `hasColor`, else `null` */
+	/** `vertexCount × 3` f32 unit normals, or `null` when the mesh has no normals */
+	normals: Float32Array | null;
+	/** `vertexCount × 4` RGBA8 colors (0–255) when `hasColor`, else `null` */
 	colors: Uint8Array | null;
 	/** `primCount × primSize` vertex indices */
 	primitives: Uint32Array;
-	/** `primCount` ascending cumulative probabilities ending at 1.0 */
+	/** `primCount` ascending cumulative primitive areas/lengths (ending at total area) */
 	areaCdf: Float32Array;
 }
+
+/**
+ * computes ascending cumulative primitive areas (triangles) or lengths (edges) for a particle shape mesh
+ *
+ * @param positions xyz per vertex
+ * @param primitives `corners` vertex indices per primitive
+ * @param corners 2 for edges, 3 for triangles
+ * @returns cumulative area/length array of length `floor(primitives.length / corners)`
+ */
+export const computeShapeMeshCdf = (
+	positions: ArrayLike<number>,
+	primitives: ArrayLike<number>,
+	corners: 2 | 3,
+): Float32Array => {
+	const count = Math.floor(primitives.length / corners);
+	const running = new Float32Array(count);
+	let total = 0;
+	for (let i = 0; i < count; i++) {
+		const a = primitives[i * corners] * 3;
+		const b = primitives[i * corners + 1] * 3;
+		const abx = positions[b] - positions[a];
+		const aby = positions[b + 1] - positions[a + 1];
+		const abz = positions[b + 2] - positions[a + 2];
+		if (corners === 2) {
+			total += Math.hypot(abx, aby, abz);
+		} else {
+			const c = primitives[i * corners + 2] * 3;
+			const acx = positions[c] - positions[a];
+			const acy = positions[c + 1] - positions[a + 1];
+			const acz = positions[c + 2] - positions[a + 2];
+			total += 0.5 * Math.hypot(aby * acz - abz * acy, abz * acx - abx * acz, abx * acy - aby * acx);
+		}
+		running[i] = total;
+	}
+	return running;
+};
 
 /** decoded `tables/luts.bin.zst` */
 export interface LutsTable {
@@ -156,12 +192,16 @@ export const encodeLutsTable = (table: LutsTable): Uint8Array => {
 
 	if (table.shapeMeshes.length > 0) {
 		let totalVerts = 0;
+		let totalNormalVerts = 0;
 		let totalColorVerts = 0;
 		let totalPrimIndices = 0;
 		let totalPrims = 0;
 		for (const mesh of table.shapeMeshes) {
 			const verts = mesh.positions.length / 3;
 			totalVerts += verts;
+			if (mesh.normals !== null) {
+				totalNormalVerts += verts;
+			}
 			if (mesh.hasColor) {
 				totalColorVerts += verts;
 			}
@@ -171,11 +211,12 @@ export const encodeLutsTable = (table: LutsTable): Uint8Array => {
 		const headers = new Uint8Array(table.shapeMeshes.length * PMSH_SIZE);
 		const hv = viewOf(headers);
 		const positions = new Float32Array(totalVerts * 3);
-		const normals = new Float32Array(totalVerts * 3);
+		const normals = new Float32Array(totalNormalVerts * 3);
 		const colors = new Uint8Array(totalColorVerts * 4);
 		const prims = new Uint32Array(totalPrimIndices);
 		const cdfs = new Float32Array(totalPrims);
 		let vAt = 0;
+		let nAt = 0;
 		let cAt = 0;
 		let piAt = 0;
 		let pAt = 0;
@@ -183,7 +224,7 @@ export const encodeLutsTable = (table: LutsTable): Uint8Array => {
 			const verts = mesh.positions.length / 3;
 			const primCount = mesh.areaCdf.length;
 			if (
-				mesh.normals.length !== verts * 3 ||
+				(mesh.normals !== null && mesh.normals.length !== verts * 3) ||
 				mesh.primitives.length !== primCount * mesh.primSize ||
 				(mesh.hasColor && mesh.colors?.byteLength !== verts * 4)
 			) {
@@ -196,9 +237,12 @@ export const encodeLutsTable = (table: LutsTable): Uint8Array => {
 			hv.setUint32(h + 12, pAt, true);
 			hv.setUint32(h + 16, primCount, true);
 			hv.setUint8(h + 20, mesh.primSize);
-			hv.setUint8(h + 21, mesh.hasColor ? 1 : 0);
+			hv.setUint8(h + 21, (mesh.hasColor ? 1 : 0) | (mesh.normals !== null ? 2 : 0));
 			positions.set(mesh.positions, vAt * 3);
-			normals.set(mesh.normals, vAt * 3);
+			if (mesh.normals !== null) {
+				normals.set(mesh.normals, nAt * 3);
+				nAt += verts;
+			}
 			if (mesh.hasColor && mesh.colors !== null) {
 				colors.set(mesh.colors, cAt * 4);
 				cAt += verts;
@@ -212,7 +256,9 @@ export const encodeLutsTable = (table: LutsTable): Uint8Array => {
 		sections.push(
 			{ tag: TAG_PMSH, data: headers, count: table.shapeMeshes.length, stride: PMSH_SIZE },
 			{ tag: TAG_PMPO, data: new Uint8Array(positions.buffer), count: totalVerts, stride: 12 },
-			{ tag: TAG_PMNM, data: new Uint8Array(normals.buffer), count: totalVerts, stride: 12 },
+			...(totalNormalVerts > 0
+				? [{ tag: TAG_PMNM, data: new Uint8Array(normals.buffer), count: totalNormalVerts, stride: 12 }]
+				: []),
 			...(totalColorVerts > 0 ? [{ tag: TAG_PMCL, data: colors, count: totalColorVerts, stride: 4 }] : []),
 			{ tag: TAG_PMPR, data: new Uint8Array(prims.buffer), count: totalPrimIndices, stride: 4 },
 			{ tag: TAG_PMCD, data: new Uint8Array(cdfs.buffer), count: totalPrims, stride: 4 },
@@ -300,15 +346,16 @@ export const decodeLutsTable = (data: Uint8Array): LutsTable => {
 		const pmnm = container.sections.get(TAG_PMNM);
 		const pmpr = container.sections.get(TAG_PMPR);
 		const pmcd = container.sections.get(TAG_PMCD);
-		if (!pmpo || !pmnm || !pmpr || !pmcd) {
+		if (!pmpo || !pmpr || !pmcd) {
 			throw new PackageFormatError('luts table PMSH missing required vertex/primitive sections');
 		}
 		const allPos = sectionF32(pmpo);
-		const allNorm = sectionF32(pmnm);
+		const allNorm = pmnm !== undefined ? sectionF32(pmnm) : null;
 		const allCol = container.sections.get(TAG_PMCL)?.data ?? null;
 		const allPrims = sectionU32(pmpr);
 		const allCdfs = sectionF32(pmcd);
 		const v = viewOf(pmsh.data);
+		let nAt = 0;
 		let cAt = 0;
 		for (let i = 0; i < pmsh.count; i++) {
 			const at = i * pmsh.stride;
@@ -321,7 +368,17 @@ export const decodeLutsTable = (data: Uint8Array): LutsTable => {
 			if (primSize !== 2 && primSize !== 3) {
 				throw new PackageFormatError(`particle shape mesh ${i} has invalid primSize ${primSize}`);
 			}
-			const hasColor = (v.getUint8(at + 21) & 1) !== 0;
+			const flags = v.getUint8(at + 21);
+			const hasColor = (flags & 1) !== 0;
+			const hasNormal = (flags & 2) !== 0;
+			let normals: Float32Array | null = null;
+			if (hasNormal) {
+				if (allNorm === null || (nAt + vCount) * 3 > allNorm.length) {
+					throw new PackageFormatError(`particle shape mesh ${i} normals run past PMNM`);
+				}
+				normals = allNorm.subarray(nAt * 3, (nAt + vCount) * 3);
+				nAt += vCount;
+			}
 			let colors: Uint8Array | null = null;
 			if (hasColor) {
 				if (allCol === null || (cAt + vCount) * 4 > allCol.byteLength) {
@@ -334,7 +391,7 @@ export const decodeLutsTable = (data: Uint8Array): LutsTable => {
 				primSize,
 				hasColor,
 				positions: allPos.subarray(vFirst * 3, (vFirst + vCount) * 3),
-				normals: allNorm.subarray(vFirst * 3, (vFirst + vCount) * 3),
+				normals,
 				colors,
 				primitives: allPrims.subarray(piFirst, piFirst + pCount * primSize),
 				areaCdf: allCdfs.subarray(pFirst, pFirst + pCount),

@@ -15,6 +15,7 @@ import {
 } from '@endfield-noclip/package-format/instances';
 import { decodeIrradianceTable, type IrradianceTable } from '@endfield-noclip/package-format/irradiance';
 import { decodeLightsTable, type LightsTable } from '@endfield-noclip/package-format/lights';
+import { decodeLutsTable, type LutsTable } from '@endfield-noclip/package-format/luts';
 import {
 	CORE_ARCHIVE,
 	CORE_ARCHIVE_INDEX,
@@ -63,6 +64,7 @@ export class PackedPackage implements AsyncDisposable {
 	#water: Promise<WaterTable> | undefined;
 	#environment: Promise<EnvironmentTable> | undefined;
 	#lights: Promise<LightsTable> | undefined;
+	#luts: Promise<LutsTable> | undefined;
 	#irradiance: Promise<IrradianceTable> | undefined;
 
 	private constructor(
@@ -172,6 +174,12 @@ export class PackedPackage implements AsyncDisposable {
 	lights(): Promise<LightsTable> {
 		this.#lights ??= readCoreMember(this.#core, CORE_PATHS.lights).then(decodeLightsTable);
 		return this.#lights;
+	}
+
+	/** @returns decoded `tables/luts.bin.zst` */
+	luts(): Promise<LutsTable> {
+		this.#luts ??= readCoreMember(this.#core, CORE_PATHS.luts).then(decodeLutsTable);
+		return this.#luts;
 	}
 
 	/** @returns decoded `tables/irradiance.bin` */

@@ -11,7 +11,7 @@ import { normalizeOrZInto } from '../math/vec3.ts';
 export interface PreparedMeshShape {
 	info: ParticleShapeMeshInfo;
 	/** primitive `i`'s total is the sum of the areas of primitives 0…i */
-	running: Float64Array;
+	running: Float32Array | Float64Array;
 }
 
 /**
@@ -19,6 +19,9 @@ export interface PreparedMeshShape {
  * @returns it, ready for {@link meshShapePoint}
  */
 export const prepareMeshShape = (info: ParticleShapeMeshInfo): PreparedMeshShape => {
+	if (info.areaCdf !== undefined) {
+		return { info, running: info.areaCdf };
+	}
 	const { positions: p, primitives, corners } = info;
 	const count = Math.floor(primitives.length / corners);
 	const running = new Float64Array(count);
@@ -46,7 +49,7 @@ export const prepareMeshShape = (info: ParticleShapeMeshInfo): PreparedMeshShape
 };
 
 /** @returns the first primitive whose running total passes `target` */
-const primitiveAt = (running: Float64Array, target: number): number => {
+const primitiveAt = (running: Float32Array | Float64Array, target: number): number => {
 	let low = 0;
 	let high = running.length - 1;
 	while (low < high) {

@@ -8,6 +8,7 @@ import { decodeGeometryTable, type GeometryTable } from '@endfield-noclip/packag
 import { decodeChains, type Chain } from '@endfield-noclip/package-format/instances';
 import { decodeIrradianceTable, type IrradianceTable } from '@endfield-noclip/package-format/irradiance';
 import { decodeLightsTable, type LightsTable } from '@endfield-noclip/package-format/lights';
+import { decodeLutsTable, type LutsTable } from '@endfield-noclip/package-format/luts';
 import {
 	CORE_ARCHIVE,
 	CORE_ARCHIVE_INDEX,
@@ -16,7 +17,7 @@ import {
 	validateManifest,
 } from '@endfield-noclip/package-format/manifest';
 import type { MaterialTable } from '@endfield-noclip/package-format/materials';
-import type { ParticlesTable } from '@endfield-noclip/package-format/particles';
+import { resolveParticleLuts, type ParticlesTable } from '@endfield-noclip/package-format/particles';
 import { decodeTextureTable, type TextureTable } from '@endfield-noclip/package-format/texture-table';
 import { decodeTree, type Tree } from '@endfield-noclip/package-format/tree';
 import type { WaterTable } from '@endfield-noclip/package-format/water';
@@ -103,6 +104,14 @@ export const openViewerPackage = async (
 		// `.zst` members are a single zstd frame
 		return path.endsWith('.zst') ? decompressZstd(bytes) : bytes;
 	};
+	const optionalMember = async (path: string): Promise<Uint8Array | null> => {
+		const file = archive.get(path);
+		if (file === undefined) {
+			return null;
+		}
+		const bytes = await file.bytes();
+		return path.endsWith('.zst') ? decompressZstd(bytes) : bytes;
+	};
 	const json = async (path: string): Promise<unknown> =>
 		JSON.parse(new TextDecoder().decode(await member(path)));
 
@@ -121,7 +130,8 @@ export const openViewerPackage = async (
 		textures,
 		water,
 		lights,
-		particles,
+		luts,
+		rawParticles,
 		environment,
 		irradiance,
 	] = await Promise.all([
@@ -135,12 +145,16 @@ export const openViewerPackage = async (
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
 		json(CORE_PATHS.water) as Promise<WaterTable>,
 		member(CORE_PATHS.lights).then(decodeLightsTable),
+		optionalMember(CORE_PATHS.luts).then((bytes): LutsTable | null =>
+			bytes === null ? null : decodeLutsTable(bytes),
+		),
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
 		json(CORE_PATHS.particles) as Promise<ParticlesTable>,
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
 		(json(CORE_PATHS.environment) as Promise<EnvironmentTable>).then(resolveEnvironment),
 		member(CORE_PATHS.irradiance).then(decodeIrradianceTable),
 	]);
+	const particles = luts === null ? rawParticles : resolveParticleLuts(rawParticles, luts);
 
 	return {
 		source,

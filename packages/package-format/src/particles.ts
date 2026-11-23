@@ -8,6 +8,7 @@
  */
 
 import type { AnimationCurve, Gradient } from './curves.ts';
+import type { LutsTable } from './luts.ts';
 import type { Vec3 } from './values.ts';
 
 /**
@@ -274,17 +275,58 @@ export interface ParticleShapeMeshInfo {
 	spread: number;
 	/** m along the interpolated normal, before it's normalized */
 	normalOffset: number;
+	/**
+	 * index into `tables/luts.bin.zst` (`LutsTable.shapeMeshes`) when stored in binary LUTs; hydrated into the
+	 * typed-array fields below by {@link resolveParticleLuts}
+	 */
+	lut?: number;
 	/** xyz per vertex, m */
-	positions: number[];
+	positions: number[] | Float32Array;
 	/** xyz per vertex; `null` when the mesh has none, leaving along +z */
-	normals: number[] | null;
+	normals: number[] | Float32Array | null;
 	/** rgba per vertex, 0–255, multiplying the authored start colour; `null` when it doesn't */
-	colors: number[] | null;
+	colors: number[] | Uint8Array | null;
 	/** vertex indices per primitive: 3 for triangles, 2 for lines */
 	corners: 2 | 3;
 	/** {@link corners} vertex indices per primitive */
-	primitives: number[];
+	primitives: number[] | Uint32Array;
+	/** precomputed ascending cumulative primitive areas/lengths from `EFLU`, if present */
+	areaCdf?: Float32Array;
 }
+
+/**
+ * hydrates `lut`-referenced particle shape meshes in a {@link ParticlesTable} from a decoded {@link LutsTable}
+ *
+ * @param table decoded `tables/particles.json.zst`
+ * @param luts decoded `tables/luts.bin.zst`
+ * @returns a new {@link ParticlesTable} with shape-mesh typed arrays and `areaCdf` filled in
+ */
+export const resolveParticleLuts = (table: ParticlesTable, luts: LutsTable): ParticlesTable => ({
+	systems: table.systems.map((system) => {
+		if (system.shape?.kind !== ParticleShapeKind.Mesh || system.shape.mesh.lut === undefined) {
+			return system;
+		}
+		const entry = luts.shapeMeshes[system.shape.mesh.lut];
+		if (entry === undefined) {
+			return system;
+		}
+		return {
+			...system,
+			shape: {
+				...system.shape,
+				mesh: {
+					...system.shape.mesh,
+					positions: entry.positions,
+					normals: entry.normals,
+					colors: entry.colors,
+					corners: entry.primSize,
+					primitives: entry.primitives,
+					areaCdf: entry.areaCdf,
+				},
+			},
+		};
+	}),
+});
 
 /** a burst of particles (Unity's `ParticleSystem.Burst`), repeated within each loop */
 export interface ParticleBurstInfo {

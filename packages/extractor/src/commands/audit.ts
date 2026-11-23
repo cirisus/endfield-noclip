@@ -410,6 +410,29 @@ const auditCore = async (packageDir: string, member: string | undefined, json: b
 			console.log(JSON.stringify(await pkg.lights(), null, '\t'));
 			return;
 		}
+		case CORE_PATHS.luts: {
+			const table = await pkg.luts();
+			console.log(
+				JSON.stringify(
+					{
+						curves: table.curves.length,
+						gradients: table.gradients.length,
+						shapeMeshes: table.shapeMeshes.map((m, i) => ({
+							id: i,
+							primSize: m.primSize,
+							vertices: m.positions.length / 3,
+							primitives: m.areaCdf.length,
+							hasNormals: m.normals !== null,
+							hasColor: m.hasColor,
+							totalArea: m.areaCdf.at(-1) ?? 0,
+						})),
+					},
+					null,
+					'\t',
+				),
+			);
+			return;
+		}
 		case CORE_PATHS.irradiance: {
 			const table = await pkg.irradiance();
 			const entries = Array.from({ length: table.keys.length }, (_, i) => ({

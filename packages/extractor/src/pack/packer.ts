@@ -5,6 +5,7 @@ import { encodeGeometryTable } from '@endfield-noclip/package-format/geometry-ta
 import { encodeChains } from '@endfield-noclip/package-format/instances';
 import { encodeIrradianceTable } from '@endfield-noclip/package-format/irradiance';
 import { encodeLightsTable } from '@endfield-noclip/package-format/lights';
+import { encodeLutsTable } from '@endfield-noclip/package-format/luts';
 import {
 	CORE_ARCHIVE,
 	CORE_PATHS,
@@ -329,6 +330,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			(key) => (scene.grid.rootSize / 2 ** key.level) * ERROR_PER_EDGE,
 			instances.global,
 		);
+		const { particles: particlesTable, luts } = content.particles.finish();
 		// a new table is one more member here
 		const members: CoreMember[] = [
 			{ path: CORE_PATHS.tree, data: encodeTree(tree) },
@@ -341,7 +343,8 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			},
 			{ path: CORE_PATHS.water, data: jsonTable(waterTable) },
 			{ path: CORE_PATHS.lights, data: binaryTable(encodeLightsTable(lights)) },
-			{ path: CORE_PATHS.particles, data: jsonTable(content.particles.table()) },
+			{ path: CORE_PATHS.luts, data: binaryTable(encodeLutsTable(luts)) },
+			{ path: CORE_PATHS.particles, data: jsonTable(particlesTable) },
 			{ path: CORE_PATHS.environment, data: jsonTable(environmentTable) },
 			{
 				path: CORE_PATHS.irradiance,
