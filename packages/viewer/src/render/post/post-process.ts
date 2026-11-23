@@ -321,9 +321,14 @@ export class PostProcess {
 				GPUTextureUsage.COPY_DST,
 		});
 		const sceneView = sceneTexture.createView();
+		this.#taa.resize({ scene: sceneView, depth: scene.depth, width, height, outputWidth, outputHeight });
+		const histories = this.#taa.histories;
+		const historyViews: [GPUTextureView, GPUTextureView] = [
+			histories[0].createView(),
+			histories[1].createView(),
+		];
 		this.#ao.resize({ depth: scene.depth, width, height });
-		// the reflections run before compositing, so the scene they read still holds last frame's
-		this.#reflections.resize({ scene, previousScene: sceneView, width, height });
+		this.#reflections.resize({ scene, previousScenes: historyViews, width, height });
 		this.#celestial.resize({ depth: scene.depth, target: scene.reflection });
 		this.#composite.resize({
 			scene,
@@ -333,15 +338,13 @@ export class PostProcess {
 		});
 		this.#lightShafts.resize({ scene, composited: sceneView, width, height });
 		this.#lensFlares.resize({ scene, composited: sceneView });
-		this.#taa.resize({ scene: sceneView, depth: scene.depth, width, height, outputWidth, outputHeight });
-		const histories = this.#taa.histories;
 		this.#bloom.resize({ histories, outputWidth, outputHeight });
 		this.#tonemap.resize({ histories, bloom: this.#bloom.result });
 		const sized: Sized = {
 			version: scene.version,
 			scene: sceneTexture,
 			sceneView,
-			historyViews: [histories[0].createView(), histories[1].createView()],
+			historyViews,
 		};
 		this.#sized = sized;
 		return sized;
@@ -402,7 +405,12 @@ export class PostProcess {
 			this.#ao.encode(encoder);
 		}
 		// with reflections off this still clears what composite reads
-		this.#reflections.encode(encoder, { camera, look: environment.post.ssr, enabled: settings.reflections });
+		this.#reflections.encode(encoder, {
+			camera,
+			look: environment.post.ssr,
+			enabled: settings.reflections,
+			previousScene: this.#taa.previousIndex,
+		});
 		this.#celestial.encode(encoder, {
 			eye: camera.position,
 			sun: environment.sunDirection,

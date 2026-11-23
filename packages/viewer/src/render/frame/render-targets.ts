@@ -83,8 +83,8 @@ export interface SceneTextures {
 	radianceTexture: GPUTexture;
 	ambient: GPUTextureView;
 	/**
-	 * rgb: the sky reflection in {@link radiance}. the screen-space reflections are its last reader; the
-	 * celestial pass then draws into it
+	 * rgb: the sky reflection in {@link radiance} on surface pixels; the celestial pass writes sky pixels over
+	 * it while keeping surface pixels for the composite
 	 */
 	reflection: GPUTextureView;
 	/** the surface's normal, roughness and screen-space reflection weight, packed; 0 where nothing lit was drawn */

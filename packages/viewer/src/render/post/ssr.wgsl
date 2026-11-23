@@ -38,8 +38,6 @@ struct Ssr {
 // fs_resolve: this frame's pyramid and view depth pyramid, all mips
 @group(1) @binding(11) var pyramid: texture_2d<f32>;
 @group(1) @binding(12) var depth_pyramid: texture_2d<f32>;
-// the main pass's `reflection`: the sky reflection the radiance holds
-@group(1) @binding(13) var reflection_texture: texture_2d<f32>;
 // the surface relit decals changed (`fs_decal_relight` in effect.wgsl), packed alike; 0 where none did
 @group(1) @binding(14) var decal_surface_texture: texture_2d<u32>;
 
@@ -124,7 +122,7 @@ fn fs_march(in: FullscreenOut) -> March {
 	let depth = textureLoad(depth_texture, full, 0);
 	out.depth = vec4f(select(SKY_DEPTH, view_depth(depth), depth > 0.0));
 	let s = reflection_surface_at(full);
-	if (!s.valid || depth <= 0.0) {
+	if (!s.valid || depth <= 0.0 || ssr.eye_delta.w > 0.5) {
 		return out;
 	}
 	let uv = (vec2f(full) + 0.5) * post.viewport.zw;
@@ -193,8 +191,9 @@ fn fs_march(in: FullscreenOut) -> March {
 
 	// fade towards the screen's edges, for surfaces seen head-on (their rays turn back off the screen) and, for
 	// all but the glossiest, between 90 and 100 m
+	let jitter_uv = vec2f(-post.jitter.x, post.jitter.y) * 0.5;
 	var hit_motion = vec2f(0.0);
-	var source = uv;
+	var source = uv + jitter_uv;
 	if (hit) {
 		let edge = min(1.0 - max(position.x, position.y), min(position.x, position.y));
 		let on_screen = clamp(select(edge / ssr.fade.x, 1.0, edge > ssr.fade.x), 0.0, 1.0);
@@ -202,7 +201,7 @@ fn fs_march(in: FullscreenOut) -> March {
 		let far = select(clamp((100.0 - eye) * 0.1, 0.0, 1.0), 1.0, s.roughness < 0.1);
 		out.fade = vec4f(on_screen * mirror * far);
 		hit_motion = motion_at(position.xy);
-		source = position.xy - hit_motion;
+		source = position.xy + jitter_uv - hit_motion;
 	}
 	out.color = vec4f(compress(textureSampleLevel(previous_scene, linear_sampler, source, 0.0).rgb), 0.0);
 
@@ -347,15 +346,14 @@ fn pyramid_color(px: vec2f, mip: f32, eye: f32) -> vec3f {
 	return color / max(weight, 0.01);
 }
 
-// what the reflection changes in the radiance: the hit colour, blurred to the reflected cone, replaces the sky
-// reflection by the fade, both under the surface's environment BRDF and specular occlusion
+// the resolved reflection radiance (rgb) and fade (a) at half size; the composite upsamples both and applies
+// each full-size pixel's environment BRDF and sky reflection, matching HGRP/DeferredLighting
 @fragment
 fn fs_resolve(in: FullscreenOut) -> @location(0) vec4f {
 	let px = vec2i(in.position.xy);
 	let full = full_px(px);
-	let s = reflection_surface_at(full);
 	let depth = textureLoad(depth_texture, full, 0);
-	if (!s.valid || depth <= 0.0) {
+	if (depth <= 0.0) {
 		return vec4f(0.0);
 	}
 	let uv = (vec2f(px) + 0.5) * ssr.size.zw;
@@ -370,8 +368,7 @@ fn fs_resolve(in: FullscreenOut) -> @location(0) vec4f {
 		color = mix(pyramid_color(vec2f(px), lower, eye), pyramid_color(vec2f(px), upper, eye), mip - lower);
 	}
 	let fade = textureSampleLevel(pyramid, linear_sampler, uv, floor(mip)).a;
-	let sky = textureLoad(reflection_texture, full, 0).rgb;
-	return vec4f((s.weight * expand(color) - sky) * fade, 0.0);
+	return vec4f(expand(color), fade);
 }
 
 // #endregion

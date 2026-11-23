@@ -150,8 +150,8 @@ export class CelestialLayer {
 	/**
 	 * rebinds the inputs after they were recreated.
 	 *
-	 * @param input the main pass's depth, and the target: its sky reflection target, which is free once the
-	 *   reflections have resolved, which run first
+	 * @param input the main pass's depth, and the target: its sky reflection target, where sky pixels are
+	 *   overwritten and surface pixels are kept for the composite
 	 */
 	resize(input: { depth: GPUTextureView; target: GPUTextureView }): void {
 		const { depth, target } = input;
@@ -179,12 +179,17 @@ export class CelestialLayer {
 			throw new Error('celestial layer used before resize()');
 		}
 		this.#write(input.eye, input.sun, input.sunIlluminance);
-		encodeFullscreen(encoder, {
-			label: 'celestial',
-			pipeline: this.#pipeline,
-			groups: [this.#postGroup, this.#layerGroup(), sized.group],
-			targets: [sized.target],
-		});
+		encodeFullscreen(
+			encoder,
+			{
+				label: 'celestial',
+				pipeline: this.#pipeline,
+				groups: [this.#postGroup, this.#layerGroup(), sized.group],
+				targets: [sized.target],
+			},
+			// keep the main pass's sky reflections on surface pixels (fs_celestial discards them) for the composite
+			'load',
+		);
 	}
 
 	/**

@@ -40,15 +40,16 @@ const mip = (source: GPUTexture, level: number): GPUTextureView =>
 interface Sized {
 	width: number;
 	height: number;
-	/** what the reflections change in the radiance */
+	/** resolved reflection radiance (rgb) and fade (a) at half size */
 	output: GPUTexture;
-	march: FullscreenPass;
+	/** march passes, one per TAA history view */
+	march: [FullscreenPass, FullscreenPass];
 	/** per pyramid: the temporal filter into its finest mip (reading the other's), its coarser mips, the resolve */
 	chains: [FullscreenPass[], FullscreenPass[]];
 	clear: GPUTextureView;
 }
 
-/** half render size reflections; resolve outputs a radiance delta the composite upsamples and adds */
+/** half render size reflections; resolve outputs radiance (rgb) and fade (a) for the composite */
 export class ScreenSpaceReflections {
 	#device: GPUDevice;
 	#postUniforms: GPUBuffer;
@@ -118,17 +119,16 @@ export class ScreenSpaceReflections {
 	/**
 	 * (re)creates the targets for new sizes or inputs; the history starts afresh.
 	 *
-	 * @param input the main pass's textures, the composited scene the next frame's hits read, and the render
-	 *   size
+	 * @param input the main pass's textures, the two antialiased scene histories hits read, and the render size
 	 */
 	resize(input: {
 		scene: SceneTextures;
-		previousScene: GPUTextureView;
+		previousScenes: readonly [GPUTextureView, GPUTextureView];
 		width: number;
 		height: number;
 	}): void {
 		this.#release();
-		const { scene, previousScene } = input;
+		const { scene, previousScenes } = input;
 		const width = Math.max(1, Math.ceil(input.width / DOWNSCALE));
 		const height = Math.max(1, Math.ceil(input.height / DOWNSCALE));
 		const device = this.#device;
@@ -156,7 +156,7 @@ export class ScreenSpaceReflections {
 			group(pipeline, 0, { 0: { buffer: this.#postUniforms } });
 		const ssr = { buffer: this.#uniforms };
 
-		const march: FullscreenPass = {
+		const makeMarch = (previousScene: GPUTextureView): FullscreenPass => ({
 			label: 'ssr march',
 			pipeline: p.march,
 			groups: [
@@ -176,7 +176,11 @@ export class ScreenSpaceReflections {
 				marchFade.createView(),
 				mip(depthPyramid, 0),
 			],
-		};
+		});
+		const march: [FullscreenPass, FullscreenPass] = [
+			makeMarch(previousScenes[0]),
+			makeMarch(previousScenes[1]),
+		];
 		const chain = (i: number): FullscreenPass[] => {
 			const pyramid = pyramids[i];
 			const passes: FullscreenPass[] = [
@@ -218,13 +222,10 @@ export class ScreenSpaceReflections {
 					group(p.resolve, 1, {
 						0: ssr,
 						1: scene.depth,
-						2: scene.reflectionSurface,
 						4: this.#sampler,
 						6: marchWeight.createView(),
 						11: pyramid.createView(),
 						12: depthPyramid.createView(),
-						13: scene.reflection,
-						14: scene.decalSurface,
 					}),
 				],
 				targets: [output.createView()],
@@ -249,15 +250,15 @@ export class ScreenSpaceReflections {
 	 * encodes this frame's reflections into {@link output}, or clears it while they're off.
 	 *
 	 * @param encoder this frame's encoder, after the main pass and before compositing
-	 * @param input the camera (unjittered), the level's reflection look (`null`: the level has none) and
-	 *   whether the view shows them
+	 * @param input the camera (unjittered), the level's reflection look (`null`: the level has none), whether
+	 *   the view shows them, and which TAA history holds last frame's scene
 	 */
 	encode(
 		encoder: GPUCommandEncoder,
-		input: { camera: Camera; look: PostLook['ssr']; enabled: boolean },
+		input: { camera: Camera; look: PostLook['ssr']; enabled: boolean; previousScene: number },
 	): void {
 		const sized = this.#ensureSized();
-		const { camera, look, enabled } = input;
+		const { camera, look, enabled, previousScene } = input;
 		if (!enabled || look === null) {
 			const pass = encoder.beginRenderPass({
 				label: 'ssr off',
@@ -274,7 +275,7 @@ export class ScreenSpaceReflections {
 		f.set([look.onScreen, look.mirrorMul, look.mirrorAdd, 0], CAMERA_HISTORY_FLOATS);
 		f[CAMERA_HISTORY_FLOATS + 4] = MARCH_STEPS;
 		this.#device.queue.writeBuffer(this.#uniforms, 0, f);
-		for (const pass of [sized.march, ...sized.chains[this.#camera.index]]) {
+		for (const pass of [sized.march[previousScene], ...sized.chains[this.#camera.index]]) {
 			encodeFullscreen(encoder, pass);
 		}
 		this.#camera.advance();

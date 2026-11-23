@@ -162,6 +162,11 @@ export class TemporalAA {
 		return this.#ensureSized().history;
 	}
 
+	/** @returns index into {@link histories} of last frame's resolved scene, before {@link encode} advances */
+	get previousIndex(): number {
+		return 1 - this.#camera.index;
+	}
+
 	/**
 	 * reads last frame's resolved history and its reprojection uniforms, before {@link encode} overwrites the
 	 * other buffer.

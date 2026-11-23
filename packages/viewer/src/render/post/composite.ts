@@ -2,6 +2,8 @@ import { autoBindGroup, encodeFullscreen, fullscreenPipeline } from '../../gfx/f
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_REPEAT, sampler } from '../../gfx/samplers.ts';
 import { HDR_FORMAT, type SceneTextures } from '../frame/render-targets.ts';
+import octahedralWgsl from '../shaders/common/octahedral.wgsl?raw';
+import reflectionSurfaceWgsl from '../shaders/common/reflection-surface.wgsl?raw';
 import { SkyBinding } from '../sky/atmosphere-luts.ts';
 import atmosphereWgsl from '../sky/atmosphere.wgsl?raw';
 import { fogSource } from '../sky/fog-source.ts';
@@ -40,6 +42,8 @@ export class Composite {
 		this.#pipeline = fullscreenPipeline(device, {
 			label: 'composite',
 			module: postShaderModule(device, 'composite', [
+				octahedralWgsl,
+				reflectionSurfaceWgsl,
 				atmosphereWgsl,
 				fogSource({ group: 1, binding: SkyBinding.froxels }),
 				skyWgsl,
@@ -94,9 +98,9 @@ export class Composite {
 	/**
 	 * rebinds the inputs after they were recreated.
 	 *
-	 * @param input the main pass's outputs, the blurred AO, the reflections' change to the radiance, and the
-	 *   scene the composite writes. the celestial pass draws the nebula and planets (and how far they cover the
-	 *   sky) into the main pass's sky reflection target, which the composite reads
+	 * @param input the main pass's outputs, the blurred AO, the resolved half-size reflections (rgb hit
+	 *   radiance, a fade), and the scene the composite writes. `scene.reflection` holds the celestial layers on
+	 *   sky pixels and the main pass's sky reflection on surface pixels
 	 */
 	resize(input: {
 		scene: SceneTextures;
@@ -113,6 +117,8 @@ export class Composite {
 				2: input.ao,
 				3: scene.depth,
 				6: input.reflections,
+				7: scene.reflectionSurface,
+				8: scene.decalSurface,
 				9: scene.reflection,
 			}),
 		};

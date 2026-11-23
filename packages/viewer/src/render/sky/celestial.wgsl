@@ -572,7 +572,7 @@ fn celestial_layers(direction: vec3f) -> vec4f {
 @fragment
 fn fs_celestial(in: FullscreenOut) -> @location(0) vec4f {
 	if (textureLoad(celestial_depth, vec2i(in.position.xy), 0) > 0.0) {
-		return vec4f(0.0);
+		discard;
 	}
 	let direction = normalize(view_ray(in.uv));
 	if (post.cloud.w > 0.5 && post.cloud_shape.w > 0.5) {

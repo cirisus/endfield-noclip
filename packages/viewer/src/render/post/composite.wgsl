@@ -1,15 +1,19 @@
 // composites the main pass into the HDR scene: screen-space reflections, ambient occlusion on the ambient
 // part, the sky where nothing was drawn with the nebula and planets beyond it, the atmosphere fog and the
 // two-layer height fog. transparent things draw over the result, fogging themselves. see
-// docs/game-data/sky-and-fog.md. needs post-common.wgsl, atmosphere.wgsl, fog.wgsl and sky.wgsl.
+// docs/game-data/sky-and-fog.md. needs post-common.wgsl, octahedral.wgsl, reflection-surface.wgsl,
+// atmosphere.wgsl, fog.wgsl and sky.wgsl.
 
 @group(2) @binding(0) var radiance_texture: texture_2d<f32>;
 @group(2) @binding(1) var ambient_texture: texture_2d<f32>;
 @group(2) @binding(2) var ao_texture: texture_2d<f32>;
 @group(2) @binding(3) var depth_texture: texture_depth_2d;
-// what the screen-space reflections change in the radiance (ssr.wgsl)
+// resolved half-size screen-space reflections: rgb hit radiance, a fade (ssr.wgsl)
 @group(2) @binding(6) var ssr_texture: texture_2d<f32>;
-// the sky planets, cloud panorama, nebula and stars over the sky: s · (1 − a) + rgb (celestial.wgsl)
+// the main pass's `reflection_surface` and relit decals' override (reflection-surface.wgsl)
+@group(2) @binding(7) var surface_texture: texture_2d<u32>;
+@group(2) @binding(8) var decal_surface_texture: texture_2d<u32>;
+// sky pixels: nebula/planets/clouds (celestial.wgsl); surface pixels: the main pass's sky reflection
 @group(2) @binding(9) var celestial_texture: texture_2d<f32>;
 
 // Jimenez et al.'s multi-bounce fit: occluded light that bounces off a bright surface comes back, so bright
@@ -39,20 +43,6 @@ fn drift_fog(unfogged: vec3f, fogged: vec3f, transmittance: vec3f, position: vec
 	return mix(unfogged, fogged, amount);
 }
 
-// the reflections' change to the radiance, upsampled bilinearly from their smaller size
-fn reflection_change(px: vec2i) -> vec3f {
-	let size = vec2i(textureDimensions(ssr_texture));
-	let at = (vec2f(px) + 0.5) * vec2f(size) / post.viewport.xy - 0.5;
-	let base = vec2i(floor(at));
-	let f = at - floor(at);
-	let edge = size - 1;
-	let a = textureLoad(ssr_texture, clamp(base, vec2i(0), edge), 0).rgb;
-	let b = textureLoad(ssr_texture, clamp(base + vec2i(1, 0), vec2i(0), edge), 0).rgb;
-	let c = textureLoad(ssr_texture, clamp(base + vec2i(0, 1), vec2i(0), edge), 0).rgb;
-	let d = textureLoad(ssr_texture, clamp(base + vec2i(1, 1), vec2i(0), edge), 0).rgb;
-	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
 @fragment
 fn fs_composite(in: FullscreenOut) -> @location(0) vec4f {
 	let px = vec2i(in.position.xy);
@@ -71,7 +61,19 @@ fn fs_composite(in: FullscreenOut) -> @location(0) vec4f {
 		return vec4f(sky * fog.transmittance + fog.inscatter, 1.0);
 	}
 	let radiance = textureLoad(radiance_texture, px, 0);
-	var color = max(radiance.rgb + reflection_change(px), vec3f(0.0));
+	var color = radiance.rgb;
+	if (post.reflections.x > 0.5) {
+		let decal = unpack_reflection_surface(textureLoad(decal_surface_texture, px, 0).xy);
+		var surface = decal;
+		if (!decal.valid) {
+			surface = unpack_reflection_surface(textureLoad(surface_texture, px, 0).xy);
+		}
+		if (surface.valid) {
+			let ssr = textureSampleLevel(ssr_texture, lut_sampler, in.uv, 0.0);
+			let sky = textureLoad(celestial_texture, px, 0).rgb;
+			color = max(color + (surface.weight * ssr.rgb - sky) * ssr.a, vec3f(0.0));
+		}
+	}
 	// the AO passes don't run while it's off, and the radiance then keeps the material occlusion alone
 	if (post.ao.w > 0.5) {
 		let ambient = textureLoad(ambient_texture, px, 0);

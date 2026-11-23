@@ -77,9 +77,6 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **screen-space reflections** ([viewer](viewer/lighting.md#screen-space-reflections)):
   - rain-wetness ripple normals not drawn; reflection-only effects listed under
     [effects and particles](#effects-and-particles).
-  - thin emissive strips (Dijiang's deck under light strips) reflect as stable white speckles:
-    half-res rays hit 1–2 px strips sparsely and the temporal filter holds full brightness
-    (untraced).
 - **ambient occlusion** ([viewer](viewer/post-processing.md#ambient-occlusion)): depth-derived
   normals, single depth-aware blur (vs temporal + two spatial filters), no depth mips, reach capped
   at 48 half-res pixels.

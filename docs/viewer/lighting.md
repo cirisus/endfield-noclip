@@ -83,8 +83,10 @@ sets it).
 [`ssr.wgsl`](../../packages/viewer/src/render/post/ssr.wgsl) and
 [`screen-space-reflections.ts`](../../packages/viewer/src/render/post/screen-space-reflections.ts)
 run the game's [SSR](../game-data/lighting.md#screen-space-reflections) as half-resolution
-fullscreen passes (march, temporal filter, pyramid, resolve; ~0.5 ms at 2560×1600), bilinearly
-upsampled at composite.
+fullscreen passes (march, temporal filter, pyramid, resolve; ~0.5 ms at 2560×1600), reading the
+previous TAA history for hit colour. the composite bilinearly upsamples the resolved radiance and
+fade and applies each full-resolution pixel's environment BRDF and sky reflection, matching
+`HGRP/DeferredLighting`.
 
 - reprojects with depth and previous camera instead of motion vectors (scenery is static).
 - needs no rain-wetness variant because surfaces already carry wet roughness
