@@ -95,6 +95,8 @@ interface StaticChunksMemo {
 	lights: { light: ChunkLight; fileIndex: number }[];
 	chains: CachedChainSpec[];
 	placements: CachedPlacement[];
+	sceneStates: number[];
+	areas: number[];
 }
 
 // the scene's chunk files: static entities, foliage grids and local lights, filed as
@@ -155,6 +157,7 @@ export interface StaticChunkSummary {
 /** replays a cached {@link StaticChunksMemo} into an empty {@link PackContent} */
 const replayStaticChunks = (content: PackContent, memo: StaticChunksMemo): StaticChunkSummary => {
 	const { scene, collector, controls, seen } = content;
+	controls.require({ sceneStates: memo.sceneStates, areas: memo.areas });
 	for (const [key, value] of Object.entries(memo.counts)) {
 		content.count(key, value);
 	}
@@ -641,8 +644,20 @@ export const collectStaticChunks = async (
 		},
 	);
 	content.count('gatedRenderers', gatedRows.size);
+	const requiredSceneStates = new Set<number>();
+	const requiredAreas = new Set<number>();
 	for (const { sources, ...rows } of gatedRows.values()) {
 		const visibility = controls.sourceVisibility(sources);
+		if (visibility !== null) {
+			for (const { sceneState, area } of sources) {
+				if (sceneState !== 0) {
+					requiredSceneStates.add(sceneState - 1);
+				}
+				if (area !== 0) {
+					requiredAreas.add(area);
+				}
+			}
+		}
 		// HLOD clusters stand in for the rows of their own area, so area-only content keeps HLOD refinement;
 		// scene-state content has no HLODs and streams as conditional detail
 		const stateGated = visibility !== null && sources.some((source) => source.sceneState !== 0);
@@ -673,6 +688,8 @@ export const collectStaticChunks = async (
 			lights: recordedLights,
 			chains: recordedChains,
 			placements: recordedPlacements,
+			sceneStates: [...requiredSceneStates],
+			areas: [...requiredAreas],
 		} satisfies StaticChunksMemo);
 	}
 	return { hlodNameMatches, chunkVolumes, sceneWater };
