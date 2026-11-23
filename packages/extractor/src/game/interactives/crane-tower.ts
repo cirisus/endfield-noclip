@@ -59,13 +59,13 @@ export interface CraneTower {
  * @returns its step lists and target, or `null` without a crane tower component
  */
 export const craneTowerOf = (template: MemoryPackValue, row: LevelInteractive): CraneTower | null => {
-	const component =
-		isMemoryPackObject(template) && Array.isArray(template.componentList)
-			? template.componentList.find((entry) => {
-					const type = memoryPackType(entry);
-					return type !== undefined && CRANE_TOWER_COMPONENTS.some((suffix) => type.endsWith(suffix));
-				})
-			: undefined;
+	if (!isMemoryPackObject(template) || !Array.isArray(template.componentList)) {
+		return null;
+	}
+	const component = template.componentList.find((entry) => {
+		const type = memoryPackType(entry);
+		return type !== undefined && CRANE_TOWER_COMPONENTS.some((suffix) => type.endsWith(suffix));
+	});
 	if (!isMemoryPackObject(component)) {
 		return null;
 	}

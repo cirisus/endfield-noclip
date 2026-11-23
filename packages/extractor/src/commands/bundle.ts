@@ -281,10 +281,21 @@ const find = async (
 		limit: number;
 	},
 ): Promise<void> => {
-	const groups =
-		options.group === 'all'
-			? [VfsGroup.Bundle, VfsGroup.InitialBundle]
-			: [options.group === 'initial' ? VfsGroup.InitialBundle : VfsGroup.Bundle];
+	let groups: (typeof VfsGroup)[keyof typeof VfsGroup][];
+	switch (options.group) {
+		case 'all': {
+			groups = [VfsGroup.Bundle, VfsGroup.InitialBundle];
+			break;
+		}
+		case 'initial': {
+			groups = [VfsGroup.InitialBundle];
+			break;
+		}
+		default: {
+			groups = [VfsGroup.Bundle];
+			break;
+		}
+	}
 	const catalogs = await Promise.all(groups.map((group) => context.vfs.group(group)));
 	const allNames = catalogs
 		.values()

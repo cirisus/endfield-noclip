@@ -625,7 +625,10 @@ export class MemoryPackReader {
 			if (type.name === 'string') {
 				const id = readI32(c);
 				const text = this.#strings(id);
-				return text === undefined ? (id < 0 ? null : `#${id}`) : text;
+				if (text !== undefined) {
+					return text;
+				}
+				return id < 0 ? null : `#${id}`;
 			}
 			return this.#raw(type, c);
 		}

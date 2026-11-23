@@ -64,10 +64,13 @@ export const run = async (args: string[]): Promise<void> => {
 		throw new Error(usage);
 	}
 	const level = values.level ?? null;
-	const outDir =
-		values.output === undefined
-			? resolve(new URL(level === null ? scene : `${scene}-${level}`, DEFAULT_OUT).pathname)
-			: resolve(values.output);
+	let outDir: string;
+	if (values.output === undefined) {
+		const name = level === null ? scene : `${scene}-${level}`;
+		outDir = resolve(new URL(name, DEFAULT_OUT).pathname);
+	} else {
+		outDir = resolve(values.output);
+	}
 	const zstdLevel = parseZstdLevel(values['zstd-level'], '--zstd-level');
 	const textureZstdLevel = parseZstdLevel(values['texture-zstd-level'], '--texture-zstd-level');
 	const jobs = parseInteger(values.jobs, '--jobs');

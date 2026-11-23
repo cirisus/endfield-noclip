@@ -190,17 +190,18 @@ const templateAtoms = (properties: MemoryPackValue | undefined, key: string): Pr
 			continue;
 		}
 		const atoms = Array.isArray(property.value.valueArray) ? property.value.valueArray : [];
-		return mapDefined(atoms, (atom) =>
-			isMemoryPackObject(atom)
-				? {
-						bits:
-							typeof atom.valueBit64 === 'string' || typeof atom.valueBit64 === 'number'
-								? BigInt(atom.valueBit64)
-								: 0n,
-						text: typeof atom.valueString === 'string' ? atom.valueString : null,
-					}
-				: undefined,
-		);
+		return mapDefined(atoms, (atom) => {
+			if (!isMemoryPackObject(atom)) {
+				return undefined;
+			}
+			return {
+				bits:
+					typeof atom.valueBit64 === 'string' || typeof atom.valueBit64 === 'number'
+						? BigInt(atom.valueBit64)
+						: 0n,
+				text: typeof atom.valueString === 'string' ? atom.valueString : null,
+			};
+		});
 	}
 	return null;
 };

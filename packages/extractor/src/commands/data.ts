@@ -224,9 +224,10 @@ const readTable = async (
 	options: { key: string | undefined; filter: RegExp | undefined; limit: number; json: boolean },
 ): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.Table);
-	const exactPath = name.includes('/')
-		? name
-		: `${TABLE_PREFIX}${name}${name.endsWith(TABLE_SUFFIX) ? '' : TABLE_SUFFIX}`;
+	let exactPath = name;
+	if (!name.includes('/')) {
+		exactPath = `${TABLE_PREFIX}${name}${name.endsWith(TABLE_SUFFIX) ? '' : TABLE_SUFFIX}`;
+	}
 	let matchedPath = group.catalog.has(exactPath) ? exactPath : undefined;
 	if (matchedPath === undefined) {
 		const lower = exactPath.toLowerCase();

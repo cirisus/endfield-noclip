@@ -284,24 +284,23 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 	const scalingMode = numberField(system.data, 'scalingMode');
 	const ownSize = scalingMode === ScalingMode.Shape || (scalingMode === ScalingMode.Local && !node.isRoot);
 	// a switched-off system stands in at its emitter whatever it would play
-	const frozen =
-		state.standIn === null
-			? await frozenParticles(walk, node, state, { renderer, system, rendererData })
-			: null;
-	if (frozen !== null) {
-		walk.candidates.push(
-			candidateOf(node, state, {
-				...particleRenderer,
-				matrix: frozen.matrix,
-				mesh: frozen.mesh,
-				particles: null,
-				unsupported: null,
-				ownSize,
-				billboard: null,
-				decal: null,
-			}),
-		);
-		return;
+	if (state.standIn === null) {
+		const frozen = await frozenParticles(walk, node, state, { renderer, system, rendererData });
+		if (frozen !== null) {
+			walk.candidates.push(
+				candidateOf(node, state, {
+					...particleRenderer,
+					matrix: frozen.matrix,
+					mesh: frozen.mesh,
+					particles: null,
+					unsupported: null,
+					ownSize,
+					billboard: null,
+					decal: null,
+				}),
+			);
+			return;
+		}
 	}
 	const read = await readPlayedSystem(walk, system, rendererData);
 	const drawsParticles = numberField(rendererData, 'm_RenderMode') !== ParticleRenderMode.None;

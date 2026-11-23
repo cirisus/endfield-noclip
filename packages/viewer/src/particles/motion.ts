@@ -135,10 +135,7 @@ export const steppedPath = (path: {
 		}
 		const speed = Math.hypot(whole[0], whole[1], whole[2]);
 		const cap = limit === null ? Infinity : evaluateMinMax(limit.info.limit, livedAt(t, life), limit.r);
-		let target = speed;
-		if (speed > cap) {
-			target = speed + (cap - speed) * pull;
-		}
+		let target = speed > cap ? speed + (cap - speed) * pull : speed;
 		if (drag !== null) {
 			const k = dragRate(drag.info, drag.size(t), drag.r);
 			target = Math.max(target - k * (drag.info.byVelocity ? target * target : 1) * h, 0);

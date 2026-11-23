@@ -916,11 +916,10 @@ export class ParticleSimulation {
 			launch = speed * modifier * scaledAge;
 			launchSpeed = speed * modifier * scaleNow;
 			// gravity builds up in the velocity the modifier scales, so the fall is ∫ g·τ·m(τ) dτ
-			if (scale === undefined) {
-				fall = 0.5 * gravity * modifier * age * age;
-			} else {
-				fall = gravity * integrateOverAge(scale, null, 1, age, life);
-			}
+			fall =
+				scale === undefined
+					? 0.5 * gravity * modifier * age * age
+					: gravity * integrateOverAge(scale, null, 1, age, life);
 			fallSpeed = gravity * age * modifier * scaleNow;
 		} else {
 			// drag slows the velocity itself and the constant modifier (curves don't come with drag) scales the move

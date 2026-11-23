@@ -355,21 +355,18 @@ export const planEnvironments = async (
 				continue;
 			}
 			const loadedPhase = volumePhases[i];
+			let index: number | null = null;
 			if (typeof loadedPhase === 'string') {
 				report({ kind: 'phase', volume: name, reason: loadedPhase });
-			}
-			const index =
-				typeof loadedPhase === 'string'
-					? null
-					: phaseIndex.getOrInsertComputed(loadedPhase.loaded.phase.name, () => {
-							addBlendSchema(plan.schema, loadedPhase.loaded.phase);
-							return (
-								plan.phases.push(
-									buildPhase(loadedPhase.loaded.phase, loadedPhase.textures, plan.textures, textureIndex),
-								) - 1
-							);
-						});
-			if (index !== null) {
+			} else {
+				index = phaseIndex.getOrInsertComputed(loadedPhase.loaded.phase.name, () => {
+					addBlendSchema(plan.schema, loadedPhase.loaded.phase);
+					return (
+						plan.phases.push(
+							buildPhase(loadedPhase.loaded.phase, loadedPhase.textures, plan.textures, textureIndex),
+						) - 1
+					);
+				});
 				volumeIndex.set(volume, plan.volumes.length);
 			}
 			plan.volumes.push({
@@ -513,14 +510,15 @@ const loadFlare = async (
 		littleEndian: ref.file.file.header.littleEndian,
 	});
 	const textures = await Promise.all(
-		data.elements.map(async ({ lensFlareTexture }, i) =>
-			lensFlareTexture === null
-				? null
-				: resolver.resolve(ref, lensFlareTexture).catch((error: unknown) => {
-						fail(`elements.${i}.lensFlareTexture`, error);
-						return null;
-					}),
-		),
+		data.elements.map(async ({ lensFlareTexture }, i) => {
+			if (lensFlareTexture === null) {
+				return null;
+			}
+			return resolver.resolve(ref, lensFlareTexture).catch((error: unknown) => {
+				fail(`elements.${i}.lensFlareTexture`, error);
+				return null;
+			});
+		}),
 	);
 	return { data, textures };
 };

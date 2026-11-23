@@ -162,9 +162,10 @@ export const classifyHgrpMaterial = (
 
 	// the Lit families, and shaders sharing their layout switch (`HGRP/Foliage/Trunk`, `HGRP/LitEffect`)
 	const litLike = family === 'lit' || family === 'litTransparent' || declared.has('_BaseTextureMapCount');
-	const baseTextureMapCount = litLike
-		? (float('_BaseTextureMapCount') ?? (keywords.includes('_TWO_BASEMAP') ? 2 : 0))
-		: null;
+	let baseTextureMapCount: number | null = null;
+	if (litLike) {
+		baseTextureMapCount = float('_BaseTextureMapCount') ?? (keywords.includes('_TWO_BASEMAP') ? 2 : 0);
+	}
 
 	return {
 		family,

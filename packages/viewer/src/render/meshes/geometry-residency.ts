@@ -48,31 +48,30 @@ export const uploadGeometry = (
 		positionScale: decoded.positionScale,
 	};
 	const indexFormat: GPUIndexFormat = decoded.indexSize === 4 ? 'uint32' : 'uint16';
-	const placed =
-		decoded.skin === null
-			? pools.place({
-					vertexCount: decoded.vertexCount,
-					uvFormat: decoded.uvFormat,
-					streams: data,
-					indices: decoded.indices,
-					indexFormat,
-				})
-			: null;
-	if (placed !== null) {
-		return {
-			...common,
-			bytes: placed.bytes,
-			vertices: placed.vertices,
-			indices: placed.indices,
-			submeshes: decoded.submeshes.map(({ firstIndex, indexCount, baseVertex }) => ({
-				firstIndex: placed.firstIndex + firstIndex,
-				indexCount,
-				baseVertex: placed.baseVertex + baseVertex,
-			})),
-			placement: placed.placement,
-			skin: null,
-			buffers: [],
-		};
+	if (decoded.skin === null) {
+		const placed = pools.place({
+			vertexCount: decoded.vertexCount,
+			uvFormat: decoded.uvFormat,
+			streams: data,
+			indices: decoded.indices,
+			indexFormat,
+		});
+		if (placed !== null) {
+			return {
+				...common,
+				bytes: placed.bytes,
+				vertices: placed.vertices,
+				indices: placed.indices,
+				submeshes: decoded.submeshes.map(({ firstIndex, indexCount, baseVertex }) => ({
+					firstIndex: placed.firstIndex + firstIndex,
+					indexCount,
+					baseVertex: placed.baseVertex + baseVertex,
+				})),
+				placement: placed.placement,
+				skin: null,
+				buffers: [],
+			};
+		}
 	}
 
 	// its own buffers: every stream it has in one vertex buffer

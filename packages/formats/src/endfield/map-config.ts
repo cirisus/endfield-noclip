@@ -82,6 +82,15 @@ export const parseMapConfig = (text: string): MapConfig => {
 			}
 		}
 	}
+	const sceneStateConditions: MapConfig['sceneStateConditions'] = [];
+	if (Array.isArray(raw.sceneStateConditions)) {
+		for (const entry of raw.sceneStateConditions) {
+			if (!isObject(entry) || typeof entry.stateName !== 'string') {
+				throw new FormatError(`map config ${mapId} has a scene state condition without a state`);
+			}
+			sceneStateConditions.push({ state: entry.stateName, condition: sceneCondition(entry.condition) });
+		}
+	}
 	return {
 		mapId,
 		mapIdNum: typeof mapIdNum === 'number' ? mapIdNum : 0,
@@ -93,14 +102,7 @@ export const parseMapConfig = (text: string): MapConfig => {
 			: [],
 		streamingMapConfigPath: typeof streamingMapConfigPath === 'string' ? streamingMapConfigPath : null,
 		sceneStates: states,
-		sceneStateConditions: Array.isArray(raw.sceneStateConditions)
-			? raw.sceneStateConditions.map((entry: unknown) => {
-					if (!isObject(entry) || typeof entry.stateName !== 'string') {
-						throw new FormatError(`map config ${mapId} has a scene state condition without a state`);
-					}
-					return { state: entry.stateName, condition: sceneCondition(entry.condition) };
-				})
-			: [],
+		sceneStateConditions,
 		mapVarIds: numberValues(raw.mapVarName2NumId),
 		mapVarNames: Object.fromEntries(
 			mapDefined(Object.entries(isObject(raw.mapVarNumId2Name) ? raw.mapVarNumId2Name : {}), ([id, name]) =>

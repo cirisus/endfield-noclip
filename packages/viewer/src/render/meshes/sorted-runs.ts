@@ -92,9 +92,11 @@ export const mergeFarToNear = (sources: readonly SortedSource[], runs: number[])
 		// take instances while this source stays ahead of every other
 		next[source]++;
 		while (next[source] < count) {
-			const other = heap.length > 1 ? (heap.length > 2 && before(heap[2], heap[1]) ? heap[2] : heap[1]) : -1;
-			if (other >= 0 && before(other, source)) {
-				break;
+			if (heap.length > 1) {
+				const other = heap.length > 2 && before(heap[2], heap[1]) ? heap[2] : heap[1];
+				if (before(other, source)) {
+					break;
+				}
 			}
 			next[source]++;
 		}

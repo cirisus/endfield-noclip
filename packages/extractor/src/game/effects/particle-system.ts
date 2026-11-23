@@ -481,6 +481,18 @@ export const particleShapeMesh = (
 		spawn = spawnMode === MeshSpawnMode.Loop ? ParticleMeshSpawn.Loop : ParticleMeshSpawn.PingPong;
 	}
 	const colors = booleanField(shape, 'm_UseMeshColors') ? mesh.colors : null;
+	let colorData: number[] | null = null;
+	if (colors !== null) {
+		colorData = Array.from({ length: mesh.vertexCount * 4 }, (_, i) => {
+			// the engine reads Color32; rgb without alpha reads as opaque
+			if (i % 4 >= colors.dimension) {
+				return 255;
+			}
+			return Math.round(
+				Math.min(Math.max(colors.data[Math.floor(i / 4) * colors.dimension + (i % 4)], 0), 1) * 255,
+			);
+		});
+	}
 	return {
 		placement,
 		spawn,
@@ -488,17 +500,7 @@ export const particleShapeMesh = (
 		normalOffset: numberField(shape, 'm_MeshNormalOffset'),
 		positions: quantize(mesh.positions, 1e4),
 		normals: mesh.normals === null ? null : quantize(mesh.normals, 1e3),
-		colors:
-			colors === null
-				? null
-				: Array.from({ length: mesh.vertexCount * 4 }, (_, i) =>
-						// the engine reads Color32; rgb without alpha reads as opaque
-						i % 4 < colors.dimension
-							? Math.round(
-									Math.min(Math.max(colors.data[Math.floor(i / 4) * colors.dimension + (i % 4)], 0), 1) * 255,
-								)
-							: 255,
-					),
+		colors: colorData,
 		corners,
 		primitives,
 	};
@@ -916,14 +918,15 @@ export const readParticleSystem = (
 	const emission = objectField(system, 'EmissionModule');
 	const emits = booleanField(emission, 'enabled');
 	const rate = emits ? readMinMaxCurve(objectField(emission, 'rateOverTime')) : ZERO_CURVE;
-	const bursts = emits
-		? arrayField(emission, 'm_Bursts').map((burst) => {
-				if (!isObject(burst)) {
-					throw new FormatError('burst is not an object');
-				}
-				return readBurst(burst);
-			})
-		: [];
+	const bursts: ParticleBurstInfo[] = [];
+	if (emits) {
+		for (const burst of arrayField(emission, 'm_Bursts')) {
+			if (!isObject(burst)) {
+				throw new FormatError('burst is not an object');
+			}
+			bursts.push(readBurst(burst));
+		}
+	}
 
 	let shape: ParticleShapeInfo | null = null;
 	let shapeMesh: { shape: PendingMeshShape; mesh: PPtr } | null = null;
@@ -939,10 +942,9 @@ export const readParticleSystem = (
 			shape = read;
 		}
 	}
-	let velocity: ParticleVelocityInfo | null = null;
-	if (enabled(system, 'VelocityModule')) {
-		velocity = readVelocity(objectField(system, 'VelocityModule'));
-	}
+	const velocity = enabled(system, 'VelocityModule')
+		? readVelocity(objectField(system, 'VelocityModule'))
+		: null;
 	let clamp: ParticleClampInfo | null = null;
 	if (enabled(system, 'ClampVelocityModule')) {
 		const module = objectField(system, 'ClampVelocityModule');

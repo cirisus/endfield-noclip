@@ -135,15 +135,16 @@ const listPackages = async (root: string, res: ServerResponse): Promise<void> =>
 	const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
 	const found = await Promise.all(
 		// hidden directories are the packer's staging and replaced packages
-		mapDefined(entries, (entry) =>
-			entry.isDirectory() && !entry.name.startsWith('.')
-				? stat(join(root, entry.name, CORE_ARCHIVE))
-						.catch(() => null)
-						.then((core): DevPackage | null =>
-							core?.isFile() ? { name: entry.name, coreSize: core.size } : null,
-						)
-				: undefined,
-		),
+		mapDefined(entries, (entry) => {
+			if (!entry.isDirectory() || entry.name.startsWith('.')) {
+				return undefined;
+			}
+			return stat(join(root, entry.name, CORE_ARCHIVE))
+				.catch(() => null)
+				.then((core): DevPackage | null =>
+					core?.isFile() ? { name: entry.name, coreSize: core.size } : null,
+				);
+		}),
 	);
 	const packages = definite(found);
 	packages.sort((a, b) => compareStrings(a.name, b.name));

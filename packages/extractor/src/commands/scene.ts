@@ -1065,12 +1065,14 @@ const loadStandIns = async (scene: string): Promise<StandInIndex> => {
 	return {
 		found: true,
 		ofPrefab: (path) => [...(byPrefab.get(path) ?? [])],
-		atEntity: (name, position) =>
-			position === null
-				? []
-				: mapDefined(byName.get(name) ?? [], (report) =>
-						Math.hypot(...report.position.map((v, i) => v - position[i])) <= 2 ? report.reason : undefined,
-					),
+		atEntity: (name, position) => {
+			if (position === null) {
+				return [];
+			}
+			return mapDefined(byName.get(name) ?? [], (report) =>
+				Math.hypot(...report.position.map((v, i) => v - position[i])) <= 2 ? report.reason : undefined,
+			);
+		},
 	};
 };
 

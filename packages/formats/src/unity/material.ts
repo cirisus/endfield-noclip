@@ -66,9 +66,9 @@ export const parseMaterial = (material: TypeTreeObject): MaterialRecord => {
 	let invalidKeywords: string[] = [];
 	if (Object.hasOwn(material, 'm_ValidKeywords')) {
 		keywords = arrayField(material, 'm_ValidKeywords').map(String);
-		invalidKeywords = Object.hasOwn(material, 'm_InvalidKeywords')
-			? arrayField(material, 'm_InvalidKeywords').map(String)
-			: [];
+		if (Object.hasOwn(material, 'm_InvalidKeywords')) {
+			invalidKeywords = arrayField(material, 'm_InvalidKeywords').map(String);
+		}
 	} else if (typeof material.m_ShaderKeywords === 'string') {
 		keywords = definite(material.m_ShaderKeywords.split(' '));
 	}
@@ -212,9 +212,10 @@ export const parseQueueTag = (queue: string): number | undefined => {
 		return delta === undefined ? undefined : Number(delta.replaceAll(' ', ''));
 	}
 	const value = QUEUE_NAMES[base];
-	return value === undefined
-		? undefined
-		: value + (delta === undefined ? 0 : Number(delta.replaceAll(' ', '')));
+	if (value === undefined) {
+		return undefined;
+	}
+	return delta === undefined ? value : value + Number(delta.replaceAll(' ', ''));
 };
 
 /**

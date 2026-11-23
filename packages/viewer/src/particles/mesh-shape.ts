@@ -120,10 +120,7 @@ export const meshShapePoint = (
 			break;
 		}
 		case ParticleMeshPlacement.Edge: {
-			let u = r0;
-			if (info.spread > 0) {
-				u = Math.floor(u / info.spread) * info.spread;
-			}
+			const u = info.spread > 0 ? Math.floor(r0 / info.spread) * info.spread : r0;
 			const target = u * total;
 			const primitive = primitiveAt(running, target);
 			const before = primitive === 0 ? 0 : running[primitive - 1];

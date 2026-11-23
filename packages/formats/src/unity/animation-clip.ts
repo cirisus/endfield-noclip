@@ -550,7 +550,10 @@ const readAclMotion = (clip: TypeTreeObject, acl: TypeTreeObject): ClipMotion =>
 		const attribute = numberField(binding, 'attribute');
 		let constant: number[] | null = null;
 		if (constantIndices.has(index)) {
-			const count = transform ? (attribute === 2 ? 4 : 3) : 1;
+			let count = 1;
+			if (transform) {
+				count = attribute === 2 ? 4 : 3;
+			}
 			constant = Array.from({ length: count }, (_, c) => constantValues[nextConstant + c]);
 			nextConstant += count;
 		}
@@ -604,23 +607,22 @@ const readAclMotion = (clip: TypeTreeObject, acl: TypeTreeObject): ClipMotion =>
 			const b = (next * trackCount + track) * ACL_TRANSFORM_STRIDE;
 			let value: ClipTransformValue;
 			if (constant !== null) {
-				value =
-					attribute === 2
-						? { kind: 'rotation', value: [constant[0], constant[1], constant[2], constant[3]] }
-						: {
-								kind: attribute === 1 ? 'position' : 'scale',
-								value: [constant[0], constant[1], constant[2]],
-							};
+				if (attribute === 2) {
+					value = { kind: 'rotation', value: [constant[0], constant[1], constant[2], constant[3]] };
+				} else {
+					value = {
+						kind: attribute === 1 ? 'position' : 'scale',
+						value: [constant[0], constant[1], constant[2]],
+					};
+				}
 			} else if (attribute === 2) {
 				// normalized lerp along the shorter arc, as ACL interpolates
-				const sign =
+				const dot =
 					values[a] * values[b] +
-						values[a + 1] * values[b + 1] +
-						values[a + 2] * values[b + 2] +
-						values[a + 3] * values[b + 3] <
-					0
-						? -1
-						: 1;
+					values[a + 1] * values[b + 1] +
+					values[a + 2] * values[b + 2] +
+					values[a + 3] * values[b + 3];
+				const sign = dot < 0 ? -1 : 1;
 				const q = [0, 1, 2, 3].map((c) => lerp(values[a + c], values[b + c] * sign, blend));
 				const length = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
 				value = { kind: 'rotation', value: [q[0] / length, q[1] / length, q[2] / length, q[3] / length] };

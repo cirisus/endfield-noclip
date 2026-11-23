@@ -300,10 +300,10 @@ export const restingLengths = (
 			if (!text(behavior.$type)?.endsWith('_MVSCEffectLengthBehaviorDataForMemoryPack') || !node) {
 				continue;
 			}
-			let value: number | boolean | undefined = Number(behavior.val ?? 0);
-			if (behavior.dependBlackBoard === true) {
-				value = blackboard.get(text(behavior.dependFloatKey) ?? '');
-			}
+			const value =
+				behavior.dependBlackBoard === true
+					? blackboard.get(text(behavior.dependFloatKey) ?? '')
+					: Number(behavior.val ?? 0);
 			if (typeof value === 'number') {
 				lengths.set(node, value + Number(behavior.deviation ?? 0));
 			}
