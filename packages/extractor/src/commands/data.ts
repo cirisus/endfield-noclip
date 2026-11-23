@@ -19,9 +19,11 @@ import {
 import { compareNatural, compareStrings } from '../compare.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText } from '../errors.ts';
+import { readViewStates, records, text } from '../game/interactives/view-state-poses.ts';
 import { toScript } from '../game/script-drivers.ts';
 import type { WorldIndex } from '../game/world/world-index.ts';
 import { VfsGroup } from '../hg/vfs.ts';
+import { mapPool } from '../pool.ts';
 
 export const summary = 'search asset paths, resolve hashes, and read SparkBuffer tables & level data';
 
@@ -35,12 +37,15 @@ export const usage = `usage:
   data scripts <level> [--id N] [--filter re] [--limit n] [--json]
                                                      decode MemoryPack level scripts for one level
   data interactives <level> [--id N] [--filter re] [--limit n] [--json]
-                                                     decode LevelData interactive placements for one level`;
+                                                     decode LevelData interactive placements for one level
+  data view-states [model-re] [--emissive re] [--filter re] [--limit n] [--json]
+                                                     inspect or search ModelViewStateControllerData JSONs`;
 
 const OPTIONS = {
 	config: { type: 'string' },
 	key: { type: 'string' },
 	id: { type: 'string' },
+	emissive: { type: 'string' },
 	filter: { type: 'string' },
 	limit: { type: 'string' },
 	json: { type: 'boolean', default: false },
@@ -97,6 +102,16 @@ export const run = async (args: string[]): Promise<void> => {
 				});
 				break;
 			}
+			case 'view-states': {
+				await readViewStatesCmd(context, {
+					model: arg === undefined ? undefined : new RegExp(arg, 'i'),
+					emissive: values.emissive === undefined ? undefined : new RegExp(values.emissive, 'i'),
+					filter,
+					limit,
+					json: values.json,
+				});
+				break;
+			}
 			default: {
 				throw new Error(usage);
 			}
@@ -104,8 +119,8 @@ export const run = async (args: string[]): Promise<void> => {
 	});
 };
 
-const parseLimit = (text: string | undefined): number => {
-	const limit = parseOptionalInteger(text, '--limit') ?? 100;
+const parseLimit = (raw: string | undefined): number => {
+	const limit = parseOptionalInteger(raw, '--limit') ?? 100;
 	if (limit < 1) {
 		throw new Error('--limit must be a positive integer');
 	}
@@ -440,6 +455,134 @@ const readInteractives = async (
 	}
 	console.error(
 		`${matched.length} interactives${matched.length === options.limit ? ' (limit reached; raise --limit for more)' : ''}`,
+	);
+};
+
+// #endregion
+
+// #region view-states
+
+const VIEW_STATE_PREFIX = 'Data/Json/Interactive/ModelViewStateControllerData/';
+const VIEW_STATE_SUFFIX = '.json';
+const VIEW_STATE_CONCURRENCY = 16;
+
+interface EmissiveStateHit {
+	state: string;
+	configHash: string;
+	configPath: string | null;
+}
+
+const readViewStatesCmd = async (
+	context: Context,
+	options: {
+		model: RegExp | undefined;
+		emissive: RegExp | undefined;
+		filter: RegExp | undefined;
+		limit: number;
+		json: boolean;
+	},
+): Promise<void> => {
+	const group = await context.vfs.group(VfsGroup.JsonData);
+	const models: string[] = [];
+	for (const entry of group.catalog) {
+		if (!entry.name.startsWith(VIEW_STATE_PREFIX) || !entry.name.endsWith(VIEW_STATE_SUFFIX)) {
+			continue;
+		}
+		const model = entry.name.slice(VIEW_STATE_PREFIX.length, -VIEW_STATE_SUFFIX.length);
+		if (options.model === undefined || options.model.test(model)) {
+			models.push(model);
+		}
+	}
+	models.sort(compareNatural);
+
+	// warm up MemoryPack schema & StringPathHash once before fanning out
+	await context.memoryPack();
+	if (options.emissive !== undefined || !options.json) {
+		await context.world.pathHash();
+	}
+
+	const rows: {
+		model: string;
+		states: string[];
+		emissives: EmissiveStateHit[];
+		data?: unknown;
+	}[] = [];
+
+	await mapPool(models, VIEW_STATE_CONCURRENCY, async (model) => {
+		const vs = await readViewStates(context, { model, source: model });
+		if (vs === null) {
+			return;
+		}
+		const states: string[] = [];
+		const emissives: EmissiveStateHit[] = [];
+		for (const ac of records(vs.data.modelAnimatorDatas)) {
+			for (const layer of records(ac.layerFsmDatas)) {
+				for (const state of records(layer.stateDatas)) {
+					const stateName = text(state.stateName) ?? text(state.name) ?? '?';
+					states.push(stateName);
+					for (const behavior of records(state.behaviors)) {
+						const type = text(behavior.$type);
+						if (type === null || !type.endsWith('_MVSCEmissiveBehaviorDataForMemoryPack')) {
+							continue;
+						}
+						const rawHash = behavior.emissiveConfigHash;
+						if (typeof rawHash !== 'string' && typeof rawHash !== 'number' && typeof rawHash !== 'bigint') {
+							continue;
+						}
+						const hash = BigInt.asUintN(64, BigInt(rawHash));
+						if (hash === 0n) {
+							continue;
+						}
+						// oxlint-disable-next-line no-await-in-loop -- cached table lookup
+						const configPath = (await context.world.pathOf(hash)) ?? null;
+						emissives.push({
+							state: stateName,
+							configHash: hashText(hash),
+							configPath,
+						});
+					}
+				}
+			}
+		}
+
+		if (options.emissive !== undefined) {
+			const matchedEmissives = emissives.filter(
+				(e) =>
+					(e.configPath !== null && options.emissive!.test(e.configPath)) ||
+					options.emissive!.test(e.configHash),
+			);
+			if (matchedEmissives.length === 0) {
+				return;
+			}
+		}
+		if (options.filter !== undefined && !options.filter.test(JSON.stringify(vs.data, jsonReplacer))) {
+			return;
+		}
+		rows.push({
+			model,
+			states,
+			emissives,
+			...(options.json ? { data: vs.data } : {}),
+		});
+	});
+
+	rows.sort((a, b) => compareNatural(a.model, b.model));
+	const shown = rows.slice(0, options.limit);
+	if (options.json) {
+		console.log(JSON.stringify(shown, jsonReplacer, '\t'));
+	} else {
+		for (const row of shown) {
+			const emText =
+				row.emissives.length === 0
+					? ''
+					: `  emissives: ${row.emissives
+							.map((e) => `${e.state}→${e.configPath?.split('/').pop() ?? e.configHash}`)
+							.join(', ')}`;
+			console.log(`${row.model.padEnd(44)} states=${row.states.length}${emText}`);
+		}
+	}
+	console.error(
+		`${shown.length} of ${rows.length} view states (scanned ${models.length})${rows.length > options.limit ? ' (raise --limit for more)' : ''}`,
 	);
 };
 
