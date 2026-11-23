@@ -34,7 +34,7 @@ import { DEBUG_DIR, STAND_INS_FILE, type StandInReport, type UnsupportedInput } 
 import { PackedPackage } from '../pack/read-package.ts';
 
 export const summary =
-	'survey packed packages and debug data: list, tree, instances, materials, geometries, stand-ins, interactives, water, env';
+	'survey packed packages and debug data: list, tree, instances, materials, geometries, textures, stand-ins, interactives, water, env';
 
 /** command usage, available without opening the install */
 export const usage = `usage:
@@ -44,11 +44,14 @@ export const usage = `usage:
                                            inspect core.czar tile tree nodes, bounds, refs and distances
   audit instances <scene> [--name re] [--id N] [--blob <hash>] [--chain N] [--from x,y,z]
       [--limit n] [--json]                 trace packed instances to their blob, tile node and LOD chain
-  audit materials <scene> [--shader re] [--name re] [--unsupported] [--undrawn] [--gap re] [--error]
-      [--group] [--limit n] [--json]
-                                           query debug/assets.json materials; --group tallies by shader/reason
-  audit geometries <scene> [--unanimated] [--error] [--tangent-uv] [--limit n] [--json]
+  audit materials <scene> [--id N] [--shader re] [--name re] [--unsupported] [--undrawn] [--gap re]
+      [--error] [--packed] [--group] [--limit n] [--json]
+                                           query debug/assets.json materials; --packed includes core.czar entry;
+                                           --group tallies by shader/reason
+  audit geometries <scene> [--id N] [--name re] [--unanimated] [--error] [--tangent-uv] [--limit n] [--json]
                                            query debug/assets.json geometries (VAT gaps, errors, tangent UVs)
+  audit textures <scene> [--id N] [--name re] [--error] [--limit n] [--json]
+                                           query debug/assets.json textures (by table id, name, or error)
   audit stand-ins <scene> [--reason re] [--name re] [--group] [--limit n] [--json]
                                            query debug/stand-ins.json; --group tallies by reason
   audit interactives <scene> [--reason re] [--group] [--limit n] [--json]
@@ -75,6 +78,7 @@ const OPTIONS = {
 	unsupported: { type: 'boolean', default: false },
 	undrawn: { type: 'boolean', default: false },
 	error: { type: 'boolean', default: false },
+	packed: { type: 'boolean', default: false },
 	unanimated: { type: 'boolean', default: false },
 	'tangent-uv': { type: 'boolean', default: false },
 	group: { type: 'boolean', default: false },
@@ -128,13 +132,15 @@ export const run = async (args: string[]): Promise<void> => {
 			break;
 		}
 		case 'materials': {
-			await auditMaterials(debugDir, {
+			await auditMaterials(packageDir, debugDir, {
+				id: parseOptionalInteger(values.id, '--id'),
 				shader: optionalRegex(values.shader),
 				name: optionalRegex(values.name),
 				gap: optionalRegex(values.gap),
 				unsupported: values.unsupported,
 				undrawn: values.undrawn,
 				error: values.error,
+				packed: values.packed,
 				group: values.group,
 				limit,
 				json: values.json,
@@ -143,9 +149,21 @@ export const run = async (args: string[]): Promise<void> => {
 		}
 		case 'geometries': {
 			await auditGeometries(debugDir, {
+				id: parseOptionalInteger(values.id, '--id'),
+				name: optionalRegex(values.name),
 				unanimated: values.unanimated,
 				error: values.error,
 				tangentUv: values['tangent-uv'],
+				limit,
+				json: values.json,
+			});
+			break;
+		}
+		case 'textures': {
+			await auditTextures(debugDir, {
+				id: parseOptionalInteger(values.id, '--id'),
+				name: optionalRegex(values.name),
+				error: values.error,
 				limit,
 				json: values.json,
 			});
@@ -258,20 +276,31 @@ interface DebugGeometryRow {
 	tangentUvs?: number[];
 }
 
+interface DebugTextureRow {
+	id?: number;
+	object?: string;
+	name?: string;
+	error?: string | null;
+}
+
 interface DebugAssetsFile {
 	geometries: DebugGeometryRow[];
 	materials: DebugMaterialRow[];
+	textures?: DebugTextureRow[];
 }
 
 const auditMaterials = async (
+	packageDir: string,
 	debugDir: string,
 	options: {
+		id: number | undefined;
 		shader: RegExp | undefined;
 		name: RegExp | undefined;
 		gap: RegExp | undefined;
 		unsupported: boolean;
 		undrawn: boolean;
 		error: boolean;
+		packed: boolean;
 		group: boolean;
 		limit: number;
 		json: boolean;
@@ -280,6 +309,9 @@ const auditMaterials = async (
 	const { materials } = await readDebugJson<DebugAssetsFile>(debugDir, 'assets.json');
 	const matched: (DebugMaterialRow & { id: number })[] = [];
 	for (const [id, row] of materials.entries()) {
+		if (options.id !== undefined && id !== options.id) {
+			continue;
+		}
 		if (options.shader !== undefined && !options.shader.test(row.shader ?? '')) {
 			continue;
 		}
@@ -342,6 +374,18 @@ const auditMaterials = async (
 	}
 
 	const shown = matched.slice(0, options.limit);
+	if (options.packed) {
+		await using pkg = await PackedPackage.open(packageDir);
+		const table = await pkg.materials();
+		const detailed = shown.map((row) => ({ ...row, packed: table.entries[row.id] ?? null }));
+		console.log(
+			JSON.stringify(options.id !== undefined && detailed.length === 1 ? detailed[0] : detailed, null, '\t'),
+		);
+		console.error(
+			`${shown.length} of ${matched.length} matching materials${matched.length > options.limit ? ' (raise --limit for more)' : ''}`,
+		);
+		return;
+	}
 	if (options.json) {
 		console.log(JSON.stringify(shown, null, '\t'));
 	} else {
@@ -372,11 +416,13 @@ const auditMaterials = async (
 
 // #endregion
 
-// #region geometries
+// #region geometries & textures
 
 const auditGeometries = async (
 	debugDir: string,
 	options: {
+		id: number | undefined;
+		name: RegExp | undefined;
 		unanimated: boolean;
 		error: boolean;
 		tangentUv: boolean;
@@ -385,13 +431,28 @@ const auditGeometries = async (
 	},
 ): Promise<void> => {
 	const { geometries } = await readDebugJson<DebugAssetsFile>(debugDir, 'assets.json');
-	const anyFilter = options.unanimated || options.error || options.tangentUv;
+	const anyFilter =
+		options.id !== undefined ||
+		options.name !== undefined ||
+		options.unanimated ||
+		options.error ||
+		options.tangentUv;
 	const matched: (DebugGeometryRow & { id: number })[] = [];
 	for (const [id, row] of geometries.entries()) {
 		if (!anyFilter) {
 			if (row.error || row.unanimated || (row.tangentUvs?.length ?? 0) > 1) {
 				matched.push({ id, ...row });
 			}
+			continue;
+		}
+		if (options.id !== undefined && id !== options.id) {
+			continue;
+		}
+		if (
+			options.name !== undefined &&
+			!options.name.test(row.name ?? '') &&
+			!options.name.test(row.path ?? '')
+		) {
 			continue;
 		}
 		if (options.unanimated && !row.unanimated) {
@@ -426,6 +487,53 @@ const auditGeometries = async (
 		}
 	}
 	console.error(`${shown.length} of ${matched.length} geometries`);
+};
+
+const auditTextures = async (
+	debugDir: string,
+	options: {
+		id: number | undefined;
+		name: RegExp | undefined;
+		error: boolean;
+		limit: number;
+		json: boolean;
+	},
+): Promise<void> => {
+	const { textures = [] } = await readDebugJson<DebugAssetsFile>(debugDir, 'assets.json');
+	const matched: (DebugTextureRow & { id: number })[] = [];
+	for (const [index, row] of textures.entries()) {
+		const id = row.id ?? index;
+		if (options.id !== undefined && id !== options.id) {
+			continue;
+		}
+		if (
+			options.name !== undefined &&
+			!options.name.test(row.name ?? '') &&
+			!options.name.test(row.object ?? '')
+		) {
+			continue;
+		}
+		if (options.error && !row.error) {
+			continue;
+		}
+		matched.push({ ...row, id });
+	}
+	const shown = matched.slice(0, options.limit);
+	if (options.json) {
+		console.log(
+			JSON.stringify(options.id !== undefined && shown.length === 1 ? shown[0] : shown, null, '\t'),
+		);
+	} else {
+		for (const row of shown) {
+			const err = row.error ? `  ERROR: ${row.error}` : '';
+			console.log(
+				`${String(row.id).padStart(6)}  ${(row.name ?? '-').padEnd(44)} ${row.object ?? '-'}${err}`,
+			);
+		}
+	}
+	console.error(
+		`${shown.length} of ${matched.length} textures${matched.length > options.limit ? ' (raise --limit for more)' : ''}`,
+	);
 };
 
 // #endregion

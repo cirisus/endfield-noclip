@@ -35,7 +35,7 @@ resolver lazily.
 | `pack`    | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                                                                                                                                                                                                          |
 | `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`), single chunks (`chunk`: entities, HLOD stats, foliage), `env` (level or `--at`), `controls`                                                                                                                                                                     |
 | `inspect` | decodes and summarizes a `prefab` (hierarchy + packer output), `material` (declared props + surface; `--name`/`--all`/`--prop`), `shader` (declared props, defaults, flags; by object or name regex), `mesh` (channels, color/UV ranges, `--vertices`), `texture` (KTX2 or DX10 DDS via `-o`, with `--layer`/`--mip`), or `water-config` |
-| `audit`   | queries packed packages under `out/` without opening the install: `list`, `tree`, `instances`, `materials`, `geometries`, `stand-ins`, `interactives`, `water`, `env`                                                                                                                                                                    |
+| `audit`   | queries packed packages under `out/` without opening the install: `list`, `tree`, `instances`, `materials` (`--id`/`--packed`), `geometries`, `textures`, `stand-ins`, `interactives`, `water`, `env`                                                                                                                                    |
 | `data`    | path catalog `paths`/`resolve`, SparkBuffer `tables`/`table`, and MemoryPack level `scripts`/`interactives`                                                                                                                                                                                                                              |
 | `vfs`     | lists VFS groups/files and extracts one logical file                                                                                                                                                                                                                                                                                     |
 | `bundle`  | inspects bundles: header, per-class counts, object JSON, stream data, container path and class search in main/initial bundles                                                                                                                                                                                                            |
@@ -107,14 +107,16 @@ requirements by `&`, each `control=values` (or `always` when ungated). `static` 
   objects of a `--class` (listing bundle, SerializedFile node, path id, class, name, and container
   paths ready for `bundle dump` or `inspect`). `--group` takes `main` (default), `initial`, or
   `all`; `--limit` caps output rows; `--scan` caps bundles.
-- **`bundle dump`**: dumps objects from one bundle by `--path-id`, `--class`, and/or `--name <re>`.
-  `--text` prints a `TextAsset`'s `m_Script` directly (headers between multiple matches); `--json`
-  wraps the output in a single JSON array.
+- **`bundle dump`**: dumps objects from one bundle by `--path-id`, `--class` (repeatable or
+  comma-separated), and/or `--name <re>`. `--full` disables array truncation; `--text` prints a
+  `TextAsset`'s `m_Script` directly (headers between multiple matches); `--json` wraps the output in
+  a single JSON array.
 - **`audit`**: reads `out/<scene>/` directly (no game install opened): `list` summarizes every
   packed package under `out/` (filterable with `--has water-volumes|stand-ins|errors`), `tree`
   inspects `core.czar` tile nodes and distances (`--at`, `--from`, `--blob`, `--level`), `instances`
   traces `debug/instances.jsonl` rows to their owning tile node and decoded LOD chain, and
-  `materials` / `geometries` / `stand-ins` / `interactives` / `water` / `env` query `debug/`.
+  `materials` / `geometries` / `textures` / `stand-ins` / `interactives` / `water` / `env` query
+  `debug/` (`materials --packed` also reads the packed `core.czar` entry).
 
 ## local config and keys
 

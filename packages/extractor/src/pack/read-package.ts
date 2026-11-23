@@ -16,6 +16,7 @@ import {
 	CORE_PATHS,
 	type PackageManifest,
 } from '@endfield-noclip/package-format/manifest';
+import type { MaterialTable } from '@endfield-noclip/package-format/materials';
 import { decodeTree, type Tree } from '@endfield-noclip/package-format/tree';
 
 import { openArchive, type Archive } from '@mary-ext/czar';
@@ -39,6 +40,7 @@ export class PackedPackage implements AsyncDisposable {
 	#tree: Promise<Tree> | undefined;
 	#blobs: Promise<BlobRecord[]> | undefined;
 	#chains: Promise<Chain[]> | undefined;
+	#materials: Promise<MaterialTable> | undefined;
 
 	private constructor(
 		dir: string,
@@ -92,6 +94,15 @@ export class PackedPackage implements AsyncDisposable {
 	chains(): Promise<Chain[]> {
 		this.#chains ??= readCoreMember(this.#core, CORE_PATHS.chains).then(decodeChains);
 		return this.#chains;
+	}
+
+	/** @returns decoded `tables/materials.json.zst` */
+	materials(): Promise<MaterialTable> {
+		this.#materials ??= readCoreMember(this.#core, CORE_PATHS.materials).then((bytes) => {
+			const table: MaterialTable = JSON.parse(new TextDecoder().decode(bytes));
+			return table;
+		});
+		return this.#materials;
 	}
 
 	/**

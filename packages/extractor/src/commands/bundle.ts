@@ -17,9 +17,11 @@ export const summary = 'inspect and search bundle objects; dump JSON or stream p
 /** command usage, available without opening the install */
 export const usage = `usage:
   bundle info <name>                     header, nodes and per-class object counts
-  bundle dump <name> [--path-id N] [--class Mesh|43] [--name re] [--text] [--json]
-      [--limit n] [--max-array n]        objects as JSON; --text prints TextAsset m_Script;
-                                         --json wraps output in a single JSON array
+  bundle dump <name> [--path-id N] [--class Mesh|43[,…]] [--name re] [--text] [--json]
+      [--limit n] [--max-array n | --full]
+                                         objects as JSON; --class is repeatable or comma-separated;
+                                         --text prints TextAsset m_Script; --json wraps in one JSON array;
+                                         --full disables array truncation
   bundle stream <name> --path-id N -o <file>
                                          writes an object's m_StreamData (.resS) payload
   bundle find [re] [--filter re] [--class Shader|48] [--scan n] [--limit n] [--group main|initial|all]
@@ -32,10 +34,11 @@ negative path ids need the --path-id=-N form.`;
 const OPTIONS = {
 	config: { type: 'string' },
 	'path-id': { type: 'string' },
-	class: { type: 'string' },
+	class: { type: 'string', multiple: true },
 	name: { type: 'string' },
 	text: { type: 'boolean', default: false },
 	json: { type: 'boolean', default: false },
+	full: { type: 'boolean', default: false },
 	limit: { type: 'string' },
 	'max-array': { type: 'string' },
 	filter: { type: 'string' },
@@ -52,9 +55,13 @@ export const run = async (args: string[]): Promise<void> => {
 	});
 	const [sub, name] = positionals;
 	const limit = parseOptionalInteger(values.limit, '--limit') ?? Infinity;
-	const maxArray = parseOptionalInteger(values['max-array'], '--max-array') ?? 16;
+	const maxArray = values.full ? Infinity : (parseOptionalInteger(values['max-array'], '--max-array') ?? 16);
 	const scan = parseOptionalInteger(values.scan, '--scan') ?? Infinity;
 	const pathId = parsePathId(values['path-id'], '--path-id');
+	const classes =
+		values.class === undefined
+			? []
+			: values.class.flatMap((entry) => entry.split(',').map((part) => part.trim())).filter(Boolean);
 
 	await withContext(values.config, async (context) => {
 		switch (sub) {
@@ -67,13 +74,13 @@ export const run = async (args: string[]): Promise<void> => {
 					throw new Error('use either --text or --json, not both');
 				}
 				const files = await openAssetFilesByName(context, name, {
-					eager: pathId === undefined && values.class === undefined && values.name === undefined,
+					eager: pathId === undefined && classes.length === 0 && values.name === undefined,
 				});
 				const matches = (object: ObjectInfo): boolean => {
 					if (pathId !== undefined) {
 						return object.pathId === pathId;
 					}
-					return values.class === undefined || isClass(object, values.class);
+					return classes.length === 0 || classes.some((cls) => isClass(object, cls));
 				};
 				await dump(files, matches, {
 					nameFilter: values.name === undefined ? undefined : new RegExp(values.name, 'i'),
@@ -99,7 +106,7 @@ export const run = async (args: string[]): Promise<void> => {
 					throw new Error('pass the container pattern either positionally or with --filter, not both');
 				}
 				const filterPattern = values.filter ?? name;
-				if (filterPattern === undefined && values.class === undefined) {
+				if (filterPattern === undefined && classes.length === 0) {
 					throw new Error('bundle find needs <re>, --filter <re>, and/or --class <class>');
 				}
 				if (!['main', 'initial', 'all'].includes(values.group)) {
@@ -108,7 +115,7 @@ export const run = async (args: string[]): Promise<void> => {
 				await find(context, {
 					group: values.group,
 					filter: filterPattern === undefined ? undefined : new RegExp(filterPattern, 'i'),
-					className: values.class,
+					classNames: classes,
 					scan,
 					limit,
 				});
@@ -358,7 +365,7 @@ const find = async (
 	context: Context,
 	options: {
 		filter: RegExp | undefined;
-		className: string | undefined;
+		classNames: readonly string[];
 		group: string;
 		scan: number;
 		limit: number;
@@ -436,15 +443,16 @@ const find = async (
 	console.error(`scanned ${scanned} bundles, ${found} matches, ${failed} failures`);
 };
 
-/** @returns matching container paths, or individually addressable objects of the requested class */
+/** @returns matching container paths, or individually addressable objects of the requested classes */
 const scanAsset = async (
 	asset: BundleAssetFile,
-	{ filter, className }: { filter: RegExp | undefined; className: string | undefined },
+	{ filter, classNames }: { filter: RegExp | undefined; classNames: readonly string[] },
 ): Promise<string[]> => {
-	const objects = asset.file.objects.filter(
-		(object) => className !== undefined && isClass(object, className),
-	);
-	if (className !== undefined && objects.length === 0) {
+	const objects =
+		classNames.length === 0
+			? []
+			: asset.file.objects.filter((object) => classNames.some((cls) => isClass(object, cls)));
+	if (classNames.length > 0 && objects.length === 0) {
 		return [];
 	}
 	const paths = (await asset.assetBundles()).flatMap(({ container }) =>
@@ -453,7 +461,7 @@ const scanAsset = async (
 	if (filter !== undefined && paths.length === 0) {
 		return [];
 	}
-	if (className === undefined) {
+	if (classNames.length === 0) {
 		return paths;
 	}
 	return Promise.all(
