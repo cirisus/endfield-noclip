@@ -628,9 +628,7 @@ entries once resolved or ruled out.
   `dynamic-structures.ts`; `LOD_GROUP = 205` in `renderer-candidates.ts`).
 - **extractor materials**: `_USE_MAIN2` check and `_MainTex2Color` read duplicated in
   `surfaces/dithered.ts` and `effects/dither-effect.ts`.
-- **extractor pack**: `convertMesh` computes `order.map(vertexOf)` twice for skinned meshes;
-  `objectHash` (`asset-ids.ts`) has three inline copies; `assetNames` (`commands/world.ts`) looks up
-  assets twice.
+- **extractor pack**: `assetNames` (`commands/world.ts`) looks up assets twice.
 - **formats**: record guard in `level-interactives.ts`, `level-locks.ts`, `level-splines.ts` vs
   `isMemoryPackObject`; `expect`/`count`/`list`/`bool` redefined 3× in `interactive-model.ts`;
   `present(VertexAttribute.BlendIndices)` called twice in `decodeMesh`; `stream-area.test.ts` has

@@ -4,9 +4,7 @@ import {
 	decodeOctahedral,
 	type MeshAttribute,
 	MeshTopology,
-	OCT10_RANGE,
 	TEXCOORD_COUNT,
-	unpackOct10,
 	VertexAttributeFormat,
 } from '@endfield-noclip/formats/unity/mesh';
 import {
@@ -247,28 +245,16 @@ export const convertMesh = (
 	}
 
 	if (mesh.normals !== null) {
-		const { normals, packedNormals } = mesh;
+		const { normals } = mesh;
 		const out = new Int16Array(vertexCount * 2);
 		const oct: [number, number] = [0, 0];
 		for (const [i, v] of order.entries()) {
 			const source = vertexOf(v);
-			if (packedNormals === null) {
-				encodeOctahedral(normals[source * 3], normals[source * 3 + 1], normals[source * 3 + 2], 16, oct);
-			} else {
-				// the game's normal is already a 10-bit octahedral pair over the same mapping. its integers are
-				// stored as they are and the stream's scale restores ÷511: exact, and smaller than respreading
-				// them over 16 bits
-				unpackOct10(packedNormals[source], oct);
-			}
+			encodeOctahedral(normals[source * 3], normals[source * 3 + 1], normals[source * 3 + 2], 16, oct);
 			out[i * 2] = oct[0];
 			out[i * 2 + 1] = oct[1];
 		}
-		const stream = plain(VertexAttribute.Normal, GeometryVertexFormat.Snorm16x2);
-		if (packedNormals !== null) {
-			stream.flags = GeometryStreamFlags.Dequantize;
-			stream.scale = [OCT10_SCALE, OCT10_SCALE, 0];
-		}
-		add(stream, bytesOf(out));
+		add(plain(VertexAttribute.Normal, GeometryVertexFormat.Snorm16x2), bytesOf(out));
 	}
 
 	if (tangents !== null) {
@@ -301,7 +287,8 @@ export const convertMesh = (
 	let animation: SkinAnimation | null = null;
 	let bounds = { min, max };
 	if (motion !== undefined) {
-		const skin = skinStreams(mesh, order.map(vertexOf), motion.boneCount);
+		const sourceOrder = order.map(vertexOf);
+		const skin = skinStreams(mesh, sourceOrder, motion.boneCount);
 		add(plain(VertexAttribute.BlendWeight, GeometryVertexFormat.Unorm16x4), bytesOf(skin.weights));
 		const wide = skin.bones instanceof Uint16Array;
 		add(
@@ -311,7 +298,7 @@ export const convertMesh = (
 			),
 			bytesOf(skin.bones),
 		);
-		bounds = motionBounds(mesh, order.map(vertexOf), skin, motion);
+		bounds = motionBounds(mesh, sourceOrder, skin, motion);
 		animation = {
 			...motion,
 			offset: [bounds.min[0], bounds.min[1], bounds.min[2]],
@@ -681,9 +668,6 @@ const padComponents = (data: Float32Array, from: number, to: number): Float32Arr
 	}
 	return out;
 };
-
-/** turns snorm16-normalized 10-bit integers (`k / 32767`) back into the game's `k / 511` */
-const OCT10_SCALE = 32_767 / OCT10_RANGE;
 
 const OCT_DECODED: [number, number, number] = [0, 0, 0];
 

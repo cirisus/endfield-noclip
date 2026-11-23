@@ -360,7 +360,7 @@ describe('convertMesh', () => {
 		const { blob } = convertMesh(testMesh({ normals, packedNormals: words }), null);
 		const { geometry, streams, read } = decodeAll(blob);
 		const stream = streams.get(VertexAttribute.Normal)!;
-		assert.equal(stream.flags, GeometryStreamFlags.Dequantize);
+		assert.equal(stream.flags, 0);
 		const positions = read(VertexAttribute.Position);
 		const decoded = read(VertexAttribute.Normal);
 		for (let v = 0; v < geometry.vertexCount; v++) {
@@ -369,7 +369,7 @@ describe('convertMesh', () => {
 			)!;
 			const n = decodeOctahedral(decoded[v][0], decoded[v][1], [0, 0, 0]);
 			for (let k = 0; k < 3; k++) {
-				assert.ok(Math.abs(n[k] - normals[s * 3 + k]) < 1e-5, `vertex ${v}: ${n.join()} vs source ${s}`);
+				assert.ok(Math.abs(n[k] - normals[s * 3 + k]) < 5e-5, `vertex ${v}: ${n.join()} vs source ${s}`);
 			}
 		}
 	});

@@ -105,7 +105,7 @@ export class AssetIds {
 	 */
 	internSynthetic(mesh: SyntheticMesh): number {
 		const key = syntheticMeshKey(mesh);
-		const hash = -BigInt(`0x${createHash('sha256').update(key).digest('hex')}`);
+		const hash = objectHash(key);
 		return this.#ids.getOrInsertComputed(
 			hash,
 			() => this.assets.push({ hash, path: key, synthetic: mesh }) - 1,
@@ -123,7 +123,7 @@ export class AssetIds {
 		for (const matrix of pose) {
 			digest.update(new Uint8Array(matrix.buffer, matrix.byteOffset, matrix.byteLength));
 		}
-		const hash = -BigInt(`0x${digest.digest('hex')}`);
+		const hash = digestHash(digest);
 		const existing = this.#ids.get(hash);
 		if (existing !== undefined) {
 			return existing;
@@ -152,7 +152,7 @@ export class AssetIds {
 			.update(key)
 			.update(`motion ${kind} ${skin.boneCount} ${skin.frameCount} ${skin.frameRate}`)
 			.update(new Uint8Array(matrices.buffer, matrices.byteOffset, matrices.byteLength));
-		const hash = -BigInt(`0x${digest.digest('hex')}`);
+		const hash = digestHash(digest);
 		return this.#ids.getOrInsertComputed(
 			hash,
 			() =>
@@ -166,8 +166,10 @@ export class AssetIds {
 	}
 }
 
+const digestHash = (digest: ReturnType<typeof createHash>): bigint => -BigInt(`0x${digest.digest('hex')}`);
+
 /**
  * @param key an object's {@link objectKey}
  * @returns its hash; negative hashes occupy a namespace separate from unsigned game hashes
  */
-const objectHash = (key: string): bigint => -BigInt(`0x${createHash('sha256').update(key).digest('hex')}`);
+const objectHash = (key: string): bigint => digestHash(createHash('sha256').update(key));
