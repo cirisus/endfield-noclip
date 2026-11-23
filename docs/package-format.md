@@ -5,11 +5,11 @@ archives of content-addressed blobs and tables. see [extraction](extraction.md#p
 [loading](viewer/loading.md) for reading, and [game-data](game-data/) for source formats.
 
 [package-format](../packages/package-format/src/) defines the shared types and binary codecs
-(`manifest`, `tiles`, `tree`, `instances`, `geometry`, `geometry-table`, `textures`,
-`texture-table`, `materials`, `surfaces`, `terrain`, `environment`, `environment-volumes`, `water`,
-`lights`, `particles`, `curves`, `irradiance`, `states`, `conditions`, `camera`, `stream-areas`,
-`story`, `blobs`, `blob-table`). its JSDoc is authoritative. `package-format` has no Node API or
-workspace dependencies.
+(`container`, `manifest`, `tiles`, `tree`, `instances`, `geometry`, `geometry-table`, `textures`,
+`texture-table`, `materials`, `surfaces`, `terrain`, `environment`, `environment-volumes`,
+`volumes`, `water`, `lights`, `particles`, `curves`, `luts`, `animation`, `irradiance`, `states`,
+`conditions`, `camera`, `stream-areas`, `story`, `blobs`, `blob-table`). its JSDoc is authoritative.
+`package-format` has no Node API or workspace dependencies.
 
 | side   | code                                                                                                                                               |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -31,7 +31,7 @@ workspace dependencies.
     tables/materials.json.zst     material table
     tables/textures.bin.zst       texture table
     tables/water.json.zst         water table
-    tables/lights.json.zst        local lights
+    tables/lights.bin.zst         local lights (EFLT TLV)
     tables/particles.json.zst     particle systems
     tables/environment.json.zst   environment volumes, phases and post profiles
     tables/irradiance.bin         irradiance cell keys → blobs, per bake
@@ -168,20 +168,21 @@ rows sorted by node into contiguous runs. global refs follow node refs in `tree.
 
 `manifest.json.zst` (`PackageManifest`, zstd-compressed JSON):
 
-| field               | contents                                                                                                                                                       |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format`, `version` | `'endfield-noclip.package'`, `PACKAGE_VERSION` ([versioning](#versioning))                                                                                     |
-| `generation`        | hash of core binary and table members ([containers and blobs](#containers-and-blobs))                                                                          |
-| `source`            | bundle manifest build guid and content hash                                                                                                                    |
-| `scene`             | streaming scene id and display name                                                                                                                            |
-| `subset`            | `--level` / `--bounds` filter, or `null`                                                                                                                       |
-| `archives`          | `ArchiveInfo[]` by `role`: core (name only), or streamed archive (name, size, `dataOffset`, tile for shards/assets)                                            |
-| `tree`              | `TreeInfo`                                                                                                                                                     |
-| `terrain`           | `baseHeight`, `heightScale`, levels with pages, close-up `splat`; `null` without terrain                                                                       |
-| `levels`            | every level of the scene (even in subsets): id, name, rect, `playerInitPos`, owned `cellLevel` cells, packed instance count, `contentBounds`, base environment |
-| `states`            | scene controls, conditional sets, visibility groups, stream areas, missions ([conditions](#conditions))                                                        |
-| `irradianceRegions` | room irradiance bakes ([irradiance cells](#irradiance-cells))                                                                                                  |
-| `fireSeed`          | [fire seed](game-data/effects.md#invisible-bridges) control and global reveal radii per value (`FireSeedInfo`), or `null` when no level script sets it         |
+| field                                              | contents                                                                                                                                                       |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`, `version`                                | `'endfield-noclip.package'`, `PACKAGE_VERSION` (major version 2, [versioning](#versioning))                                                                    |
+| `minReaderVersion`, `features`, `requiredFeatures` | forward-compatibility envelope validated by `validateManifest`                                                                                                 |
+| `generation`                                       | hash of core binary and table members ([containers and blobs](#containers-and-blobs))                                                                          |
+| `source`                                           | bundle manifest build guid and content hash                                                                                                                    |
+| `scene`                                            | streaming scene id and display name                                                                                                                            |
+| `subset`, `maxTextureSize`                         | `--level` / `--bounds` filter, and optional `--max-texture-size` lite-package cap                                                                              |
+| `archives`                                         | `ArchiveInfo[]` by `role`: core (name only), or streamed archive (name, size, `dataOffset`, tile for shards/assets)                                            |
+| `tree`                                             | `TreeInfo`                                                                                                                                                     |
+| `terrain`                                          | `baseHeight`, `heightScale`, levels with pages, close-up `splat`; `null` without terrain                                                                       |
+| `levels`                                           | every level of the scene (even in subsets): id, name, rect, `playerInitPos`, owned `cellLevel` cells, packed instance count, `contentBounds`, base environment |
+| `states`                                           | scene controls, conditional sets, visibility groups, stream areas, missions ([conditions](#conditions))                                                        |
+| `irradianceRegions`                                | room irradiance bakes ([irradiance cells](#irradiance-cells))                                                                                                  |
+| `fireSeed`                                         | [fire seed](game-data/effects.md#invisible-bridges) control and global reveal radii per value (`FireSeedInfo`), or `null` when no level script sets it         |
 
 `levels` contains only the scene's own map's levels (non-overlapping). a group's `level` indexes
 `levels` (`null` = shared; entity-id level tags stay in the extractor, [world](extraction.md#world),
@@ -191,18 +192,29 @@ and drive initial camera framing ([level-pose.ts](../packages/viewer/src/scene/l
 
 ## binary encodings
 
-all binary data is little-endian with 4-byte-aligned sections. tables share a 16-byte header unless
-noted: `u32 magic, u16 version, u16 0, u32 count, u32 count-or-0`. `.bin.zst` tables are single zstd
+all v2 binary tables and blobs use the shared FourCC TLV container
+([container.ts](../packages/package-format/src/container.ts)): a 16-byte little-endian header
+(`u32 magic, u16 majorVersion, u16 flags, u32 sectionCount, u32 reserved`), a `sectionCount × 24`
+directory (`u32 tag, u32 flags, u32 offset, u32 byteLength, u32 count, u32 stride`), and
+16-byte-aligned payloads (enabling zero-copy typed-array views). unknown optional sections are
+skipped, unknown `Required` sections fail explicitly, and fixed-stride record sections advance by
+`stride` so trailing fields added later don't break older readers. `.bin.zst` tables are single zstd
 frames; `.bin` tables are uncompressed.
 
-| member                      | magic  | layout                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tree.bin`                  | `EFTR` | 24-byte header (`nodes`, `nodeRefs`, `globalRefs`, `reaches`); 48-byte nodes: `i32 x, i32 z, u8 level, u8×3 0, f32×3 min, f32×3 max, f32 geometricError, u32 refFirst, u32 refCount`; 24-byte refs (node then global): `u8 kind, u8 tier, u16 0, u32 group, u32 blob, u32 first, u32 count, u32 reach` (`0xffffffff` = none); 16-byte reaches: `f32 minX, minZ, maxX, maxZ` (`[min, max)`, may be ±∞)           |
-| `tables/chains.bin`         | `EFCH` | header (`chains`, `draws`); 8-byte chains: `u32 firstDraw, u16 drawCount, u8 flags, u8 0`; 32-byte draws: `u32 geometry, u32 material, u32 particles, u16 submesh, u8 lod, u8 role, f32 minSquared, f32 maxSquared, u8 flags, u8 0, i16 sortingLayer, i16 sortingOrder, u16 0`; then `f32×3` distance origins (one per `CameraDistance` chain in chain order)                                                   |
-| `tables/blobs.bin`          | `EFBX` | header (`blobs`, 0); 16-byte records: `u8 kind, u8 codec, u16 archive, u32 offset, u32 length, u32 rawLength`                                                                                                                                                                                                                                                                                                   |
-| `tables/irradiance.bin`     | `EFIV` | version 2; header (`entries`, 0); ascending `u32` cell keys (repeats allowed), then `u32` blob indices, then `u32` visibility groups                                                                                                                                                                                                                                                                            |
-| `tables/geometries.bin.zst` | `EFGE` | header (`geometries`, 0); 44-byte records: `u8 status, u8 tangentUv, u16 attributes, u32 blob, u32 vertexCount, u32 indexCount, u16 submeshCount, u16 animationFrames, f32×3 min, f32×3 max` ([asset tables](#asset-tables))                                                                                                                                                                                    |
-| `tables/textures.bin.zst`   | `EFTX` | 20-byte header (`textures`, `pieces`, `samplers`); 12-byte samplers: `u8 addressModeU, V, W, u8 magFilter, minFilter, mipmapFilter, u16 maxAnisotropy, f32 mipBias`; 16-byte textures: `u8 status, u8 kind, u8 format, u8 mipCount, u16 width, u16 height, u16 depthOrArrayLayers, u16 sampler, u32 firstPiece`; 8-byte pieces: `u32 blob, u8 firstLevel, u8 levelCount, u16 0` ([asset tables](#asset-tables)) |
+| member                      | magic                    | sections                                                                                                                                  |
+| --------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `tree.bin`                  | `EFTR`                   | `NODE` (52 B, includes `parent: i32`), `REFS` (24 B, includes `streamingLayer`), `GLOB` (24 B), optional `RCHS` (16 B)                    |
+| `tables/chains.bin`         | `EFCH`                   | `CHNS` (16 B, includes `u64 contentHash`), `DRWS` (32 B, includes `sortingBand`), optional `DORG` (16 B: `chainIndex` + `distanceOrigin`) |
+| `tables/blobs.bin`          | `EFBX`                   | `BLBS` (16 B: `kind`, `codec`, `archive`, `offset`, `length`, `rawLength`)                                                                |
+| `tables/irradiance.bin`     | `EFIV`                   | `KEYS` (`u32[]`), `BLBS` (`u32[]`), `GRPS` (`u32[]`)                                                                                      |
+| `tables/geometries.bin.zst` | `EFGE`                   | `GEOM` (44 B records, [asset tables](#asset-tables))                                                                                      |
+| `tables/textures.bin.zst`   | `EFTX`                   | `SAMP` (12 B), `TEXS` (20 B, includes `droppedMips`), `PCES` (8 B) ([asset tables](#asset-tables))                                        |
+| `tables/lights.bin.zst`     | `EFLT`                   | `LGHT` (100 B), optional `SHDW` (32 B), optional `CBOX` (52 B)                                                                            |
+| `.inst`                     | `EFIN`                   | `HEAD`, `CHNS`, `XFRM`, `BNDS`, optional sparse `DECL`, `SPIN`, `FLOT`, `RIDE`, optional `PATH`                                           |
+| `.mesh`                     | `EFGM`                   | `HEAD`, `STRM` (36 B), `SUBM` (40 B), `VBUF`, `IBUF`, optional `ANIM`                                                                     |
+| `.hgt` / `.tsp` / `.tsl`    | `EFHT` / `EFTS` / `EFSL` | `HEAD` + `HGTS` / (`ALBD`, `NORM`) / (`CTRL`, `TINT`, `INDX`)                                                                             |
+| `.anim`                     | `EFAN`                   | `HEAD` + kind-specific section (`SKIN`, `TRNS`, `SPIN`, `FLOT`, `VATC`, or `MATR` + `MSMP`)                                               |
+| `tables/luts.bin.zst`       | `EFLU`                   | optional `CRVH`/`CRVS`, `GRDH`/`GRDS`, `PMSH`/`PMPO`/`PMNM`/`PMCL`/`PMPR`/`PMCD`                                                          |
 
 tree nodes sort coarse to fine (`level`, `z`, `x`). children of `(l, x, z)` are
 `(l + 1, 2x + dx, 2z + dz)`. node bounds enclose the node, its descendants, and overhang.
@@ -708,15 +720,16 @@ using `TriggerMemory` passed through `cameraValues`:
 
 ## versioning
 
-- `PACKAGE_VERSION` ([manifest.ts](../packages/package-format/src/manifest.ts)) versions
-  `manifest.json.zst`, all JSON tables, and overall package structure. JSON tables carry no
-  individual version.
-- each binary encoding (`tree`, `chains`, `blobs`, `geometries`, `textures`, `irradiance`, `.inst`,
-  `.hgt`, `.tsp`, `.tsl`, `.mesh`) carries its own header version.
-- readers require exact version matches; no migration is performed (re-extract instead).
-- the [pack cache](extraction.md#pack-cache) fingerprints converter code, which imports only
-  `geometry`, `textures`, and `blobs` from `package-format`. separate encoding versions keep cached
-  mesh/texture conversions valid when manifest, tree, instance-block, or asset-table layouts change.
+- `PACKAGE_VERSION` (`2`, [manifest.ts](../packages/package-format/src/manifest.ts)) is the major
+  format version, paired with `minReaderVersion`, `features`, and `requiredFeatures` validated by
+  `validateManifest`. additive optional JSON fields and optional FourCC binary sections do not bump
+  `PACKAGE_VERSION`.
+- each binary encoding (`EFTR`, `EFCH`, `EFBX`, `EFGE`, `EFTX`, `EFLT`, `EFIV`, `EFIN`, `EFGM`,
+  `EFHT`, `EFTS`, `EFSL`, `EFAN`, `EFLU`) uses the shared FourCC TLV container (`majorVersion = 2`)
+  with per-section `Required` flags and fixed-stride record growth.
+- the [pack cache](extraction.md#pack-cache) fingerprints geometry (`convert-geometry.ts`) and
+  texture (`convert-texture.ts`) converters separately, so geometry edits keep cached textures
+  valid.
 
 ## reading a package
 
