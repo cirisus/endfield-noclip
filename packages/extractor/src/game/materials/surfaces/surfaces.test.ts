@@ -881,6 +881,7 @@ describe('the Lit model', () => {
 			),
 		);
 		assert.equal(surface.keepsLitDecalsOff, true);
+		assert.equal(surface.writesDepth, true);
 		const glow = surface.overlay;
 		assert.ok(glow?.kind === 'parallax');
 		// world-space parallax keeps bright/dark unscaled by intensity and applies intensity last

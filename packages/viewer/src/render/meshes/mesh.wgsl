@@ -598,6 +598,40 @@ fn fs_opaque(in: VertexOut) -> Shaded {
 	return out;
 }
 
+// alpha-tested surfaces that don't write depth (`HGRP/Lit` `_ZWRITE_OFF`, e.g. floor/wall mesh decals):
+// they skip the prepass and discard here against the opaque/cutout depth buffer
+@fragment
+fn fs_cutout_overlay(in: VertexOut) -> Shaded {
+	if (fade_discard(in.fade, in.position.xy)) {
+		discard;
+	}
+	let draw = draws[in.draw];
+	let flags = bitcast<u32>(draw.offset.w);
+	let id = look_slot(draw);
+	let look = looks[id];
+	let gradient_scale = exp2(frame.params.y);
+	let uv0_dx = dpdx(in.uv.xy) * gradient_scale;
+	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
+	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
+	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
+	var texel: vec4f;
+	if ((flags & ALPHA_NORMAL) != 0u) {
+		texel = sample_slot(normal_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, NORMAL_SLOT);
+	} else {
+		texel = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT);
+	}
+	if (texel.a < look.tint.w) {
+		discard;
+	}
+	let feedback = pack_mip_feedback(id, in.uv, in.rel, frame.params.y);
+	var out = shade(in, true);
+	if (look.detail2.w > 0.5) {
+		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
+	}
+	out.mip_feedback = feedback;
+	return out;
+}
+
 // lean shading path for plain opaque Lit looks (base + normal only, no mask/emissive/detail/layer/parallax/
 // foliage/erosion/unlit/dither/gaps); keeps VGPRs low for the ~86% of opaque materials that need nothing else
 @fragment

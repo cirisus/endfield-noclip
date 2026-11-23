@@ -53,8 +53,9 @@ for pass details.
   `r32uint` target holds [mip feedback](streaming.md#mip-feedback) (shaders always return `Shaded`;
   pipelines without the 5th target drop it). depth is stored for post. draw order: opaque mesh depth
   → alpha-tested cut-out depth → terrain → opaque meshes (depth-equal) → alpha-tested meshes
-  (depth-equal) → opaque [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only portal masks →
-  instance boxes → box outlines (> `outlineMetres`) → terrain wireframe.
+  (depth-equal) → non-depth-writing alpha-tested overlays (`_ZWRITE_OFF` mesh decals,
+  `greater-equal`) → opaque [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only portal masks
+  → instance boxes → box outlines (> `outlineMetres`) → terrain wireframe.
 - **decal relight pass.** normal/roughness/occlusion-only lit decals add lighting delta to radiance
   using depth, packed surface, and ambient ([decals](materials.md#decals)).
 - **lit decal pass.** albedo-writing lit decals draw over the composited scene (no depth test,

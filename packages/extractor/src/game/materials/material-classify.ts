@@ -168,6 +168,10 @@ export const classifyHgrpMaterial = (
 		baseTextureMapCount = float('_BaseTextureMapCount') ?? (keywords.includes('_TWO_BASEMAP') ? 2 : 0);
 	}
 
+	const zWriteFloat = float('_ZWrite') ?? float('_ZWriteGBuffer');
+	const zWrite =
+		!keywords.includes('_ZWRITE_OFF') && (zWriteFloat === undefined ? !blended : zWriteFloat !== 0);
+
 	return {
 		family,
 		shaderName: shader.name,
@@ -176,7 +180,7 @@ export const classifyHgrpMaterial = (
 		blendFactors,
 		alphaClipThreshold,
 		cull,
-		zWrite: float('_ZWrite') === undefined ? !blended : float('_ZWrite') !== 0,
+		zWrite,
 		baseTextureMapCount,
 	};
 };

@@ -137,6 +137,8 @@ export interface LitSurface {
 	vertexOffset: LitVertexOffset | null;
 	/** the surface keeps `HGRP/DecalLit` decals off (`docs/game-data/materials.md#decals`) */
 	keepsLitDecalsOff: boolean;
+	/** whether the surface writes depth (`_ZWriteGBuffer` / `_ZWRITE_OFF` on `HGRP/Lit`) */
+	writesDepth: boolean;
 }
 
 /**

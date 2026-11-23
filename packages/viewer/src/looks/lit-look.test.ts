@@ -100,6 +100,7 @@ const litSurface = (overrides: Partial<LitSurface> = {}): LitSurface => ({
 	sway: null,
 	vertexOffset: null,
 	keepsLitDecalsOff: false,
+	writesDepth: true,
 	...overrides,
 });
 
@@ -663,4 +664,30 @@ test('foliage: leaves and grass fill the foliage rows, and surfaces keeping lit 
 	assert.deepEqual(row(grass, LookRow.foliageAo), [1, 2, 0.5, 1]);
 	assert.deepEqual(row(grass, LookRow.foliage2), [0.1, 3, 4, 0.25].map(Math.fround));
 	assert.equal(grass.params[LookRow.detail2 + 3], 0);
+});
+
+test('a non-depth-writing alpha-tested Lit surface draws in cutoutOverlay without casting shadows', () => {
+	const base = { texture: 1, uv: 0, scale: [1, 1] as [number, number], offset: [0, 0] as [number, number] };
+	const [decal, normal] = materialLooks({
+		entries: [
+			described(
+				litSurface({
+					textures: { base, normal: null, mro: null, emissive: null },
+					alphaClip: 0.1,
+					writesDepth: false,
+				}),
+			),
+			described(
+				litSurface({
+					textures: { base, normal: null, mro: null, emissive: null },
+					alphaClip: 0.1,
+					writesDepth: true,
+				}),
+			),
+		],
+	});
+	assert.equal(decal.queue, 'cutoutOverlay');
+	assert.equal(decal.castsShadows, false);
+	assert.equal(normal.queue, 'cutout');
+	assert.equal(normal.castsShadows, true);
 });

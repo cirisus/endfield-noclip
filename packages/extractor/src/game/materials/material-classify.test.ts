@@ -36,6 +36,20 @@ describe('classifyHgrpMaterial', () => {
 		assert.equal(result.baseTextureMapCount, 0);
 	});
 
+	it('reads _ZWriteGBuffer and _ZWRITE_OFF for Lit mesh decals', () => {
+		const decal = classifyHgrpMaterial(
+			material({
+				keywords: ['_ALPHATEST_ON', '_TWO_BASEMAP', '_ZWRITE_OFF'],
+				queue: 2475,
+				floats: { _ZWriteGBuffer: 0, _DisableZWrite: 1, _AlphaClipThreshold: 0.1 },
+			}),
+			shader('HGRP/Lit', 2000),
+		);
+		assert.equal(decal.blend, 'alphaTest');
+		assert.equal(decal.zWrite, false);
+		assert.equal(decal.alphaClipThreshold, 0.1);
+	});
+
 	it('classifies alpha-tested two-sided foliage', () => {
 		const result = classifyHgrpMaterial(
 			material({

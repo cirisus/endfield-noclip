@@ -117,7 +117,12 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		params[LookRow.emissive2 + 3] = surface.opacity;
 		params[LookRow.detail2 + 2] = surface.blend === 'premultiplied' ? 1 : 0;
 	} else if (surface.alphaClip !== null && surface.alphaClip >= 0 && alphaTextureOf(look) !== null) {
-		look.queue = 'cutout';
+		if (surface.writesDepth) {
+			look.queue = 'cutout';
+		} else {
+			look.queue = 'cutoutOverlay';
+			look.castsShadows = false;
+		}
 	}
 	params[LookRow.emissive + 3] = surface.tintCover;
 	params.set(

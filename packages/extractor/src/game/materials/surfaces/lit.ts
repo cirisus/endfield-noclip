@@ -306,5 +306,6 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 		vertexOffset: shader.name === 'HGRP/Lit' ? vertexOffsetOf(reader) : null,
 		keepsLitDecalsOff:
 			STENCIL_REF_SHADERS.has(shader.name) && (float('_StencilRef', 0) & LIT_DECAL_STENCIL_BIT) !== 0,
+		writesDepth: material.zWrite,
 	};
 };

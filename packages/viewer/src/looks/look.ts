@@ -179,6 +179,9 @@ export const GAPS_FLOAT = 144;
  * - `cutout`: alpha-tested against the alpha of the base colour, or of the normal map with
  *   {@link LookFlags.AlphaNormal} (`fs_cutout_depth` in mesh.wgsl), once that texture is bound
  *   ({@link alphaTextureOf}); until then drawn as `opaque`
+ * - `cutoutOverlay`: alpha-tested without writing depth (`HGRP/Lit` `_ZWRITE_OFF` mesh decals), skipping the
+ *   prepass and discarding in the main pass (`fs_cutout_overlay`) against `greater-equal` depth once its
+ *   alpha texture is bound; never shadow-casting
  * - `stencilMask`: writes only the stencil where its surface passes the depth test, at the end of the main pass
  *   (a portal's mask, with a {@link MaterialLook.stencil})
  * - `transparent`: alpha-blended in the transparent pass with the opacity `fs_transparent` in mesh.wgsl
@@ -205,6 +208,7 @@ export const GAPS_FLOAT = 144;
 export type LookQueue =
 	| 'opaque'
 	| 'cutout'
+	| 'cutoutOverlay'
 	| 'stencilMask'
 	| 'transparent'
 	| 'effect'

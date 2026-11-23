@@ -22,6 +22,14 @@ test('a look draws in its queue, alpha-tested ones as opaque until their alpha i
 		drawRangeOf(look({ queue: 'cutout' }), { ...context, state: { ...ready, alphaReady: false } }),
 		'opaque',
 	);
+	assert.equal(drawRangeOf(look({ queue: 'cutoutOverlay', castsShadows: false }), context), 'cutoutOverlay');
+	assert.equal(
+		drawRangeOf(look({ queue: 'cutoutOverlay', castsShadows: false }), {
+			...context,
+			state: { ...ready, alphaReady: false },
+		}),
+		null,
+	);
 });
 
 test('effects wait for all their textures, unlit looks for their base colour', () => {

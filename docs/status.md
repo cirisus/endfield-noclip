@@ -177,11 +177,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **ignored surface keywords** (listed in `debug/assets.json` and striped by the
   [gaps view](viewer/materials.md#gaps), which excludes effects, terrain, water, and per-entity
   gaps): on map02, `_MACRO_NORMAL_MAP` (~90 materials), `_SUBSURFACE*`, `_FAKE*` (glints, cracks,
-  dust, volume, refraction), interior parallax/mapping, `_ZWRITE_OFF`, `_SIMPLE_VERTEXANIM_ROPE`,
-  pendulum gravity/anchor and alpha-blended pendulums (e.g. lamp glass
-  `M_prop_map02_light+1_003_01h`), `HGRP/LitTransparent` cloth, `HGRP/LitEffect` `_VAT_RIGIDBODY`,
-  and `_MOVING_BAMBOO`. cloth sway and [pendulums](viewer/materials.md#swaying-cloth) are unverified
-  in game.
+  dust, volume, refraction), interior parallax/mapping, `_SIMPLE_VERTEXANIM_ROPE`, pendulum
+  gravity/anchor and alpha-blended pendulums (e.g. lamp glass `M_prop_map02_light+1_003_01h`),
+  `HGRP/LitTransparent` cloth, `HGRP/LitEffect` `_VAT_RIGIDBODY`, and `_MOVING_BAMBOO`. cloth sway
+  and [pendulums](viewer/materials.md#swaying-cloth) are unverified in game.
 - **vertex animation textures** ([viewer](viewer/materials.md#vertex-animation-textures)): baked per
   mesh, so meshes shared by different animations hold still (map02 `s_zmdmachinevat_lod*` and one
   Hongshan waterway mesh). frames interpolate (game steps); unverified in game.

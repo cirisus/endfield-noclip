@@ -150,7 +150,8 @@ const FEEDBACK_SLOTS = 5;
  * @returns whether the main pass's mesh shader shades its draws in view, and so reports their mips
  */
 const sampledInMainPass = (look: MaterialLook): boolean =>
-	(look.queue === 'opaque' || look.queue === 'cutout') && (look.flags & LookFlags.Effect) === 0;
+	(look.queue === 'opaque' || look.queue === 'cutout' || look.queue === 'cutoutOverlay') &&
+	(look.flags & LookFlags.Effect) === 0;
 
 /** @returns a number standing for the view options {@link slotHidden} reads */
 const slotFilterKey = (view: MeshView): number =>

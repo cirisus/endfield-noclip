@@ -204,6 +204,11 @@ export const prepareMeshPipelines = (
 		depthWriteEnabled: false,
 		depthCompare: 'equal',
 	};
+	const depthGreaterEqual: GPUDepthStencilState = {
+		format: format.depth,
+		depthWriteEnabled: false,
+		depthCompare: 'greater-equal',
+	};
 	const noColor = format.targets.map((target) => ({ ...target, writeMask: 0 }));
 	const shade: GPUFragmentState = { module, entryPoint: 'fs_opaque', targets: format.targets };
 	const shadeLit: GPUFragmentState = { module, entryPoint: 'fs_opaque_lit', targets: format.targets };
@@ -225,6 +230,10 @@ export const prepareMeshPipelines = (
 		depthStencil: depthWrite,
 	});
 	describeMesh(PHASES.cutoutShade, { fragment: shade, depthStencil: depthEqual });
+	describeMesh(PHASES.cutoutOverlay, {
+		fragment: { module, entryPoint: 'fs_cutout_overlay', targets: format.targets },
+		depthStencil: depthGreaterEqual,
+	});
 	describeMesh(PHASES.transparent, {
 		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 		depthStencil: depthTest,

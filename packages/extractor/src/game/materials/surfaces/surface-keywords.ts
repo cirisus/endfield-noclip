@@ -49,6 +49,7 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 			'_COMMONVAT_BONE_2',
 			'_COMMONVAT_BONE_3',
 			'_COMMONVAT_BONE_4',
+			'_ZWRITE_OFF',
 		],
 		'HGRP/LitEffect': LIT_KEYWORDS,
 		'Hidden/HGRP/LitEffectBlend': LIT_KEYWORDS,

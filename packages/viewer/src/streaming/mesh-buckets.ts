@@ -310,7 +310,9 @@ export class MeshBuckets {
 					gpuFlags,
 					hiddenBy: hiddenByOf(draw.role, look),
 					shadowOnly,
-					gpuCullable: draw.particles === null && (queue === 'opaque' || queue === 'cutout'),
+					gpuCullable:
+						draw.particles === null &&
+						(queue === 'opaque' || queue === 'cutout' || queue === 'cutoutOverlay'),
 					sorted: SORTED_RANGES.has(look.queue),
 					band: sortBand(draw.sortingLayer, draw.sortingOrder, this.#renderQueueOf(material)),
 					particles: draw.particles,

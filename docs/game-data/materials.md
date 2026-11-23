@@ -61,6 +61,11 @@ the source:
 - `1`: normal map alpha (~24 map01 materials, all two-basemap where base alpha is metallic, e.g. the
   Hub's white container walls)
 
+mesh decals (`M_mdecal_*`, `M_meshdecal_*`) on `HGRP/Lit` add `_ZWRITE_OFF` with
+`_ZWriteGBuffer = 0`, `_DisableZWrite = 1`, `DepthOnly` disabled, and `customRenderQueue = 2475`:
+they skip the depth prepass and discard inside `HGBuffer`, testing `_ZTestGBuffer` (default
+`LEqual`) without writing depth so overlapping decals do not z-fight.
+
 ## emission
 
 HGRP Lit emits through `_EMISSIVE_*` keywords. `_EmissiveColor` is an HDR colour authored in linear

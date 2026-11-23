@@ -31,6 +31,8 @@ export const DRAW_RANGES: readonly DrawRangeInfo[] = [
 	{ range: 'opaqueLit', order: 'pipelineThenNearest', effect: false },
 	{ range: 'opaque', order: 'pipelineThenNearest', effect: false },
 	{ range: 'cutout', order: 'pipelineThenNearest', effect: false },
+	// alpha-tested mesh decals (`HGRP/Lit` `_ZWRITE_OFF`) drawn over opaque/cutout depth without writing depth
+	{ range: 'cutoutOverlay', order: 'bindings', effect: false },
 	{ range: 'effectOpaque', order: 'bindings', effect: true },
 	{ range: 'stencilMask', order: 'bindings', effect: false },
 	{ range: 'transparent', order: 'bindings', effect: false },
@@ -96,6 +98,7 @@ export const PHASES = {
 	opaque: shading('mesh/opaque', 'opaque'),
 	cutoutDepth: { key: 'mesh/cutout-depth', range: 'cutout', textured: true, shadow: false, streams: 'uv' },
 	cutoutShade: shading('mesh/cutout-shade', 'cutout'),
+	cutoutOverlay: shading('mesh/cutout-overlay', 'cutoutOverlay'),
 	stencilMask: {
 		key: 'mesh/stencil-mask',
 		range: 'stencilMask',
@@ -176,7 +179,14 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// alpha-tested cut-outs lay down their depth before the terrain too, so it isn't shaded under leaves and grass
 	prepass: [PHASES.prepassLit, PHASES.prepass, PHASES.cutoutDepth],
 	// stencil masks after the surfaces they're tested against
-	main: [PHASES.opaqueLit, PHASES.opaque, PHASES.cutoutShade, PHASES.effectOpaque, PHASES.stencilMask],
+	main: [
+		PHASES.opaqueLit,
+		PHASES.opaque,
+		PHASES.cutoutShade,
+		PHASES.cutoutOverlay,
+		PHASES.effectOpaque,
+		PHASES.stencilMask,
+	],
 	// lit decals that change only the surface's normal, roughness or occlusion, run between the main and the
 	// transparent pass: they add the change in the surface's light to the radiance
 	relight: [PHASES.decalRelight],

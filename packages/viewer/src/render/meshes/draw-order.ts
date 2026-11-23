@@ -84,6 +84,10 @@ export const drawRangeOf = (
 		case 'cutout': {
 			return state.alphaReady ? queue : 'opaque';
 		}
+		// mesh decals without depth write wait for their alpha texture rather than covering the floor as solids
+		case 'cutoutOverlay': {
+			return state.alphaReady ? queue : null;
+		}
 		// effects are made of their textures, so they wait for all of them
 		case 'effect':
 		case 'effectOpaque':
