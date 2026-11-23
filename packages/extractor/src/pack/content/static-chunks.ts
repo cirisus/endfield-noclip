@@ -1,3 +1,5 @@
+import type { ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
+import type { RendererDraw, WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { MonoObject } from '@endfield-noclip/formats/endfield/mono-objects';
 import type { WaterGlobalBinding, WaterSurface } from '@endfield-noclip/formats/endfield/water';
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
@@ -8,13 +10,91 @@ import { collectSceneVolumes, type SceneVolumes } from '../../game/environment.t
 import type { Visibility } from '../../game/state/scene-control.ts';
 import { collectSceneWater, type SceneWater } from '../../game/water/water-source.ts';
 import type { ChunkFile, ChunkSource, WorldIndex } from '../../game/world/world-index.ts';
+import { VfsGroup } from '../../hg/vfs.ts';
 import { orderedPool } from '../../pool.ts';
-import { chunkEntityPlacement } from '../instances/chains.ts';
+import { type ChainPlacement, chunkEntityPlacement } from '../instances/chains.ts';
 import type { CollectedRow } from '../instances/collector.ts';
 import { HLOD_NAME, type HlodCandidates, hlodCandidates, pickHlodTile } from '../instances/hlod-cells.ts';
 import { type InstanceInput, rowReach } from '../instances/instances.ts';
+import type { SkippedEntityRow } from '../skipped-entities.ts';
+import type { PackCache } from '../store/pack-cache.ts';
 
 import { decalPlacement, type PackContent } from './pack-content.ts';
+
+const STATIC_CHUNKS_ENTRY = new URL(import.meta.url);
+
+type CachedDrawSpec =
+	| { kind: 'renderer'; draw: RendererDraw }
+	| { kind: 'decal'; material: bigint }
+	| { kind: 'waterDecal'; mesh: bigint; material: bigint; placement: WaterDecal };
+
+interface CachedChainSpec {
+	draws: CachedDrawSpec[];
+	placement: ChainPlacement | undefined;
+}
+
+type CachedPlacement =
+	| {
+			kind: 'hlod';
+			tag: number;
+			key: TileKey;
+			tier: number;
+			name: string;
+			file: number;
+			row: InstanceInput;
+			visibility: Visibility | null;
+	  }
+	| {
+			kind: 'global';
+			tag: number;
+			name: string;
+			file: number;
+			row: InstanceInput;
+			visibility: Visibility | null;
+	  }
+	| {
+			kind: 'detail';
+			tag: number;
+			key: TileKey;
+			name: string;
+			file: number;
+			row: InstanceInput;
+			visibility: Visibility | null;
+	  }
+	| {
+			kind: 'conditional';
+			tag: number;
+			key: TileKey;
+			name: string;
+			file: number;
+			row: InstanceInput;
+			visibility: Visibility;
+	  }
+	| {
+			kind: 'foliage';
+			tag: number;
+			key: TileKey;
+			name: string;
+			file: number;
+			entityId: number;
+			chain: number;
+			bounds: Aabb;
+			instances: Float32Array;
+			visibility: Visibility | null;
+			stateGated: boolean;
+	  };
+
+interface StaticChunksMemo {
+	hlodNameMatches: number;
+	chunkVolumes: SceneVolumes;
+	sceneWater: SceneWater;
+	counts: Record<string, number>;
+	skipped: SkippedEntityRow[];
+	seen: Uint32Array;
+	lights: { light: ChunkLight; fileIndex: number }[];
+	chains: CachedChainSpec[];
+	placements: CachedPlacement[];
+}
 
 // the scene's chunk files: static entities, foliage grids and local lights, filed as
 // docs/extraction.md#how-the-packer-files-instances describes
@@ -49,6 +129,8 @@ interface HlodCluster extends CollectedRow {
 /** rows of one entity or foliage grid and where it was first met */
 interface StaticRows {
 	rows: InstanceInput[];
+	/** when set, `rows` came from foliage clusters (kept compact for the pack cache) */
+	foliageClusters?: { chain: number; bounds: Aabb; entityId: number; instances: Float32Array }[];
 	tag: number;
 	name: string;
 	/** chunk-file index */
@@ -69,30 +151,187 @@ export interface StaticChunkSummary {
 	sceneWater: SceneWater;
 }
 
+/** replays a cached {@link StaticChunksMemo} into an empty {@link PackContent} */
+const replayStaticChunks = (content: PackContent, memo: StaticChunksMemo): StaticChunkSummary => {
+	const { scene, collector, controls, seen } = content;
+	for (const [key, value] of Object.entries(memo.counts)) {
+		content.count(key, value);
+	}
+	content.skipped.merge(memo.skipped);
+	for (const id of memo.seen) {
+		seen.add(id);
+	}
+	for (const { light, fileIndex } of memo.lights) {
+		content.lights.add(light, scene.files[fileIndex]);
+	}
+	for (const spec of memo.chains) {
+		const draws = spec.draws.map((entry): ChainDraw => {
+			switch (entry.kind) {
+				case 'renderer': {
+					return content.rendererDraw(entry.draw);
+				}
+				case 'decal': {
+					return content.decalDraw(entry.material)!;
+				}
+				case 'waterDecal': {
+					return content.waterDecalDraw(entry.mesh, entry.material, entry.placement);
+				}
+			}
+		});
+		content.chains.intern(draws, spec.placement);
+	}
+	for (const item of memo.placements) {
+		switch (item.kind) {
+			case 'hlod': {
+				const condition = item.visibility === null ? null : controls.condition(item.visibility);
+				collector.addHlod({
+					tag: item.tag,
+					row: item.row,
+					name: item.name,
+					file: item.file,
+					tier: item.tier,
+					key: item.key,
+					condition,
+				});
+				content.uses.note(item.row.chain, item.key);
+				collector.noteOwner(item.tag, rowReach(item.row));
+				break;
+			}
+			case 'global': {
+				const condition = item.visibility === null ? null : controls.condition(item.visibility);
+				collector.addGlobal({ tag: item.tag, row: item.row, name: item.name, file: item.file, condition });
+				content.uses.note(item.row.chain, null);
+				collector.noteOwner(item.tag, rowReach(item.row));
+				break;
+			}
+			case 'detail': {
+				const condition = item.visibility === null ? null : controls.condition(item.visibility);
+				collector.addDetail({
+					tag: item.tag,
+					row: item.row,
+					name: item.name,
+					file: item.file,
+					key: item.key,
+					condition,
+				});
+				content.uses.note(item.row.chain, item.key);
+				collector.noteOwner(item.tag, rowReach(item.row));
+				break;
+			}
+			case 'conditional': {
+				collector.addConditional({
+					tag: item.tag,
+					row: item.row,
+					name: item.name,
+					file: item.file,
+					key: item.key,
+					visibility: item.visibility,
+					reach: null,
+				});
+				content.uses.note(item.row.chain, item.key);
+				collector.noteOwner(item.tag, rowReach(item.row));
+				break;
+			}
+			case 'foliage': {
+				const condition = item.visibility === null ? null : controls.condition(item.visibility);
+				const instanceCount = item.instances.length / 16;
+				for (let i = 0; i < instanceCount; i++) {
+					const row: InstanceInput = {
+						chain: item.chain,
+						matrix: item.instances.subarray(i * 16, i * 16 + 16),
+						bounds: item.bounds,
+						entityId: item.entityId,
+					};
+					if (item.stateGated && item.visibility !== null) {
+						collector.addConditional({
+							tag: item.tag,
+							row,
+							name: item.name,
+							file: item.file,
+							key: item.key,
+							visibility: item.visibility,
+							reach: null,
+						});
+					} else {
+						collector.addDetail({
+							tag: item.tag,
+							row,
+							name: item.name,
+							file: item.file,
+							key: item.key,
+							condition,
+						});
+					}
+					content.uses.note(item.chain, item.key);
+				}
+				collector.noteOwner(item.tag, item.bounds);
+				break;
+			}
+		}
+	}
+	return {
+		hlodNameMatches: memo.hlodNameMatches,
+		chunkVolumes: memo.chunkVolumes,
+		sceneWater: memo.sceneWater,
+	};
+};
+
 /**
  * reads every chunk file of the scene, in order, and files each entity, foliage instance and light, while
  * collecting chunk environment/post volumes and Global-chunk water in the same pass
  *
  * @param world the world index
  * @param content the pack's content; rows, lights, counts and skipped entities are added
+ * @param cache optional pack cache for the scene's static chunk summary
  * @returns HLOD name-match tally, chunk environment volumes and Global-chunk water
  */
 export const collectStaticChunks = async (
 	world: WorldIndex,
 	content: PackContent,
+	cache: PackCache | null = null,
 ): Promise<StaticChunkSummary> => {
 	const { scene, collector, controls, seen } = content;
 	const { grid, subset } = scene;
+	let memoKey: string | null = null;
+	if (cache !== null) {
+		const streamingHash = (await world.vfs.group(VfsGroup.Streaming)).catalogHash;
+		memoKey = await cache.stepKey(STATIC_CHUNKS_ENTRY, {
+			kind: 'staticChunks',
+			scene: scene.id,
+			subset: subset.info,
+			streamingHash,
+			hlod: scene.hlod,
+			grid,
+			hasDecalCube: content.decalCubeHash() ?? null,
+		});
+		const recalled = await cache.recallValue<StaticChunksMemo>(memoKey);
+		if (recalled !== undefined) {
+			scene.globalChunks.clear();
+			return replayStaticChunks(content, recalled);
+		}
+	}
 	// listed in the report even at zero
 	for (const key of STATIC_COUNTS) {
 		content.count(key, 0);
 	}
+	const record = memoKey !== null;
+	const recordedLights: { light: ChunkLight; fileIndex: number }[] = [];
+	const recordedChains: CachedChainSpec[] = [];
+	const recordedPlacements: CachedPlacement[] = [];
+	const internChain = (specs: CachedDrawSpec[], draws: ChainDraw[], placement?: ChainPlacement): number => {
+		const before = content.chains.chains.length;
+		const id = content.chains.intern(draws, placement);
+		if (record && content.chains.chains.length > before) {
+			recordedChains.push({ draws: specs, placement });
+		}
+		return id;
+	};
 	// rows of scene-state and stream-area files, by entity or foliage grid id, with every file holding them;
 	// added once all files are read
 	const gatedRows = new Map<number, StaticRows & { sources: ChunkSource[] }>();
 	let hlodNameMatches = 0;
 	/** HLOD clusters whose name leaves more than one tile: clamped coordinates, or a misaligned tier */
-	const unresolvedHlod: HlodCluster[] = [];
+	const unresolvedHlod: (HlodCluster & { visibility: Visibility | null })[] = [];
 	/** bounds of always-loaded detail instances by `tileId/levelTag` */
 	const detailBounds = new Map<string, Aabb[]>();
 	const volumeFiles: { file: ChunkFile; objects: readonly MonoObject[] }[] = [];
@@ -102,7 +341,7 @@ export const collectStaticChunks = async (
 		globals: readonly WaterGlobalBinding[];
 	}[] = [];
 
-	const addHlod = (cluster: HlodCluster, key: TileKey): void => {
+	const addHlod = (cluster: HlodCluster & { visibility: Visibility | null }, key: TileKey): void => {
 		const [x, , z] = cluster.row.bounds.center;
 		const at = tileAt(grid, key.level, x, z);
 		if (at.x === key.x && at.z === key.z) {
@@ -110,6 +349,18 @@ export const collectStaticChunks = async (
 		}
 		collector.addHlod({ ...cluster, key });
 		content.uses.note(cluster.row.chain, key);
+		if (record) {
+			recordedPlacements.push({
+				kind: 'hlod',
+				tag: cluster.tag,
+				key,
+				tier: cluster.tier,
+				name: cluster.name,
+				file: cluster.file,
+				row: cluster.row,
+				visibility: cluster.visibility,
+			});
+		}
 	};
 
 	/** sends a row to its destination: HLOD node, Global block, detail leaf or conditional leaf */
@@ -119,6 +370,8 @@ export const collectStaticChunks = async (
 		visibility: Visibility | null,
 		/** whether a scene state gates it, so no HLOD stands in for it */
 		stateGated: boolean,
+		/** false for foliage rows, which are recorded per cluster instead */
+		recordRow = true,
 	): void => {
 		const entry = { tag, row, name, file };
 		const condition = visibility === null ? null : controls.condition(visibility);
@@ -130,7 +383,7 @@ export const collectStaticChunks = async (
 				sample: { tier, x: Number(hlod[2]), z: Number(hlod[3]) },
 				bounds: row.bounds,
 			});
-			const cluster = { ...entry, tier, candidates, condition };
+			const cluster = { ...entry, tier, candidates, condition, visibility };
 			if (candidates.x[0] === candidates.x[1] && candidates.z[0] === candidates.z[1]) {
 				addHlod(cluster, { level: candidates.level, x: candidates.x[0], z: candidates.z[0] });
 			} else {
@@ -142,16 +395,55 @@ export const collectStaticChunks = async (
 		if (global) {
 			collector.addGlobal({ ...entry, condition });
 			content.uses.note(row.chain, null);
+			if (record && recordRow) {
+				recordedPlacements.push({ kind: 'global', tag, name, file, row, visibility });
+			}
 			return;
 		}
 		const key = tileAt(grid, grid.leafLevel, row.bounds.center[0], row.bounds.center[2]);
 		if (stateGated && visibility !== null) {
 			collector.addConditional({ ...entry, key, visibility, reach: null });
+			if (record && recordRow) {
+				recordedPlacements.push({ kind: 'conditional', tag, key, name, file, row, visibility });
+			}
 		} else {
 			collector.addDetail({ ...entry, condition, key });
 			detailBounds.getOrInsertComputed(`${tileId(key)}/${tag}`, () => []).push(row.bounds);
+			if (record && recordRow) {
+				recordedPlacements.push({ kind: 'detail', tag, key, name, file, row, visibility });
+			}
 		}
 		content.uses.note(row.chain, key);
+	};
+
+	const emitRows = (rows: StaticRows, visibility: Visibility | null, stateGated: boolean): void => {
+		if (rows.foliageClusters !== undefined) {
+			for (const cluster of rows.foliageClusters) {
+				const key = tileAt(grid, grid.leafLevel, cluster.bounds.center[0], cluster.bounds.center[2]);
+				if (record) {
+					recordedPlacements.push({
+						kind: 'foliage',
+						tag: rows.tag,
+						key,
+						name: rows.name,
+						file: rows.file,
+						entityId: cluster.entityId,
+						chain: cluster.chain,
+						bounds: cluster.bounds,
+						instances: cluster.instances,
+						visibility,
+						stateGated,
+					});
+				}
+			}
+			for (const row of rows.rows) {
+				addRow({ ...rows, row }, visibility, stateGated, false);
+			}
+			return;
+		}
+		for (const row of rows.rows) {
+			addRow({ ...rows, row }, visibility, stateGated, true);
+		}
 	};
 
 	/** files rows met first in `file`, or holds them back when the file is gated */
@@ -160,9 +452,7 @@ export const collectStaticChunks = async (
 			gatedRows.set(id, { ...rows, sources: [file] });
 			return;
 		}
-		for (const row of rows.rows) {
-			addRow({ ...rows, row }, null, false);
-		}
+		emitRows(rows, null, false);
 	};
 
 	// files are settled in order, for a deterministic dedupe
@@ -190,6 +480,9 @@ export const collectStaticChunks = async (
 			for (const light of read.lights) {
 				if (subset.includesPoint(light.levelTag, light.position)) {
 					content.lights.add(light, file);
+					if (record) {
+						recordedLights.push({ light, fileIndex });
+					}
 				}
 			}
 			/** @returns whether the entity or grid was met before, adding the file to its sources if so */
@@ -208,16 +501,16 @@ export const collectStaticChunks = async (
 				}
 				content.count('unique');
 				const { renderer } = entity;
-				/** a decal's or WaterDecal box's draw; a renderer's are interned once the entity is known to pack */
-				let decal: ChainDraw | null = null;
+				/** decal / WaterDecal hashes to intern once the entity is known to pack */
+				let decalSpec: CachedDrawSpec | null = null;
 				if (entity.decal !== null) {
 					const material = read.decalMaterials.get(entity.id);
-					decal = material === undefined ? null : content.decalDraw(material);
-					if (decal === null) {
+					if (material === undefined || content.decalCubeHash() === undefined) {
 						content.count('decalSkipped');
 						content.skipped.add('static', decalSkipReason(material), entity);
 						continue;
 					}
+					decalSpec = { kind: 'decal', material };
 					content.count('decal');
 				} else if (entity.waterDecal !== null) {
 					const material = read.decalMaterials.get(entity.id);
@@ -227,7 +520,7 @@ export const collectStaticChunks = async (
 						content.skipped.add('static', 'water decal without its mesh or material', entity);
 						continue;
 					}
-					decal = content.waterDecalDraw(mesh, material, entity.waterDecal);
+					decalSpec = { kind: 'waterDecal', mesh, material, placement: entity.waterDecal };
 					content.count('waterDecal');
 				} else if (renderer === null) {
 					content.count('noRenderer');
@@ -255,13 +548,23 @@ export const collectStaticChunks = async (
 					content.count('clothSimulated');
 				}
 				let draws: ChainDraw[] = [];
+				let drawSpecs: CachedDrawSpec[] = [];
 				if (renderer !== null) {
 					draws = renderer.draws.map((draw) => content.rendererDraw(draw));
-				} else if (decal !== null) {
-					draws = [decal];
+					if (record) {
+						drawSpecs = renderer.draws.map((draw) => ({ kind: 'renderer', draw }));
+					}
+				} else if (decalSpec !== null) {
+					draws = [
+						decalSpec.kind === 'decal'
+							? content.decalDraw(decalSpec.material)!
+							: content.waterDecalDraw(decalSpec.mesh, decalSpec.material, decalSpec.placement),
+					];
+					drawSpecs = [decalSpec];
 				}
+				const placement = chunkEntityPlacement({ ...entity, matrix: entity.matrix });
 				const row: InstanceInput = {
-					chain: content.chains.intern(draws, chunkEntityPlacement({ ...entity, matrix: entity.matrix })),
+					chain: internChain(drawSpecs, draws, placement),
 					matrix: entity.matrix,
 					bounds: entity.bounds,
 					entityId: entity.id,
@@ -295,23 +598,42 @@ export const collectStaticChunks = async (
 				// every instance of a cluster carries the cluster's bounds, so a cluster culls and switches LOD as
 				// one, the way the game draws it
 				const rows: InstanceInput[] = [];
+				const foliageClusters: NonNullable<StaticRows['foliageClusters']> = [];
 				for (const cluster of foliage.clusters) {
 					if (!subset.includesPoint(foliage.levelTag, cluster.bounds.center)) {
 						continue;
 					}
-					const chain = content.chains.intern(
-						cluster.renderer.draws.map((draw) => content.rendererDraw(draw)),
-					);
+					const draws = cluster.renderer.draws.map((draw) => content.rendererDraw(draw));
+					const specs: CachedDrawSpec[] = record
+						? cluster.renderer.draws.map((draw) => ({ kind: 'renderer', draw }))
+						: [];
+					const chain = internChain(specs, draws);
 					for (let i = 0; i < cluster.instanceCount; i++) {
 						const matrix = cluster.instances.subarray(i * 16, i * 16 + 16);
 						rows.push({ chain, matrix, bounds: cluster.bounds, entityId: foliage.id });
+					}
+					if (record && cluster.instanceCount > 0) {
+						foliageClusters.push({
+							chain,
+							bounds: cluster.bounds,
+							entityId: foliage.id,
+							instances: cluster.instances.subarray(0, cluster.instanceCount * 16),
+						});
 					}
 					collector.noteOwner(foliage.levelTag, cluster.bounds);
 				}
 				content.count('foliageInstances', rows.length);
 				place(
 					foliage.id,
-					{ rows, tag: foliage.levelTag, name: foliage.name, file: fileIndex, global: false, hlod: null },
+					{
+						rows,
+						foliageClusters: record ? foliageClusters : undefined,
+						tag: foliage.levelTag,
+						name: foliage.name,
+						file: fileIndex,
+						global: false,
+						hlod: null,
+					},
 					file,
 				);
 			}
@@ -323,9 +645,7 @@ export const collectStaticChunks = async (
 		// HLOD clusters stand in for the rows of their own area, so area-only content keeps HLOD refinement;
 		// scene-state content has no HLODs and streams as conditional detail
 		const stateGated = visibility !== null && sources.some((source) => source.sceneState !== 0);
-		for (const row of rows.rows) {
-			addRow({ ...rows, row }, visibility, stateGated);
-		}
+		emitRows(rows, visibility, stateGated);
 	}
 	for (const cluster of unresolvedHlod) {
 		const key = pickHlodTile({
@@ -337,11 +657,22 @@ export const collectStaticChunks = async (
 		});
 		addHlod(cluster, key);
 	}
-	return {
-		hlodNameMatches,
-		chunkVolumes: collectSceneVolumes(volumeFiles.toSorted(byFileName)),
-		sceneWater: collectSceneWater(waterFiles.toSorted(byFileName)),
-	};
+	const chunkVolumes = collectSceneVolumes(volumeFiles.toSorted(byFileName));
+	const sceneWater = collectSceneWater(waterFiles.toSorted(byFileName));
+	if (memoKey !== null && cache !== null) {
+		await cache.rememberValue(memoKey, {
+			hlodNameMatches,
+			chunkVolumes,
+			sceneWater,
+			counts: { ...content.counts },
+			skipped: content.skipped.rows(),
+			seen: Uint32Array.from(seen),
+			lights: recordedLights,
+			chains: recordedChains,
+			placements: recordedPlacements,
+		} satisfies StaticChunksMemo);
+	}
+	return { hlodNameMatches, chunkVolumes, sceneWater };
 };
 
 const byFileName = (a: { file: ChunkFile }, b: { file: ChunkFile }): number =>

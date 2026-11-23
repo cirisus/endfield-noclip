@@ -27,7 +27,13 @@ import type { LevelEnvironment } from '@endfield-noclip/package-format/manifest'
 
 import type { Context } from '../../context.ts';
 import { errorText } from '../../errors.ts';
-import { type AssetResolver, objectKey, type ObjectRef } from '../../game/assets/assets.ts';
+import {
+	type AssetResolver,
+	type LocatedObject,
+	locatedObject,
+	type ObjectRef,
+	recordBundleReads,
+} from '../../game/assets/assets.ts';
 import {
 	environmentBlend,
 	environmentVolumeShape,
@@ -52,6 +58,17 @@ import {
 	type Visibility,
 } from '../../game/state/scene-control.ts';
 import type { ControlRegistry } from '../control-registry.ts';
+import type { BundleSource } from '../convert/convert-pool.ts';
+import {
+	bundleSources,
+	relocateSaved,
+	type SavedLocator,
+	saveLocated,
+	sourcesCurrent,
+} from '../store/bundle-memo.ts';
+import type { PackCache } from '../store/pack-cache.ts';
+
+const ENVIRONMENTS_ENTRY = new URL(import.meta.url);
 
 // the environment table: every volume with its phase, each level's base volume and its post-processing
 // profile. textures the phases reference are converted with the other assets, so planning happens before
@@ -119,7 +136,7 @@ export interface EnvironmentPlan {
 	 */
 	volumeOwners: { levelTag: number; sceneStates: number[]; condition: Visibility | null }[];
 	/** textures the phases reference; slots index this list */
-	textures: ObjectRef[];
+	textures: LocatedObject[];
 	/** index into {@link textures} of the height fog's flow noise, or `null` if the install lacks it */
 	flowNoise: number | null;
 	debug: LevelEnvironmentDebug[];
@@ -185,6 +202,7 @@ export const planEnvironments = async (
 	enabled: ReadonlySet<number>,
 	chunkVolumes: SceneVolumes,
 	placed: readonly SceneEnvironmentVolume[],
+	cache: PackCache | null = null,
 ): Promise<EnvironmentPlan> => {
 	const plan: EnvironmentPlan = {
 		levels: [],
@@ -203,156 +221,213 @@ export const planEnvironments = async (
 	}
 	const [pathOf, resolver] = await Promise.all([context.world.pathLookup(), context.resolver()]);
 	const volumes: SceneVolumes = { ...chunkVolumes, environment: [...chunkVolumes.environment, ...placed] };
-	const reported = new Set<string>();
-	const report: ReportProblem = (problem) => {
-		const key = JSON.stringify(problem);
-		if (!reported.has(key)) {
-			reported.add(key);
-			plan.problems.push(problem);
-		}
-	};
-	const flowNoise = await findFlowNoise(context, resolver);
-	if (typeof flowNoise === 'string') {
-		report({ kind: 'resource', path: FLOW_NOISE_PATH, reason: flowNoise });
-	} else {
-		plan.flowNoise = plan.textures.push(flowNoise) - 1;
-	}
-
-	// levels mostly share phases and profiles, so loads are cached; they run for all levels at once
-	const phase = scenePhaseLoader(resolver, pathOf, volumes.environment);
-	const postLoads = new Map<bigint, Promise<LoadedVolumeProfile>>();
-	const postProfile = (hash: bigint) =>
-		postLoads.getOrInsertComputed(hash, () => loadVolumeProfile(resolver, hash, pathOf));
-	const loaded = await Promise.all(
-		levels.map(async (level) => {
-			const choice = resolveLevelEnvironment(level, volumes, enabled);
-			const profile = resolveLevelPost(level, volumes, enabled)?.profile ?? null;
-			try {
-				// the level's and the global phase, for the debug index's section sources
-				const phases = await loadLevelPhases(choice, phase);
-				// the post profile is only used with a phase
-				return {
-					choice,
-					phases,
-					post: phases === null || profile === null ? null : await postProfile(profile),
-				};
-			} catch (error) {
-				return { choice, phases: error instanceof Error ? error : new Error(String(error)), post: null };
-			}
-		}),
-	);
-
-	// every volume with its own phase, for blending at the camera. a phase that can't be read leaves its volume
-	// without one, which the viewer skips. the references that can't be read are reported in volume order, as
-	// the loads finish in any order
-	const volumePhases = await Promise.all(
-		volumes.environment.map(async ({ volume }) => {
-			const load = phase(volume);
-			if (load === null) {
-				return 'no phase set';
-			}
-			try {
-				const loadedPhase = await load;
-				const problems: EnvironmentProblem[] = [];
-				const textures = await resolvePhaseTextures(resolver, loadedPhase, (problem) =>
-					problems.push(problem),
-				);
-				return { loaded: loadedPhase, textures, problems };
-			} catch (error) {
-				return errorText(error);
-			}
-		}),
-	);
-	for (const loadedPhase of volumePhases) {
-		if (typeof loadedPhase !== 'string') {
-			const keyed = loadedPhase.problems.map((problem) => ({ problem, key: JSON.stringify(problem) }));
-			for (const { problem } of keyed.toSorted((a, b) => (a.key < b.key ? -1 : 1))) {
-				report(problem);
-			}
-		}
-	}
-	const textureIndex = new Map<string, number>();
-	const phaseIndex = new Map<string, number>();
-	const volumeIndex = new Map<EnvironmentVolume, number>();
-	for (const [i, { tag, sceneStates, condition, volume }] of volumes.environment.entries()) {
-		const name = volume.name.replace(/#.*$/, '');
-		const shape = environmentVolumeShape(volume);
-		if (typeof shape === 'string') {
-			report({ kind: 'volume', volume: name, reason: shape });
-			continue;
-		}
-		const blend = environmentBlend(volume);
-		if (typeof blend === 'string') {
-			report({ kind: 'volume', volume: name, reason: blend });
-			continue;
-		}
-		const loadedPhase = volumePhases[i];
-		if (typeof loadedPhase === 'string') {
-			report({ kind: 'phase', volume: name, reason: loadedPhase });
-		}
-		const index =
-			typeof loadedPhase === 'string'
-				? null
-				: phaseIndex.getOrInsertComputed(loadedPhase.loaded.phase.name, () => {
-						addBlendSchema(plan.schema, loadedPhase.loaded.phase);
-						return (
-							plan.phases.push(
-								buildPhase(loadedPhase.loaded.phase, loadedPhase.textures, plan.textures, textureIndex),
-							) - 1
-						);
-					});
-		if (index !== null) {
-			volumeIndex.set(volume, plan.volumes.length);
-		}
-		plan.volumes.push({
-			name,
-			group: 0,
-			shape,
-			control: null,
-			blend,
-			priority: volume.priority,
-			phase: index,
+	const envFp = cache === null ? null : await cache.fingerprint(ENVIRONMENTS_ENTRY);
+	let planMemoKey: string | null = null;
+	if (cache !== null && envFp !== null) {
+		planMemoKey = cache.keyWith(envFp, {
+			kind: 'environmentPlan',
+			levels: levels.map(({ id, tag }) => [id, tag]),
+			enabled: [...enabled].toSorted((a, b) => a - b),
+			volumes: volumes.environment.map(({ tag, sceneStates, condition, volume, phaseObject }) => ({
+				tag,
+				sceneStates,
+				condition,
+				id: volume.id,
+				name: volume.name,
+				envPhase: volume.envPhase,
+				phaseObject: phaseObject?.key ?? null,
+				priority: volume.priority,
+			})),
+			posts: volumes.post.map(({ tag, sceneStates, volume }) => ({
+				tag,
+				sceneStates,
+				id: volume.id,
+				profile: volume.profile,
+				priority: volume.priority,
+			})),
 		});
-		plan.volumeOwners.push({ levelTag: tag, sceneStates, condition });
+		const recalled = await cache.recallValue<{
+			plan: Omit<EnvironmentPlan, 'textures'>;
+			textures: SavedLocator[];
+			sources: BundleSource[];
+		}>(planMemoKey);
+		if (recalled !== undefined && (await sourcesCurrent(resolver, recalled.sources))) {
+			const textures: LocatedObject[] = [];
+			let ok = true;
+			for (const saved of recalled.textures) {
+				const relocated = relocateSaved(resolver.manifest, saved);
+				if (relocated === undefined) {
+					ok = false;
+					break;
+				}
+				textures.push(relocated);
+			}
+			if (ok) {
+				return { ...recalled.plan, textures };
+			}
+		}
 	}
+	const { result: built, bundles } = await recordBundleReads(async () => {
+		const reported = new Set<string>();
+		const report: ReportProblem = (problem) => {
+			const key = JSON.stringify(problem);
+			if (!reported.has(key)) {
+				reported.add(key);
+				plan.problems.push(problem);
+			}
+		};
+		const flowNoise = await findFlowNoise(context, resolver);
+		if (typeof flowNoise === 'string') {
+			report({ kind: 'resource', path: FLOW_NOISE_PATH, reason: flowNoise });
+		} else {
+			plan.flowNoise = plan.textures.push(locatedObject(flowNoise)) - 1;
+		}
 
-	const postIndex = new Map<string, number>();
-	for (const [i, { choice, phases, post }] of loaded.entries()) {
-		const debug = levelDebug(levels[i], choice);
-		plan.debug.push(debug);
-		if (phases instanceof Error) {
-			debug.error = phases.message;
-		} else if (phases !== null) {
-			debug.phase = phases.own.phase.name;
-			debug.post = post?.name ?? null;
-			for (const name of ENVIRONMENT_SECTIONS) {
-				const { source } = phases.composed[name];
-				if (source !== 'level') {
-					debug.sections[name] = source;
+		// levels mostly share phases and profiles, so loads are cached; they run for all levels at once
+		const phase = scenePhaseLoader(resolver, pathOf, volumes.environment);
+		const postLoads = new Map<bigint, Promise<LoadedVolumeProfile>>();
+		const postProfile = (hash: bigint) =>
+			postLoads.getOrInsertComputed(hash, () => loadVolumeProfile(resolver, hash, pathOf));
+		const loaded = await Promise.all(
+			levels.map(async (level) => {
+				const choice = resolveLevelEnvironment(level, volumes, enabled);
+				const profile = resolveLevelPost(level, volumes, enabled)?.profile ?? null;
+				try {
+					// the level's and the global phase, for the debug index's section sources
+					const phases = await loadLevelPhases(choice, phase);
+					// the post profile is only used with a phase
+					return {
+						choice,
+						phases,
+						post: phases === null || profile === null ? null : await postProfile(profile),
+					};
+				} catch (error) {
+					return { choice, phases: error instanceof Error ? error : new Error(String(error)), post: null };
+				}
+			}),
+		);
+
+		// every volume with its own phase, for blending at the camera. a phase that can't be read leaves its volume
+		// without one, which the viewer skips. the references that can't be read are reported in volume order, as
+		// the loads finish in any order
+		const volumePhases = await Promise.all(
+			volumes.environment.map(async ({ volume }) => {
+				const load = phase(volume);
+				if (load === null) {
+					return 'no phase set';
+				}
+				try {
+					const loadedPhase = await load;
+					const problems: EnvironmentProblem[] = [];
+					const textures = await resolvePhaseTextures(resolver, loadedPhase, (problem) =>
+						problems.push(problem),
+					);
+					return { loaded: loadedPhase, textures, problems };
+				} catch (error) {
+					return errorText(error);
+				}
+			}),
+		);
+		for (const loadedPhase of volumePhases) {
+			if (typeof loadedPhase !== 'string') {
+				const keyed = loadedPhase.problems.map((problem) => ({ problem, key: JSON.stringify(problem) }));
+				for (const { problem } of keyed.toSorted((a, b) => (a.key < b.key ? -1 : 1))) {
+					report(problem);
 				}
 			}
 		}
-		const volume = choice.volume === null ? undefined : volumeIndex.get(choice.volume);
-		if (volume === undefined || phases === null || phases instanceof Error) {
-			// the base volume's phase is unset or unreadable (recorded with the volume)
-			plan.levels.push(null);
-			continue;
-		}
-		plan.levels.push({
-			volume,
-			post:
-				post === null
+		const textureIndex = new Map<string, number>();
+		const phaseIndex = new Map<string, number>();
+		const volumeIndex = new Map<EnvironmentVolume, number>();
+		for (const [i, { tag, sceneStates, condition, volume }] of volumes.environment.entries()) {
+			const name = volume.name.replace(/#.*$/, '');
+			const shape = environmentVolumeShape(volume);
+			if (typeof shape === 'string') {
+				report({ kind: 'volume', volume: name, reason: shape });
+				continue;
+			}
+			const blend = environmentBlend(volume);
+			if (typeof blend === 'string') {
+				report({ kind: 'volume', volume: name, reason: blend });
+				continue;
+			}
+			const loadedPhase = volumePhases[i];
+			if (typeof loadedPhase === 'string') {
+				report({ kind: 'phase', volume: name, reason: loadedPhase });
+			}
+			const index =
+				typeof loadedPhase === 'string'
 					? null
-					: postIndex.getOrInsertComputed(post.name, () => plan.posts.push(postProfileOf(post)) - 1),
+					: phaseIndex.getOrInsertComputed(loadedPhase.loaded.phase.name, () => {
+							addBlendSchema(plan.schema, loadedPhase.loaded.phase);
+							return (
+								plan.phases.push(
+									buildPhase(loadedPhase.loaded.phase, loadedPhase.textures, plan.textures, textureIndex),
+								) - 1
+							);
+						});
+			if (index !== null) {
+				volumeIndex.set(volume, plan.volumes.length);
+			}
+			plan.volumes.push({
+				name,
+				group: 0,
+				shape,
+				control: null,
+				blend,
+				priority: volume.priority,
+				phase: index,
+			});
+			plan.volumeOwners.push({ levelTag: tag, sceneStates, condition });
+		}
+
+		const postIndex = new Map<string, number>();
+		for (const [i, { choice, phases, post }] of loaded.entries()) {
+			const debug = levelDebug(levels[i], choice);
+			plan.debug.push(debug);
+			if (phases instanceof Error) {
+				debug.error = phases.message;
+			} else if (phases !== null) {
+				debug.phase = phases.own.phase.name;
+				debug.post = post?.name ?? null;
+				for (const name of ENVIRONMENT_SECTIONS) {
+					const { source } = phases.composed[name];
+					if (source !== 'level') {
+						debug.sections[name] = source;
+					}
+				}
+			}
+			const volume = choice.volume === null ? undefined : volumeIndex.get(choice.volume);
+			if (volume === undefined || phases === null || phases instanceof Error) {
+				// the base volume's phase is unset or unreadable (recorded with the volume)
+				plan.levels.push(null);
+				continue;
+			}
+			plan.levels.push({
+				volume,
+				post:
+					post === null
+						? null
+						: postIndex.getOrInsertComputed(post.name, () => plan.posts.push(postProfileOf(post)) - 1),
+			});
+		}
+
+		for (const { phase: info } of plan.phases) {
+			if (info.active.includes('celestial')) {
+				checkRayPlanet(info.name, info.sections.celestial, report);
+			}
+		}
+		return plan;
+	});
+	if (planMemoKey !== null && cache !== null) {
+		const { textures, ...rest } = built;
+		await cache.rememberValue(planMemoKey, {
+			plan: rest,
+			textures: textures.map((texture) => saveLocated(resolver.manifest, texture)),
+			sources: await bundleSources(resolver, bundles),
 		});
 	}
-
-	for (const { phase: info } of plan.phases) {
-		if (info.active.includes('celestial')) {
-			checkRayPlanet(info.name, info.sections.celestial, report);
-		}
-	}
-	return plan;
+	return built;
 };
 
 /** the textures the ray-traced planet's shader samples; without any of them it isn't drawn */
@@ -585,7 +660,7 @@ const addBlendSchema = (schema: EnvironmentSchema, phase: EnvironmentPhase): voi
 const buildPhase = (
 	phase: EnvironmentPhase,
 	textureRefs: SectionTextures,
-	textures: ObjectRef[],
+	textures: LocatedObject[],
 	textureIndex: Map<string, number>,
 ): PendingPhase => {
 	const slots: TextureSlot[] = [];
@@ -669,16 +744,17 @@ const fillTextureSlots = (
 	section: EnvironmentSection,
 	refs: SectionRefs | undefined,
 	slots: TextureSlot[],
-	textures: ObjectRef[],
+	textures: LocatedObject[],
 	textureIndex: Map<string, number>,
 ): void => {
 	const slotFor = (holder: Record<string, unknown>, key: string, ref: ObjectRef | null): void => {
 		holder[key] = null;
 		if (ref !== null) {
+			const located = locatedObject(ref);
 			slots.push({
 				holder,
 				key,
-				texture: textureIndex.getOrInsertComputed(objectKey(ref), () => textures.push(ref) - 1),
+				texture: textureIndex.getOrInsertComputed(located.key, () => textures.push(located) - 1),
 			});
 		}
 	};

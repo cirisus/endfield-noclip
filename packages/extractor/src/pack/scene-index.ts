@@ -29,9 +29,13 @@ import {
 	type TerrainSceneIndex,
 } from '../game/world/terrain-source.ts';
 import type { ChunkContent, ChunkFile, WorldIndex } from '../game/world/world-index.ts';
+import { VfsGroup } from '../hg/vfs.ts';
 
 import { squareOverlapsRect } from './instances/bounds.ts';
 import { HLOD_NAME, type HlodLayout, type HlodSample, layoutHlodGrid } from './instances/hlod-cells.ts';
+import type { PackCache } from './store/pack-cache.ts';
+
+const SCENE_INDEX_ENTRY = new URL(import.meta.url);
 
 /** what to pack; the packer's options that decide the package's content */
 export interface SceneSelection {
@@ -93,12 +97,13 @@ export interface SceneIndex {
 export const indexScene = async (
 	context: Pick<Context, 'vfs' | 'world' | 'resolver'>,
 	selection: SceneSelection,
-	options?: { terrain?: boolean; hlod?: boolean },
+	options?: { terrain?: boolean; hlod?: boolean; cache?: PackCache | null },
 ): Promise<SceneIndex> => {
 	const { world } = context;
 	const { scene } = selection;
 	const includeTerrain = options?.terrain ?? true;
 	const includeHlod = options?.hlod ?? true;
+	const cache = options?.cache ?? null;
 	const [
 		pathOf,
 		bundleManifest,
@@ -141,17 +146,39 @@ export const indexScene = async (
 	const terrainGrid = treeGrid(surface);
 	// HLOD clusters sit in Global chunks only, which are small; keep the decoded chunks for `collectStaticChunks`
 	const globalChunks = new Map<string, ChunkContent>();
-	const hlod = layoutHlodGrid(
-		includeHlod
-			? await hlodSamples(
+	let hlod: HlodLayout;
+	if (!includeHlod) {
+		hlod = layoutHlodGrid([], terrainGrid);
+	} else {
+		let cachedHlod: HlodLayout | undefined;
+		let hlodKey: string | null = null;
+		if (cache !== null) {
+			const streamingHash = (await context.vfs.group(VfsGroup.Streaming)).catalogHash;
+			hlodKey = await cache.stepKey(SCENE_INDEX_ENTRY, {
+				kind: 'hlodLayout',
+				scene,
+				streamingHash,
+				terrainGrid,
+			});
+			cachedHlod = await cache.recallValue<HlodLayout>(hlodKey);
+		}
+		if (cachedHlod !== undefined) {
+			hlod = cachedHlod;
+		} else {
+			hlod = layoutHlodGrid(
+				await hlodSamples(
 					world,
 					files.filter((file) => file.cell === null),
 					partition,
 					globalChunks,
-				)
-			: [],
-		terrainGrid,
-	);
+				),
+				terrainGrid,
+			);
+			if (hlodKey !== null && cache !== null) {
+				await cache.rememberValue(hlodKey, hlod);
+			}
+		}
+	}
 	const grid: TreeInfo = { ...terrainGrid, hlodLevels: hlod.levels };
 	let terrain: SceneTerrain | null = null;
 	if (terrainScene !== undefined && surface !== undefined) {

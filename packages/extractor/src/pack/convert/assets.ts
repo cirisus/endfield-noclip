@@ -15,6 +15,8 @@ import { failureReason } from '../../errors.ts';
 import {
 	type AssetRef,
 	type AssetResolver,
+	type LocatedObject,
+	locatedObject,
 	type ObjectLocator,
 	type ObjectRef,
 	recordBundleReads,
@@ -26,12 +28,7 @@ import {
 	materialSway,
 	materialVertexOffset,
 } from '../../game/materials/material-describe.ts';
-import {
-	type LocatedMaterial,
-	type LocatedObject,
-	locatedObject,
-	locateMaterial,
-} from '../../game/materials/material-load.ts';
+import { type LocatedMaterial, locateMaterial } from '../../game/materials/material-load.ts';
 import { type MaterialValues as ConvertedMaterial, readerOf } from '../../game/materials/material-values.ts';
 import { keywordsNotDrawn, surfaceGaps } from '../../game/materials/surfaces/surface-keywords.ts';
 import type { MaterialValues } from '../../game/prefabs/prefab.ts';
@@ -101,7 +98,7 @@ export interface AssetConversionInput {
 
 /** a texture referenced outside materials, and where its blobs go */
 export interface PlacedTexture {
-	ref: ObjectRef;
+	ref: ObjectRef | LocatedObject;
 	place: Place;
 }
 
@@ -204,7 +201,7 @@ export const convertAssets = async (input: AssetConversionInput): Promise<AssetC
 	const textureUses = new TextureUses();
 	const materials = await loadMaterials(input, jobs, textureUses);
 	const extraIndices = input.extraTextures.map((group) =>
-		group.map(({ ref, place }) => textureUses.use(locatedObject(ref), place)),
+		group.map(({ ref, place }) => textureUses.use('locator' in ref ? ref : locatedObject(ref), place)),
 	);
 	timer.end('materials');
 	// textures don't depend on geometry, so both share the worker pool; start geometry first so its initial

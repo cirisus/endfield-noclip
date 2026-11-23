@@ -562,14 +562,14 @@ implemented in [pack/store/pack-cache.ts](../packages/extractor/src/pack/store/p
 | `memo/`  | **material loads:** V8-serialized (preserves bigints and non-finite numbers) per material + `material-load.ts` import graph + bundle MD5s; shader summaries stored once per shader + bundle MD5; shader/texture bundles re-located by name on recall (warm `map02` materials drop from >10 s to 1–2 s)                        |
 | `memo/`  | **prefabs:** V8-serialized per `(prefab, pose, locked, effectLod)` for renderers and per prefab for lights and local-space environment volumes, keyed by the corresponding prefab module's import graph + read bundle MD5s, relocating mesh/material/phase bundles by name on recall                                          |
 | `memo/`  | **dynamic structures, scripts, interactives, and water volumes:** V8-serialized per dynamic ECS chunk, per view-state model, and per scene/level for level scripts, interactive facilities (without looping clip samplers), and water volumes, keyed by module import graph, VFS group catalog hashes, and read bundle MD5s   |
+| `memo/`  | **static chunks, HLOD layout, and environments:** V8-serialized per scene/subset for static chunk rows (foliage stored per cluster), HLOD grid fit, and planned environments, keyed by module import graph, Streaming catalog hash, and read bundle MD5s                                                                      |
 | `memo/`  | **whole steps (terrain, irradiance):** keyed by module import graph, options, subset tiles/cells, and catalog data MD5s of read files (warm `map02`: ~10 s → <1 s each)                                                                                                                                                       |
 | `memo/`  | **packer-compressed blobs (e.g. instance blocks):** keyed by raw-byte hash, zstd level, and node zstd version; avoids re-running level-19 zstd on unchanged blocks                                                                                                                                                            |
 | `roots/` | one file per package dir listing its blobs and memos; after each pack, roots missing `core.czar` are dropped and unreferenced entries swept. deleting a package dir frees its cache on next pack; deleting the whole cache is always safe                                                                                     |
 | `lock`   | holds packer PID; serializes cache access (stale locks from dead processes are taken over)                                                                                                                                                                                                                                    |
 
-**not cached**: turning loaded materials into table entries (fast), the entities phase (~20 s on
-`map02`), and failed conversions/material loads (always retried, so warm packs may still spawn
-workers).
+**not cached**: turning loaded materials into table entries (fast), script driver linking, and
+failed conversions/material loads (always retried, so warm packs may still spawn workers).
 
 ### report and debug outputs
 

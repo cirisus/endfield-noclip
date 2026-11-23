@@ -60,7 +60,11 @@ export const collectEntities = async (
 	cache: PackCache | null = null,
 ): Promise<SceneEntities> => {
 	const { scene, controls } = content;
-	const { hlodNameMatches, chunkVolumes, sceneWater } = await collectStaticChunks(context.world, content);
+	const { hlodNameMatches, chunkVolumes, sceneWater } = await collectStaticChunks(
+		context.world,
+		content,
+		cache,
+	);
 	const sources = await collectPlacementSources(context, content, { cache });
 	const { scriptWater, waterDrivers, placements, fireSeed, unsupported, cabinRooms } = sources.interactives;
 

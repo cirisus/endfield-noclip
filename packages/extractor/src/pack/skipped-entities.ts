@@ -48,6 +48,29 @@ export class SkippedEntities {
 		}
 	}
 
+	/** merges previously tallied rows into this collector */
+	merge(rows: readonly SkippedEntityRow[]): void {
+		for (const incoming of rows) {
+			const components = incoming.components.toSorted((a, b) => a - b);
+			const row = this.#rows.getOrInsertComputed(
+				`${incoming.source}/${incoming.reason}/${components.join(',')}`,
+				() => ({
+					source: incoming.source,
+					reason: incoming.reason,
+					components,
+					count: 0,
+					examples: [],
+				}),
+			);
+			row.count += incoming.count;
+			for (const name of incoming.examples) {
+				if (row.examples.length < EXAMPLES) {
+					row.examples.push(name);
+				}
+			}
+		}
+	}
+
 	/** @returns the rows, largest first */
 	rows(): SkippedEntityRow[] {
 		return [...this.#rows.values()].toSorted((a, b) => b.count - a.count);

@@ -223,6 +223,11 @@ export class PackContent {
 		return chainDraw({ geometry: this.geometries.intern(mesh, pathOf), material: id, minSquared: 0 });
 	}
 
+	/** @returns the decal cube's StringPathHash key, or `undefined` if absent */
+	decalCubeHash(): bigint | undefined {
+		return this.#decalCube;
+	}
+
 	/**
 	 * @returns the decal cube's geometry id, which rect decals and prefabs' decal projectors share, or `null`
 	 *   without a decal cube in the install

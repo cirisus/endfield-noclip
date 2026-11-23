@@ -105,7 +105,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 	});
 	try {
 		// #region setup
-		const scene = await indexScene(context, options);
+		const scene = await indexScene(context, options, { cache });
 		const content = await PackContent.create(context.world, scene, options.log);
 		const { controls } = content;
 		const layout = new ArchiveLayout(scene.grid);
@@ -160,6 +160,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				defaultSceneStates(scene.sceneStates, scene.game),
 				entities.chunkVolumes,
 				entities.placedVolumes,
+				cache,
 			),
 			planWater(context, {
 				sceneWater: entities.sceneWater,
