@@ -157,9 +157,11 @@ at PC high, every lit surface at any roughness gets SSR:
 `specular = (hit · fade + sky · (1 − fade)) · environment BRDF · specular occlusion`
 
 only the `sky` term carries the diffuse normalisation and `indirectSpecularFactor`. on a miss, the
-sky reflection remains. all passes (march, resolve, temporal filter, fade) run at half resolution on
-every PC tier; per-tier step counts and upsampling are in
-[quality settings](quality-settings.md#values-by-level).
+sky reflection remains. at PC high (4000), all passes run at half resolution with 32 march steps; PC
+very high (5000) raises the march to 128 steps and enables `ssrV2Upsample` (half-res march outputs
+hit UVs, full-res scene lookup and colour temporal filter, half-res downsample/pyramid/resolve, and
+a full-res upsample pass that keeps the full-res temporal colour where cone mip < 0.25). per-tier
+values are in [quality settings](quality-settings.md#values-by-level).
 
 - **march**: mirror ray projects to screen, stretches to screen edge, and steps linearly in UV and
   device depth (4 taps/loop): 32 steps (`ssrRayMarchingSampleCount` at PC high, also the distance
