@@ -169,9 +169,8 @@ export const packTerrain = async (
 ): Promise<PackedTerrain> => {
 	checkTerrainLayout();
 	const { terrainScene, surface } = input;
-	const tiles = [...terrainScene.tiles.values()]
-		.filter(({ key }) => input.includesTile(key))
-		.toSorted((a, b) => a.key.level - b.key.level || a.key.z - b.key.z || a.key.x - b.key.x);
+	const tiles = [...terrainScene.tiles.values()].filter(({ key }) => input.includesTile(key));
+	tiles.sort((a, b) => a.key.level - b.key.level || a.key.z - b.key.z || a.key.x - b.key.x);
 	const splatIndex = await findTerrainSplatIndex(context, input.scene);
 	const layerFiles = layerTextureFiles(terrainScene, surface);
 

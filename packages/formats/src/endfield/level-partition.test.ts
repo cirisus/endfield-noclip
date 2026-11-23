@@ -102,7 +102,8 @@ test('disagreeing cell lists are reported', () => {
 	broken[0].levelGrids?.pop();
 	broken[1].levelGrids?.push({ x: 1, z: 1 });
 	const { issues } = buildLevelPartition(mapConfig(), broken);
-	assert.deepEqual(issues.map((i) => i.level).toSorted(), ['map09_lv001', 'map09_lv005']);
+	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+	assert.deepEqual(issues.map((i) => i.level).sort(), ['map09_lv001', 'map09_lv005']);
 });
 
 test('classifyEntity separates ownership from placement', () => {

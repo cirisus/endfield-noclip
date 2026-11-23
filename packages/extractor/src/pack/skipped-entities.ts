@@ -5,6 +5,8 @@
  * @module
  */
 
+import { compareNumbers } from '../compare.ts';
+
 /** entities left out for one reason, sharing one component set */
 export interface SkippedEntityRow {
 	/** `static` for InitChunkData entities, `dynamic` for DynamicStreaming ones */
@@ -34,7 +36,7 @@ export class SkippedEntities {
 		reason: string,
 		entity: { name: string; components: readonly number[] },
 	): void {
-		const components = entity.components.toSorted((a, b) => a - b);
+		const components = entity.components.toSorted(compareNumbers);
 		const row = this.#rows.getOrInsertComputed(`${source}/${reason}/${components.join(',')}`, () => ({
 			source,
 			reason,
@@ -51,7 +53,7 @@ export class SkippedEntities {
 	/** merges previously tallied rows into this collector */
 	merge(rows: readonly SkippedEntityRow[]): void {
 		for (const incoming of rows) {
-			const components = incoming.components.toSorted((a, b) => a - b);
+			const components = incoming.components.toSorted(compareNumbers);
 			const row = this.#rows.getOrInsertComputed(
 				`${incoming.source}/${incoming.reason}/${components.join(',')}`,
 				() => ({
@@ -73,6 +75,8 @@ export class SkippedEntities {
 
 	/** @returns the rows, largest first */
 	rows(): SkippedEntityRow[] {
-		return [...this.#rows.values()].toSorted((a, b) => b.count - a.count);
+		const rows = [...this.#rows.values()];
+		rows.sort((a, b) => b.count - a.count);
+		return rows;
 	}
 }

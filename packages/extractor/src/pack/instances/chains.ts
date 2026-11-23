@@ -11,6 +11,7 @@ import {
 	type ChainDraw,
 } from '@endfield-noclip/package-format/instances';
 
+import { compareStrings } from '../../compare.ts';
 import { ignoreMissing } from '../../errors.ts';
 import { DEBUG_DIR } from '../debug.ts';
 
@@ -172,7 +173,7 @@ export class ChainTable {
 				slots[kept] = id;
 			}
 		}
-		added.sort((a, b) => Number(chainKeys[a] > chainKeys[b]) - Number(chainKeys[a] < chainKeys[b]));
+		added.sort((a, b) => compareStrings(chainKeys[a], chainKeys[b]));
 		let free = 0;
 		for (const id of added) {
 			while (free < slots.length && slots[free] !== null) {

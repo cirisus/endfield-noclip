@@ -12,6 +12,7 @@ import type { TileKey } from '@endfield-noclip/package-format/tiles';
 import { mapDefined } from '@mary-ext/array-fns';
 import { type ArchivePlan, encodeArchive, planArchive } from '@mary-ext/czar';
 
+import { compareStrings } from '../../compare.ts';
 import { ignoreMissing } from '../../errors.ts';
 import { mapPool } from '../../pool.ts';
 import { zstd } from '../../zstd.ts';
@@ -269,7 +270,7 @@ export class BlobStore {
 		const archives = mapDefined([...this.#layout().archives.values()], ({ name, stem }) =>
 			name !== this.#core ? { name, stem } : undefined,
 		);
-		archives.sort((a, b) => (a.name < b.name ? -1 : 1));
+		archives.sort((a, b) => compareStrings(a.name, b.name));
 		return archives;
 	}
 

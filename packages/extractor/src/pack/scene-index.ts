@@ -15,6 +15,7 @@ import { type Rect, rectContains } from '@endfield-noclip/package-format/values'
 
 import { mapDefined } from '@mary-ext/array-fns';
 
+import { compareStrings } from '../compare.ts';
 import type { Context } from '../context.ts';
 import { GameState, type MapVariables } from '../game/state/game-state.ts';
 import {
@@ -133,16 +134,15 @@ export const indexScene = async (
 	if (terrainScene !== undefined && surface === undefined) {
 		throw new Error(`${scene} has terrain tiles but no HGTerrainSurfacesData`);
 	}
-	const files = chunkFiles
-		.filter((file) => file.scene === scene)
-		// always-loaded files first, then scene states; the default area before stream areas: a fixed order
-		// for the first-wins dedupe, in which an entity of an always-loaded file stays unconditional
-		.toSorted(
-			(a, b) =>
-				Number(a.sceneState !== 0) - Number(b.sceneState !== 0) ||
-				Number(a.area !== 0) - Number(b.area !== 0) ||
-				(a.name < b.name ? -1 : 1),
-		);
+	const files = chunkFiles.filter((file) => file.scene === scene);
+	// always-loaded files first, then scene states; the default area before stream areas: a fixed order
+	// for the first-wins dedupe, in which an entity of an always-loaded file stays unconditional
+	files.sort(
+		(a, b) =>
+			Number(a.sceneState !== 0) - Number(b.sceneState !== 0) ||
+			Number(a.area !== 0) - Number(b.area !== 0) ||
+			compareStrings(a.name, b.name),
+	);
 	const terrainGrid = treeGrid(surface);
 	// HLOD clusters sit in Global chunks only, which are small; keep the decoded chunks for `collectStaticChunks`
 	const globalChunks = new Map<string, ChunkContent>();

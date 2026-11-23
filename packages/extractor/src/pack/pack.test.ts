@@ -20,6 +20,8 @@ import { ContentKind } from '@endfield-noclip/package-format/tree';
 import { openArchive } from '@mary-ext/czar';
 import { fromFileHandle } from '@mary-ext/czar/node';
 
+import { compareNumbers } from '../compare.ts';
+
 import { ChainTable } from './instances/chains.ts';
 import { type HlodSample, hlodCandidates, layoutHlodGrid, pickHlodTile } from './instances/hlod-cells.ts';
 import { InstanceBlockBuilder, rowReach } from './instances/instances.ts';
@@ -69,7 +71,8 @@ describe('ChainTable', () => {
 		first.intern([draw({ geometry: 1 })]);
 		const a = first.stableOrder(keys(['a', 'b']), []);
 		assert.deepEqual(
-			[...a.ids].toSorted((x, y) => x - y),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			[...a.ids].sort(compareNumbers),
 			[0, 1],
 		);
 

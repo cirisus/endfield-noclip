@@ -12,6 +12,7 @@ import { isObject } from '@endfield-noclip/formats/unity/values';
 
 import { unique } from '@mary-ext/array-fns';
 
+import { compareNumbers } from '../../compare.ts';
 import type { Context } from '../../context.ts';
 import { VfsGroup } from '../../hg/vfs.ts';
 import type { AssetResolver } from '../assets/assets.ts';
@@ -176,10 +177,10 @@ export const loadCabins = async (
 		? await readPlantingFieldLevels(vfs)
 		: new Map<number, number>();
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-	const levels = [...new Set(fieldLevels.values())].sort((a, b) => a - b);
+	const levels = [...new Set(fieldLevels.values())].sort(compareNumbers);
 	const area = (cabin: Cabin) => (cabin.max[0] - cabin.min[0]) * (cabin.max[1] - cabin.min[1]);
-	const bySize = cabins.toSorted((a, b) => area(b) - area(a));
-	if (bySize.length === 0) {
+	cabins.sort((a, b) => area(b) - area(a));
+	if (cabins.length === 0) {
 		return { controls: [], models: [], rooms: [] };
 	}
 
@@ -188,7 +189,7 @@ export const loadCabins = async (
 	const rooms: CabinRoom[] = [];
 	for (const { id, slot } of slots) {
 		const turns = slot.direction % 4;
-		const cabin = bySize.find((candidate) => fits(candidate, slot, turns)) ?? bySize.at(-1)!;
+		const cabin = cabins.find((candidate) => fits(candidate, slot, turns)) ?? cabins.at(-1)!;
 		const control = `cabin:${id}`;
 		const [x, , z] = slot.position;
 		const cell = cellOf(x, z);

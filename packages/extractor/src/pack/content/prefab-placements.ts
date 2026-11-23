@@ -11,6 +11,7 @@ import { type ChainDraw, DrawRole, type RowPath } from '@endfield-noclip/package
 
 import { mapDefined } from '@mary-ext/array-fns';
 
+import { compareNumbers } from '../../compare.ts';
 import { formatErrorOnly } from '../../errors.ts';
 import {
 	type AssetResolver,
@@ -270,7 +271,8 @@ export const placePrefabs = async (
 				label: loaded.label,
 				sources: await bundleSources(
 					resolver,
-					[...extraBundles].toSorted((a, b) => a - b),
+					// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+					[...extraBundles].sort(compareNumbers),
 				),
 				renderers: located.map((renderer) => ({
 					...renderer,

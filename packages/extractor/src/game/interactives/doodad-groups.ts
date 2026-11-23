@@ -1,5 +1,6 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 
+import { compareNumbers } from '../../compare.ts';
 import { mapPool } from '../../pool.ts';
 import type { DraftControl } from '../state/scene-control.ts';
 import { progressionControl } from '../state/scenery-variants.ts';
@@ -135,7 +136,7 @@ export class DoodadGroups {
 	progressions(): DraftControl[] {
 		return [...this.#levels].map(([id, set]) => {
 			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-			const levels = [...set].sort((a, b) => a - b);
+			const levels = [...set].sort(compareNumbers);
 			// which slots a shell leaves active says nothing about its level, hence the default
 			return progressionControl(
 				'doodadGroups',

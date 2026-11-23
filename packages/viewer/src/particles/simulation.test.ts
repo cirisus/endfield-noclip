@@ -8,6 +8,8 @@ import {
 	ParticleShapeKind,
 } from '@endfield-noclip/package-format/particles';
 
+import { compareNumbers } from '../compare.ts';
+
 import {
 	PARTICLE_FLOATS,
 	ParticleSimulation,
@@ -314,7 +316,8 @@ describe('ParticleSimulation', () => {
 				perLoop.set(v, (perLoop.get(v) ?? 0) + 1);
 			}
 			assert.deepEqual(
-				[...perLoop.keys()].toSorted((a, b) => a - b),
+				// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+				[...perLoop.keys()].sort(compareNumbers),
 				[0, 1, 2, 3],
 			);
 			assert.ok([...perLoop.values()].every((n) => n === perLoop.get(0)));

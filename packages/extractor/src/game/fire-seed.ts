@@ -2,6 +2,7 @@ import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { ControlDriver } from '@endfield-noclip/package-format/states';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import { compareStrings } from '../compare.ts';
 import type { Context } from '../context.ts';
 
 import type { LevelScripts } from './script-drivers.ts';
@@ -52,7 +53,8 @@ export const scriptFireSeedLevels = (levelScripts: LevelScripts): ScriptFireSeed
 			found.push({ script: script.id, node: id, level: typeof constant === 'number' ? constant : null });
 		}
 	}
-	return found.toSorted((a, b) => (a.script === b.script ? a.node - b.node : a.script < b.script ? -1 : 1));
+	found.sort((a, b) => compareStrings(a.script, b.script) || a.node - b.node);
+	return found;
 };
 
 /** the id of the fire seed's control */

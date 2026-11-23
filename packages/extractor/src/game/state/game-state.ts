@@ -7,6 +7,8 @@ import type {
 import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 import type { SceneControlValue } from '@endfield-noclip/package-format/states';
 
+import { compareNumbers, compareStrings } from '../../compare.ts';
+
 import { sceneControl, type DraftControl, type DraftRuleText, type Requirement } from './scene-control.ts';
 
 // shares quest, mission and variable controls across MapConfig conditions and dynamic load gates.
@@ -415,7 +417,8 @@ export class GameState {
 				}),
 			);
 		}
-		return controls.toSorted((a, b) => a.id.localeCompare(b.id));
+		controls.sort((a, b) => compareStrings(a.id, b.id));
+		return controls;
 	}
 
 	#expand(condition: GameCondition, negate: boolean): Alternatives {
@@ -539,7 +542,7 @@ const COMPLETED = 3;
  */
 const variableRanges = (variable: Variable): Range[] => {
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-	const targets = [...variable.targets].sort((a, b) => a - b);
+	const targets = [...variable.targets].sort(compareNumbers);
 	const ranges: Range[] = [{ label: 'unset', value: null }];
 	ranges.push({ label: `< ${targets[0]}`, value: targets[0] - 1 });
 	for (const [i, target] of targets.entries()) {

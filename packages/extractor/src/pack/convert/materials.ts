@@ -6,6 +6,7 @@ import {
 } from '@endfield-noclip/formats/unity/material';
 import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 
+import { compareStrings } from '../../compare.ts';
 import type { MaterialClassification } from '../../game/materials/material-classify.ts';
 import {
 	type MaterialValues,
@@ -161,7 +162,8 @@ export const convertMaterial = (
 
 	const slots: Record<string, TextureSlot> = {};
 	let normalMapUv: number | null = null;
-	for (const [name, slot] of Object.entries(record.textures).toSorted(([a], [b]) => (a < b ? -1 : 1))) {
+	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+	for (const [name, slot] of Object.entries(record.textures).sort(([a], [b]) => compareStrings(a, b))) {
 		if (slot.texture === null || (!declaresNothing && !Object.hasOwn(defaults.textures, name))) {
 			continue;
 		}

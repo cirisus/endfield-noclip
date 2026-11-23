@@ -355,7 +355,8 @@ export const listOpfsPackages = async (): Promise<string[]> => {
 			names.push(name);
 		}
 	}
-	return names.toSorted();
+	names.sort();
+	return names;
 };
 
 /**

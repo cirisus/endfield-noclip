@@ -4,6 +4,7 @@ import type { StreamAreaTable } from '@endfield-noclip/formats/endfield/stream-a
 
 import { groupByDefined, mapDefined } from '@mary-ext/array-fns';
 
+import { compareNumbers, compareStrings } from '../../compare.ts';
 import { mapPool } from '../../pool.ts';
 import type { ChunkFile, WorldIndex } from '../world/world-index.ts';
 
@@ -195,7 +196,8 @@ const revealingAreas = (table: StreamAreaTable, area: number): number[] => {
 			ids.push(id);
 		}
 	}
-	return ids.toSorted((a, b) => a - b);
+	ids.sort(compareNumbers);
+	return ids;
 };
 
 /**
@@ -274,7 +276,7 @@ export const summarizeProgressions = (entities: Iterable<DynamicEntity>): Progre
 			return undefined;
 		}
 		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		const levels = [...entry.perLevel.keys()].sort((a, b) => a - b);
+		const levels = [...entry.perLevel.keys()].sort(compareNumbers);
 		return {
 			kind: entry.kind,
 			key: entry.key,
@@ -285,7 +287,7 @@ export const summarizeProgressions = (entities: Iterable<DynamicEntity>): Progre
 			levelNum: entry.levelNums.size === 1 ? [...entry.levelNums][0] : null,
 		};
 	});
-	summaries.sort((a, b) => a.kind.localeCompare(b.kind) || a.key.localeCompare(b.key));
+	summaries.sort((a, b) => compareStrings(a.kind, b.kind) || compareStrings(a.key, b.key));
 	return summaries;
 };
 

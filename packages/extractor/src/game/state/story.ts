@@ -3,6 +3,7 @@ import type { MissionInfo, QuestRef } from '@endfield-noclip/package-format/stat
 
 import { definite, mapDefined } from '@mary-ext/array-fns';
 
+import { compareNatural } from '../../compare.ts';
 import type { WorldIndex } from '../world/world-index.ts';
 
 import type { DraftControl } from './scene-control.ts';
@@ -74,7 +75,7 @@ export const labelStory = async (
 		control.name = label ?? `hidden step ${id.slice(missionId.length + 3)}`;
 	}
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-	return [...missions.values()].sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+	return [...missions.values()].sort((a, b) => compareNatural(a.id, b.id));
 };
 
 /**
@@ -87,9 +88,8 @@ export const mainStoryOrder = (missions: readonly MissionInfo[]): string[] => {
 		const key = category === 'main' ? storyOrder(id) : null;
 		return key === null ? undefined : { id, key };
 	});
-	return keyed
-		.toSorted((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2])
-		.map(({ id }) => id);
+	keyed.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2]);
+	return keyed.map(({ id }) => id);
 };
 
 /**

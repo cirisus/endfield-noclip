@@ -115,15 +115,15 @@ export const placeDistance = (place: ControlPlace, eye: Readonly<Vec3>): number 
  * @param eye the camera's position, in Unity coordinates
  * @returns the entries with a place within {@link NEARBY_RADIUS} of the eye, nearest first
  */
-export const controlsNear = (entries: readonly ListedControl[], eye: Readonly<Vec3>): ListedControl[] =>
-	entries
-		.flatMap((entry) => {
-			const { place } = entry.control;
-			const distance = place === null ? Infinity : placeDistance(place, eye);
-			return distance <= NEARBY_RADIUS ? [{ entry, distance }] : [];
-		})
-		.toSorted((a, b) => a.distance - b.distance)
-		.map(({ entry }) => entry);
+export const controlsNear = (entries: readonly ListedControl[], eye: Readonly<Vec3>): ListedControl[] => {
+	const near = entries.flatMap((entry) => {
+		const { place } = entry.control;
+		const distance = place === null ? Infinity : placeDistance(place, eye);
+		return distance <= NEARBY_RADIUS ? [{ entry, distance }] : [];
+	});
+	near.sort((a, b) => a.distance - b.distance);
+	return near.map(({ entry }) => entry);
+};
 
 /** an environment volume listed for a level */
 export interface ListedVolume {

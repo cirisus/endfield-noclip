@@ -68,11 +68,11 @@ const sortedVolumes = new WeakMap<
 const volumesOf = (
 	environment: ResolvedEnvironmentTable,
 ): { id: number; volume: EnvironmentVolumeInfo }[] => {
-	return sortedVolumes.getOrInsertComputed(environment, () =>
-		environment.volumes
-			.map((volume, id) => ({ id, volume }))
-			.toSorted(({ volume: a }, { volume: b }) => compareVolumes(a, b)),
-	);
+	return sortedVolumes.getOrInsertComputed(environment, () => {
+		const list = environment.volumes.map((volume, id) => ({ id, volume }));
+		list.sort(({ volume: a }, { volume: b }) => compareVolumes(a, b));
+		return list;
+	});
 };
 
 /**

@@ -3,6 +3,7 @@ import { storyPointPicks, storyPoints, type StoryPoint } from '@endfield-noclip/
 
 import { definite } from '@mary-ext/array-fns';
 
+import { compareStrings } from '../../compare.ts';
 import type { ListedControl } from '../../scene-states/listing.ts';
 import type { Viewer } from '../../viewer/viewer.ts';
 import { ChoiceRow } from '../controls.tsx';
@@ -26,7 +27,7 @@ const ordered = (entries: readonly ListedControl[]): ListedControl[] =>
 		({ control: a }, { control: b }) =>
 			Number(a.story?.role !== 'mission') - Number(b.story?.role !== 'mission') ||
 			(a.story?.step ?? Number.MAX_SAFE_INTEGER) - (b.story?.step ?? Number.MAX_SAFE_INTEGER) ||
-			a.id.localeCompare(b.id),
+			compareStrings(a.id, b.id),
 	);
 
 /**

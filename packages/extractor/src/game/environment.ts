@@ -29,6 +29,7 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
+import { compareNumbers } from '../compare.ts';
 import { mapPool } from '../pool.ts';
 
 import type { AssetResolver, LocatedObject, ObjectRef } from './assets/assets.ts';
@@ -123,7 +124,9 @@ export const collectSceneVolumes = (
 	for (const entry of [...volumes.environment, ...volumes.post]) {
 		const states = fileStates.get(entry.volume.id)!;
 		if (!states.has(0)) {
-			entry.sceneStates.push(...[...states].map((id) => id - 1).toSorted((a, b) => a - b));
+			const sorted = [...states].map((id) => id - 1);
+			sorted.sort(compareNumbers);
+			entry.sceneStates.push(...sorted);
 		}
 	}
 	return volumes;
@@ -275,9 +278,11 @@ export const resolveLevelPost = (
 	const globals = volumes.post.filter(
 		(entry) => entry.volume.isGlobal && entry.volume.profile !== null && volumeLoaded(entry, enabled),
 	);
-	const pick = (tag: number) =>
-		globals.filter((entry) => entry.tag === tag).toSorted((a, b) => b.volume.priority - a.volume.priority)[0]
-			?.volume;
+	const pick = (tag: number) => {
+		const matching = globals.filter((entry) => entry.tag === tag);
+		matching.sort((a, b) => b.volume.priority - a.volume.priority);
+		return matching[0]?.volume;
+	};
 	return pick(level.tag) ?? pick(0) ?? null;
 };
 

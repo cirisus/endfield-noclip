@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { DEFAULT_OUT, need as needArg, parseOptionalInteger, separatePositionals } from '../cli-args.ts';
+import { compareStrings } from '../compare.ts';
 import { DEBUG_DIR, STAND_INS_FILE, type StandInReport, type UnsupportedInput } from '../pack/debug.ts';
 
 export const summary = 'survey packed debug data: materials, geometries, stand-ins, interactives, water, env';
@@ -157,7 +158,9 @@ const tallyBy = <T>(
 			}
 		}
 	}
-	return [...groups.values()].toSorted((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+	const sorted = [...groups.values()];
+	sorted.sort((a, b) => b.count - a.count || compareStrings(a.key, b.key));
+	return sorted;
 };
 
 // #region materials

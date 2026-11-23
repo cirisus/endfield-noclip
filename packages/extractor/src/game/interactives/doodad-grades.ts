@@ -1,6 +1,7 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { isSparkBean, parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 
+import { compareNumbers } from '../../compare.ts';
 import { VfsGroup } from '../../hg/vfs.ts';
 import type { DraftControl } from '../state/scene-control.ts';
 import { progressionControl } from '../state/scenery-variants.ts';
@@ -60,7 +61,7 @@ export const gradeMasks = <Form extends { model: string }>(
 ): { form: Form; mask: number }[] => {
 	const shown = new Map<string, { form: Form; mask: number }>();
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-	for (const level of [...levels].sort((a, b) => a - b)) {
+	for (const level of [...levels].sort(compareNumbers)) {
 		const index = gradeForm(need, level);
 		const form = index === null ? base : forms[index - 1];
 		const entry = shown.getOrInsertComputed(form.model, () => ({ form, mask: 0 }));
@@ -211,7 +212,7 @@ export class DoodadGrades {
 	progressions(): DraftControl[] {
 		return [...this.#controls].map(([id, { name, levels }]) => {
 			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-			const sorted = [...levels].sort((a, b) => a - b);
+			const sorted = [...levels].sort(compareNumbers);
 			return progressionControl(
 				'doodadGrade',
 				id,

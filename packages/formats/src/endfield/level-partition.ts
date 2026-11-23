@@ -104,9 +104,10 @@ export const levelTagOf = (entityId: number): number => entityId >>> 27;
 export const buildLevelPartition = (map: MapConfig, configs: Iterable<LevelConfig>): LevelPartition => {
 	// a level belongs to the partition when it owns cells of this map's grid
 	const gridIds = new Set(map.levelIds);
-	const own = [...configs]
-		.filter((config) => config.mapId === map.mapId && config.idNum !== 0 && gridIds.has(config.idNum))
-		.toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+	const own = [...configs].filter(
+		(config) => config.mapId === map.mapId && config.idNum !== 0 && gridIds.has(config.idNum),
+	);
+	own.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
 	const issues: PartitionIssue[] = [];
 	const levels: PartitionLevel[] = own.map((config, index) => {
@@ -238,20 +239,20 @@ export const voteLevelTags = (
 		const tally = votes.getOrInsertComputed(sample.tag, () => new Map());
 		tally.set(owner, (tally.get(owner) ?? 0) + 1);
 	}
-	return [...votes.entries()]
-		.toSorted((a, b) => a[0] - b[0])
-		.map(([tag, tally]) => {
-			let majority: string | null = null;
-			let best = 0;
-			let count = 0;
-			for (const [owner, n] of tally) {
-				count += n;
-				// the backdrop doesn't vote: off-level skyline props would otherwise outvote small levels
-				if (owner !== null && n > best) {
-					majority = owner;
-					best = n;
-				}
+	const entries = [...votes.entries()];
+	entries.sort((a, b) => a[0] - b[0]);
+	return entries.map(([tag, tally]) => {
+		let majority: string | null = null;
+		let best = 0;
+		let count = 0;
+		for (const [owner, n] of tally) {
+			count += n;
+			// the backdrop doesn't vote: off-level skyline props would otherwise outvote small levels
+			if (owner !== null && n > best) {
+				majority = owner;
+				best = n;
 			}
-			return { tag, rule: levelOfTag(partition, tag)?.id ?? null, majority, share: best / count, count };
-		});
+		}
+		return { tag, rule: levelOfTag(partition, tag)?.id ?? null, majority, share: best / count, count };
+	});
 };

@@ -6,6 +6,7 @@ import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import type { ChainDraw } from '@endfield-noclip/package-format/instances';
 import { type TileKey, tileAt, tileId } from '@endfield-noclip/package-format/tiles';
 
+import { compareStrings } from '../../compare.ts';
 import { collectSceneVolumes, type SceneVolumes } from '../../game/environment.ts';
 import type { Visibility } from '../../game/state/scene-control.ts';
 import { collectSceneWater, type SceneWater } from '../../game/water/water-source.ts';
@@ -657,8 +658,10 @@ export const collectStaticChunks = async (
 		});
 		addHlod(cluster, key);
 	}
-	const chunkVolumes = collectSceneVolumes(volumeFiles.toSorted(byFileName));
-	const sceneWater = collectSceneWater(waterFiles.toSorted(byFileName));
+	volumeFiles.sort(byFileName);
+	waterFiles.sort(byFileName);
+	const chunkVolumes = collectSceneVolumes(volumeFiles);
+	const sceneWater = collectSceneWater(waterFiles);
 	if (memoKey !== null && cache !== null) {
 		await cache.rememberValue(memoKey, {
 			hlodNameMatches,
@@ -676,7 +679,7 @@ export const collectStaticChunks = async (
 };
 
 const byFileName = (a: { file: ChunkFile }, b: { file: ChunkFile }): number =>
-	a.file.name < b.file.name ? -1 : a.file.name > b.file.name ? 1 : 0;
+	compareStrings(a.file.name, b.file.name);
 
 /** @returns why a rect decal makes no row: no material, or no decal cube in the install */
 export const decalSkipReason = (material: bigint | null | undefined): string =>

@@ -14,6 +14,7 @@ import {
 	parseOptionalInteger,
 	separatePositionals,
 } from '../cli-args.ts';
+import { compareNatural, compareStrings } from '../compare.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText } from '../errors.ts';
 import { toScript } from '../game/script-drivers.ts';
@@ -206,8 +207,8 @@ const listTables = async (context: Context, filter: RegExp | undefined): Promise
 	const names = [...group.catalog]
 		.filter((file) => file.name.endsWith(TABLE_SUFFIX))
 		.map((file) => ({ name: tableShortName(file.name), length: file.length }))
-		.filter((entry) => filter === undefined || filter.test(entry.name))
-		.toSorted((a, b) => a.name.localeCompare(b.name));
+		.filter((entry) => filter === undefined || filter.test(entry.name));
+	names.sort((a, b) => compareStrings(a.name, b.name));
 	for (const entry of names) {
 		console.log(`${String(entry.length).padStart(10)}  ${entry.name}`);
 	}
@@ -287,8 +288,8 @@ const readScripts = async (
 	const prefix = `Data/Json/LevelScriptData/${level}/`;
 	const files = [...group.catalog.names()]
 		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
-		.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`)
-		.toSorted((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+		.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`);
+	files.sort(compareNatural);
 	if (files.length === 0) {
 		throw new Error(
 			`no level scripts found for ${level}${options.id === undefined ? '' : ` id ${options.id}`}`,
@@ -347,9 +348,10 @@ const readInteractives = async (
 ): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.JsonData);
 	const prefix = `Data/Json/LevelData/${level}/`;
-	const files = [...group.catalog.names()]
-		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
-		.toSorted((a, b) => a.localeCompare(b));
+	const files = [...group.catalog.names()].filter(
+		(name) => name.startsWith(prefix) && name.endsWith('.json'),
+	);
+	files.sort();
 	if (files.length === 0) {
 		throw new Error(`no LevelData files found for ${level}`);
 	}

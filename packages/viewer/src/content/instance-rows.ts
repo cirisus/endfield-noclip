@@ -359,7 +359,8 @@ export const movingRows = (spins: RowSpins | null, rides: RowRides | null): Uint
 	if (spins === null || rides === null) {
 		return spins?.rows ?? rides?.rows ?? null;
 	}
-	return Uint32Array.from(new Set([...spins.rows, ...rides.rows])).toSorted();
+	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh array
+	return Uint32Array.from(new Set([...spins.rows, ...rides.rows])).sort();
 };
 
 /**

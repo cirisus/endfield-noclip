@@ -144,7 +144,8 @@ export const intersectRanges = (
 			}
 		}
 	}
-	return out.toSorted((p, q) => p.near - q.near);
+	out.sort((p, q) => p.near - q.near);
+	return out;
 };
 
 /** an `EffectSetting`'s distance LOD: where the camera has to be for the GameObjects it switches to show */

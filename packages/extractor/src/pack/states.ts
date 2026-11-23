@@ -4,6 +4,7 @@ import type { StatesInfo } from '@endfield-noclip/package-format/states';
 import type { StreamAreasInfo } from '@endfield-noclip/package-format/stream-areas';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import { compareNumbers } from '../compare.ts';
 import { loadInteractiveVariables, nameInteractiveVariable } from '../game/state/interactive-variables.ts';
 import {
 	defaultSceneStates,
@@ -89,10 +90,9 @@ export const addSceneStateControls = (
 ): void => {
 	const named = sceneStateControls(scene.sceneStates, scene.game, (formula) => controls.condition(formula));
 	const ids = new Set(named.map((control) => control.id));
-	const unnamed = [...controls.sceneStates]
-		.filter((index) => !ids.has(sceneStateControl(index)))
-		.toSorted((a, b) => a - b)
-		.map(unnamedSceneStateControl);
+	const unnamedIds = [...controls.sceneStates].filter((index) => !ids.has(sceneStateControl(index)));
+	unnamedIds.sort(compareNumbers);
+	const unnamed = unnamedIds.map(unnamedSceneStateControl);
 	controls.add(...named, ...unnamed);
 };
 
@@ -129,19 +129,19 @@ export const buildSceneStates = async (
 	const levels = (partition?.levels ?? []).map((level, i) =>
 		levelInfo(level, scene, collector, inputs.environments[i] ?? null),
 	);
-	const areas = [...controls.areas]
-		.toSorted((a, b) => a - b)
-		.map((area) =>
-			sceneControl({
-				kind: 'area',
-				id: streamAreaControl(area),
-				name: `Stream area ${area}`,
-				values: switchValues('hidden', 'shown'),
-				default: 1,
-				assumption: 'follows the camera, like the game',
-				source: { kind: 'camera', test: { kind: 'area', area } },
-			}),
-		);
+	const areaIds = [...controls.areas];
+	areaIds.sort(compareNumbers);
+	const areas = areaIds.map((area) =>
+		sceneControl({
+			kind: 'area',
+			id: streamAreaControl(area),
+			name: `Stream area ${area}`,
+			values: switchValues('hidden', 'shown'),
+			default: 1,
+			assumption: 'follows the camera, like the game',
+			source: { kind: 'camera', test: { kind: 'area', area } },
+		}),
+	);
 	controls.add(...scene.game.controls(), ...inputs.progressions, ...areas);
 	if (scene.variables !== null) {
 		// a map variable holding an interactive's saved property is named and placed after the interactive
@@ -224,7 +224,8 @@ const levelInfo = (
 		cells: (config.levelGrids ?? [])
 			.map((cell) => cellTile(scene.grid, cell))
 			.map((key): [number, number] => [key.x, key.z])
-			.toSorted((a, b) => a[1] - b[1] || a[0] - b[0]),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			.sort((a, b) => a[1] - b[1] || a[0] - b[0]),
 		instances: collector.tagInstances.get(level.tag) ?? 0,
 		contentBounds: collector.tagBounds.get(level.tag) ?? null,
 		environment,

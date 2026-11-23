@@ -2,6 +2,7 @@ import type { LevelInfo, PackageManifest } from '@endfield-noclip/package-format
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 import type { WaterSurfaceEntry } from '@endfield-noclip/package-format/water';
 
+import { compareStrings } from '../compare.ts';
 import { ROW_BYTES, ROW_WORDS } from '../content/instance-rows.ts';
 import type { AppliedVolume } from '../environment/blend.ts';
 import { windClockRate } from '../environment/environment.ts';
@@ -363,9 +364,13 @@ export class Viewer {
 				row.nearest = Math.min(row.nearest, bucket.nearest);
 			}
 		}
-		return [...rows.values()]
-			.map(({ gap, materials, nearest }) => ({ gap, materials: materials.size, nearest }))
-			.toSorted((a, b) => a.nearest - b.nearest);
+		const list = [...rows.values()].map(({ gap, materials, nearest }) => ({
+			gap,
+			materials: materials.size,
+			nearest,
+		}));
+		list.sort((a, b) => a.nearest - b.nearest);
+		return list;
 	}
 
 	/** @returns the environment volumes applied at the camera, in order */
@@ -386,9 +391,9 @@ export class Viewer {
 				indices.add(volume.phase);
 			}
 		}
-		return [...indices]
-			.map((index) => ({ index, name: pkg.environment.phases[index].name }))
-			.toSorted((a, b) => a.name.localeCompare(b.name));
+		const phases = [...indices].map((index) => ({ index, name: pkg.environment.phases[index].name }));
+		phases.sort((a, b) => compareStrings(a.name, b.name));
+		return phases;
 	}
 
 	// #endregion

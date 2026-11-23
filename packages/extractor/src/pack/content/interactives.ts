@@ -4,6 +4,7 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
+import { compareStrings } from '../../compare.ts';
 import type { Context } from '../../context.ts';
 import { recordBundleReads } from '../../game/assets/assets.ts';
 import { cabinDoors, type CabinRoom, loadCabins } from '../../game/dynamic/cabins.ts';
@@ -112,7 +113,8 @@ export const collectInteractives = async (
 		scriptsMemoKey = cache.keyWith(fp, {
 			kind: 'levelScripts',
 			scene: scene.id,
-			entities: [...scripted.keys()].toSorted(),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			entities: [...scripted.keys()].sort(),
 			jsonHash,
 		});
 		levelScripts = await cache.recallValue<LevelScripts>(scriptsMemoKey);
@@ -145,8 +147,10 @@ export const collectInteractives = async (
 			kind: 'interactiveFacilities',
 			scene: scene.id,
 			level: scene.level,
-			scripted: [...scriptedInteractives].toSorted(),
-			erosionCores: [...dynamic.erosionCores.entries()].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			scripted: [...scriptedInteractives].sort(),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			erosionCores: [...dynamic.erosionCores.entries()].sort(([a], [b]) => compareStrings(a, b)),
 			jsonHash,
 			tableHash,
 		});

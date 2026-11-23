@@ -1,5 +1,6 @@
 import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
 
+import { compareStrings } from '../../compare.ts';
 import type { LevelScripts } from '../script-drivers.ts';
 
 // the fills level scripts set water volumes to: `WaterVolumeInfiniteSetHeight` sets a fraction of the volume's
@@ -43,9 +44,8 @@ export const scriptWaterLevels = (
 ): { levels: ScriptWaterLevel[]; computed: number } => {
 	const levels: ScriptWaterLevel[] = [];
 	let computed = 0;
-	const own = levelScripts.scripts
-		.filter((script) => levelScripts.ownLevels.has(script.level))
-		.toSorted((a, b) => (scriptFile(a) < scriptFile(b) ? -1 : 1));
+	const own = levelScripts.scripts.filter((script) => levelScripts.ownLevels.has(script.level));
+	own.sort((a, b) => compareStrings(scriptFile(a), scriptFile(b)));
 	for (const script of own) {
 		const found = scriptLevels(script.id, script.data);
 		levels.push(...found.levels);

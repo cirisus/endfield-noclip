@@ -31,6 +31,7 @@ import {
 	parseOptionalInteger,
 	separatePositionals,
 } from '../cli-args.ts';
+import { compareNatural, compareStrings } from '../compare.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText, ignoreMissing } from '../errors.ts';
 import type { StructureModel } from '../game/dynamic/dynamic-structures.ts';
@@ -264,11 +265,8 @@ const listDungeons = async (
 			charId,
 			operator: charId === null ? null : (operators.get(charId) ?? null),
 			missions: missions.map((mission) => ({ id: mission.id, name: missionName(mission.nameKey) })),
-		}))
-		.toSorted(
-			(a, b) =>
-				(a.level ?? '').localeCompare(b.level ?? '', 'en', { numeric: true }) || a.id.localeCompare(b.id),
-		);
+		}));
+	rows.sort((a, b) => compareNatural(a.level ?? '', b.level ?? '') || compareStrings(a.id, b.id));
 	if (options.json) {
 		console.log(JSON.stringify(rows, null, '\t'));
 		return;

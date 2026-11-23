@@ -11,6 +11,7 @@ import {
 } from '@endfield-noclip/formats/hg/terrain';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 
+import { compareStrings } from '../../compare.ts';
 import type { Context } from '../../context.ts';
 import { VfsGroup, type Vfs, type VfsFile } from '../../hg/vfs.ts';
 import { loadTexture } from '../assets/asset-decode.ts';
@@ -94,7 +95,7 @@ export const indexTerrain = async (vfs: Vfs): Promise<Map<string, TerrainSceneIn
 		scene.orphanPages.sort();
 	}
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-	return new Map([...scenes].sort(([a], [b]) => a.localeCompare(b)));
+	return new Map([...scenes].sort(([a], [b]) => compareStrings(a, b)));
 };
 
 /** @returns the asset folder of a scene's terrain */

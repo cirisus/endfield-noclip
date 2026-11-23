@@ -9,6 +9,7 @@ import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import { booleanField, objectField } from '@endfield-noclip/formats/unity/values';
 
+import { compareNumbers } from '../../compare.ts';
 import type { Context } from '../../context.ts';
 import { VfsGroup } from '../../hg/vfs.ts';
 import { type EmissiveColors, readEmissiveConfig, ROOT_EMISSIVE } from '../prefabs/emissive-override.ts';
@@ -202,7 +203,9 @@ export const testedValues = (states: ViewStates, key: string): number[] => {
 			}
 		}
 	}
-	return [...values].toSorted((a, b) => a - b);
+	const sorted = [...values];
+	sorted.sort(compareNumbers);
+	return sorted;
 };
 
 /**

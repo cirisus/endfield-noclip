@@ -11,6 +11,7 @@ import {
 	type TextureSampler,
 } from '@endfield-noclip/package-format/textures';
 
+import { compareNumbers } from '../../compare.ts';
 import { failureReason } from '../../errors.ts';
 import {
 	type AssetRef,
@@ -725,7 +726,11 @@ const vatNeeds = (
 	return {
 		vat: input.geometries.map((_asset, id) => {
 			const bake = found.get(id)?.bake ?? null;
-			return bake === null ? null : { ...bake, submeshes: bake.submeshes.toSorted((a, b) => a - b) };
+			if (bake === null) {
+				return null;
+			}
+			bake.submeshes.sort(compareNumbers);
+			return bake;
 		}),
 		unanimated,
 	};
@@ -797,7 +802,8 @@ const convertGeometries = async (
 				error: null,
 				...(unanimated === undefined ? {} : { unanimated }),
 				...(uvs.size > 1 && result.entry.tangentUv !== null
-					? { tangentUvs: [...uvs].toSorted((a, b) => a - b) }
+					? // oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+						{ tangentUvs: [...uvs].sort(compareNumbers) }
 					: {}),
 			});
 			tally.vertices += result.entry.vertexCount;

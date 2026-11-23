@@ -66,7 +66,8 @@ export const storyPoints = (
 			),
 			(control) => control.story?.step ?? 0,
 		);
-		for (const [step, quests] of [...steps].toSorted((a, b) => a[0] - b[0])) {
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+		for (const [step, quests] of [...steps].sort((a, b) => a[0] - b[0])) {
 			points.push({ point: { mission: index, step }, mission, quests });
 		}
 	}

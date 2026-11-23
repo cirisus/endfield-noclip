@@ -330,8 +330,8 @@ export const writeKtx2 = (texture: Ktx2Texture, options: WriteKtx2Options): Uint
 		['KTXwriter', options.writer],
 		...Object.entries(texture.metadata ?? {}),
 	];
-	const metadata = entries.toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-	const kvd = keyValueData(metadata);
+	entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	const kvd = keyValueData(entries);
 	const stored = texture.levels.map((data) => (options.zstd === undefined ? data : options.zstd(data)));
 
 	const levelCount = texture.levels.length;

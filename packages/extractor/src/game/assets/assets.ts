@@ -9,6 +9,7 @@ import type { PPtr, StreamingInfo } from '@endfield-noclip/formats/unity/values'
 
 import { unique } from '@mary-ext/array-fns';
 
+import { compareNumbers } from '../../compare.ts';
 import type { Keys } from '../../config.ts';
 import {
 	archiveFileName,
@@ -125,7 +126,7 @@ export const recordBundleReads = async <T>(
 	const bundles = new Set<number>();
 	const result = await bundleReads.run(bundles, work);
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-	return { result, bundles: [...bundles].sort((a, b) => a - b) };
+	return { result, bundles: [...bundles].sort(compareNumbers) };
 };
 
 /** how many opened bundles (directory + a few decoded blocks each) stay cached */

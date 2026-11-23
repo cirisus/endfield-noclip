@@ -7,6 +7,7 @@ import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 import sirv from 'sirv';
 import type { Connect, Plugin } from 'vite';
 
+import { compareStrings } from '../src/compare.ts';
 import { DEV_PACKAGES_INDEX, DEV_PACKAGES_PREFIX, type DevPackage } from '../src/package/dev-packages.ts';
 
 /**
@@ -140,7 +141,8 @@ const listPackages = async (root: string, res: ServerResponse): Promise<void> =>
 				return core?.isFile() ? { name: entry.name, coreSize: core.size } : null;
 			}),
 	);
-	const packages = found.filter((entry) => entry !== null).toSorted((a, b) => a.name.localeCompare(b.name));
+	const packages = found.filter((entry) => entry !== null);
+	packages.sort((a, b) => compareStrings(a.name, b.name));
 	res.setHeader('content-type', 'application/json');
 	res.setHeader('cache-control', 'no-cache');
 	res.end(JSON.stringify({ packages }));

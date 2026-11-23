@@ -10,6 +10,7 @@ import type {
 } from '@endfield-noclip/package-format/states';
 import { type Bounds, unionBounds, type Vec3 } from '@endfield-noclip/package-format/values';
 
+import { compareNumbers, compareStrings } from '../compare.ts';
 import { sourceVisibility } from '../game/state/chunk-sources.ts';
 import { sceneStateControl } from '../game/state/scene-conditions.ts';
 import {
@@ -235,7 +236,8 @@ export class ControlRegistry {
 		const used = ordered.filter((control) => reaches.has(control.id));
 		for (const control of used) {
 			const { tags, bounds } = reaches.get(control.id)!;
-			control.levelTags = [...tags].toSorted((a, b) => a - b);
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			control.levelTags = [...tags].sort(compareNumbers);
 			const position = control.place?.position ?? (bounds && local(bounds) ? centre(bounds) : null);
 			control.place = position === null ? null : { position, bounds, label: options.locate(position) };
 		}
@@ -294,7 +296,9 @@ export class ControlRegistry {
 				}
 				indices.add(level);
 			}
-			return [...indices].toSorted((a, b) => a - b);
+			const sorted = [...indices];
+			sorted.sort(compareNumbers);
+			return sorted;
 		};
 		const controls = finished.controls.map((draft): SceneControl => {
 			const { category, source, levelTags, story, ...rest } = draft;
@@ -389,16 +393,16 @@ export class ControlRegistry {
 	 */
 	condition(visibility: Visibility): number {
 		// canonical order at both levels, so equivalent expressions share one set
-		const alternatives = [
+		const uniqueAlternatives = [
 			...new Map(
 				visibility.alternatives.map((requirements) => {
-					const sorted = requirements.toSorted((a, b) => a.control.localeCompare(b.control));
+					const sorted = requirements.toSorted((a, b) => compareStrings(a.control, b.control));
 					return [JSON.stringify(sorted), sorted];
 				}),
 			),
-		]
-			.toSorted(([a], [b]) => Number(a > b) - Number(a < b))
-			.map(([, requirements]) => requirements);
+		];
+		uniqueAlternatives.sort(([a], [b]) => compareStrings(a, b));
+		const alternatives = uniqueAlternatives.map(([, requirements]) => requirements);
 		const serialized = JSON.stringify(alternatives);
 		return this.#conditionIds.getOrInsertComputed(
 			serialized,

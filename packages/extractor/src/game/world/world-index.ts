@@ -52,6 +52,7 @@ import { parseStringPoolBlock, StringPool } from '@endfield-noclip/formats/hg/st
 
 import { definite, mapDefined } from '@mary-ext/array-fns';
 
+import { compareNatural, compareStrings } from '../../compare.ts';
 import { loadBundleManifest } from '../../hg/bundles.ts';
 import { VfsGroup, type Vfs } from '../../hg/vfs.ts';
 import { mapPool } from '../../pool.ts';
@@ -386,7 +387,9 @@ export class WorldIndex {
 		const group = await this.vfs.group(VfsGroup.JsonData);
 		const ids = mapDefined([...group.catalog.names()], (name) => MISSION_PATTERN.exec(name)?.[1]);
 		const missions = await mapPool(ids, READ_CONCURRENCY, (id) => this.mission(id));
-		return definite(missions).toSorted((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+		const loaded = definite(missions);
+		loaded.sort((a, b) => compareNatural(a.id, b.id));
+		return loaded;
 	}
 
 	/** @returns every InitChunkData file of every streaming scene */
@@ -406,7 +409,8 @@ export class WorldIndex {
 					});
 				}
 			}
-			return files.toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+			files.sort((a, b) => compareStrings(a.name, b.name));
+			return files;
 		})();
 		return this.#chunkFiles;
 	}
@@ -731,9 +735,10 @@ export class WorldIndex {
 	dynamicEntities(scene: string): Promise<DynamicEntity[]> {
 		return this.#dynamicEntities.getOrInsertComputed(scene, async () => {
 			const prefix = `${DYNAMIC_SCENE_ROOT}${scene}/fb_main_`;
-			const names = [...(await this.vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
-				.filter((name) => name.startsWith(prefix))
-				.toSorted();
+			const names = [...(await this.vfs.group(VfsGroup.DynamicStreaming)).catalog.names()].filter((name) =>
+				name.startsWith(prefix),
+			);
+			names.sort();
 			const perFile = await mapPool(
 				names,
 				READ_CONCURRENCY,

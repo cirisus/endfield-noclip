@@ -22,6 +22,8 @@ import {
 
 import { MeshoptDecoder } from 'meshoptimizer/decoder';
 
+import { compareNumbers } from '../../compare.ts';
+
 import { convertMesh, encodeOctahedral, geometryReady, rigidSkin } from './geometry.ts';
 
 // two quads in the XZ plane sharing the edge x = 1; the second mirrors U, so the shared vertices need two
@@ -163,9 +165,11 @@ const triangleKeys = (corners: number[][]): string[] => {
 				.join(','),
 		);
 		const rotations = [0, 1, 2].map((r) => [tri[r], tri[(r + 1) % 3], tri[(r + 2) % 3]].join(' '));
-		keys.push(rotations.toSorted()[0]);
+		rotations.sort();
+		keys.push(rotations[0]);
 	}
-	return keys.toSorted();
+	keys.sort();
+	return keys;
 };
 
 describe('convertMesh', () => {
@@ -446,7 +450,8 @@ describe('convertMesh', () => {
 		MeshoptDecoder.decodeVertexBuffer(new Uint8Array(indices.buffer), geometry.vertexCount, 8, bones.data);
 		const named = new Set(Array.from({ length: geometry.vertexCount }, (_, v) => indices[v * 4]));
 		assert.deepEqual(
-			[...named].toSorted((a, b) => a - b),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			[...named].sort(compareNumbers),
 			[0, 1, 2, 297, 298, 299],
 		);
 	});

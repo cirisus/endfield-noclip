@@ -734,8 +734,8 @@ export const volumeEntry = (
 		volume.infinite || volume.amountMax <= 0
 			? volume.fillSpeed
 			: (volume.fillSpeed * volume.heightMax) / volume.amountMax;
-	const sorted = found.toSorted((a, b) => a.fraction - b.fraction);
-	const levels: WaterVolumeLevel[] = sorted.map(({ fraction, speed }) => ({
+	found.sort((a, b) => a.fraction - b.fraction);
+	const levels: WaterVolumeLevel[] = found.map(({ fraction, speed }) => ({
 		fraction,
 		speed: speed ?? fillSpeed,
 	}));
@@ -752,7 +752,7 @@ export const volumeEntry = (
 			// the table index of the parent is known once every volume is in (see `parent` below)
 			parent: null,
 		},
-		sources: sorted.map(({ source }) => source),
+		sources: found.map(({ source }) => source),
 		parent: volume.parent,
 	};
 };

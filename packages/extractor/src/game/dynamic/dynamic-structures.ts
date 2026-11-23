@@ -454,8 +454,8 @@ class DynamicFiles {
 	async readOwners(): Promise<{ grids: Map<number, DynamicGrid>; owners: DynamicSceneEntity[] }> {
 		const names = [...(await this.#vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
 			.filter((name) => name.startsWith(`${this.#prefix}fb_main_`))
-			.map((name) => name.slice(this.#prefix.length))
-			.toSorted();
+			.map((name) => name.slice(this.#prefix.length));
+		names.sort();
 		const perFile = await mapPool(names, READ_CONCURRENCY, async (name) =>
 			readDynamicScene(await this.#read(name)),
 		);

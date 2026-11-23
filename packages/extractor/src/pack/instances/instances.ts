@@ -112,9 +112,8 @@ export class InstanceBlockBuilder {
 	): { block: InstanceBlock; order: Uint32Array } {
 		const count = this.#chains.length;
 		const chainOf = (i: number): number => chainIds[this.#chains[i]];
-		const order = Uint32Array.from({ length: count }, (_, i) => i).toSorted(
-			(a, b) => this.#groups[a] - this.#groups[b] || chainOf(a) - chainOf(b) || a - b,
-		);
+		const order = Uint32Array.from({ length: count }, (_, i) => i);
+		order.sort((a, b) => this.#groups[a] - this.#groups[b] || chainOf(a) - chainOf(b) || a - b);
 		const chains = new Uint32Array(count);
 		const transforms = new Float32Array(count * 12);
 		const bounds = new Float32Array(count * 6);

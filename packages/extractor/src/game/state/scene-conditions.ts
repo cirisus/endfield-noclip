@@ -49,12 +49,12 @@ export const loadSceneStates = async (world: WorldIndex, map: string): Promise<S
 		return [];
 	}
 	const conditions = new Map(config.sceneStateConditions.map(({ state, condition }) => [state, condition]));
-	return Object.entries(config.sceneStates)
-		.toSorted((a, b) => a[1] - b[1])
-		.map(([name, index]) => {
-			const condition = conditions.get(name);
-			return { index, name, condition: condition === undefined ? null : mapConfigCondition(condition) };
-		});
+	const entries = Object.entries(config.sceneStates);
+	entries.sort((a, b) => a[1] - b[1]);
+	return entries.map(([name, index]) => {
+		const condition = conditions.get(name);
+		return { index, name, condition: condition === undefined ? null : mapConfigCondition(condition) };
+	});
 };
 
 /**

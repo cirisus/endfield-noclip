@@ -25,6 +25,7 @@ import type {
 } from '@endfield-noclip/package-format/environment';
 import type { LevelEnvironment } from '@endfield-noclip/package-format/manifest';
 
+import { compareNumbers, compareStrings } from '../../compare.ts';
 import type { Context } from '../../context.ts';
 import { errorText } from '../../errors.ts';
 import {
@@ -227,7 +228,8 @@ export const planEnvironments = async (
 		planMemoKey = cache.keyWith(envFp, {
 			kind: 'environmentPlan',
 			levels: levels.map(({ id, tag }) => [id, tag]),
-			enabled: [...enabled].toSorted((a, b) => a - b),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			enabled: [...enabled].sort(compareNumbers),
 			volumes: volumes.environment.map(({ tag, sceneStates, condition, volume, phaseObject }) => ({
 				tag,
 				sceneStates,
@@ -331,7 +333,8 @@ export const planEnvironments = async (
 		for (const loadedPhase of volumePhases) {
 			if (typeof loadedPhase !== 'string') {
 				const keyed = loadedPhase.problems.map((problem) => ({ problem, key: JSON.stringify(problem) }));
-				for (const { problem } of keyed.toSorted((a, b) => (a.key < b.key ? -1 : 1))) {
+				keyed.sort((a, b) => compareStrings(a.key, b.key));
+				for (const { problem } of keyed) {
 					report(problem);
 				}
 			}

@@ -306,7 +306,8 @@ describe('texture table', () => {
 	});
 
 	it('codes every texture format', () => {
-		assert.deepEqual(TEXTURE_FORMAT_CODES.toSorted(), Object.keys(TEXTURE_FORMATS).toSorted());
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+		assert.deepEqual(TEXTURE_FORMAT_CODES.toSorted(), Object.keys(TEXTURE_FORMATS).sort());
 	});
 
 	it('rejects values without a code, sampler indices past the palette and unknown codes', () => {

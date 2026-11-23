@@ -105,7 +105,8 @@ test('hashesOf matches case-insensitively on both first scan and indexed lookups
 		]),
 	);
 	assert.deepEqual(
-		table.hashesOf('assets/foo/bar.prefab').toSorted((a, b) => Number(a - b)),
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+		table.hashesOf('assets/foo/bar.prefab').sort((a, b) => Number(a - b)),
 		[10n, 30n],
 	);
 	// second lookup uses the length index

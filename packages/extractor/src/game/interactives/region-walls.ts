@@ -2,6 +2,7 @@ import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import type { LevelInteractive } from '@endfield-noclip/formats/endfield/level-interactives';
 import { parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 
+import { compareNumbers } from '../../compare.ts';
 import { VfsGroup } from '../../hg/vfs.ts';
 import { type DraftControl, sceneControl } from '../state/scene-control.ts';
 
@@ -80,7 +81,7 @@ export class RegionWalls implements InteractiveKind {
 			unlockOf.set(area, unlock);
 		}
 		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-		const levels = [...new Set([1, ...unlockOf.values()])].sort((a, b) => a - b);
+		const levels = [...new Set([1, ...unlockOf.values()])].sort(compareNumbers);
 		this.#nexus = {
 			control: sceneControl({
 				kind: 'controlNexus',

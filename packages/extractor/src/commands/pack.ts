@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 
 import { DEFAULT_OUT, parseBounds, parseInteger, parseZstdLevel } from '../cli-args.ts';
+import { compareNumbers } from '../compare.ts';
 import { withContext } from '../context.ts';
 import { packScene } from '../pack/packer.ts';
 import type { PackReport } from '../pack/report.ts';
@@ -136,29 +137,31 @@ const formatReport = (report: PackReport): string => {
 					? ''
 					: ` (${geometry.tangentUvConflicts} for one of several uv sets; tangentUvs in debug/assets.json)`),
 		);
-		const groups = Object.entries(conversion.texturePieces).toSorted(([a], [b]) =>
-			a === 'tail' ? -1 : b === 'tail' ? 1 : Number(a) - Number(b),
-		);
+		const groups = Object.entries(conversion.texturePieces);
+		groups.sort(([a], [b]) => (a === 'tail' ? -1 : b === 'tail' ? 1 : Number(a) - Number(b)));
 		for (const [group, tally] of groups) {
 			lines.push(
 				`texture ${group === 'tail' ? 'mip tails' : `${group}² levels`}: ${tally.count} blobs, ` +
 					`${mb(tally.stored)} stored, ${mb(tally.raw)} raw`,
 			);
 		}
+		const textureFormats = Object.entries(conversion.textureFormats);
+		textureFormats.sort((a, b) => b[1] - a[1]);
 		lines.push(
-			`texture formats: ${Object.entries(conversion.textureFormats)
-				.toSorted((a, b) => b[1] - a[1])
+			`texture formats: ${textureFormats
 				.map(([format, count]) => `${format} ${count}`)
 				.join(', ')}; ${conversion.textureDuplicates} duplicate objects merged`,
 		);
 		for (const [approximation, count] of Object.entries(conversion.textureApproximations)) {
 			lines.push(`  approximated ${String(count).padStart(5)} × texture: ${approximation}`);
 		}
-		for (const [reason, count] of Object.entries(conversion.failures).toSorted((a, b) => b[1] - a[1])) {
+		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+		for (const [reason, count] of Object.entries(conversion.failures).sort((a, b) => b[1] - a[1])) {
 			lines.push(`  failed ${String(count).padStart(5)} × ${reason}`);
 		}
 		{
-			const unsupported = Object.entries(conversion.unsupportedMaterials).toSorted((a, b) => b[1] - a[1]);
+			const unsupported = Object.entries(conversion.unsupportedMaterials);
+			unsupported.sort((a, b) => b[1] - a[1]);
 			const keywords = Object.values(conversion.keywordsNotDrawn);
 			lines.push(
 				`materials: ${unsupported.reduce((sum, [, count]) => sum + count, 0)} unsupported; ` +
@@ -255,8 +258,10 @@ const formatReport = (report: PackReport): string => {
 		lines.push(`${CORE_ARCHIVE}: ${mb(core.size)}, ${core.members} members, header ${core.headerLength} B`);
 	}
 	if (shards.length > 0) {
-		const sizes = shards.map((archive) => archive.size).toSorted((a, b) => a - b);
-		const headers = shards.map((archive) => archive.headerLength).toSorted((a, b) => a - b);
+		const sizes = shards.map((archive) => archive.size);
+		sizes.sort(compareNumbers);
+		const headers = shards.map((archive) => archive.headerLength);
+		headers.sort(compareNumbers);
 		lines.push(
 			`${shards.length} shards: ${mb(sizes[0])}–${mb(sizes.at(-1)!)} (median ${mb(sizes[sizes.length >> 1])}), ` +
 				`headers ${headers[0]}–${headers.at(-1)} B, ${shards.reduce((sum, a) => sum + a.members, 0)} members`,

@@ -46,9 +46,8 @@ export const packInstances = async (
 		global: countRows(collector.global.values()),
 	};
 
-	const detailGroups = [...collector.detail.values()].toSorted(
-		(a, b) => a.key.z - b.key.z || a.key.x - b.key.x || a.visibility - b.visibility,
-	);
+	const detailGroups = [...collector.detail.values()];
+	detailGroups.sort((a, b) => a.key.z - b.key.z || a.key.x - b.key.x || a.visibility - b.visibility);
 	for (let start = 0; start < detailGroups.length; start += BLOB_BATCH) {
 		const encoded = detailGroups.slice(start, start + BLOB_BATCH).map((group) => {
 			const { minX, minZ } = tileFootprint(grid, group.key);
@@ -80,12 +79,12 @@ export const packInstances = async (
 
 	// HLOD and global rows form one block per visibility group, in the core
 	const coreBlocks = async (groups: Map<number, Group>) => {
-		const encoded = [...groups]
-			.toSorted((a, b) => a[0] - b[0])
-			.map(([visibility, group]) => {
-				const { block, order } = group.rows.toBlock([grid.origin[0], 0, grid.origin[1]], chainIds, volumes);
-				return { visibility, group, block, order };
-			});
+		const sorted = [...groups];
+		sorted.sort((a, b) => a[0] - b[0]);
+		const encoded = sorted.map(([visibility, group]) => {
+			const { block, order } = group.rows.toBlock([grid.origin[0], 0, grid.origin[1]], chainIds, volumes);
+			return { visibility, group, block, order };
+		});
 		const blobs = await store.putMany(
 			encoded.map(({ block }) => ({
 				raw: encodeInstanceBlock(block),
