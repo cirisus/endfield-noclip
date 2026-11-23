@@ -544,8 +544,10 @@ export class MeshRenderer {
 			if (range === null) {
 				continue;
 			}
+			const preparedRange = this.#range(range);
 			const pipelineKey = pipelineKeyOf(bucket);
-			const key = sortKeyOf(bucket, pipelineKey);
+			// pipelineThenNearest never reads entry.key
+			const key = preparedRange.info.order === 'pipelineThenNearest' ? 0 : sortKeyOf(bucket, pipelineKey);
 			const entry = this.#entries[entries];
 			if (entry === undefined) {
 				this.#entries[entries] = { bucket, span, state, pipelineKey, key };
@@ -556,7 +558,7 @@ export class MeshRenderer {
 				entry.pipelineKey = pipelineKey;
 				entry.key = key;
 			}
-			this.#range(range).entries.push(this.#entries[entries]);
+			preparedRange.entries.push(this.#entries[entries]);
 			entries++;
 		}
 

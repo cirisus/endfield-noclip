@@ -199,6 +199,8 @@ interface SelectedBlock {
 	origins: (Vec3 | null)[];
 	/** per chain run: 1 when the GPU can cull its rows (every shown slot {@link ChainSlot.gpuCullable}) */
 	gpuRuns: Uint8Array;
+	/** per chain run: 1 when at least one shown slot casts shadows */
+	runCasts: Uint8Array;
 	/** each group's rows split by chain run, from `groupSegmentsOf` */
 	segments: Float32Array;
 	/** per group, where its segments start; one more entry ends the last */
@@ -399,6 +401,9 @@ export class MeshSelector {
 				block.gpuRuns = Uint8Array.from(block.slots, (slots, r) =>
 					slots.length > 0 && block.origins[r] === null && slots.every((slot) => slot.gpuCullable) ? 1 : 0,
 				);
+				block.runCasts = Uint8Array.from(block.slots, (slots) =>
+					slots.some((slot) => slot.castsShadows) ? 1 : 0,
+				);
 				block.filter = filter;
 			}
 			const groups = block.groups;
@@ -530,6 +535,7 @@ export class MeshSelector {
 				boxes,
 				origins,
 				gpuRuns: new Uint8Array(runCount),
+				runCasts: new Uint8Array(runCount),
 				segments,
 				groupSegments,
 			};
@@ -577,6 +583,9 @@ export class MeshSelector {
 				continue;
 			}
 			const run = segments[at + SegmentFloat.run];
+			if (castOnly && block.runCasts[run] === 0) {
+				continue;
+			}
 			if (block.gpuRuns[run] === 0) {
 				this.#selectRows(instances, first, end, { inside: group.inside, block });
 				continue;
@@ -616,6 +625,46 @@ export class MeshSelector {
 			const checkedFrame = this.#checkedFrame;
 			const readyArr = this.#ready;
 			const wantedArr = this.#wanted;
+			// fast path for single-slot chains (~60% of chains): avoids candidate/LOD loops and #needsBox
+			if (slots.length === 1) {
+				const slot = slots[0];
+				if (slot.maxSquared < low || slot.minSquared >= high) {
+					continue;
+				}
+				const slotPriority = Math.min(priority, bandPixels(slot, viewportHeight) * scale);
+				const geom = slot.geometry;
+				let isReady = true;
+				if (checkedFrame[geom] === frame) {
+					if (slotPriority > wantedArr[geom]) {
+						wantedArr[geom] = slotPriority;
+					}
+					if (readyArr[geom] === 0) {
+						isReady = false;
+					}
+				} else if (!this.#geometryReady(geom, slotPriority, frame)) {
+					isReady = false;
+				}
+				if (!isReady) {
+					if (block.boxes[run] === 1 && !castOnly) {
+						this.#selectRows(instances, first, end, { inside: group.inside, block });
+					}
+					continue;
+				}
+				const rows = end - first;
+				const segment = this.#segment;
+				segment.rows = rows;
+				segment.handedness = segments[at + SegmentFloat.handedness];
+				segment.priority = priority;
+				segment.nearest = nearest;
+				segment.layer = segmentLayer;
+				segment.high = high;
+				addItem(work, instances.alloc.start + first, rows, group.inside ? ItemFlags.Inside : 0);
+				this.#addSlot(slot, slot);
+				if (work.items[(work.itemCount - 1) * ITEM_WORDS + 3] === 0) {
+					work.itemCount--;
+				}
+				continue;
+			}
 			let count = 0;
 			let ready = true;
 			for (let i = 0; i < slots.length; i++) {
