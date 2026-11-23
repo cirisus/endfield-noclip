@@ -1,14 +1,14 @@
 /* oxlint-disable no-await-in-loop -- walks a small subtree in authored order */
-import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { readClipActivity } from '@endfield-noclip/formats/unity/animation-clip';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import {
 	arrayField,
 	asPPtr,
 	isObject,
 	numberField,
 	objectField,
+	objectsField,
 	pptrField,
 } from '@endfield-noclip/formats/unity/values';
 
@@ -16,9 +16,6 @@ import { objectKey, type AssetResolver, type ObjectRef } from '../assets/assets.
 import { PRUNE, walkPrefab } from '../prefabs/prefab-walk.ts';
 
 // effects a prefab's view states never show at rest: docs/game-data/effects.md#one-shot-effects
-
-const fieldNames = (ref: ObjectRef): Set<string> =>
-	new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
 
 /**
  * @param resolver bundle reader
@@ -61,10 +58,8 @@ export const animatorHiddenNodes = async (
  * @param ref a MonoBehaviour
  * @returns whether it's a prefab's own view-state controller (`PostModelViewStateController` and its kin)
  */
-export const isViewStateControllerType = (ref: ObjectRef): boolean => {
-	const names = fieldNames(ref);
-	return names.has('stateList') && names.has('animatorNode');
-};
+export const isViewStateControllerType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'stateList', 'animatorNode');
 
 /**
  * @param resolver bundle reader
@@ -78,14 +73,8 @@ export const playedEffectNodes = async (
 	data: TypeTreeObject,
 ): Promise<Set<string>> => {
 	const nodes = new Set<string>();
-	for (const state of arrayField(data, 'stateList')) {
-		if (!isObject(state)) {
-			throw new FormatError('invalid view state');
-		}
-		for (const config of arrayField(state, 'effectPlayConfigs')) {
-			if (!isObject(config)) {
-				throw new FormatError('invalid view state effect');
-			}
+	for (const state of objectsField(data, 'stateList')) {
+		for (const config of objectsField(state, 'effectPlayConfigs')) {
 			if (numberField(config, 'controlActive') === 0) {
 				continue;
 			}
@@ -102,7 +91,8 @@ export const playedEffectNodes = async (
  * @param ref a MonoBehaviour
  * @returns whether it's an `EffectSetting`
  */
-export const isEffectSettingType = (ref: ObjectRef): boolean => fieldNames(ref).has('effectLogicCfg');
+export const isEffectSettingType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'effectLogicCfg');
 
 /**
  * @param resolver bundle reader
@@ -120,10 +110,7 @@ export const effectLodNodes = async (
 	if (numberField(data, 'm_Enabled') === 0) {
 		return nodes;
 	}
-	for (const entry of arrayField(data, 'lodSetting')) {
-		if (!isObject(entry)) {
-			throw new FormatError('invalid effect LOD entry');
-		}
+	for (const entry of objectsField(data, 'lodSetting')) {
 		const node = await resolver.resolve(setting, pptrField(entry, 'gameobject'));
 		if (node !== null) {
 			nodes.add(objectKey(node));
@@ -184,12 +171,7 @@ export const effectDistanceLod = async (
 	if (numberField(data, 'm_Enabled') === 0 || numberField(data, 'isUseDistanceLod') === 0) {
 		return null;
 	}
-	const distances = arrayField(data, 'distanceLodCfgList').map((band) => {
-		if (!isObject(band)) {
-			throw new FormatError('invalid effect distance band');
-		}
-		return numberField(band, 'distance');
-	});
+	const distances = objectsField(data, 'distanceLodCfgList').map((band) => numberField(band, 'distance'));
 	if (distances.length === 0) {
 		return null;
 	}
@@ -269,10 +251,7 @@ const lodEntryBands = async (
 	count: number,
 ): Promise<Map<string, boolean[]>> => {
 	const nodes = new Map<string, boolean[]>();
-	for (const entry of arrayField(data, 'lodSetting')) {
-		if (!isObject(entry)) {
-			throw new FormatError('invalid effect LOD entry');
-		}
+	for (const entry of objectsField(data, 'lodSetting')) {
 		const node = await resolver.resolve(setting, pptrField(entry, 'gameobject'));
 		if (node === null) {
 			continue;

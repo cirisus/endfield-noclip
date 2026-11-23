@@ -7,19 +7,20 @@ import {
 	type PolyLineShape,
 	yawRotation,
 } from '@endfield-noclip/formats/endfield/environment-volume';
+import type { SerializedType } from '@endfield-noclip/formats/unity/serialized-file';
 import {
 	multiplyQuaternions,
 	quaternionUnityEuler,
 	unityEulerQuaternion,
 } from '@endfield-noclip/formats/unity/transform';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import {
-	arrayField,
 	booleanField,
-	isObject,
 	numberField,
 	objectField,
+	objectsField,
 	pptrField,
+	vector3Field,
 } from '@endfield-noclip/formats/unity/values';
 import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 
@@ -122,55 +123,19 @@ export const loadPlacedVolumes = async (
 	return { volumes, unsupported };
 };
 
-const xyz = (value: TypeTreeObject): [number, number, number] => [
-	numberField(value, 'x'),
-	numberField(value, 'y'),
-	numberField(value, 'z'),
-];
-
 /** whether a SerializedFile type has the serialized fields of an `HGEnvironmentVolume` */
-const isVolumeTypeNodes = (nodes: readonly { level: number; name: string }[] | undefined): boolean => {
-	if (nodes === undefined) {
-		return false;
-	}
-	let hasType = false;
-	let hasPhase = false;
-	let hasShape = false;
-	for (const node of nodes) {
-		if (node.level !== 1) {
-			continue;
-		}
-		switch (node.name) {
-			case '_volumeType': {
-				hasType = true;
-				break;
-			}
-			case '_envPhase': {
-				hasPhase = true;
-				break;
-			}
-			case '_polyLineShape': {
-				hasShape = true;
-				break;
-			}
-			default: {
-				break;
-			}
-		}
-	}
-	return hasType && hasPhase && hasShape;
-};
+const isVolumeSerializedType = (type: SerializedType | undefined): boolean =>
+	hasTypeFields(type, '_volumeType', '_envPhase', '_polyLineShape');
 
 /** whether a MonoBehaviour's serialized fields are an `HGEnvironmentVolume`'s, without reading the object */
-const isVolumeType = (ref: ObjectRef): boolean => isVolumeTypeNodes(ref.info.type?.nodes);
+const isVolumeType = (ref: ObjectRef): boolean => isVolumeSerializedType(ref.info.type);
 
 /**
  * fast pre-check: a prefab's GameObject and MonoBehaviour components are serialized in its own
  * SerializedFile, so one whose type table declares no `HGEnvironmentVolume` cannot contain an environment
  * volume
  */
-const fileMayHaveVolumes = (root: ObjectRef): boolean =>
-	root.file.file.types.some((type) => isVolumeTypeNodes(type.nodes));
+const fileMayHaveVolumes = (root: ObjectRef): boolean => root.file.file.types.some(isVolumeSerializedType);
 
 /**
  * reads the enabled environment volumes of a prefab's active GameObjects. box volumes take the GameObject's
@@ -269,17 +234,14 @@ const rotate = (q: readonly number[], v: readonly number[]): [number, number, nu
 
 /** the serialized `PolyLineShape`, read as the chunk blob is: points relative to the position, turned by yaw */
 const readShape = (shape: TypeTreeObject): PolyLineShape | null => {
-	const list = arrayField(shape, 'm_posList');
+	const list = objectsField(shape, 'm_posList');
 	if (list.length === 0) {
 		return null;
 	}
-	const position = xyz(objectField(shape, 'm_position'));
-	const rotation = xyz(objectField(shape, 'm_rotation'));
+	const position = vector3Field(shape, 'm_position');
+	const rotation = vector3Field(shape, 'm_rotation');
 	const turn = yawRotation(rotation[1]);
 	const points = list.map((point): [number, number] => {
-		if (!isObject(point)) {
-			throw new FormatError('polyline point is not an object');
-		}
 		const [x, z] = turn(numberField(point, 'x'), numberField(point, 'y'));
 		return [position[0] + x, position[2] + z];
 	});

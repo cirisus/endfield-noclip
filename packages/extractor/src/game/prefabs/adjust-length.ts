@@ -1,12 +1,12 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import type { MaterialTextureSlot } from '@endfield-noclip/formats/unity/material';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import {
 	arrayField,
 	asPPtr,
 	booleanField,
-	isObject,
 	numberField,
+	objectsField,
 	pptrField,
 	stringField,
 	type PPtr,
@@ -53,20 +53,16 @@ export interface AdjustLength {
  * @param ref a MonoBehaviour
  * @returns whether its serialized fields are a `VFXAdjustLength`'s, without reading the object
  */
-export const isAdjustLengthType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return names.has('presetLength') && names.has('axisDir') && names.has('targetScaleTransforms');
-};
+export const isAdjustLengthType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'presetLength', 'axisDir', 'targetScaleTransforms');
 
 /**
  * @param ref a MonoBehaviour
  * @returns whether its serialized fields are a `PositionFollower`'s, which moves its GameObject to another's
  *   world position every frame
  */
-export const isPositionFollowerType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return names.has('source') && names.has('positionThreshold');
-};
+export const isPositionFollowerType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'source', 'positionThreshold');
 
 /**
  * @param data a `VFXAdjustLength`'s fields (see {@link isAdjustLengthType})
@@ -96,18 +92,13 @@ export const readAdjustLength = (data: TypeTreeObject): AdjustLength => {
 		? arrayField(data, 'targetScaleTransforms').map((pointer) => asPPtr(pointer))
 		: [];
 	const tilings = booleanField(data, 'useTillingOffset')
-		? arrayField(data, 'tillingOffsetConfigs').map((config): LengthTiling => {
-				if (!isObject(config)) {
-					throw new FormatError('invalid VFXAdjustLength tiling');
-				}
-				return {
-					renderer: pptrField(config, 'target'),
-					texture: stringField(config, 'textureName'),
-					dir: numberField(config, 'tillingDir'),
-					offset: numberField(config, 'offset'),
-					revert: booleanField(config, 'revertScale'),
-				};
-			})
+		? objectsField(data, 'tillingOffsetConfigs').map((config): LengthTiling => ({
+				renderer: pptrField(config, 'target'),
+				texture: stringField(config, 'textureName'),
+				dir: numberField(config, 'tillingDir'),
+				offset: numberField(config, 'offset'),
+				revert: booleanField(config, 'revertScale'),
+			}))
 		: [];
 	return { axis, preset, scaleTargets, tilings, unread };
 };

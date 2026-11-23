@@ -3,7 +3,7 @@ import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import type { RectDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { ClipMaterialValue, ClipMotion } from '@endfield-noclip/formats/unity/animation-clip';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import { booleanField, optionalNumberField, pptrField } from '@endfield-noclip/formats/unity/values';
 import type { ParticleSystemInfo } from '@endfield-noclip/package-format/particles';
 
@@ -340,10 +340,8 @@ interface ComponentReader {
 }
 
 /** whether a MonoBehaviour is an `UnlockEffectConfigMono`, which swaps a model's locked and unlocked looks */
-const isUnlockEffectConfigType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return names.has('useDifferentModel') && names.has('lockedModel') && names.has('unlockedModel');
-};
+const isUnlockEffectConfigType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'useDifferentModel', 'lockedModel', 'unlockedModel');
 
 const behaviourOf =
 	(isType: (ref: ObjectRef) => boolean) =>
@@ -410,10 +408,8 @@ const readUnlockConfig: ComponentReader = {
 const RAFT_WAKE_ROOTS = ['headAnchorRoot', 'tailAnchorRoot'] as const;
 
 /** whether a MonoBehaviour is an `InteractiveSummonTeamPostmodelMono`, the bamboo raft's post-model */
-const isRaftPostmodelType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return RAFT_WAKE_ROOTS.every((name) => names.has(name)) && names.has('decalHeadRoot');
-};
+const isRaftPostmodelType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, ...RAFT_WAKE_ROOTS, 'decalHeadRoot');
 
 /**
  * `InteractiveSummonTeamPostmodelMono` on the root: the wakes the raft's logic switches on only while it

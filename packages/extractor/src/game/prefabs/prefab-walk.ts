@@ -7,11 +7,11 @@ import {
 	arrayField,
 	asPPtr,
 	booleanField,
-	isObject,
-	numberField,
-	objectField,
+	objectsField,
 	pptrField,
 	stringField,
+	vector3Field,
+	vector4Field,
 } from '@endfield-noclip/formats/unity/values';
 
 import { objectKey, type AssetResolver, type ObjectRef } from '../assets/assets.ts';
@@ -120,12 +120,6 @@ export interface PrefabVisitor<State extends Parent, Parent = State> {
 	visit?(node: PlacedPrefabNode, state: State): void | Promise<void>;
 }
 
-const xyz = (value: TypeTreeObject): [number, number, number] => [
-	numberField(value, 'x'),
-	numberField(value, 'y'),
-	numberField(value, 'z'),
-];
-
 const identityLocal = (): LocalTransform => ({
 	position: [0, 0, 0],
 	rotation: [0, 0, 0, 1],
@@ -149,10 +143,7 @@ const readNode = async (
 	const key = objectKey(go);
 	const data = await resolver.read(go);
 	const components: PrefabComponent[] = [];
-	for (const item of arrayField(data, 'm_Component')) {
-		if (!isObject(item)) {
-			throw new FormatError('prefab component is not an object');
-		}
+	for (const item of objectsField(data, 'm_Component')) {
 		const ref = await resolver.resolve(go, pptrField(item, 'component'));
 		if (ref !== null) {
 			components.push(readComponent(resolver, ref));
@@ -163,7 +154,6 @@ const readNode = async (
 		throw new FormatError(`prefab GameObject ${key} has no Transform`);
 	}
 	const t = await transform.read();
-	const rotation = objectField(t, 'm_LocalRotation');
 	return {
 		go,
 		key,
@@ -176,9 +166,9 @@ const readNode = async (
 		transform,
 		transformKey: objectKey(transform.ref),
 		saved: {
-			position: xyz(objectField(t, 'm_LocalPosition')),
-			rotation: [...xyz(rotation), numberField(rotation, 'w')],
-			scale: xyz(objectField(t, 'm_LocalScale')),
+			position: vector3Field(t, 'm_LocalPosition'),
+			rotation: vector4Field(t, 'm_LocalRotation'),
+			scale: vector3Field(t, 'm_LocalScale'),
 		},
 		ofClass: (classId) => components.filter((component) => component.classId === classId),
 		behaviours: (isType) =>

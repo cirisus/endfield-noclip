@@ -1,12 +1,12 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
-import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { type SerializedType, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
+import { type TypeTreeObject, typeFieldNames } from '@endfield-noclip/formats/unity/type-tree';
 import {
 	arrayField,
 	asPPtr,
-	isObject,
 	numberField,
 	objectField,
+	objectsField,
 	pptrField,
 } from '@endfield-noclip/formats/unity/values';
 
@@ -14,11 +14,12 @@ import { objectKey, type AssetResolver, type ObjectRef } from '../assets/assets.
 
 /** the form fields of a doodad-group centre's postmodel script, for group levels 1 to 4 */
 const FORM_FIELDS = ['doodadFormOne', 'doodadFormTwo', 'doodadFormThree', 'doodadFormFour'];
-const FORM_FIELD_SET = new Set(FORM_FIELDS);
 
 /** whether a SerializedFile type declares any doodad-shell form field */
-const isShellTypeNodes = (nodes: readonly { level: number; name: string }[] | undefined): boolean =>
-	nodes?.some((node) => node.level === 1 && FORM_FIELD_SET.has(node.name)) ?? false;
+const isShellType = (type: SerializedType | undefined): boolean => {
+	const fields = typeFieldNames(type);
+	return FORM_FIELDS.some((field) => fields.has(field));
+};
 
 /** a doodad-group centre's postmodel: a shell that loads one form model per group level into a slot */
 export interface DoodadShell {
@@ -39,16 +40,13 @@ export const readDoodadShell = async (
 	resolver: AssetResolver,
 	root: ObjectRef,
 ): Promise<DoodadShell | null> => {
-	if (!root.file.file.types.some((type) => isShellTypeNodes(type.nodes))) {
+	if (!root.file.file.types.some(isShellType)) {
 		return null;
 	}
 	const data = await resolver.read(root);
 	let rootTransform: ObjectRef | null = null;
 	let shell: { ref: ObjectRef; data: TypeTreeObject } | null = null;
-	for (const item of arrayField(data, 'm_Component')) {
-		if (!isObject(item)) {
-			throw new FormatError('prefab component is not an object');
-		}
+	for (const item of objectsField(data, 'm_Component')) {
 		// oxlint-disable-next-line no-await-in-loop -- a root has a handful of components
 		const ref = await resolver.resolve(root, pptrField(item, 'component'));
 		switch (ref?.info.classId) {
@@ -57,7 +55,7 @@ export const readDoodadShell = async (
 				break;
 			}
 			case UnityClass.MonoBehaviour: {
-				if (!isShellTypeNodes(ref.info.type?.nodes)) {
+				if (!isShellType(ref.info.type)) {
 					break;
 				}
 				// oxlint-disable-next-line no-await-in-loop -- as above
@@ -99,10 +97,7 @@ const expectIdentityChild = async (
 	slotData: TypeTreeObject,
 	rootTransform: ObjectRef,
 ): Promise<void> => {
-	for (const item of arrayField(slotData, 'm_Component')) {
-		if (!isObject(item)) {
-			throw new FormatError('prefab component is not an object');
-		}
+	for (const item of objectsField(slotData, 'm_Component')) {
 		// oxlint-disable-next-line no-await-in-loop -- a slot has one component
 		const ref = await resolver.resolve(slot, pptrField(item, 'component'));
 		if (ref?.info.classId !== UnityClass.Transform) {

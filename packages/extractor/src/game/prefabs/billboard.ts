@@ -4,8 +4,8 @@ import {
 	trsMatrix,
 	multiplyMatrices,
 } from '@endfield-noclip/formats/unity/transform';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { booleanField, numberField, objectField, type Aabb } from '@endfield-noclip/formats/unity/values';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { booleanField, numberField, vector3Field, type Aabb } from '@endfield-noclip/formats/unity/values';
 import { ChainFlags } from '@endfield-noclip/package-format/instances';
 
 import type { ObjectRef } from '../assets/assets.ts';
@@ -39,10 +39,8 @@ const BillboardMode = {
  * @param ref a MonoBehaviour
  * @returns whether its serialized fields are a `VFXBillBoard`'s, without reading the object
  */
-export const isBillboardType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return names.has('billboardMode') && names.has('rotateInLateTick') && names.has('rotation');
-};
+export const isBillboardType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'billboardMode', 'rotateInLateTick', 'rotation');
 
 /**
  * reads an enabled `VFXBillBoard`. modes 2 and 3 turn about an up axis the viewer takes as the world's
@@ -56,12 +54,7 @@ export const readBillboard = (data: TypeTreeObject, frame: Float32Array): Prefab
 	if (!booleanField(data, 'm_Enabled')) {
 		return null;
 	}
-	const rotation = objectField(data, 'rotation');
-	const offset = unityEulerQuaternion([
-		numberField(rotation, 'x'),
-		numberField(rotation, 'y'),
-		numberField(rotation, 'z'),
-	]);
+	const offset = unityEulerQuaternion(vector3Field(data, 'rotation'));
 	switch (numberField(data, 'billboardMode')) {
 		case BillboardMode.Billboard: {
 			return { flag: ChainFlags.BillboardFacing, offset, frame };

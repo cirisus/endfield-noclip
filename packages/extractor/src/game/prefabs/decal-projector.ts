@@ -1,6 +1,6 @@
 import type { RectDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { numberField, objectField, pptrField } from '@endfield-noclip/formats/unity/values';
+import { colorField, numberField, pptrField, vector2Field } from '@endfield-noclip/formats/unity/values';
 
 // HG's `HGDecalProjector`, the prefab form of the world's rect decals (docs/game-data/materials.md#decals):
 // its GameObject's transform is the box, projecting down its y, and its fields are the rect decal's
@@ -25,9 +25,6 @@ export interface DecalProjector {
  * @returns its placement and whether it's drawn as the game does
  */
 export const readDecalProjector = (data: TypeTreeObject): DecalProjector => {
-	const color = objectField(data, 'm_BaseColor');
-	const tiling = objectField(data, 'm_UvTilling');
-	const offset = objectField(data, 'm_UvOffset');
 	const shape = numberField(data, 'm_ShapeType');
 	let unsupported: string | null = null;
 	if (shape !== 0) {
@@ -37,14 +34,9 @@ export const readDecalProjector = (data: TypeTreeObject): DecalProjector => {
 	}
 	return {
 		decal: {
-			uvScale: [numberField(tiling, 'x'), numberField(tiling, 'y')],
-			uvOffset: [numberField(offset, 'x'), numberField(offset, 'y')],
-			color: [
-				numberField(color, 'r'),
-				numberField(color, 'g'),
-				numberField(color, 'b'),
-				numberField(color, 'a'),
-			],
+			uvScale: vector2Field(data, 'm_UvTilling'),
+			uvOffset: vector2Field(data, 'm_UvOffset'),
+			color: colorField(data, 'm_BaseColor'),
 			intensity: numberField(data, 'm_BaseColorIntensity'),
 			sectorAngle: numberField(data, 'm_SectorAngle'),
 			flags: 0,

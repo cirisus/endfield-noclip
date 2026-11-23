@@ -12,7 +12,7 @@ import type { DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
 import { typeName, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { type DecodedTexture, toKtx2Texture } from '@endfield-noclip/formats/unity/texture';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { pptrField, type PPtr } from '@endfield-noclip/formats/unity/values';
+import { asPPtr, type PPtr } from '@endfield-noclip/formats/unity/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
@@ -242,8 +242,8 @@ const findBuiltinMesh = async (
 
 const scriptName = async (resolver: AssetResolver, ref: ObjectRef): Promise<string> => {
 	try {
-		const data = await resolver.read(ref);
-		const scriptRef = await resolver.resolve(ref, pptrField(data, 'm_Script'));
+		const script = await ref.file.readField(ref.info, 'm_Script');
+		const scriptRef = await resolver.resolve(ref, asPPtr(script));
 		if (scriptRef === null) {
 			return 'MonoBehaviour';
 		}

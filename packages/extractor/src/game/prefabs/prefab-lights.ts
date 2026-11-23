@@ -10,7 +10,13 @@ import {
 	unityEulerQuaternion,
 } from '@endfield-noclip/formats/unity/transform';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { booleanField, numberField, objectField, vector3Field } from '@endfield-noclip/formats/unity/values';
+import {
+	booleanField,
+	colorField,
+	numberField,
+	objectField,
+	vector3Field,
+} from '@endfield-noclip/formats/unity/values';
 
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
 
@@ -71,14 +77,13 @@ export const readPrefabLights = async (resolver: AssetResolver, root: ObjectRef)
 
 /** @returns a Unity `Light` and HG's additional data as a chunk light's settings */
 const readLight = (name: string, light: TypeTreeObject, additional: TypeTreeObject): PrefabLight['light'] => {
-	const color = objectField(light, 'm_Color');
 	const intensity = numberField(light, 'm_Intensity');
 	const shadows = objectField(light, 'm_Shadows');
 	return {
 		name,
 		type: numberField(light, 'm_Type'),
 		color: lightColor(
-			[numberField(color, 'r'), numberField(color, 'g'), numberField(color, 'b')],
+			colorField(light, 'm_Color'),
 			intensity,
 			booleanField(light, 'm_UseColorTemperature') ? numberField(light, 'm_ColorTemperature') : null,
 		),

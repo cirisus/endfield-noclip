@@ -1,13 +1,6 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import {
-	arrayField,
-	asPPtr,
-	numberField,
-	objectField,
-	type PPtr,
-	pptrField,
-} from '@endfield-noclip/formats/unity/values';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { arrayField, asPPtr, colorField, type PPtr, pptrField } from '@endfield-noclip/formats/unity/values';
 
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
 
@@ -41,22 +34,8 @@ export interface EmissiveOverride {
  * @param ref a MonoBehaviour
  * @returns whether its serialized fields are an `AnimationProperties_Emissive`'s, without reading the object
  */
-export const isEmissiveOverrideType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return (
-		names.has('affectRenderers') &&
-		names.has('emissiveColor') &&
-		names.has('emissiveAlbedoColor') &&
-		names.has('breathFrequency')
-	);
-};
-
-const rgba = (value: TypeTreeObject): Rgba => [
-	numberField(value, 'r'),
-	numberField(value, 'g'),
-	numberField(value, 'b'),
-	numberField(value, 'a'),
-];
+export const isEmissiveOverrideType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'affectRenderers', 'emissiveColor', 'emissiveAlbedoColor', 'breathFrequency');
 
 /**
  * reads the resting colours of an `AnimationProperties_Emissive`. its breathing isn't read
@@ -67,8 +46,8 @@ const rgba = (value: TypeTreeObject): Rgba => [
 export const readEmissiveOverride = (data: TypeTreeObject): EmissiveOverride => ({
 	renderers: arrayField(data, 'affectRenderers').map((pointer) => asPPtr(pointer)),
 	colors: {
-		color: rgba(objectField(data, 'emissiveColor')),
-		albedo: rgba(objectField(data, 'emissiveAlbedoColor')),
+		color: colorField(data, 'emissiveColor'),
+		albedo: colorField(data, 'emissiveAlbedoColor'),
 	},
 });
 
@@ -101,9 +80,9 @@ export const readEmissiveConfig = async (
 	if (colorRef === null) {
 		throw new FormatError(`emissive config ${ref.info.pathId} has no colour config`);
 	}
-	const color = rgba(objectField(await resolver.read(colorRef), 'emissiveColor'));
+	const color = colorField(await resolver.read(colorRef), 'emissiveColor');
 	const baseRef = await resolver.resolve(ref, pptrField(config, 'baseColorConfig'));
-	const albedo = baseRef === null ? NO_ALBEDO : rgba(objectField(await resolver.read(baseRef), 'baseColor'));
+	const albedo = baseRef === null ? NO_ALBEDO : colorField(await resolver.read(baseRef), 'baseColor');
 	return { color, albedo };
 };
 

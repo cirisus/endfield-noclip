@@ -1,6 +1,6 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
-import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { hasTypeFields, type TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import {
 	aabbField,
 	arrayField,
@@ -9,6 +9,7 @@ import {
 	isObject,
 	numberField,
 	objectField,
+	objectsField,
 	type PPtr,
 	pptrField,
 	vector3Field,
@@ -95,10 +96,7 @@ export const splineMoverRenderers = async (
 		if (!isObject(lod)) {
 			continue;
 		}
-		for (const entry of arrayField(lod, 'renderers')) {
-			if (!isObject(entry)) {
-				throw new FormatError('invalid LOD renderer');
-			}
+		for (const entry of objectsField(lod, 'renderers')) {
 			// oxlint-disable-next-line no-await-in-loop -- renderer order is draw order
 			const renderer = await resolver.resolve(group, pptrField(entry, 'renderer'));
 			if (renderer === null || renderer.info.classId !== UnityClass.MeshRenderer) {
@@ -154,10 +152,8 @@ const meshOf = async (
  * @param ref a MonoBehaviour
  * @returns whether it is Beyond's `HGSplineMovingObjects`, by its serialized fields
  */
-export const isSplineMoverType = (ref: ObjectRef): boolean => {
-	const names = new Set(ref.info.type?.nodes.filter((node) => node.level === 1).map((node) => node.name));
-	return names.has('desc') && names.has('knotData') && names.has('fixedPostion');
-};
+export const isSplineMoverType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, 'desc', 'knotData', 'fixedPostion');
 
 /**
  * @param value a `ParticleSystem.MinMaxCurve` as a MonoBehaviour serializes it
@@ -225,20 +221,15 @@ export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 		return { reason: `spline emission type ${numberField(desc, 'emissionType')}` };
 	}
 
-	const segments: SplineSegmentInfo[] = arrayField(data, 'knotData').map((knot) => {
-		if (!isObject(knot)) {
-			throw new FormatError('spline knot is not an object');
-		}
-		return {
-			points: [
-				vector3Field(knot, 'p0'),
-				vector3Field(knot, 'p1'),
-				vector3Field(knot, 'p2'),
-				vector3Field(knot, 'p3'),
-			],
-			length: numberField(knot, 'length'),
-		};
-	});
+	const segments: SplineSegmentInfo[] = objectsField(data, 'knotData').map((knot) => ({
+		points: [
+			vector3Field(knot, 'p0'),
+			vector3Field(knot, 'p1'),
+			vector3Field(knot, 'p2'),
+			vector3Field(knot, 'p3'),
+		],
+		length: numberField(knot, 'length'),
+	}));
 	const total = segments.reduce((sum, segment) => sum + segment.length, 0);
 	if (total <= 0) {
 		return { reason: 'no spline' };
