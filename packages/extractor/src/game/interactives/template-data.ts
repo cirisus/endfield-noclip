@@ -1,4 +1,4 @@
-import type { LevelInteractive } from '@endfield-noclip/formats/endfield/level-interactives';
+import { atomFloat, type LevelInteractive } from '@endfield-noclip/formats/endfield/level-interactives';
 import {
 	isMemoryPackObject,
 	type MemoryPackObject,
@@ -63,15 +63,7 @@ const propertyAtomBits = (
 	return undefined;
 };
 
-/**
- * @param bits a float's IEEE bits in a 64-bit atom
- * @returns the float
- */
-export const atomFloat = (bits: bigint): number => {
-	const view = new DataView(new ArrayBuffer(4));
-	view.setUint32(0, Number(BigInt.asUintN(32, bits)));
-	return view.getFloat32(0);
-};
+export { atomFloat };
 
 /**
  * @param template a decoded interactive template

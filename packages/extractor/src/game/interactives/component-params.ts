@@ -3,7 +3,12 @@ import {
 	type LevelInteractive,
 	interactiveParamFromValue,
 } from '@endfield-noclip/formats/endfield/level-interactives';
-import { isMemoryPackObject, type MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
+import {
+	isMemoryPackObject,
+	memoryPackDictGet,
+	memoryPackType,
+	type MemoryPackValue,
+} from '@endfield-noclip/formats/endfield/memory-pack';
 
 /** how one interactive component is named in a template, its variants and LevelData */
 export interface ComponentKeys {
@@ -28,11 +33,7 @@ export const componentOf = (
 		return null;
 	}
 	for (const component of template.componentList) {
-		if (
-			isMemoryPackObject(component) &&
-			typeof component.$type === 'string' &&
-			component.$type.endsWith(suffix)
-		) {
+		if (isMemoryPackObject(component) && memoryPackType(component)?.endsWith(suffix)) {
 			return component;
 		}
 	}
@@ -65,16 +66,11 @@ export const componentParams = (
 		}
 	};
 	add(component.propertyList);
-	for (const pair of Array.isArray(template.templateVariant) ? template.templateVariant : []) {
-		if (!Array.isArray(pair) || pair[0] !== row.template || !isMemoryPackObject(pair[1])) {
-			continue;
-		}
-		for (const diff of Array.isArray(pair[1].componentDiffProperties)
-			? pair[1].componentDiffProperties
-			: []) {
-			if (Array.isArray(diff) && diff[0] === keys.diffKey && isMemoryPackObject(diff[1])) {
-				add(diff[1].value);
-			}
+	const variant = memoryPackDictGet(template.templateVariant, row.template);
+	if (isMemoryPackObject(variant)) {
+		const diff = memoryPackDictGet(variant.componentDiffProperties, keys.diffKey);
+		if (isMemoryPackObject(diff)) {
+			add(diff.value);
 		}
 	}
 	for (const param of row.componentProperties.get(keys.type) ?? []) {

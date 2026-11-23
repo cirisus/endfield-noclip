@@ -3,11 +3,16 @@ import { crc32 } from 'node:zlib';
 
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import {
+	atomFloat,
 	type InteractiveParam,
 	type LevelInteractive,
 	interactiveParamFromValue,
 } from '@endfield-noclip/formats/endfield/level-interactives';
-import { isMemoryPackObject, type MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
+import {
+	isMemoryPackObject,
+	memoryPackType,
+	type MemoryPackValue,
+} from '@endfield-noclip/formats/endfield/memory-pack';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import {
 	multiplyMatrices,
@@ -34,12 +39,6 @@ export const CRANE_TOWER_COMPONENTS = ['_CraneTowerComponentDataForMemoryPack'];
 /** the height a container hangs below the hook when its entity has no `height` property */
 export const DEFAULT_CONTAINER_HEIGHT = 4;
 
-const toFloat = (bits: bigint): number => {
-	const view = new DataView(new ArrayBuffer(4));
-	view.setUint32(0, Number(BigInt.asUintN(32, bits)));
-	return view.getFloat32(0);
-};
-
 /** a crane tower's step lists and the container it carries */
 export interface CraneTower {
 	/** rope lengths, picked by `state_1` (`position_list`) */
@@ -63,8 +62,8 @@ export const craneTowerOf = (template: MemoryPackValue, row: LevelInteractive): 
 	const component =
 		isMemoryPackObject(template) && Array.isArray(template.componentList)
 			? template.componentList.find((entry) => {
-					const type = isMemoryPackObject(entry) ? entry.$type : null;
-					return typeof type === 'string' && CRANE_TOWER_COMPONENTS.some((suffix) => type.endsWith(suffix));
+					const type = memoryPackType(entry);
+					return type !== undefined && CRANE_TOWER_COMPONENTS.some((suffix) => type.endsWith(suffix));
 				})
 			: undefined;
 	if (!isMemoryPackObject(component)) {
@@ -78,7 +77,8 @@ export const craneTowerOf = (template: MemoryPackValue, row: LevelInteractive): 
 	for (const param of row.componentProperties.get(CRANE_TOWER_COMPONENT) ?? []) {
 		params.set(param.key, param);
 	}
-	const floats = (key: string): number[] => (params.get(key)?.values ?? []).map((atom) => toFloat(atom.bits));
+	const floats = (key: string): number[] =>
+		(params.get(key)?.values ?? []).map((atom) => atomFloat(atom.bits));
 	const target = params.get('target')?.values[0]?.bits ?? 0n;
 	return {
 		ropeLengths: floats('position_list'),

@@ -1,4 +1,8 @@
-import type { LevelInteractive } from '@endfield-noclip/formats/endfield/level-interactives';
+import {
+	atomFloat,
+	atomInt,
+	type LevelInteractive,
+} from '@endfield-noclip/formats/endfield/level-interactives';
 import {
 	type BezierCurve,
 	bezierPoint,
@@ -60,12 +64,6 @@ export interface CurveMove {
 	variesSpeed: boolean;
 }
 
-const toFloat = (bits: bigint): number => {
-	const view = new DataView(new ArrayBuffer(4));
-	view.setUint32(0, Number(BigInt.asUintN(32, bits)));
-	return view.getFloat32(0);
-};
-
 /**
  * @param template the decoded template
  * @param row the placement
@@ -78,24 +76,24 @@ export const curveMoveOf = (template: MemoryPackValue, row: LevelInteractive): C
 	}
 	const atoms = (key: string): { bits: bigint }[] => params.get(key)?.values ?? [];
 	const bits = (key: string): bigint => atoms(key)[0]?.bits ?? 0n;
-	const int = (key: string): number => Number(BigInt.asIntN(32, bits(key)));
+	const int = (key: string): number => atomInt(bits(key));
 	// the three lists are parallel, one entry per waiting knot
 	const nearby = atoms('wait_for_nearby_list');
 	const times = atoms('curve_node_wait_time_list');
 	return {
 		splineId: int('spline_id'),
-		speed: toFloat(bits('speed')),
+		speed: atomFloat(bits('speed')),
 		mode: int('curve_move_mode'),
 		startIndex: int('curve_start_index'),
 		targetIndex: int('curve_target_index'),
-		initialPhase: toFloat(bits('initial_phase')),
+		initialPhase: atomFloat(bits('initial_phase')),
 		followsTangent: int('curve_move_direction') === 1,
 		waits: atoms('curve_node_index_list').map((atom, i) => ({
 			node: Number(BigInt.asIntN(32, atom.bits)),
 			forNearby: (nearby[i]?.bits ?? 0n) !== 0n,
-			time: toFloat(times[i]?.bits ?? 0n),
+			time: atomFloat(times[i]?.bits ?? 0n),
 		})),
-		ramp: int('tween') === 1 ? toFloat(bits('distance')) : null,
+		ramp: int('tween') === 1 ? atomFloat(bits('distance')) : null,
 		variesSpeed: atoms('curve_start_index_list').length > 0 || bits('use_curve_control_speed') !== 0n,
 	};
 };

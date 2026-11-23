@@ -28,6 +28,23 @@ export interface InteractiveParam {
 	values: { bits: bigint; text: string | null }[];
 }
 
+const atomScratch = new DataView(new ArrayBuffer(4));
+
+/**
+ * @param bits a 32-bit float's IEEE-754 bits stored in the low half of a 64-bit interactive atom
+ * @returns the float value
+ */
+export const atomFloat = (bits: bigint): number => {
+	atomScratch.setUint32(0, Number(BigInt.asUintN(32, bits)));
+	return atomScratch.getFloat32(0);
+};
+
+/**
+ * @param bits a signed 32-bit integer stored in the low half of a 64-bit interactive atom
+ * @returns the integer value
+ */
+export const atomInt = (bits: bigint): number => Number(BigInt.asIntN(32, bits));
+
 /** an unimplemented field; callers may report and omit the entire file, never scan past it */
 export class UnsupportedLevelData extends FormatError {}
 

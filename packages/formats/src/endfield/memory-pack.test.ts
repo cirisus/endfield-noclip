@@ -215,6 +215,45 @@ test('decodes wrappers, unions, enums, raw pointers and raw dictionaries', () =>
 	assert.throws(() => reader.decode(new Uint8Array([...encoded, 0]), 'RootForMemoryPack'), FormatError);
 });
 
+test('decodeFields skips unselected fields without reading past the last requested field', () => {
+	const schema = new MemoryPackSchema(fakeRuntime(TYPES));
+	let lookups = 0;
+	const reader = new MemoryPackReader(schema, (id) => {
+		lookups++;
+		return id === 7 ? 'hello' : undefined;
+	});
+	const encoded = bytes(
+		[4, 1], // Root: 4 members
+		[7, 4], // name: string id 7 (skipped)
+		[123n, 8], // script: raw ScriptPtr (skipped)
+		[5, 4],
+		[0, 4],
+		[2, 4], // nodes: 2 items (skipped)
+		[1, 1],
+		[3, 1],
+		[9, 4],
+		[10100520002n, 8],
+		[2, 1],
+		[255, 1],
+		[1, 4], // ids: requested
+		[42, 4],
+		[0x3f800000, 4],
+	);
+	assert.deepEqual(reader.decodeFields(encoded, 'RootForMemoryPack', new Set(['ids'])), {
+		$type: 'RootForMemoryPack',
+		ids: [[42, 1]],
+	});
+	// skipped string field must not hit the string pool
+	assert.equal(lookups, 0);
+
+	// early exit: requesting only the first field ignores truncated/corrupt tail
+	assert.deepEqual(reader.decodeFields(bytes([4, 1], [7, 4]), 'RootForMemoryPack', new Set(['name'])), {
+		$type: 'RootForMemoryPack',
+		name: 'hello',
+	});
+	assert.equal(lookups, 1);
+});
+
 test('reads compressed integers as IL2CPP metadata writes them', () => {
 	const reader = new AttributeReader(
 		new Uint8Array([0, 0x7f, 0x81, 0x02, 0xc0, 0x01, 0x02, 0x03, 0x05, 0xff]),

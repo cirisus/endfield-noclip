@@ -76,6 +76,33 @@ export const asMemoryPackVec3 = (
 	return [asMemoryPackNumber(x, what), asMemoryPackNumber(y, what), asMemoryPackNumber(z, what)];
 };
 
+/**
+ * @param value a decoded value, or a missing member
+ * @returns its `$type` wrapper name, or `undefined` if it isn't a typed object
+ */
+export const memoryPackType = (value: MemoryPackValue | undefined): string | undefined =>
+	isMemoryPackObject(value) && typeof value.$type === 'string' ? value.$type : undefined;
+
+/**
+ * @param entries a decoded `Dictionary` / `SerializeFieldDictionary` (`[key, value][]`)
+ * @param key the key to find
+ * @returns the first matching value, or `undefined` if absent
+ */
+export const memoryPackDictGet = (
+	entries: MemoryPackValue | undefined,
+	key: MemoryPackValue,
+): MemoryPackValue | undefined => {
+	if (!Array.isArray(entries)) {
+		return undefined;
+	}
+	for (const pair of entries) {
+		if (Array.isArray(pair) && pair[0] === key) {
+			return pair[1];
+		}
+	}
+	return undefined;
+};
+
 /** a generated wrapper class */
 interface Wrapper {
 	name: string;
@@ -255,15 +282,6 @@ export class MemoryPackSchema {
 	}
 }
 
-/** @returns the next `size` bytes as an unsigned little-endian number (exact up to 2^53) */
-const littleEndian = (reader: AttributeReader, size: number): number => {
-	let result = 0;
-	for (let i = 0; i < size; i++) {
-		result += reader.byte() * 2 ** (8 * i);
-	}
-	return result;
-};
-
 /** @returns an identity key for a resolved type */
 const typeKey = (type: Il2CppTypeRef): string => {
 	switch (type.kind) {
@@ -312,7 +330,7 @@ const readAttributeArguments = (
 			case 0x03:
 			case 0x06:
 			case 0x07: {
-				return littleEndian(reader, 2);
+				return reader.u16();
 			}
 			case 0x08: {
 				return reader.compressedI32();
@@ -321,12 +339,12 @@ const readAttributeArguments = (
 				return reader.compressedU32();
 			}
 			case 0x0c: {
-				return littleEndian(reader, 4);
+				return reader.u32();
 			}
 			case 0x0a:
 			case 0x0b:
 			case 0x0d: {
-				return littleEndian(reader, 8);
+				return reader.u32() + reader.u32() * 0x1_0000_0000;
 			}
 			case 0x0e: {
 				const length = reader.compressedI32();
@@ -398,6 +416,53 @@ const PRIMITIVE_KINDS = new Map([
 	['double', 0x0d],
 ]);
 
+interface Cursor {
+	bytes: Uint8Array;
+	view: DataView;
+	at: number;
+}
+
+const advance = (c: Cursor, size: number): number => {
+	const at = c.at;
+	if (size < 0 || at + size > c.bytes.length) {
+		throw new FormatError(`read of ${size} bytes at ${at} passes the end`);
+	}
+	c.at += size;
+	return at;
+};
+
+const readU8 = (c: Cursor): number => c.view.getUint8(advance(c, 1));
+const readU16 = (c: Cursor): number => c.view.getUint16(advance(c, 2), true);
+const readI32 = (c: Cursor): number => c.view.getInt32(advance(c, 4), true);
+const readF32 = (c: Cursor): number => c.view.getFloat32(advance(c, 4), true);
+
+const readUtf8 = (c: Cursor): string | null => {
+	const length = readI32(c);
+	if (length === -1) {
+		return null;
+	}
+	const at = advance(c, length);
+	return utf8.decode(c.bytes.subarray(at, at + length));
+};
+
+const skipUtf8 = (c: Cursor): void => {
+	const length = readI32(c);
+	if (length !== -1) {
+		advance(c, length);
+	}
+};
+
+const readListCount = (c: Cursor): number => {
+	const count = readI32(c);
+	if (count === -1) {
+		return 0;
+	}
+	if (count < 0 || count > c.bytes.length - c.at) {
+		throw new FormatError(`collection of ${count} at ${c.at - 4}`);
+	}
+	return count;
+};
+
 /** decodes MemoryPack bytes with a client's schema */
 export class MemoryPackReader {
 	readonly schema: MemoryPackSchema;
@@ -405,9 +470,6 @@ export class MemoryPackReader {
 	readonly #layouts = new Map<string, Layout | null>();
 	readonly #layoutRefs = new WeakMap<Il2CppTypeRef, Layout | null>();
 	readonly #rawStructs = new Map<number, RawStruct>();
-	#bytes: Uint8Array = new Uint8Array();
-	#view: DataView = new DataView(this.#bytes.buffer);
-	#at = 0;
 
 	/**
 	 * @param schema the client's wrappers
@@ -426,35 +488,56 @@ export class MemoryPackReader {
 	 * @throws {FormatError} if the bytes don't decode as the schema says or don't end where the object does
 	 */
 	decode(bytes: Uint8Array, root: string): MemoryPackValue {
-		this.#bytes = bytes;
-		this.#view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-		this.#at = 0;
-		const value = this.#wrapper(this.schema.wrapperNamed(root));
-		if (this.#at !== bytes.length) {
-			throw new FormatError(`${root} ends at ${this.#at} of ${bytes.length} bytes`);
+		const c: Cursor = {
+			bytes,
+			view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+			at: 0,
+		};
+		const value = this.#wrapper(this.schema.wrapperNamed(root), c, undefined);
+		if (c.at !== bytes.length) {
+			throw new FormatError(`${root} ends at ${c.at} of ${bytes.length} bytes`);
 		}
 		return value;
 	}
 
-	#wrapper(index: number): MemoryPackValue {
+	/**
+	 * decodes only the named top-level fields of `root`, skipping unselected fields without allocating values
+	 * and stopping once every requested field has been read
+	 *
+	 * @param bytes a serialized object
+	 * @param root the name of its wrapper class
+	 * @param fields top-level field names to materialize
+	 * @returns an object holding `$type` and the requested fields, or `null` for a null root
+	 * @throws {FormatError} if the bytes up through the last requested field don't match the schema
+	 */
+	decodeFields(bytes: Uint8Array, root: string, fields: ReadonlySet<string>): MemoryPackValue {
+		const c: Cursor = {
+			bytes,
+			view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+			at: 0,
+		};
+		return this.#wrapper(this.schema.wrapperNamed(root), c, fields);
+	}
+
+	#wrapper(index: number, c: Cursor, pick: ReadonlySet<string> | undefined): MemoryPackValue {
 		const wrapper = this.schema.wrapper(index);
 		if (wrapper.union !== null) {
-			let tag = this.#u8();
+			let tag = readU8(c);
 			if (tag === 255) {
 				return null;
 			}
 			// 250 escapes to a u16 for large tags
 			if (tag === 250) {
-				tag = this.#u16();
+				tag = readU16(c);
 			}
 			const subtype = wrapper.union.get(tag);
 			if (subtype === undefined) {
 				throw new FormatError(`${wrapper.name} has no union tag ${tag}`);
 			}
-			return this.#wrapper(subtype);
+			return this.#wrapper(subtype, c, pick);
 		}
-		const at = this.#at;
-		const members = this.#u8();
+		const at = c.at;
+		const members = readU8(c);
 		if (members === 255) {
 			return null;
 		}
@@ -464,9 +547,27 @@ export class MemoryPackReader {
 			);
 		}
 		const result: { [key: string]: MemoryPackValue } = { $type: wrapper.name };
+		let remaining = 0;
+		if (pick !== undefined) {
+			for (const { name } of wrapper.fields) {
+				if (pick.has(name)) {
+					remaining++;
+				}
+			}
+		}
 		for (const { name, type } of wrapper.fields) {
+			if (pick !== undefined && remaining === 0) {
+				break;
+			}
 			try {
-				result[name] = this.#value(type, false);
+				if (pick === undefined || pick.has(name)) {
+					result[name] = this.#value(type, false, c);
+					if (pick !== undefined) {
+						remaining--;
+					}
+				} else {
+					this.#skipValue(type, false, c);
+				}
 			} catch (error) {
 				if (error instanceof FormatError) {
 					throw new FormatError(`${wrapper.name}.${name}: ${error.message}`);
@@ -477,33 +578,72 @@ export class MemoryPackReader {
 		return result;
 	}
 
-	#value(type: Il2CppTypeRef, listElement: boolean): MemoryPackValue {
+	#skipWrapper(index: number, c: Cursor): void {
+		const wrapper = this.schema.wrapper(index);
+		if (wrapper.union !== null) {
+			let tag = readU8(c);
+			if (tag === 255) {
+				return;
+			}
+			if (tag === 250) {
+				tag = readU16(c);
+			}
+			const subtype = wrapper.union.get(tag);
+			if (subtype === undefined) {
+				throw new FormatError(`${wrapper.name} has no union tag ${tag}`);
+			}
+			this.#skipWrapper(subtype, c);
+			return;
+		}
+		const at = c.at;
+		const members = readU8(c);
+		if (members === 255) {
+			return;
+		}
+		if (members !== wrapper.fields.length) {
+			throw new FormatError(
+				`${wrapper.name} at ${at} has ${members} members, expected ${wrapper.fields.length}`,
+			);
+		}
+		for (const { name, type } of wrapper.fields) {
+			try {
+				this.#skipValue(type, false, c);
+			} catch (error) {
+				if (error instanceof FormatError) {
+					throw new FormatError(`${wrapper.name}.${name}: ${error.message}`);
+				}
+				throw error;
+			}
+		}
+	}
+
+	#value(type: Il2CppTypeRef, listElement: boolean, c: Cursor): MemoryPackValue {
 		const { runtime } = this.schema;
 		if (type.kind === 'primitive') {
 			if (type.name === 'string') {
-				const id = this.#i32();
+				const id = readI32(c);
 				const text = this.#strings(id);
 				return text === undefined ? (id < 0 ? null : `#${id}`) : text;
 			}
-			return this.#raw(type);
+			return this.#raw(type, c);
 		}
 		if (type.kind === 'array') {
 			if (type.rank !== 1) {
 				throw new FormatError(`unsupported array ${runtime.typeName(type)}`);
 			}
-			return this.#list(() => this.#value(type.element, false));
+			return this.#list(c, () => this.#value(type.element, false, c));
 		}
 		if (type.kind !== 'definition' && type.kind !== 'generic') {
 			throw new FormatError(`unsupported type ${runtime.typeName(type)}`);
 		}
 		const base = runtime.definitionName(type.definition);
-		const special = this.#special(base);
+		const special = this.#special(base, c);
 		if (special !== undefined) {
 			return special;
 		}
 		const layout = this.#layout(type);
 		if (layout !== null && (VECTORS.has(base) || FLAGGED.has(base))) {
-			return this.#rawAdvance(type, layout);
+			return this.#rawAdvance(type, layout, c);
 		}
 		// these structs are raw copies, except as List elements, which are wrapper-serialized
 		if (
@@ -511,31 +651,31 @@ export class MemoryPackReader {
 			(base.endsWith('Ptr') || RAW_STRUCTS.has(base)) &&
 			!(listElement && this.schema.wrapperFor(type) !== undefined)
 		) {
-			return this.#rawAdvance(type, layout);
+			return this.#rawAdvance(type, layout, c);
 		}
 		if (type.kind === 'generic') {
 			const [first, second] = type.args;
 			switch (base) {
 				case 'List': {
-					return this.#list(() => this.#value(first, true));
+					return this.#list(c, () => this.#value(first, true, c));
 				}
 				case 'SerializeFieldDictionary': {
 					// a header byte: 255 null, 2 a key list then a value list, 1 one list of key/value pairs
-					const header = this.#u8();
+					const header = readU8(c);
 					switch (header) {
 						case 255: {
 							return null;
 						}
 						case 1: {
-							return this.#list(() => [this.#value(first, false), this.#value(second, false)]);
+							return this.#list(c, () => [this.#value(first, false, c), this.#value(second, false, c)]);
 						}
 						case 2: {
-							const keys = this.#list(() => this.#value(first, false));
-							const values = this.#list(() => this.#value(second, false));
+							const keys = this.#list(c, () => this.#value(first, false, c));
+							const values = this.#list(c, () => this.#value(second, false, c));
 							return keys.map((key, i) => [key, values[i] ?? null]);
 						}
 						default: {
-							throw new FormatError(`SerializeFieldDictionary header ${header} at ${this.#at - 1}`);
+							throw new FormatError(`SerializeFieldDictionary header ${header} at ${c.at - 1}`);
 						}
 					}
 				}
@@ -547,12 +687,12 @@ export class MemoryPackReader {
 						const align = Math.max(key.align, value.align);
 						const valueAt = Math.ceil(key.size / value.align) * value.align;
 						const size = Math.ceil((valueAt + value.size) / align) * align;
-						return this.#list(() => {
-							const at = this.#advance(size);
-							return [this.#rawAt(first, at), this.#rawAt(second, at + valueAt)];
+						return this.#list(c, () => {
+							const at = advance(c, size);
+							return [this.#rawAt(first, at, c), this.#rawAt(second, at + valueAt, c)];
 						});
 					}
-					return this.#list(() => [this.#value(first, false), this.#value(second, false)]);
+					return this.#list(c, () => [this.#value(first, false, c), this.#value(second, false, c)]);
 				}
 				default: {
 					break;
@@ -561,32 +701,155 @@ export class MemoryPackReader {
 		}
 		const definition = runtime.metadata.typeDefinition(type.definition);
 		if (definition.enumType) {
-			return this.#raw(runtime.type(definition.elementTypeIndex));
+			return this.#raw(runtime.type(definition.elementTypeIndex), c);
 		}
 		const wrapper = this.schema.wrapperFor(type);
 		if (wrapper === undefined) {
 			throw new FormatError(`no wrapper serializes ${runtime.typeName(type)}`);
 		}
-		return this.#wrapper(wrapper);
+		return this.#wrapper(wrapper, c, undefined);
+	}
+
+	#skipValue(type: Il2CppTypeRef, listElement: boolean, c: Cursor): void {
+		const { runtime } = this.schema;
+		if (type.kind === 'primitive') {
+			if (type.name === 'string') {
+				advance(c, 4);
+				return;
+			}
+			const layout = this.#layout(type);
+			if (layout === null) {
+				throw new FormatError(`no unmanaged layout for ${runtime.typeName(type)}`);
+			}
+			advance(c, layout.size);
+			return;
+		}
+		if (type.kind === 'array') {
+			if (type.rank !== 1) {
+				throw new FormatError(`unsupported array ${runtime.typeName(type)}`);
+			}
+			const count = readListCount(c);
+			for (let i = 0; i < count; i++) {
+				this.#skipValue(type.element, false, c);
+			}
+			return;
+		}
+		if (type.kind !== 'definition' && type.kind !== 'generic') {
+			throw new FormatError(`unsupported type ${runtime.typeName(type)}`);
+		}
+		const base = runtime.definitionName(type.definition);
+		if (this.#skipSpecial(base, c)) {
+			return;
+		}
+		const layout = this.#layout(type);
+		if (layout !== null && (VECTORS.has(base) || FLAGGED.has(base))) {
+			advance(c, layout.size);
+			return;
+		}
+		if (
+			layout !== null &&
+			(base.endsWith('Ptr') || RAW_STRUCTS.has(base)) &&
+			!(listElement && this.schema.wrapperFor(type) !== undefined)
+		) {
+			advance(c, layout.size);
+			return;
+		}
+		if (type.kind === 'generic') {
+			const [first, second] = type.args;
+			switch (base) {
+				case 'List': {
+					const count = readListCount(c);
+					for (let i = 0; i < count; i++) {
+						this.#skipValue(first, true, c);
+					}
+					return;
+				}
+				case 'SerializeFieldDictionary': {
+					const header = readU8(c);
+					switch (header) {
+						case 255: {
+							return;
+						}
+						case 1: {
+							const count = readListCount(c);
+							for (let i = 0; i < count; i++) {
+								this.#skipValue(first, false, c);
+								this.#skipValue(second, false, c);
+							}
+							return;
+						}
+						case 2: {
+							const keyCount = readListCount(c);
+							for (let i = 0; i < keyCount; i++) {
+								this.#skipValue(first, false, c);
+							}
+							const valueCount = readListCount(c);
+							for (let i = 0; i < valueCount; i++) {
+								this.#skipValue(second, false, c);
+							}
+							return;
+						}
+						default: {
+							throw new FormatError(`SerializeFieldDictionary header ${header} at ${c.at - 1}`);
+						}
+					}
+				}
+				case 'Dictionary': {
+					const key = this.#layout(first);
+					const value = this.#layout(second);
+					if (key !== null && value !== null && this.#plain(first) && this.#plain(second)) {
+						const align = Math.max(key.align, value.align);
+						const valueAt = Math.ceil(key.size / value.align) * value.align;
+						const size = Math.ceil((valueAt + value.size) / align) * align;
+						const count = readListCount(c);
+						advance(c, count * size);
+						return;
+					}
+					const count = readListCount(c);
+					for (let i = 0; i < count; i++) {
+						this.#skipValue(first, false, c);
+						this.#skipValue(second, false, c);
+					}
+					return;
+				}
+				default: {
+					break;
+				}
+			}
+		}
+		const definition = runtime.metadata.typeDefinition(type.definition);
+		if (definition.enumType) {
+			const elemLayout = this.#layout(runtime.type(definition.elementTypeIndex));
+			if (elemLayout === null) {
+				throw new FormatError(`no unmanaged layout for ${runtime.typeName(type)}`);
+			}
+			advance(c, elemLayout.size);
+			return;
+		}
+		const wrapper = this.schema.wrapperFor(type);
+		if (wrapper === undefined) {
+			throw new FormatError(`no wrapper serializes ${runtime.typeName(type)}`);
+		}
+		this.#skipWrapper(wrapper, c);
 	}
 
 	/** @returns a value of a type with its own formatter, or `undefined` for other types */
-	#special(base: string): MemoryPackValue | undefined {
+	#special(base: string, c: Cursor): MemoryPackValue | undefined {
 		switch (base) {
 			case 'AnimationCurve': {
 				// member count 3, preWrapMode, postWrapMode, raw Keyframe[] (28 bytes each)
-				const members = this.#u8();
+				const members = readU8(c);
 				if (members === 255) {
 					return null;
 				}
 				if (members !== 3) {
 					throw new FormatError(`AnimationCurve with ${members} members`);
 				}
-				const preWrapMode = this.#i32();
-				const postWrapMode = this.#i32();
-				const keys = this.#list(() => {
-					const at = this.#advance(28);
-					return Array.from({ length: 7 }, (_, i) => this.#view.getFloat32(at + i * 4, true));
+				const preWrapMode = readI32(c);
+				const postWrapMode = readI32(c);
+				const keys = this.#list(c, () => {
+					const at = advance(c, 28);
+					return Array.from({ length: 7 }, (_, i) => c.view.getFloat32(at + i * 4, true));
 				});
 				return { $type: 'AnimationCurve', preWrapMode, postWrapMode, keys };
 			}
@@ -595,17 +858,19 @@ export class MemoryPackReader {
 			case 'SendLuaEvent2': {
 				// member count, ID, inline UTF-8 uid, bool, nextID, bool, Param<string> event name, then one inline UTF-8
 				// JSON string per parameter
-				const members = this.#u8();
+				const members = readU8(c);
 				if (members === 255) {
 					return null;
 				}
-				const id = this.#i32();
-				const uid = this.#utf8();
-				const first = this.#u8() !== 0;
-				const nextId = this.#i32();
-				const second = this.#u8() !== 0;
+				const id = readI32(c);
+				const uid = readUtf8(c);
+				const first = readU8(c) !== 0;
+				const nextId = readI32(c);
+				const second = readU8(c) !== 0;
 				const eventName = this.#wrapper(
 					this.schema.wrapperNamed('Beyond_Gameplay_Actions_Param_string_ForMemoryPack'),
+					c,
+					undefined,
 				);
 				return {
 					$type: base,
@@ -615,22 +880,63 @@ export class MemoryPackReader {
 					nextID: nextId,
 					flag1: second,
 					eventName,
-					params: Array.from({ length: members - 6 }, () => this.#utf8()),
+					params: Array.from({ length: members - 6 }, () => readUtf8(c)),
 				};
 			}
 			case 'AudioBlackScreenBehaviour': {
 				// a raw struct: the skips are its padding
-				const preset = this.#u8();
-				const flags = this.#u8();
-				const fadeIn = this.#u8() !== 0;
-				this.#advance(1);
-				const inTime = this.#f32();
-				const fadeOut = this.#u8() !== 0;
-				this.#advance(3);
-				return { $type: base, preset, flags, fadeIn, inTime, fadeOut, outTime: this.#f32() };
+				const preset = readU8(c);
+				const flags = readU8(c);
+				const fadeIn = readU8(c) !== 0;
+				advance(c, 1);
+				const inTime = readF32(c);
+				const fadeOut = readU8(c) !== 0;
+				advance(c, 3);
+				return { $type: base, preset, flags, fadeIn, inTime, fadeOut, outTime: readF32(c) };
 			}
 			default: {
 				return undefined;
+			}
+		}
+	}
+
+	#skipSpecial(base: string, c: Cursor): boolean {
+		switch (base) {
+			case 'AnimationCurve': {
+				const members = readU8(c);
+				if (members === 255) {
+					return true;
+				}
+				if (members !== 3) {
+					throw new FormatError(`AnimationCurve with ${members} members`);
+				}
+				advance(c, 8);
+				const count = readListCount(c);
+				advance(c, count * 28);
+				return true;
+			}
+			case 'SendLuaEvent':
+			case 'SendLuaEvent1':
+			case 'SendLuaEvent2': {
+				const members = readU8(c);
+				if (members === 255) {
+					return true;
+				}
+				advance(c, 4);
+				skipUtf8(c);
+				advance(c, 6);
+				this.#skipWrapper(this.schema.wrapperNamed('Beyond_Gameplay_Actions_Param_string_ForMemoryPack'), c);
+				for (let i = 0; i < members - 6; i++) {
+					skipUtf8(c);
+				}
+				return true;
+			}
+			case 'AudioBlackScreenBehaviour': {
+				advance(c, 16);
+				return true;
+			}
+			default: {
+				return false;
 			}
 		}
 	}
@@ -717,29 +1023,29 @@ export class MemoryPackReader {
 		return { size: Math.ceil(size / align) * align, align };
 	}
 
-	#rawAdvance(type: Il2CppTypeRef, layout: Layout): MemoryPackValue {
-		return this.#rawAt(type, this.#advance(layout.size));
+	#rawAdvance(type: Il2CppTypeRef, layout: Layout, c: Cursor): MemoryPackValue {
+		return this.#rawAt(type, advance(c, layout.size), c);
 	}
 
-	#raw(type: Il2CppTypeRef): MemoryPackValue {
+	#raw(type: Il2CppTypeRef, c: Cursor): MemoryPackValue {
 		const layout = this.#layout(type);
 		if (layout === null) {
 			throw new FormatError(`no unmanaged layout for ${this.schema.runtime.typeName(type)}`);
 		}
 		if (type.kind === 'primitive' && type.name === 'bool') {
-			const value = this.#u8();
+			const value = readU8(c);
 			if (value > 1) {
 				throw new FormatError(`bool ${value}`);
 			}
 			return value === 1;
 		}
-		return this.#rawAdvance(type, layout);
+		return this.#rawAdvance(type, layout, c);
 	}
 
 	/** @returns an unmanaged value at an offset */
-	#rawAt(type: Il2CppTypeRef, at: number): MemoryPackValue {
+	#rawAt(type: Il2CppTypeRef, at: number, c: Cursor): MemoryPackValue {
 		const { runtime } = this.schema;
-		const view = this.#view;
+		const { view } = c;
 		if (type.kind === 'primitive') {
 			switch (type.name) {
 				case 'bool': {
@@ -785,10 +1091,10 @@ export class MemoryPackReader {
 			const inner = this.#layout(type.args[0])!;
 			const present = view.getUint8(at) !== 0;
 			if (runtime.definitionName(type.definition) === 'Nullable') {
-				return present ? this.#rawAt(type.args[0], at + inner.align) : null;
+				return present ? this.#rawAt(type.args[0], at + inner.align, c) : null;
 			}
 			// an Optional keeps its value when disabled
-			return { $type: 'Optional', enabled: present, value: this.#rawAt(type.args[0], at + inner.align) };
+			return { $type: 'Optional', enabled: present, value: this.#rawAt(type.args[0], at + inner.align, c) };
 		}
 		if (type.kind !== 'definition') {
 			throw new FormatError(`no raw form for ${runtime.typeName(type)}`);
@@ -797,7 +1103,7 @@ export class MemoryPackReader {
 		if (cached !== undefined) {
 			const result: { [key: string]: MemoryPackValue } = { $type: cached.name };
 			for (const field of cached.fields) {
-				result[field.name] = this.#rawAt(field.type, at + field.offset);
+				result[field.name] = this.#rawAt(field.type, at + field.offset, c);
 			}
 			return result;
 		}
@@ -806,10 +1112,10 @@ export class MemoryPackReader {
 		if (vector !== undefined) {
 			const element: Il2CppTypeRef = { kind: 'primitive', name: vector[0] };
 			const size = PRIMITIVE_SIZES.get(vector[0])!;
-			return Array.from({ length: vector[1] }, (_, i) => this.#rawAt(element, at + i * size));
+			return Array.from({ length: vector[1] }, (_, i) => this.#rawAt(element, at + i * size, c));
 		}
 		if (definition.enumType) {
-			return this.#rawAt(runtime.type(definition.elementTypeIndex), at);
+			return this.#rawAt(runtime.type(definition.elementTypeIndex), at, c);
 		}
 		const struct: RawStruct = {
 			name: definition.name,
@@ -825,55 +1131,15 @@ export class MemoryPackReader {
 		this.#rawStructs.set(definition.index, struct);
 		const result: { [key: string]: MemoryPackValue } = { $type: struct.name };
 		for (const field of struct.fields) {
-			result[field.name] = this.#rawAt(field.type, at + field.offset);
+			result[field.name] = this.#rawAt(field.type, at + field.offset, c);
 		}
 		return result;
 	}
 
 	/** @returns a collection's items; a null collection (count -1) reads as empty */
-	#list<T>(item: () => T): T[] {
-		const count = this.#i32();
-		if (count === -1) {
-			return [];
-		}
-		if (count < 0 || count > this.#bytes.length - this.#at) {
-			throw new FormatError(`collection of ${count} at ${this.#at - 4}`);
-		}
+	#list<T>(c: Cursor, item: () => T): T[] {
+		const count = readListCount(c);
 		return Array.from({ length: count }, item);
-	}
-
-	#utf8(): string | null {
-		const length = this.#i32();
-		if (length === -1) {
-			return null;
-		}
-		const at = this.#advance(length);
-		return utf8.decode(this.#bytes.subarray(at, at + length));
-	}
-
-	#advance(size: number): number {
-		const at = this.#at;
-		if (size < 0 || at + size > this.#bytes.length) {
-			throw new FormatError(`read of ${size} bytes at ${at} passes the end`);
-		}
-		this.#at += size;
-		return at;
-	}
-
-	#u8(): number {
-		return this.#view.getUint8(this.#advance(1));
-	}
-
-	#u16(): number {
-		return this.#view.getUint16(this.#advance(2), true);
-	}
-
-	#i32(): number {
-		return this.#view.getInt32(this.#advance(4), true);
-	}
-
-	#f32(): number {
-		return this.#view.getFloat32(this.#advance(4), true);
 	}
 }
 

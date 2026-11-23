@@ -56,6 +56,7 @@ export interface WaterVolumeFloater {
 const BELONG_TO_WATER_VOLUME = 39;
 
 const ROOT = 'Beyond_Gameplay_LevelDataForMemoryPack';
+const WATER_FIELDS = new Set(['waterVolumes', 'interactives']);
 
 /**
  * reads the water volumes and floating interactives of a scene's levels. a LevelData file the schema can't
@@ -98,7 +99,7 @@ export const readWaterVolumes = async (
 			const bytes = await vfs.read(VfsGroup.JsonData, path);
 			let data: MemoryPackValue;
 			try {
-				data = reader.decode(bytes, ROOT);
+				data = reader.decodeFields(bytes, ROOT, WATER_FIELDS);
 			} catch (error) {
 				if (!(error instanceof FormatError)) {
 					throw error;

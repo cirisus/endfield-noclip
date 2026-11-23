@@ -119,8 +119,11 @@ export const collectPlacements = async (
 	return { placed, createdControls, levelDataPaths };
 };
 
-/** the MemoryPack wrapper of LevelData, decoded whole for its splines and locks */
+/** the MemoryPack wrapper of LevelData */
 const LEVEL_DATA_ROOT = 'Beyond_Gameplay_LevelDataForMemoryPack';
+
+/** only the LevelData fields this reader uses */
+const LEVEL_EXTRA_FIELDS = new Set(['splines', 'interactiveLockData']);
 
 /** what a level's LevelData files hold beyond the placements */
 interface LevelExtras {
@@ -186,7 +189,8 @@ export class LevelDataExtras {
 				let data: MemoryPackValue;
 				try {
 					// oxlint-disable-next-line no-await-in-loop -- one level's files, each released once read
-					data = sources.memoryPack.decode(await sources.read(path), LEVEL_DATA_ROOT);
+					const bytes = await sources.read(path);
+					data = sources.memoryPack.decodeFields(bytes, LEVEL_DATA_ROOT, LEVEL_EXTRA_FIELDS);
 				} catch (error) {
 					sources.report(path, `splines and gameplay locks: ${formatErrorOnly(error).message}`);
 					continue;
