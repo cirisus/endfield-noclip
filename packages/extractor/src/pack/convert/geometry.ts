@@ -462,27 +462,43 @@ const splitByTangent = (
 
 	const origin: number[] = [];
 	const tangents: number[] = [];
-	// per source vertex, the new vertices made for it so far
-	const variants = new Map<number, number[]>();
+	// per source vertex, head and tail of a FIFO linked list of new vertex ids created for it (-1 = none)
+	const head = new Int32Array(mesh.vertexCount).fill(-1);
+	const tail = new Int32Array(mesh.vertexCount).fill(-1);
+	const next: number[] = [];
 	let at = 0;
 	for (const list of corners) {
 		for (let i = 0; i < list.length; i++, at++) {
 			const vertex = list[i];
 			const t = at * 4;
-			const [x, y, z, w] = [perCorner[t], perCorner[t + 1], perCorner[t + 2], perCorner[t + 3]];
-			const candidates = variants.getOrInsertComputed(vertex, () => []);
-			let id = candidates.find((candidate) => {
+			const x = perCorner[t];
+			const y = perCorner[t + 1];
+			const z = perCorner[t + 2];
+			const w = perCorner[t + 3];
+			const wSign = Math.sign(w);
+			let id = -1;
+			for (let candidate = head[vertex]; candidate !== -1; candidate = next[candidate]) {
 				const c = candidate * 4;
-				return (
-					Math.sign(tangents[c + 3]) === Math.sign(w) &&
+				if (
+					Math.sign(tangents[c + 3]) === wSign &&
 					tangents[c] * x + tangents[c + 1] * y + tangents[c + 2] * z >= SAME_TANGENT
-				);
-			});
-			if (id === undefined) {
+				) {
+					id = candidate;
+					break;
+				}
+			}
+			if (id === -1) {
 				id = origin.length;
 				origin.push(vertex);
 				tangents.push(x, y, z, w < 0 ? -1 : 1);
-				candidates.push(id);
+				next.push(-1);
+				const last = tail[vertex];
+				if (last === -1) {
+					head[vertex] = id;
+				} else {
+					next[last] = id;
+				}
+				tail[vertex] = id;
 			}
 			list[i] = id;
 		}
@@ -645,6 +661,8 @@ const padComponents = (data: Float32Array, from: number, to: number): Float32Arr
 /** turns snorm16-normalized 10-bit integers (`k / 32767`) back into the game's `k / 511` */
 const OCT10_SCALE = 32_767 / OCT10_RANGE;
 
+const OCT_DECODED: [number, number, number] = [0, 0, 0];
+
 /**
  * octahedral encoding into signed `bits`-bit integers, choosing the rounding (of four) that decodes closest
  * to the input
@@ -679,12 +697,17 @@ export const encodeOctahedral = (
 		v = fv;
 	}
 	const length = Math.hypot(x, y, z);
+	const qu0 = Math.floor(u * range);
+	const qu1 = Math.ceil(u * range);
+	const qv0 = Math.floor(v * range);
+	const qv1 = Math.ceil(v * range);
 	let best = -Infinity;
-	const decoded: [number, number, number] = [0, 0, 0];
-	for (const qu of [Math.floor(u * range), Math.ceil(u * range)]) {
-		for (const qv of [Math.floor(v * range), Math.ceil(v * range)]) {
-			decodeOctahedral(qu / range, qv / range, decoded);
-			const dot = (decoded[0] * x + decoded[1] * y + decoded[2] * z) / length;
+	for (let iu = 0; iu < 2; iu++) {
+		const qu = iu === 0 ? qu0 : qu1;
+		for (let iv = 0; iv < 2; iv++) {
+			const qv = iv === 0 ? qv0 : qv1;
+			decodeOctahedral(qu / range, qv / range, OCT_DECODED);
+			const dot = (OCT_DECODED[0] * x + OCT_DECODED[1] * y + OCT_DECODED[2] * z) / length;
 			if (dot > best) {
 				best = dot;
 				out[0] = qu;

@@ -45,6 +45,10 @@ export interface PrefabLight {
  * @throws {FormatError} on a malformed hierarchy, or a light without HG's additional light data
  */
 export const readPrefabLights = async (resolver: AssetResolver, root: ObjectRef): Promise<PrefabLight[]> => {
+	// fast pre-check: a prefab's components live in its own SerializedFile, so one holding no Light has none
+	if (!root.file.file.objects.some((info) => info.classId === UnityClass.Light)) {
+		return [];
+	}
 	const result: PrefabLight[] = [];
 	await walkPrefab(
 		resolver,

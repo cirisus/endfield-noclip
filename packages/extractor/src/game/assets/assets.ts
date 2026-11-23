@@ -114,9 +114,9 @@ export const recordBundleReads = async <T>(
 };
 
 /** how many opened bundles (directory + a few decoded blocks each) stay cached */
-const BUNDLE_CACHE_SIZE = 96;
+const BUNDLE_CACHE_SIZE = 192;
 /** how many bundles' SerializedFiles (metadata, plus small files read whole) stay cached */
-const FILE_CACHE_SIZE = 48;
+const FILE_CACHE_SIZE = 96;
 
 const CLASS_NAMES = new Map<number, string>(Object.entries(UnityClass).map(([name, id]) => [id, name]));
 
@@ -200,6 +200,8 @@ export class AssetResolver {
 	readonly #cabs = new Map<string, number>();
 	/** bundles whose directory has been registered in {@link #cabs} */
 	readonly #scanned = new Set<number>();
+	/** bundle catalog MD5s by manifest index */
+	readonly #bundleMd5s = new Map<number, Promise<string>>();
 	readonly #builtins: BuiltinLookup | undefined;
 
 	/**
@@ -231,8 +233,11 @@ export class AssetResolver {
 	 * @param index manifest bundle index
 	 * @returns the md5 of the bundle's file, from the VFS catalog (nothing is read)
 	 */
-	async bundleMd5(index: number): Promise<string> {
-		return (await findBundleFile(this.context.vfs, this.manifest.bundleName(index))).entry.dataMd5;
+	bundleMd5(index: number): Promise<string> {
+		return this.#bundleMd5s.getOrInsertComputed(
+			index,
+			async () => (await findBundleFile(this.context.vfs, this.manifest.bundleName(index))).entry.dataMd5,
+		);
 	}
 
 	/**

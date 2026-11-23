@@ -101,6 +101,8 @@ export type WorkerReply = { id: number; result: ConvertResult } | { id: number; 
 interface QueuedJob {
 	id: number;
 	job: ConvertJob;
+	/** manifest bundle index the job reads, to prefer a worker that already has it open */
+	affinity: number | undefined;
 	resolve: (result: ConvertResult) => void;
 	reject: (error: Error) => void;
 }
@@ -125,6 +127,8 @@ export class ConvertPool {
 	readonly #data: ConvertWorkerData;
 	readonly #workers: PoolWorker[] = [];
 	readonly #queue = new Queue<QueuedJob>();
+	/** last worker assigned a job for each manifest bundle index */
+	readonly #affinity = new Map<number, PoolWorker>();
 	#nextId = 0;
 
 	/**
@@ -138,12 +142,13 @@ export class ConvertPool {
 
 	/**
 	 * @param job the asset to convert
+	 * @param affinity manifest bundle index the job reads, to route same-bundle jobs to one worker
 	 * @returns the converted asset
 	 * @throws {Error} with the worker's message if conversion fails
 	 */
-	run(job: ConvertJob): Promise<ConvertResult> {
+	run(job: ConvertJob, affinity?: number): Promise<ConvertResult> {
 		const { promise, resolve, reject } = Promise.withResolvers<ConvertResult>();
-		this.#queue.enqueue({ id: this.#nextId++, job, resolve, reject });
+		this.#queue.enqueue({ id: this.#nextId++, job, affinity, resolve, reject });
 		this.#dispatch();
 		return promise;
 	}
@@ -151,19 +156,28 @@ export class ConvertPool {
 	/** hands queued jobs to workers with room, starting workers while the pool isn't full */
 	#dispatch(): void {
 		while (this.#queue.size > 0) {
+			const next = this.#queue.peek()!;
+			const preferred = next.affinity === undefined ? undefined : this.#affinity.get(next.affinity);
 			let target: PoolWorker | undefined;
-			for (const entry of this.#workers) {
-				if (target === undefined || entry.pending.size < target.pending.size) {
-					target = entry;
+			if (preferred !== undefined && preferred.pending.size < JOBS_PER_WORKER) {
+				target = preferred;
+			} else {
+				for (const entry of this.#workers) {
+					if (target === undefined || entry.pending.size < target.pending.size) {
+						target = entry;
+					}
+				}
+				if (target === undefined || (target.pending.size > 0 && this.#workers.length < this.size)) {
+					target = this.#start();
+					this.#workers.push(target);
+				} else if (target.pending.size >= JOBS_PER_WORKER) {
+					return;
 				}
 			}
-			if (target === undefined || (target.pending.size > 0 && this.#workers.length < this.size)) {
-				target = this.#start();
-				this.#workers.push(target);
-			} else if (target.pending.size >= JOBS_PER_WORKER) {
-				return;
-			}
 			const queued = this.#queue.dequeue()!;
+			if (queued.affinity !== undefined) {
+				this.#affinity.set(queued.affinity, target);
+			}
 			target.pending.set(queued.id, queued);
 			// oxlint-disable-next-line unicorn/require-post-message-target-origin -- a node worker, not a window
 			target.worker.postMessage({ type: 'job', id: queued.id, job: queued.job } satisfies WorkerRequest);
@@ -207,6 +221,11 @@ export class ConvertPool {
 			const index = this.#workers.indexOf(entry);
 			if (index !== -1) {
 				this.#workers.splice(index, 1);
+				for (const [bundle, worker] of this.#affinity) {
+					if (worker === entry) {
+						this.#affinity.delete(bundle);
+					}
+				}
 				this.#dispatch();
 			}
 		};

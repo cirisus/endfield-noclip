@@ -68,7 +68,7 @@ export interface PackOptions extends SceneSelection {
 }
 
 /** materials decoded concurrently */
-const MATERIAL_CONCURRENCY = 8;
+const MATERIAL_CONCURRENCY = 16;
 
 /**
  * placeholder error model until the game's HLOD switch distances are known: a node's geometric error is this

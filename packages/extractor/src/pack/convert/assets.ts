@@ -206,9 +206,14 @@ export const convertAssets = async (input: AssetConversionInput): Promise<AssetC
 		group.map(({ ref, place }) => textureUses.use(locatedObject(ref), place)),
 	);
 	timer.end('materials');
-	const geometries = await convertGeometries(input, jobs, meshNeeds(input, materials, textureUses));
+	// textures don't depend on geometry, so both share the worker pool; start geometry first so its initial
+	// window enters the queue ahead of textures, and commit geometry before textures so blob indices stay
+	// identical to running them sequentially
+	const geometryJobs = convertGeometries(input, jobs, meshNeeds(input, materials, textureUses));
+	const textureJobs = startTextureJobs(input, jobs, textureUses.objects);
+	const geometries = await geometryJobs;
 	timer.end('geometry');
-	const textures = await convertTextures(input, jobs, textureUses.objects);
+	const textures = await finishTextures(input, jobs, textureUses.objects, textureJobs);
 	// slots referenced textures by object; point them at the deduplicated entries
 	for (const material of materials.converted) {
 		if (material !== null) {
@@ -274,7 +279,7 @@ class ConvertJobs {
 	}
 
 	/** @returns the job's result, from the cache when every bundle it read is unchanged */
-	async run<J extends ConvertJob>(job: J): Promise<ConvertResultOf<J>> {
+	async run<J extends ConvertJob>(job: J, affinity?: number): Promise<ConvertResultOf<J>> {
 		const { pool, cache } = this.#input;
 		const ofJob = (result: ConvertResult): ConvertResultOf<J> => {
 			if (!resultMatches(job, result)) {
@@ -283,14 +288,14 @@ class ConvertJobs {
 			return result;
 		};
 		if (cache === null) {
-			return ofJob(await pool.run(job));
+			return ofJob(await pool.run(job, affinity));
 		}
 		const key = cache.key(job);
 		const recalled = await cache.recall(key, (sources) => this.#sourcesCurrent(sources));
 		if (recalled !== undefined) {
 			return ofJob(recalled);
 		}
-		const result = await pool.run(job);
+		const result = await pool.run(job, affinity);
 		await cache.remember(key, result);
 		return ofJob(result);
 	}
@@ -760,19 +765,29 @@ const convertGeometries = async (
 		generatedTangents: 0,
 		tangentUvConflicts: 0,
 	};
+	const { manifest } = input.resolver;
+	const inFlight = Math.max(CONVERSIONS_IN_FLIGHT, input.pool.size * 8);
 	await orderedPool(
 		input.geometries,
-		CONVERSIONS_IN_FLIGHT,
-		(asset, id) =>
-			jobs.run({
-				kind: 'geometry',
-				asset,
-				tangentUv: needs.tangentUv[id],
-				sway: needs.sway[id],
-				offset: needs.offset[id],
-				vat: needs.vat[id],
-				zstdLevel: input.geometryZstdLevel,
-			}),
+		inFlight,
+		(asset, id) => {
+			const affinity =
+				asset.synthetic !== undefined
+					? undefined
+					: (asset.locator?.bundleIndex ?? manifest.findAssets(asset.hash)[0]?.bundleIndex);
+			return jobs.run(
+				{
+					kind: 'geometry',
+					asset,
+					tangentUv: needs.tangentUv[id],
+					sway: needs.sway[id],
+					offset: needs.offset[id],
+					vat: needs.vat[id],
+					zstdLevel: input.geometryZstdLevel,
+				},
+				affinity,
+			);
+		},
 		(result, _asset, id) => {
 			if (result instanceof Error) {
 				entries.push({ status: 'failed' });
@@ -828,12 +843,36 @@ interface ConvertedTextures {
 	approximations: Record<string, number>;
 }
 
-/** converts every texture object, storing equal contents once and their pieces together */
-const convertTextures = async (
+/** converts every texture object on the worker pool while geometry runs, collecting small results in order */
+const startTextureJobs = (
 	input: AssetConversionInput,
 	jobs: ConvertJobs,
 	objects: TextureUses['objects'],
+): Promise<(ConvertResultOf<Extract<ConvertJob, { kind: 'texture' }>> | Error)[]> => {
+	const results: (ConvertResultOf<Extract<ConvertJob, { kind: 'texture' }>> | Error)[] = [];
+	const inFlight = Math.max(CONVERSIONS_IN_FLIGHT, input.pool.size * 8);
+	return orderedPool(
+		objects,
+		inFlight,
+		(object) =>
+			jobs.run(
+				{ kind: 'texture', locator: object.locator, zstdLevel: input.textureZstdLevel },
+				object.locator.bundleIndex,
+			),
+		(result) => {
+			results.push(result);
+		},
+	).then(() => results);
+};
+
+/** commits every converted texture object in id order, storing equal contents once and their pieces together */
+const finishTextures = async (
+	input: AssetConversionInput,
+	jobs: ConvertJobs,
+	objects: TextureUses['objects'],
+	pending: Promise<(ConvertResultOf<Extract<ConvertJob, { kind: 'texture' }>> | Error)[]>,
 ): Promise<ConvertedTextures> => {
+	const results = await pending;
 	const out: ConvertedTextures = {
 		entries: [],
 		samplers: [],
@@ -846,68 +885,64 @@ const convertTextures = async (
 	};
 	const samplerIds = new Map<string, number>();
 	const byContent = new Map<string, number>();
-	await orderedPool(
-		objects,
-		CONVERSIONS_IN_FLIGHT,
-		(object) => jobs.run({ kind: 'texture', locator: object.locator, zstdLevel: input.textureZstdLevel }),
-		(result, object) => {
-			if (result instanceof Error) {
-				out.ids.push(out.entries.length);
-				out.debug.push({
-					object: object.key,
-					name: null,
-					error: jobs.fail('texture', result),
-					id: out.entries.length,
-				});
-				out.entries.push({ status: 'failed' });
-				return;
-			}
-			const { name, pieces } = result;
-			for (const approximation of result.approximations) {
-				out.approximations[approximation] = (out.approximations[approximation] ?? 0) + 1;
-			}
-			const approximations =
-				result.approximations.length === 0 ? {} : { approximations: result.approximations };
-			const twin = byContent.get(result.contentKey);
-			if (twin !== undefined) {
-				out.duplicates++;
-				out.ids.push(twin);
-				out.debug.push({ object: object.key, name, error: null, id: twin, ...approximations });
-				return;
-			}
-			const id = out.entries.length;
-			byContent.set(result.contentKey, id);
-			out.ids.push(id);
-			out.formats[result.entry.format] = (out.formats[result.entry.format] ?? 0) + 1;
-			const stem = input.archives.stem(object.place);
-			const sampler = samplerIds.getOrInsertComputed(
-				JSON.stringify(result.entry.sampler),
-				() => out.samplers.push(result.entry.sampler) - 1,
-			);
-			out.entries.push({
-				status: 'ready',
-				...result.entry,
-				sampler,
-				pieces: pieces.map((piece, i) => {
-					const { width, height } = textureLevelLayout(result.entry, piece.firstLevel);
-					const group = i === 0 && piece.levelCount > 1 ? 'tail' : String(Math.max(width, height));
-					out.pieces[group] ??= { count: 0, stored: 0, raw: 0 };
-					// a texture's pieces sit together under its tail's hash, coarse to fine
-					const placement: BlobPlacement = {
-						kind: BlobKind.Texture,
-						stem,
-						locality: `${pieces[0].blob.hash}.${i.toString(16).padStart(2, '0')}`,
-					};
-					return {
-						blob: commit(input.store, piece.blob, placement, out.pieces[group]),
-						firstLevel: piece.firstLevel,
-						levelCount: piece.levelCount,
-					};
-				}),
+	for (const [index, result] of results.entries()) {
+		const object = objects[index];
+		if (result instanceof Error) {
+			out.ids.push(out.entries.length);
+			out.debug.push({
+				object: object.key,
+				name: null,
+				error: jobs.fail('texture', result),
+				id: out.entries.length,
 			});
-			out.debug.push({ object: object.key, name, error: null, id, ...approximations });
-		},
-	);
+			out.entries.push({ status: 'failed' });
+			continue;
+		}
+		const { name, pieces } = result;
+		for (const approximation of result.approximations) {
+			out.approximations[approximation] = (out.approximations[approximation] ?? 0) + 1;
+		}
+		const approximations =
+			result.approximations.length === 0 ? {} : { approximations: result.approximations };
+		const twin = byContent.get(result.contentKey);
+		if (twin !== undefined) {
+			out.duplicates++;
+			out.ids.push(twin);
+			out.debug.push({ object: object.key, name, error: null, id: twin, ...approximations });
+			continue;
+		}
+		const id = out.entries.length;
+		byContent.set(result.contentKey, id);
+		out.ids.push(id);
+		out.formats[result.entry.format] = (out.formats[result.entry.format] ?? 0) + 1;
+		const stem = input.archives.stem(object.place);
+		const sampler = samplerIds.getOrInsertComputed(
+			JSON.stringify(result.entry.sampler),
+			() => out.samplers.push(result.entry.sampler) - 1,
+		);
+		out.entries.push({
+			status: 'ready',
+			...result.entry,
+			sampler,
+			pieces: pieces.map((piece, i) => {
+				const { width, height } = textureLevelLayout(result.entry, piece.firstLevel);
+				const group = i === 0 && piece.levelCount > 1 ? 'tail' : String(Math.max(width, height));
+				out.pieces[group] ??= { count: 0, stored: 0, raw: 0 };
+				// a texture's pieces sit together under its tail's hash, coarse to fine
+				const placement: BlobPlacement = {
+					kind: BlobKind.Texture,
+					stem,
+					locality: `${pieces[0].blob.hash}.${i.toString(16).padStart(2, '0')}`,
+				};
+				return {
+					blob: commit(input.store, piece.blob, placement, out.pieces[group]),
+					firstLevel: piece.firstLevel,
+					levelCount: piece.levelCount,
+				};
+			}),
+		});
+		out.debug.push({ object: object.key, name, error: null, id, ...approximations });
+	}
 	return out;
 };
 

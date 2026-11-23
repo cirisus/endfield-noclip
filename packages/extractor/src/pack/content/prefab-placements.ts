@@ -23,6 +23,7 @@ import { placePrefabLight, readPrefabLights, type PrefabLight } from '../../game
 import type { PrefabRoots } from '../../game/prefabs/prefab-root.ts';
 import { type EffectLodSource, readPrefabRenderers, type PrefabRenderer } from '../../game/prefabs/prefab.ts';
 import type { WorldIndex } from '../../game/world/world-index.ts';
+import { mapPool } from '../../pool.ts';
 import { chainDistanceOrigin } from '../instances/chains.ts';
 
 import { onPivot } from './interactives.ts';
@@ -38,6 +39,9 @@ import {
 // every prefab the scene places, whatever placed it (dynamic structures, facilities, cabins): its lights and
 // renderers, once per prefab and pose, then placed per placement. a prefab that can't be read stands in as a
 // box rather than failing the scene (docs/extraction/prefabs-and-interactives.md)
+
+/** unique prefabs decoded concurrently while prefetching */
+const PREFAB_CONCURRENCY = 16;
 
 /**
  * places the lights and renderers of every placed prefab. a prefab's lights take their synthetic ids before
@@ -59,12 +63,24 @@ export const placePrefabs = async (
 	const { scene } = content;
 	const { subset } = scene;
 	const { resolver } = roots;
-	const particleQuad = await findMesh(world, resolver, RENDER_PIPELINE_QUAD_PATH);
-	const decalCube = await findMesh(world, resolver, DECAL_CUBE_PATH);
-	/** by prefab and pose: its renderers, or why they couldn't be read, and how reports name it */
-	const prefabs = new Map<string, Promise<{ label: string; read: PrefabRenderer[] | FormatError }>>();
-	const prefabLights = new Map<bigint, Promise<PrefabLight[]>>();
+	const [particleQuad, decalCube] = await Promise.all([
+		findMesh(world, resolver, RENDER_PIPELINE_QUAD_PATH),
+		findMesh(world, resolver, DECAL_CUBE_PATH),
+	]);
 	content.count('prefabLights', 0);
+
+	// filter placements first, then prefetch every unique prefab and its lights concurrently while committing
+	// results, stand-ins and unsupported reports in placement order below
+	interface PrefabWork {
+		key: string;
+		pathHash: bigint;
+		pose: StructureModel['pose'];
+		locked: boolean;
+		effectLod: EffectLodSource;
+	}
+	const activePlacements: { placement: StructureModel; key: string }[] = [];
+	const uniqueWork = new Map<string, PrefabWork>();
+	const uniqueHashes = new Set<bigint>();
 	for (const placement of placements) {
 		const { model, levelTag, pose } = placement;
 		// ownership filters can reject a prefab before any of its bundles are read
@@ -77,60 +93,64 @@ export const placePrefabs = async (
 		}
 		const locked = placement.locked ?? false;
 		// a dynamic scene's effect rows have their LOD band set by a LOD proxy instead of the camera
-		const { lodGrids } = placement;
-		const effectLod: EffectLodSource = lodGrids === undefined ? 'camera' : 'proxy';
-		const found = roots.root(model.pathHash);
+		const effectLod: EffectLodSource = placement.lodGrids === undefined ? 'camera' : 'proxy';
 		const key = `${model.pathHash}:${pose?.key ?? ''}:${locked}:${effectLod}`;
-		const prefab = prefabs.getOrInsertComputed(key, async () => {
-			const { label, root } = await found;
-			if (root instanceof FormatError) {
-				content.unsupportedPrefab({ path: label, reason: root.message });
-				return { label, read: root };
-			}
-			const read = await readPrefabRenderers(resolver, root, {
-				viewPose: pose,
-				particleQuad,
-				decalCube,
-				locked,
-				effectLod,
-			}).catch(formatErrorOnly);
-			if (read instanceof FormatError) {
-				content.unsupportedPrefab({ path: label, reason: read.message });
-				return { label, read };
-			}
-			for (const { name, unsupported } of read) {
-				if (unsupported !== null) {
-					content.standIns.push({ path: label, name, reason: unsupported, position: null });
-				}
-			}
-			return { label, read };
-		});
+		activePlacements.push({ placement, key });
+		uniqueHashes.add(model.pathHash);
+		if (!uniqueWork.has(key)) {
+			uniqueWork.set(key, { key, pathHash: model.pathHash, pose, locked, effectLod });
+		}
+	}
+
+	const hashList = [...uniqueHashes];
+	const lightsList = await mapPool(hashList, PREFAB_CONCURRENCY, async (hash) => {
+		const { label, root } = await roots.root(hash);
+		if (root instanceof FormatError) {
+			return { label, lights: [] as PrefabLight[], error: null as FormatError | null };
+		}
+		const lights = await readPrefabLights(resolver, root).catch(formatErrorOnly);
+		if (lights instanceof FormatError) {
+			return { label, lights: [] as PrefabLight[], error: lights };
+		}
+		return { label, lights, error: null as FormatError | null };
+	});
+	const prefabLights = new Map(hashList.map((hash, i) => [hash, lightsList[i]]));
+
+	const workList = [...uniqueWork.values()];
+	const renderersList = await mapPool(workList, PREFAB_CONCURRENCY, async (work) => {
+		const { label, root } = await roots.root(work.pathHash);
+		if (root instanceof FormatError) {
+			return { label, read: root as PrefabRenderer[] | FormatError };
+		}
+		const read = await readPrefabRenderers(resolver, root, {
+			viewPose: work.pose,
+			particleQuad,
+			decalCube,
+			locked: work.locked,
+			effectLod: work.effectLod,
+		}).catch(formatErrorOnly);
+		return { label, read };
+	});
+	const prefabs = new Map(workList.map((work, i) => [work.key, renderersList[i]]));
+
+	const reportedPrefabs = new Set<string>();
+	const reportedLightErrors = new Set<bigint>();
+	for (const { placement, key } of activePlacements) {
+		const { model, levelTag, lodGrids } = placement;
 		const rotation = unityEulerQuaternion(model.rotation);
-		{
-			// the prefab's own lights load with the placement too
-			const read = prefabLights.getOrInsertComputed(model.pathHash, async () => {
-				const { label, root } = await found;
-				if (root instanceof FormatError) {
-					// reported with the renderers
-					return [];
-				}
-				const lights = await readPrefabLights(resolver, root).catch(formatErrorOnly);
-				if (lights instanceof FormatError) {
-					content.unsupportedPrefab({ path: label, reason: lights.message });
-					return [];
-				}
-				return lights;
-			});
-			// oxlint-disable-next-line no-await-in-loop -- stable synthetic ids
-			for (const prefabLight of await read) {
-				const light = placePrefabLight(
-					prefabLight,
-					{ position: model.position, rotation, scale: model.scale },
-					content.nextSyntheticId(levelTag),
-				);
-				if (content.addLight(light, placement.visibility)) {
-					content.count('prefabLights');
-				}
+		const lightEntry = prefabLights.get(model.pathHash)!;
+		if (lightEntry.error !== null && !reportedLightErrors.has(model.pathHash)) {
+			reportedLightErrors.add(model.pathHash);
+			content.unsupportedPrefab({ path: lightEntry.label, reason: lightEntry.error.message });
+		}
+		for (const prefabLight of lightEntry.lights) {
+			const light = placePrefabLight(
+				prefabLight,
+				{ position: model.position, rotation, scale: model.scale },
+				content.nextSyntheticId(levelTag),
+			);
+			if (content.addLight(light, placement.visibility)) {
+				content.count('prefabLights');
 			}
 		}
 		const rootMatrix = trsMatrix(model.position, rotation, model.scale);
@@ -139,8 +159,19 @@ export const placePrefabs = async (
 			visibility: placement.visibility,
 			loadReach: placement.grid === undefined ? null : gridIdReach(placement.grid),
 		};
-		// oxlint-disable-next-line no-await-in-loop -- stable asset ids and bounded bundle cache
-		const { label, read } = await prefab;
+		const { label, read } = prefabs.get(key)!;
+		if (!reportedPrefabs.has(key)) {
+			reportedPrefabs.add(key);
+			if (read instanceof FormatError) {
+				content.unsupportedPrefab({ path: label, reason: read.message });
+			} else {
+				for (const { name, unsupported } of read) {
+					if (unsupported !== null) {
+						content.standIns.push({ path: label, name, reason: unsupported, position: null });
+					}
+				}
+			}
+		}
 		if (read instanceof FormatError) {
 			// its size isn't known, so a metre cube stands on its pivot, scaled with the placement
 			content.addStandInCube(
