@@ -411,10 +411,26 @@ fn slot_set(uv: vec4f, flags: u32, slot: u32) -> vec2f {
 	return select(uv.xy, uv.zw, (flags & (1u << (UV1_SHIFT + slot))) != 0u);
 }
 
-// read through the buffer: arrays in a `let` copy can't be indexed by a variable
-fn slot_uv(look_id: u32, uv: vec4f, flags: u32, slot: u32) -> vec2f {
+// samples a material slot with explicit screen-space derivatives (already scaled by exp2(bias)), so optional
+// maps can be skipped in non-uniform control flow without changing mip selection
+fn sample_slot(
+	tex: texture_2d<f32>,
+	samp: sampler,
+	look_id: u32,
+	uv: vec4f,
+	uv0_dx: vec2f,
+	uv0_dy: vec2f,
+	uv1_dx: vec2f,
+	uv1_dy: vec2f,
+	flags: u32,
+	slot: u32,
+) -> vec4f {
+	let use_uv1 = (flags & (1u << (UV1_SHIFT + slot))) != 0u;
 	let t = looks[look_id].slot_uv[slot];
-	return slot_set(uv, flags, slot) * t.xy + t.zw;
+	let coords = select(uv.xy, uv.zw, use_uv1) * t.xy + t.zw;
+	let dx = select(uv0_dx, uv1_dx, use_uv1) * t.xy;
+	let dy = select(uv0_dy, uv1_dy, use_uv1) * t.xy;
+	return textureSampleGrad(tex, samp, coords, dx, dy);
 }
 
 // one tri-channel mask channel's blend toward its colour, roughness and metallic
@@ -553,15 +569,20 @@ fn fs_transparent(in: VertexOut) -> @location(0) vec4f {
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
 	let look = looks[id];
-	let bias = frame.params.y;
-	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
-	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
+	let gradient_scale = exp2(frame.params.y);
+	let uv0_dx = dpdx(in.uv.xy) * gradient_scale;
+	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
+	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
+	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
 	let shaded = shade(in, false);
 	// a map still streaming leaves the tint's alpha alone
-	var alpha = select(base.a, packed.a, (flags & ALPHA_NORMAL) != 0u);
-	let alpha_map = select(BASE_MAP, NORMAL_MAP, (flags & ALPHA_NORMAL) != 0u);
-	if ((flags & alpha_map) == 0u) {
-		alpha = 1.0;
+	var alpha = 1.0;
+	if ((flags & ALPHA_NORMAL) != 0u) {
+		if ((flags & NORMAL_MAP) != 0u) {
+			alpha = sample_slot(normal_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, NORMAL_SLOT).a;
+		}
+	} else if ((flags & BASE_MAP) != 0u) {
+		alpha = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT).a;
 	}
 	alpha = saturate(alpha * look.emissive2.w);
 	// premultiplied glass (detail2.z) adds its whole radiance and lets its opacity only dim what's behind
@@ -602,34 +623,37 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
 	let look = looks[id];
-	// derivatives (and implicit-LOD sampling) must happen in uniform control flow
-	let faceted = cross(dpdy(in.rel), dpdx(in.rel));
-	let bias = frame.params.y;
-	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
-	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
-	let mask = textureSampleBias(mask_map, detail_sampler, slot_uv(id, in.uv, flags, MASK_SLOT), bias);
-	let glow = textureSampleBias(emissive_map, base_sampler, slot_uv(id, in.uv, flags, EMISSIVE_SLOT), bias);
-	let detail = textureSampleBias(detail_map, detail_sampler, slot_uv(id, in.uv, flags, DETAIL_SLOT), bias);
-	// the parallax march samples with explicit gradients: those of UV set 0 (as the game does) for the noise,
-	// and of the pattern's own UVs for the pattern
-	let gradient_scale = exp2(bias);
-	let parallax_uv = slot_set(in.uv, flags, PARALLAX_SLOT);
+	// derivatives must happen in uniform control flow; sampling with explicit gradients lets each optional
+	// texture skip its fetch when its flag is unset
+	let rel_dx = dpdx(in.rel);
+	let rel_dy = dpdy(in.rel);
+	let faceted = cross(rel_dy, rel_dx);
+	let gradient_scale = exp2(frame.params.y);
 	let uv0_dx = dpdx(in.uv.xy) * gradient_scale;
 	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
-	let parallax_dx = dpdx(parallax_uv) * gradient_scale;
-	let parallax_dy = dpdy(parallax_uv) * gradient_scale;
-	// the flowing glow's noise, on its own UV set
-	let noise_uv = slot_set(in.uv, flags, NOISE_SLOT);
-	let noise_dx = dpdx(noise_uv) * gradient_scale;
-	let noise_dy = dpdy(noise_uv) * gradient_scale;
-	// the layer's coordinates: UV set 0, world XZ, or UV set 2, which the viewer reads as set 0
-	// (`layerBlendParams` in lit-look.ts)
-	let layer_type = look.parallax.w;
-	let layer_source = select(in.uv.xy, (in.rel + frame.eye.xyz).xz, layer_type > 0.5 && layer_type < 1.5);
-	let layer_t = look.slot_uv[LAYER_SLOT];
-	let layer_uv = layer_source * layer_t.xy + layer_t.zw;
-	let layer_dx = dpdx(layer_uv) * gradient_scale;
-	let layer_dy = dpdy(layer_uv) * gradient_scale;
+	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
+	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
+
+	var base = vec4f(1.0);
+	if ((flags & BASE_MAP) != 0u) {
+		base = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT);
+	}
+	var packed = vec4f(0.5, 0.5, 1.0, 1.0);
+	if ((flags & NORMAL_MAP) != 0u) {
+		packed = sample_slot(normal_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, NORMAL_SLOT);
+	}
+	var mask = vec4f(1.0);
+	if ((flags & MASK_MAP) != 0u) {
+		mask = sample_slot(mask_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, MASK_SLOT);
+	}
+	var glow = vec4f(0.0);
+	if ((flags & EMISSIVE_MAP) != 0u) {
+		glow = sample_slot(emissive_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, EMISSIVE_SLOT);
+	}
+	var detail = vec4f(0.5, 0.5, 1.0, 1.0);
+	if ((flags & DETAIL_MAP) != 0u) {
+		detail = sample_slot(detail_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, DETAIL_SLOT);
+	}
 
 	// the gaps view (`DEBUG_VIEWS` in debug-views.ts): a material drawn without something the game draws
 	// (`GAPS_FLOAT` in look.ts) shows amber and black stripes, 25 cm wide in world space, over its base map's
@@ -732,6 +756,14 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	var layer = vec4f(0.0);
 	var layer_bump = vec4f(0.0);
 	if (layered) {
+		// the layer's coordinates: UV set 0, world XZ, or UV set 2, which the viewer reads as set 0
+		// (`layerBlendParams` in lit-look.ts)
+		let world_xz = look.parallax.w > 0.5 && look.parallax.w < 1.5;
+		let layer_source = select(in.uv.xy, (in.rel + frame.eye.xyz).xz, world_xz);
+		let layer_t = look.slot_uv[LAYER_SLOT];
+		let layer_uv = layer_source * layer_t.xy + layer_t.zw;
+		let layer_dx = select(uv0_dx, rel_dx.xz * gradient_scale, world_xz) * layer_t.xy;
+		let layer_dy = select(uv0_dy, rel_dy.xz * gradient_scale, world_xz) * layer_t.xy;
 		layer = textureSampleGrad(parallax_map, parallax_sampler, layer_uv, layer_dx, layer_dy);
 		layer_bump = textureSampleGrad(parallax_noise_map, parallax_sampler, layer_uv, layer_dx, layer_dy);
 	}
@@ -875,6 +907,10 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	// `HGRP/Foliage/Glow`'s flowing glow: the noise map alone in the parallax slots
 	let parallax_users = PARALLAX_MAP | PARALLAX_NOISE_MAP | LAYER_BLEND | VERTEX_OFFSET;
 	if ((flags & parallax_users) == PARALLAX_NOISE_MAP) {
+		let noise_uv1 = (flags & (1u << (UV1_SHIFT + NOISE_SLOT))) != 0u;
+		let noise_uv = select(in.uv.xy, in.uv.zw, noise_uv1);
+		let noise_dx = select(uv0_dx, uv1_dx, noise_uv1);
+		let noise_dy = select(uv0_dy, uv1_dy, noise_uv1);
 		s.emission += flow_glow(look, s.albedo, in.color.r, noise_uv, noise_dx, noise_dy);
 	}
 
@@ -885,6 +921,10 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 		if (glow_mask > 0.01) {
 			let v = normalize(-in.rel);
 			let has_noise = (flags & PARALLAX_NOISE_MAP) != 0u;
+			let p_uv1 = (flags & (1u << (UV1_SHIFT + PARALLAX_SLOT))) != 0u;
+			let parallax_uv = select(in.uv.xy, in.uv.zw, p_uv1);
+			let parallax_dx = select(uv0_dx, uv1_dx, p_uv1);
+			let parallax_dy = select(uv0_dy, uv1_dy, p_uv1);
 			s.emission += parallax_glow(look, in, v, n, has_noise, parallax_uv, uv0_dx, uv0_dy, parallax_dx, parallax_dy) *
 				(glow_mask * glow_mask);
 		}
@@ -1245,18 +1285,34 @@ fn fs_cutout_depth(in: CutoutDepthVaryings) {
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
 	let look = looks[id];
-	let bias = frame.params.y;
-	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
-	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
-	let texel = select(base, packed, (flags & ALPHA_NORMAL) != 0u);
-	// a dithered look's `_USE_MASK`, in the noise slot (white until it's loaded); sampled here, in uniform
-	// control flow
-	let masking = textureSampleBias(parallax_noise_map, noise_sampler, slot_uv(id, in.uv, flags, NOISE_SLOT), bias);
+	let gradient_scale = exp2(frame.params.y);
+	let uv0_dx = dpdx(in.uv.xy) * gradient_scale;
+	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
+	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
+	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
+	var texel: vec4f;
+	if ((flags & ALPHA_NORMAL) != 0u) {
+		texel = sample_slot(normal_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, NORMAL_SLOT);
+	} else {
+		texel = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT);
+	}
 	if (look.tint.w < 0.0) {
 		let dither = look.canopy;
 		let bits = u32(dither.w);
 		var scaled = dither_alpha(look, bits, texel, in.color.a, 1.0 / in.position.w);
 		if ((bits & DITHER_MASK) != 0u) {
+			let masking = sample_slot(
+				parallax_noise_map,
+				noise_sampler,
+				id,
+				in.uv,
+				uv0_dx,
+				uv0_dy,
+				uv1_dx,
+				uv1_dy,
+				flags,
+				NOISE_SLOT,
+			);
 			scaled *= select(masking.a, masking.r, (bits & DITHER_MASK_RED) != 0u);
 		}
 		let alpha = pow(saturate(scaled), dither.y);
