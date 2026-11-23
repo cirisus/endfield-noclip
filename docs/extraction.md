@@ -29,16 +29,16 @@ pnpm extract --help
 `withContext` (`context.ts`), which mounts the VFS, builds the world index, and creates the asset
 resolver lazily.
 
-| command   | purpose                                                                                                                                                                                                                                                                                                                                  |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`    | writes `endfield.local.json` with `Endfield_Data` path and validated keys                                                                                                                                                                                                                                                                |
-| `pack`    | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                                                                                                                                                                                                          |
-| `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`), single chunks (`chunk`: entities, HLOD stats, foliage), `env` (level or `--at`), `controls`                                                                                                                                                                     |
-| `inspect` | decodes and summarizes a `prefab` (hierarchy + packer output), `material` (declared props + surface; `--name`/`--all`/`--prop`), `shader` (declared props, defaults, flags; by object or name regex), `mesh` (channels, color/UV ranges, `--vertices`), `texture` (KTX2 or DX10 DDS via `-o`, with `--layer`/`--mip`), or `water-config` |
-| `audit`   | queries packed packages under `out/` without opening the install: `list`, `tree`, `instances`, `materials` (`--id`/`--packed`), `geometries`, `textures`, `stand-ins`, `interactives`, `water`, `env`                                                                                                                                    |
-| `data`    | path catalog `paths`/`resolve`, SparkBuffer `tables`/`table`, and MemoryPack level `scripts`/`interactives`                                                                                                                                                                                                                              |
-| `vfs`     | lists VFS groups/files and extracts one logical file                                                                                                                                                                                                                                                                                     |
-| `bundle`  | inspects bundles: header, per-class counts, object JSON, stream data, container path and class search in main/initial bundles                                                                                                                                                                                                            |
+| command   | purpose                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`    | writes `endfield.local.json` with `Endfield_Data` path and validated keys                                                                                                                                                                                                                                                                                         |
+| `pack`    | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                                                                                                                                                                                                                                   |
+| `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`), single chunks (`chunk`: entities, HLOD stats, foliage), `env` (level or `--at`), `controls`                                                                                                                                                                                              |
+| `inspect` | decodes and summarizes a `prefab` (hierarchy + packer output), `material` (declared props + surface; `--name`/`--all`/`--prop`), `shader` (declared props, defaults, flags; by object or name regex), `mesh` (channels, color/UV ranges, `--vertices`), `texture` (KTX2 or DX10 DDS via `-o`, with `--layer`/`--mip`), or `water-config`                          |
+| `audit`   | queries packed packages under `out/` without opening the install: `list`, `core`, `tree`, `instances`, `materials` (`--id`/`--packed`/`all`), `geometries` (`--packed`/`--min-span`/`--stats`/`all`), `textures`, `stand-ins`, `interactives`, `water` (`--near`/`--config`/`--packed`), `env` (`--phase`/`--post`/`--section`/`--packed`), `irradiance` (`--at`) |
+| `data`    | path catalog `paths`/`resolve`, SparkBuffer `tables`/`table`, and MemoryPack level `scripts`/`interactives`                                                                                                                                                                                                                                                       |
+| `vfs`     | lists VFS groups/files and extracts one logical file                                                                                                                                                                                                                                                                                                              |
+| `bundle`  | inspects bundles: header, per-class counts, object JSON, stream data, container path and class search in main/initial bundles                                                                                                                                                                                                                                     |
 
 only `init` and `pack` are needed to build packages; the rest are for research and debugging.
 
@@ -112,11 +112,14 @@ requirements by `&`, each `control=values` (or `always` when ungated). `static` 
   `TextAsset`'s `m_Script` directly (headers between multiple matches); `--json` wraps the output in
   a single JSON array.
 - **`audit`**: reads `out/<scene>/` directly (no game install opened): `list` summarizes every
-  packed package under `out/` (filterable with `--has water-volumes|stand-ins|errors`), `tree`
+  packed package under `out/` (filterable with `--has water-volumes|stand-ins|errors`), `core` lists
+  or dumps decoded/decompressed members of `core.czar` (accepting `CORE_PATHS` shorthands), `tree`
   inspects `core.czar` tile nodes and distances (`--at`, `--from`, `--blob`, `--level`), `instances`
-  traces `debug/instances.jsonl` rows to their owning tile node and decoded LOD chain, and
-  `materials` / `geometries` / `textures` / `stand-ins` / `interactives` / `water` / `env` query
-  `debug/` (`materials --packed` also reads the packed `core.czar` entry).
+  traces `debug/instances.jsonl` rows to their owning tile node and decoded LOD chain, `irradiance`
+  summarizes `tables/irradiance.bin` or decodes raw probes at `--at x,y,z`, and `materials` /
+  `geometries` / `textures` / `stand-ins` / `interactives` / `water` / `env` query `debug/` and
+  packed `core.czar` tables (`--id` accepts comma-separated/repeated ids; `materials` and
+  `geometries` also accept `all` to scan every package under `out/`).
 
 ## local config and keys
 

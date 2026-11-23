@@ -155,6 +155,8 @@ describe('PackedPackage', () => {
 
 			await using pkg = await PackedPackage.open(dir);
 			assert.equal(pkg.manifest.scene.id, 'test_scene');
+			assert.ok(pkg.coreFiles().some((file) => file.path === CORE_PATHS.manifest));
+			assert.ok((await pkg.readCore('manifest')).byteLength > 0);
 			assert.equal((await pkg.tree()).nodes.length, 1);
 			assert.equal((await pkg.chains()).length, 1);
 
@@ -168,6 +170,7 @@ describe('PackedPackage', () => {
 			assert.equal(reversed.get(coreBlobId), coreHash);
 			assert.equal(reversed.get(shardBlobId), shardHash);
 
+			assert.deepEqual(await pkg.readBlob(shardBlobId, BlobKind.Instances), encodedBlock);
 			const decoded = await pkg.readInstanceBlock(shardBlobId);
 			assert.deepEqual(decoded.origin, block.origin);
 			assert.deepEqual(decoded.chains, block.chains);

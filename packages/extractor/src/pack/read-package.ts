@@ -4,12 +4,15 @@ import { zstdDecompressSync } from 'node:zlib';
 
 import { decodeBlobTable, type BlobRecord } from '@endfield-noclip/package-format/blob-table';
 import { BlobCodec, BlobKind } from '@endfield-noclip/package-format/blobs';
+import type { EnvironmentTable } from '@endfield-noclip/package-format/environment';
+import { decodeGeometryTable, type GeometryTable } from '@endfield-noclip/package-format/geometry-table';
 import {
 	decodeChains,
 	decodeInstanceBlock,
 	type Chain,
 	type InstanceBlock,
 } from '@endfield-noclip/package-format/instances';
+import { decodeIrradianceTable, type IrradianceTable } from '@endfield-noclip/package-format/irradiance';
 import {
 	CORE_ARCHIVE,
 	CORE_ARCHIVE_INDEX,
@@ -18,6 +21,7 @@ import {
 } from '@endfield-noclip/package-format/manifest';
 import type { MaterialTable } from '@endfield-noclip/package-format/materials';
 import { decodeTree, type Tree } from '@endfield-noclip/package-format/tree';
+import type { WaterTable } from '@endfield-noclip/package-format/water';
 
 import { openArchive, type Archive } from '@mary-ext/czar';
 import { fromFileHandle } from '@mary-ext/czar/node';
@@ -26,6 +30,17 @@ import { mapPool } from '../pool.ts';
 
 const BLOB_MEMBER = /^blobs\/(?:.+\/)?([0-9a-f]+)\.[a-z]+$/;
 const INSTANCE_MEMBER = /^blobs\/(?:.+\/)?([0-9a-f]+)\.inst$/;
+
+const CORE_PATH_ALIASES = new Map<string, string>(Object.entries(CORE_PATHS));
+
+/**
+ * resolves a {@link CORE_PATHS} shorthand (e.g. `water`, `environment`) to its archive path, or returns
+ * `path` unchanged
+ *
+ * @param path member path or shorthand key
+ * @returns resolved archive path in `core.czar`
+ */
+export const resolveCorePath = (path: string): string => CORE_PATH_ALIASES.get(path) ?? path;
 
 /** concurrent shard header opens when locating blobs by hash */
 const ARCHIVE_CONCURRENCY = 8;
@@ -40,7 +55,11 @@ export class PackedPackage implements AsyncDisposable {
 	#tree: Promise<Tree> | undefined;
 	#blobs: Promise<BlobRecord[]> | undefined;
 	#chains: Promise<Chain[]> | undefined;
+	#geometries: Promise<GeometryTable> | undefined;
 	#materials: Promise<MaterialTable> | undefined;
+	#water: Promise<WaterTable> | undefined;
+	#environment: Promise<EnvironmentTable> | undefined;
+	#irradiance: Promise<IrradianceTable> | undefined;
 
 	private constructor(
 		dir: string,
@@ -78,6 +97,22 @@ export class PackedPackage implements AsyncDisposable {
 		}
 	}
 
+	/** @returns members of `core.czar` in archive order with stored byte lengths */
+	coreFiles(): { path: string; size: number }[] {
+		return this.#core.files.map((file) => ({ path: file.path, size: file.size }));
+	}
+
+	/**
+	 * reads a member of `core.czar`, decompressing `.zst` members automatically
+	 *
+	 * @param path member path in `core.czar`, or a {@link CORE_PATHS} key (e.g. `water`, `environment`)
+	 * @returns uncompressed member bytes
+	 * @throws {Error} if the member is absent from `core.czar`
+	 */
+	readCore(path: string): Promise<Uint8Array> {
+		return readCoreMember(this.#core, resolveCorePath(path));
+	}
+
 	/** @returns decoded `tree.bin` */
 	tree(): Promise<Tree> {
 		this.#tree ??= readCoreMember(this.#core, CORE_PATHS.tree).then(decodeTree);
@@ -96,6 +131,12 @@ export class PackedPackage implements AsyncDisposable {
 		return this.#chains;
 	}
 
+	/** @returns decoded `tables/geometries.bin.zst` */
+	geometries(): Promise<GeometryTable> {
+		this.#geometries ??= readCoreMember(this.#core, CORE_PATHS.geometries).then(decodeGeometryTable);
+		return this.#geometries;
+	}
+
 	/** @returns decoded `tables/materials.json.zst` */
 	materials(): Promise<MaterialTable> {
 		this.#materials ??= readCoreMember(this.#core, CORE_PATHS.materials).then((bytes) => {
@@ -103,6 +144,30 @@ export class PackedPackage implements AsyncDisposable {
 			return table;
 		});
 		return this.#materials;
+	}
+
+	/** @returns decoded `tables/water.json.zst` */
+	water(): Promise<WaterTable> {
+		this.#water ??= readCoreMember(this.#core, CORE_PATHS.water).then((bytes) => {
+			const table: WaterTable = JSON.parse(new TextDecoder().decode(bytes));
+			return table;
+		});
+		return this.#water;
+	}
+
+	/** @returns decoded `tables/environment.json.zst` */
+	environment(): Promise<EnvironmentTable> {
+		this.#environment ??= readCoreMember(this.#core, CORE_PATHS.environment).then((bytes) => {
+			const table: EnvironmentTable = JSON.parse(new TextDecoder().decode(bytes));
+			return table;
+		});
+		return this.#environment;
+	}
+
+	/** @returns decoded `tables/irradiance.bin` */
+	irradiance(): Promise<IrradianceTable> {
+		this.#irradiance ??= readCoreMember(this.#core, CORE_PATHS.irradiance).then(decodeIrradianceTable);
+		return this.#irradiance;
 	}
 
 	/**
@@ -219,20 +284,21 @@ export class PackedPackage implements AsyncDisposable {
 	}
 
 	/**
-	 * reads and decodes one instance block blob from its archive
+	 * reads and decompresses one blob from its owning archive
 	 *
-	 * @param blobId blob index of a {@link BlobKind.Instances} blob
-	 * @returns the decoded instance block
-	 * @throws {Error} if `blobId` is out of range or not an instance block
+	 * @param blobId blob table index
+	 * @param expectedKind when given, verifies the blob's {@link BlobKind}
+	 * @returns raw (decompressed) blob bytes
+	 * @throws {Error} if `blobId` is out of range, its archive is missing, or its kind doesn't match
 	 */
-	async readInstanceBlock(blobId: number): Promise<InstanceBlock> {
+	async readBlob(blobId: number, expectedKind?: BlobKind): Promise<Uint8Array> {
 		const blobs = await this.blobs();
 		const record = blobs[blobId];
 		if (record === undefined) {
 			throw new Error(`blob ${blobId} is out of range (${blobs.length} blobs)`);
 		}
-		if (record.kind !== BlobKind.Instances) {
-			throw new Error(`blob ${blobId} is not an instance block (kind ${record.kind})`);
+		if (expectedKind !== undefined && record.kind !== expectedKind) {
+			throw new Error(`blob ${blobId} has kind ${record.kind}, expected ${expectedKind}`);
 		}
 		const info = this.manifest.archives[record.archive];
 		if (info === undefined) {
@@ -245,7 +311,18 @@ export class PackedPackage implements AsyncDisposable {
 			await using handle = await open(join(this.dir, info.name));
 			stored = await readRange(handle, info.dataOffset + record.offset, record.length);
 		}
-		const raw = record.codec === BlobCodec.Zstd ? new Uint8Array(zstdDecompressSync(stored)) : stored;
+		return record.codec === BlobCodec.Zstd ? new Uint8Array(zstdDecompressSync(stored)) : stored;
+	}
+
+	/**
+	 * reads and decodes one instance block blob from its archive
+	 *
+	 * @param blobId blob index of a {@link BlobKind.Instances} blob
+	 * @returns the decoded instance block
+	 * @throws {Error} if `blobId` is out of range or not an instance block
+	 */
+	async readInstanceBlock(blobId: number): Promise<InstanceBlock> {
+		const raw = await this.readBlob(blobId, BlobKind.Instances);
 		return decodeInstanceBlock(raw);
 	}
 

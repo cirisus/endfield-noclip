@@ -102,6 +102,30 @@ export const parseOptionalInteger = (text: string | undefined, label: string): n
 };
 
 /**
+ * parses repeatable and/or comma-separated integer option values (e.g. `--id 1,2 --id 3`)
+ *
+ * @param values raw option values from `parseArgs` (`multiple: true`)
+ * @param label flag name, for the error
+ * @returns the set of integers, or `undefined` if the option wasn't given
+ * @throws {Error} if any entry isn't an integer
+ */
+export const parseIntegerSet = (
+	values: readonly string[] | undefined,
+	label: string,
+): Set<number> | undefined => {
+	if (values === undefined || values.length === 0) {
+		return undefined;
+	}
+	const out = new Set<number>();
+	for (const entry of values) {
+		for (const part of entry.split(',')) {
+			out.add(parseInteger(part, label));
+		}
+	}
+	return out;
+};
+
+/**
  * @param text an optional option's value
  * @param label flag name, for the error
  * @returns the path id, or `undefined` if the option wasn't given
