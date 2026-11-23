@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
-import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, link, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, link, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { crc32 } from 'node:zlib';
 
 import type { BlobRecord } from '@endfield-noclip/package-format/blob-table';
@@ -12,7 +10,7 @@ import { ARCHIVE_ID_LENGTH, archiveName } from '@endfield-noclip/package-format/
 import type { TileKey } from '@endfield-noclip/package-format/tiles';
 
 import { mapDefined } from '@mary-ext/array-fns';
-import { type ArchivePlan, encodeArchive, encodeArchiveStream, planArchive } from '@mary-ext/czar';
+import { type ArchivePlan, encodeArchive, planArchive } from '@mary-ext/czar';
 
 import { ignoreMissing } from '../../errors.ts';
 import { mapPool } from '../../pool.ts';
@@ -330,8 +328,7 @@ export class BlobStore {
 					return describe(true);
 				}
 			}
-			const stream = encodeArchiveStream(plan, (source) => createReadStream(this.#blobPath(source.index)));
-			await pipeline(Readable.fromWeb(stream), createWriteStream(target));
+			await writePlannedArchive(target, plan, (index) => this.#blobPath(index));
 			return describe(false);
 		});
 		return new Map(written.map((archive) => [archive.name, archive]));
@@ -464,6 +461,87 @@ const reuseFile = async (source: string, target: string): Promise<void> => {
 	} catch {
 		await copyFile(source, target, constants.COPYFILE_FICLONE);
 	}
+};
+
+/** staging buffer size for writing planned archives */
+const ARCHIVE_WRITE_BUFFER = 4 * 1024 * 1024;
+
+/** writes a planned archive directly to disk with buffered writes, avoiding per-blob stream overhead */
+const writePlannedArchive = async (
+	target: string,
+	plan: ArchivePlan<BlobSource>,
+	blobPathOf: (index: number) => string,
+): Promise<void> => {
+	await using handle = await open(target, 'w');
+	const buffer = new Uint8Array(Math.min(ARCHIVE_WRITE_BUFFER, Math.max(4096, plan.size)));
+	let used = 0;
+
+	const writeAll = async (data: Uint8Array): Promise<void> => {
+		let offset = 0;
+		while (offset < data.length) {
+			// oxlint-disable-next-line no-await-in-loop -- finish short writes
+			const { bytesWritten } = await handle.write(data, offset, data.length - offset);
+			offset += bytesWritten;
+		}
+	};
+
+	const flush = async (): Promise<void> => {
+		if (used > 0) {
+			await writeAll(buffer.subarray(0, used));
+			used = 0;
+		}
+	};
+
+	const append = async (data: Uint8Array): Promise<void> => {
+		if (data.length >= buffer.length) {
+			await flush();
+			await writeAll(data);
+			return;
+		}
+		if (used + data.length > buffer.length) {
+			await flush();
+		}
+		buffer.set(data, used);
+		used += data.length;
+	};
+
+	const padZeros = async (count: number): Promise<void> => {
+		let remaining = count;
+		while (remaining > 0) {
+			if (used === buffer.length) {
+				// oxlint-disable-next-line no-await-in-loop -- flush full buffer before zeroing more
+				await flush();
+			}
+			const chunk = Math.min(remaining, buffer.length - used);
+			buffer.fill(0, used, used + chunk);
+			used += chunk;
+			remaining -= chunk;
+		}
+	};
+
+	await append(plan.head);
+	let position = plan.head.length;
+	for (const segment of plan.segments) {
+		if (segment.position > position) {
+			// oxlint-disable-next-line no-await-in-loop -- segments are written in order
+			await padZeros(segment.position - position);
+			position = segment.position;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- sequential archive write
+		const bytes = await readFile(blobPathOf(segment.source.index));
+		if (bytes.length !== segment.source.size) {
+			throw new Error(
+				`blob ${segment.source.path} is ${bytes.length} bytes on disk, planned ${segment.source.size}`,
+			);
+		}
+		// oxlint-disable-next-line no-await-in-loop -- sequential archive write
+		await append(bytes);
+		position += bytes.length;
+	}
+	if (plan.size > position) {
+		await padZeros(plan.size - position);
+	}
+	await flush();
 };
 
 const archiveSizes = <T>(
