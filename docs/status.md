@@ -37,9 +37,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 
 - **ambient** ([viewer](viewer/lighting.md#ambient), [open](game-data/lighting.md#open)):
   - verified against an in-game shot only at Jingyu's cave arch.
-  - missing: volume default SH, lookup jitter, forward-shifted clipmap centres, per-channel AO
-    multi-bounce (uses luminance), GTAO specular occlusion, and local reflection probes (placements
-    not found).
+  - missing: lookup jitter, forward-shifted clipmap centres, per-channel AO multi-bounce (uses
+    luminance), GTAO specular occlusion, and local reflection probes (placements not found).
   - specular ambient falls back to the ambient probe until the reflection cubemap streams in.
   - next: compare GPU clipmap samples with the bake at one point and check clipmap seams (L0
     repeats, L1 clamps).
@@ -122,8 +121,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     shadow crossfade and weighted `drawCloudAfterPlanet` are skipped
     ([blending](viewer/environment.md#blending-at-the-camera)).
   - packed but unread: cloud flow (`cloudFlowType`, `cloudFlowMap`, `flowSpeed`), `skyMaterialType`
-    1 + `skyboxCubeMap` (boss phases), `reflectionType`, `useCustomIVDefaultSH`, and
-    `heightFogConfig.enableVolumetricFog` (PC path uses `volumetricFogConfig.enable` alone).
+    1 + `skyboxCubeMap` (boss phases), `reflectionType`, and `heightFogConfig.enableVolumetricFog`
+    (PC path uses `volumetricFogConfig.enable` alone).
 - **weather** ([game-data](game-data/environment.md#weather),
   [wetness](viewer/environment.md#wetness)):
   - quest-driven rain (LevelData dynamic volumes), snow, and falling precipitation (streaks,

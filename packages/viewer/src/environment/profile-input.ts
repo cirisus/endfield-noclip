@@ -40,7 +40,13 @@ export type LightInput = Pick<
 /** the parts of the game's sky config the viewer reads */
 export type SkyInput = Pick<
 	SkyConfig,
-	'skyAmbientSH' | 'skyDirectIntensity' | 'reflectionMap' | 'skyDistance' | 'proceduralSkyLuxFactor'
+	| 'skyAmbientSH'
+	| 'skyDirectIntensity'
+	| 'useCustomIVDefaultSH'
+	| 'customIVDefaultSH'
+	| 'reflectionMap'
+	| 'skyDistance'
+	| 'proceduralSkyLuxFactor'
 >;
 
 /** the game's atmosphere config, Unreal's SkyAtmosphere parameters: kilometres and per-kilometre */

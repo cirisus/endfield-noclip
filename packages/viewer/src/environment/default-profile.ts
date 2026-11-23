@@ -103,6 +103,8 @@ export const DEFAULT_PROFILE: EnvironmentInput = {
 			0.36, 0.14, 0, 0, 0, 0, 0, 0, 0.0, 0.44, 0.2, 0, 0, 0, 0, 0, 0, 0.0, 0.5, 0.26, 0, 0, 0, 0, 0, 0, 0.0,
 		],
 		skyDirectIntensity: 1,
+		useCustomIVDefaultSH: false,
+		customIVDefaultSH: [],
 		reflectionMap: null,
 		skyDistance: 5000,
 		proceduralSkyLuxFactor: 1,

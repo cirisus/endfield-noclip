@@ -56,6 +56,23 @@ const shaderSh = (sh: readonly number[], factor: number): Float32Array => {
 	return out;
 };
 
+/**
+ * packs the L1 part of a Unity `SphericalHarmonicsL2` as the game's `HGEnvironmentUtils.GetCoefficientsL1`
+ * does (`[u3, u1, u2, u0]` per channel, without L2's `-u6` fold), scaled by `factor`
+ *
+ * @param sh 27 coefficients
+ * @param factor multiplies every coefficient
+ * @returns 12 floats (`_IVDefaultSHAr`, `_IVDefaultSHAg`, `_IVDefaultSHAb`)
+ */
+export const shaderShL1 = (sh: readonly number[], factor: number): Float32Array => {
+	const out = new Float32Array(12);
+	for (let c = 0; c < 3; c++) {
+		const u = (i: number): number => (sh[c * 9 + i] ?? 0) * factor;
+		out.set([u(3), u(1), u(2), u(0)], c * 4);
+	}
+	return out;
+};
+
 /** the height fog's density and falloff per profile unit, as the game packs them (its shaders use base 2) */
 const FOG_UNIT = 0.1;
 
@@ -347,6 +364,10 @@ export const deriveEnvironment = (profile: EnvironmentInput | null): Environment
 		skySunDirection,
 		skyIlluminance: skyViewScale(light, sky, atmosphere),
 		sh: shaderSh(sky.skyAmbientSH, light.indirectDiffuseFactor),
+		ivDefaultSh: shaderShL1(
+			sky.useCustomIVDefaultSH ? sky.customIVDefaultSH : sky.skyAmbientSH,
+			sky.skyDirectIntensity * light.indirectDiffuseFactor,
+		),
 		indirectDiffuse: light.indirectDiffuseFactor,
 		indirectSpecular: light.indirectSpecularFactor,
 		reflection: sky.reflectionMap,

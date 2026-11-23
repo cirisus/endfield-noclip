@@ -7,11 +7,10 @@ and applies rain wetness.
 
 package [phase sections](../extraction/environments.md) keep the game's field names and feed
 lighting, sky, fog, post-processing, and rain wetness; `wind` only clocks
-[swaying cloth](materials.md#swaying-cloth). five unexplained fields
+[swaying cloth](materials.md#swaying-cloth). four unexplained fields
 ([game-data](../game-data/environment.md#environment-phases)) are packed but unread:
-`cloudFlowType`, `skyMaterialType`, `reflectionType`, `useCustomIVDefaultSH`, and
-`heightFogConfig.enableVolumetricFog` (the cloud panorama is static, and PC volumetric fog switches
-on `volumetricFogConfig.enable` alone).
+`cloudFlowType`, `skyMaterialType`, `reflectionType`, and `heightFogConfig.enableVolumetricFog` (the
+cloud panorama is static, and PC volumetric fog switches on `volumetricFogConfig.enable` alone).
 
 ## environment volumes
 

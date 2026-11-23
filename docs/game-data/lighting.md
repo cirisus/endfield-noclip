@@ -112,8 +112,12 @@ probe** elsewhere. all diffuse ambient (and volumetric fog's sky term) scales by
 `light.indirectSpecularFactor`).
 
 - **ambient probe**: `sky.skyAmbientSH` (Unity `SphericalHarmonicsL2`, 27 floats channel-major).
-  native code sets the irradiance volume's default SH (`skyAmbientSH` or `customIVDefaultSH`; see
-  [open](#open)).
+  volumetric fog reads `skyAmbientSH` directly as L1 SH without `skyDirectIntensity`.
+- **irradiance volume default SH** (`_IVDefaultSHAr/g/b`): `sky.customIVDefaultSH` when
+  `sky.useCustomIVDefaultSH` is set, else `sky.skyAmbientSH`, packed as pure L1 SH
+  (`[u3, u1, u2, u0]` per channel, without L2's `−u6` fold) and scaled by `sky.skyDirectIntensity`.
+  shaders blend it with irradiance volume probes by sky visibility and multiply the combined
+  irradiance by `light.indirectDiffuseFactor`.
 - **irradiance volume probes**: used unscaled as stored (already pre-exposed). bake fields
   (`skyBakedIndirectIntensity`, `bakedIndirectMultiplier`, `giSkyMultiplier`,
   `giBakedIndirectMultiplier`) do not apply at runtime through the volume.
@@ -289,8 +293,6 @@ per-renderer value and `_VFXParams1` ([blending](effects.md#blending)).
 
 ## open
 
-- irradiance volume default SH (`skyAmbientSH` vs `customIVDefaultSH` and its scale), packed in
-  native code.
 - sun units: sun uses the local-light lobe (no `1/π` on diffuse); whether the CPU folds `1/π` into
   sun colour is unknown (`directIntensityDividePi` also exists on phases).
 - baked lightmaps on HLOD and terrain (unchecked).

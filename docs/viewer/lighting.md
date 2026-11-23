@@ -64,10 +64,11 @@ sets it).
 ## ambient
 
 - **diffuse probe**: `sky.skyAmbientSH * light.indirectDiffuseFactor`, converted to Unity `ShadeSH9`
-  vectors (`shaderSh`) and pre-exposed. irradiance volume samples apply `indirectDiffuseFactor` in
-  the shader so all diffuse ambient scales once. the volume's default SH reuses this probe
-  (`useCustomIVDefaultSH` and `customIVDefaultSH` are unread;
-  [open](../game-data/lighting.md#open)).
+  vectors (`shaderSh`) and pre-exposed, used by volumetric fog, sky reflection normalisation, and
+  the reflection-map fallback. irradiance volume samples apply `indirectDiffuseFactor` in the shader
+  so all diffuse ambient scales once. the volume's default SH (`_IVDefaultSHAr/g/b`) packs
+  `sky.customIVDefaultSH` when `sky.useCustomIVDefaultSH` is set, else `sky.skyAmbientSH`, as pure
+  L1 SH (`shaderShL1`) scaled by `sky.skyDirectIntensity * light.indirectDiffuseFactor`.
 - **irradiance sampling**: `ambient_irradiance` blends clipmap levels near edges with validity
   fill-in and vertical correction, without jitter or forward-shifted centres.
 - **occlusion**: multi-bounce AO uses albedo luminance rather than per-channel fits. specular

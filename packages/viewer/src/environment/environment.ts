@@ -199,6 +199,12 @@ export interface Environment {
 	/** Unity shader form of the ambient probe (SHAr, SHAg, SHAb, SHBr, SHBg, SHBb, SHC), 28 floats */
 	sh: Float32Array;
 	/**
+	 * the irradiance volume's default L1 SH (`_IVDefaultSHAr/g/b`), 12 floats: `skyAmbientSH` (or
+	 * `customIVDefaultSH` when `useCustomIVDefaultSH` is set) scaled by `skyDirectIntensity` and
+	 * `light.indirectDiffuseFactor`
+	 */
+	ivDefaultSh: Float32Array;
+	/**
 	 * `light.indirectDiffuseFactor`, the game's scale on all diffuse ambient (`_EnvironmentGlobalParams0.x`);
 	 * {@link sh} already carries it, the irradiance volume doesn't
 	 */

@@ -108,4 +108,14 @@ describe('writeFrameUniforms', () => {
 		assert.equal(f32[FrameOffsets.terrain], -15);
 		assert.equal(u32[FrameOffsets.terrain + 2], TERRAIN_HOLE_BIT);
 	});
+
+	it('packs the irradiance volume default SH at FrameOffsets.ivDefaultSh', () => {
+		const environment = deriveEnvironment(null);
+		environment.ivDefaultSh.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+		const { f32 } = write({ environment });
+		assert.deepEqual(
+			[...f32.subarray(FrameOffsets.ivDefaultSh, FrameOffsets.ivDefaultSh + 12)],
+			[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+		);
+	});
 });

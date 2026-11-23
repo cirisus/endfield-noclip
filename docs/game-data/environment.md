@@ -50,8 +50,6 @@ fields with unknown effects (checked across map01, map02, dungeon, base, and rac
   `Env_dung02_rdg008_sword`, and `Env_indie_race001_art_bossS1_end2`; 0 elsewhere (1 presumably
   swaps the procedural sky for the cubemap).
 - `skyConfig.reflectionType`: 0 or 1, roughly evenly.
-- `skyConfig.useCustomIVDefaultSH`: set in ~⅓ of phases; `customIVDefaultSH` presumably supplies the
-  fallback SH outside irradiance-volume coverage ([lighting](lighting.md#open)).
 - `heightFogConfig.enableVolumetricFog`: false in a few dozen phases (including map02's
   `Env_map02_lv003_global`), while `volumetricFogConfig.enable` is true wherever that section is
   active; which flag controls the PC fog path is unknown.
@@ -283,5 +281,5 @@ rainy phases.
 - tie-breaking order among equal-priority volumes.
 - whether a local post `Volume` replaces or layers over the level's global one.
 - plain-field lerping: integers, enums, effect directions, and deferred fog Rayleigh scale.
-- exact behavior of cloud flow, `skyMaterialType`, `reflectionType`, `useCustomIVDefaultSH`, and
+- exact behavior of cloud flow, `skyMaterialType`, `reflectionType`, and
   `heightFogConfig.enableVolumetricFog` ([environment phases](#environment-phases)).

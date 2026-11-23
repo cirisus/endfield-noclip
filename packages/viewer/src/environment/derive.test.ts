@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { cloudLook, skyViewScale } from './derive.ts';
+import { DEFAULT_PROFILE } from './default-profile.ts';
+import { cloudLook, deriveEnvironment, shaderShL1, skyViewScale } from './derive.ts';
 import type { CloudInput } from './profile-input.ts';
 
 // Power Plateau's overcast phase once e3m5 reaches state 3 (Env_map01_lv007_art_overcast_brightness)
@@ -57,5 +58,54 @@ describe('skyViewScale', () => {
 		assert.ok(Math.abs(scale[0] - expected) < 1e-9);
 		assert.ok(Math.abs(scale[1] - expected * 0.5) < 1e-9);
 		assert.ok(Math.abs(scale[2] - expected * 0.25) < 1e-9);
+	});
+});
+
+describe('shaderShL1', () => {
+	it('packs pure L1 coefficients scaled by factor without the L2 u6 fold', () => {
+		const sh = Array.from({ length: 27 }, (_, i) => i + 1);
+		const out = shaderShL1(sh, 2);
+		assert.equal(out.length, 12);
+		// channel 0: u3=4, u1=2, u2=3, u0=1 (ignoring u6=7), × 2
+		assert.deepEqual([...out.subarray(0, 4)], [8, 4, 6, 2]);
+		// channel 1: u3=13, u1=11, u2=12, u0=10, × 2
+		assert.deepEqual([...out.subarray(4, 8)], [26, 22, 24, 20]);
+		// channel 2: u3=22, u1=20, u2=21, u0=19, × 2
+		assert.deepEqual([...out.subarray(8, 12)], [44, 40, 42, 38]);
+	});
+});
+
+describe('deriveEnvironment ivDefaultSh', () => {
+	it('scales skyAmbientSH by skyDirectIntensity and indirectDiffuseFactor', () => {
+		const sh = Array.from({ length: 27 }, (_, i) => (i % 9 === 0 ? 0.5 : 0));
+		const env = deriveEnvironment({
+			...DEFAULT_PROFILE,
+			light: { ...DEFAULT_PROFILE.light, indirectDiffuseFactor: 1.5 },
+			sky: {
+				...DEFAULT_PROFILE.sky,
+				skyAmbientSH: sh,
+				skyDirectIntensity: 2,
+				useCustomIVDefaultSH: false,
+			},
+		});
+		// L0 = 0.5 × 2 × 1.5 = 1.5 per channel
+		assert.deepEqual([...env.ivDefaultSh], [0, 0, 0, 1.5, 0, 0, 0, 1.5, 0, 0, 0, 1.5]);
+	});
+
+	it('switches to customIVDefaultSH when useCustomIVDefaultSH is set', () => {
+		const skySh = Array.from({ length: 27 }, () => 0.1);
+		const customSh = Array.from({ length: 27 }, (_, i) => (i % 9 === 0 ? 0.25 : 0));
+		const env = deriveEnvironment({
+			...DEFAULT_PROFILE,
+			light: { ...DEFAULT_PROFILE.light, indirectDiffuseFactor: 1 },
+			sky: {
+				...DEFAULT_PROFILE.sky,
+				skyAmbientSH: skySh,
+				skyDirectIntensity: 4,
+				useCustomIVDefaultSH: true,
+				customIVDefaultSH: customSh,
+			},
+		});
+		assert.deepEqual([...env.ivDefaultSh], [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
 	});
 });

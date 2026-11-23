@@ -68,6 +68,9 @@ struct Frame {
 	// the wind (`_WindGlobalParams0`, wind.ts): x = the wind clock, y = the main intensity, zw = the unit XZ
 	// direction it blows toward
 	wind: vec4f,
+	// the irradiance volume's default L1 SH (`_IVDefaultSHAr/g/b`), pre-scaled by `skyDirectIntensity` and
+	// `indirectDiffuseFactor`
+	iv_default_sh: array<vec4f, 3>,
 	// #endregion
 }
 
@@ -461,18 +464,21 @@ fn irradiance_outside(d: vec3f, h: vec2f, fade: f32) -> f32 {
 	return max(clamp((max(abs(d.x), abs(d.z)) - h.x) * fade, 0.0, 1.0), clamp((abs(d.y) - h.y) * fade, 0.0, 1.0));
 }
 
-// diffuse ambient: the irradiance volume's L1 probes blended over the clipmap levels, with the ambient probe
-// where they don't reach or are invalid, as the game's deferred indirect lighting does without its jitter
-// (docs/viewer/lighting.md#ambient)
+// diffuse ambient: the irradiance volume's L1 probes blended over the clipmap levels, with the volume's
+// default L1 SH (`_IVDefaultSHAr/g/b`) where they don't reach or open to the sky, as the game's deferred
+// indirect lighting does without its jitter (docs/viewer/lighting.md#ambient)
 fn ambient_irradiance(world: vec3f, n: vec3f) -> vec3f {
-	let base = ambient_probe(n);
 	if (frame.irradiance[2].w < 0.5) {
-		return base;
+		return ambient_probe(n);
 	}
 	let p = world + n * 0.25;
 	let outside = irradiance_outside(p - frame.irradiance[2].xyz, vec2f(464.0, 208.0), 0.03125);
 	if (outside >= 1.0) {
-		return base;
+		return max(vec3f(
+			dot(frame.iv_default_sh[0].xyz, n) + frame.iv_default_sh[0].w,
+			dot(frame.iv_default_sh[1].xyz, n) + frame.iv_default_sh[1].w,
+			dot(frame.iv_default_sh[2].xyz, n) + frame.iv_default_sh[2].w,
+		), vec3f(0.0));
 	}
 	var r = vec4f(0.0);
 	var g = vec4f(0.0);
@@ -503,7 +509,7 @@ fn ambient_irradiance(world: vec3f, n: vec3f) -> vec3f {
 		b += s.b;
 		validity += s.validity;
 	}
-	// the ambient probe fills in for missing validity; `band` is the game's vertical correction term
+	// sky visibility (encoded in [0.5, 1]) blends in the upper hemisphere of `_IVDefaultSHAr/g/b`
 	let valid = clamp(validity * 2.0 - 1.0, 0.0, 1.0);
 	let band = valid - outside;
 	let fallback = (valid + outside) * 0.5;
@@ -511,11 +517,16 @@ fn ambient_irradiance(world: vec3f, n: vec3f) -> vec3f {
 	let sh = array<vec4f, 3>(r * k, g * k, b * k);
 	var c = vec3f(0.0);
 	for (var i = 0; i < 3; i++) {
-		let d = frame.sh[i];
-		let corrected = sh[i] + vec4f(0.0, d.w * band * 0.5, 0.0, d.y * band * 0.375);
-		c[i] = dot(corrected.xyz, n) + corrected.w;
+		let d = frame.iv_default_sh[i];
+		let combined = sh[i] + vec4f(
+			d.x * fallback,
+			d.y * fallback + d.w * band * 0.5,
+			d.z * fallback,
+			d.w * fallback + d.y * band * 0.375,
+		);
+		c[i] = max(dot(combined.xyz, n) + combined.w, 0.0);
 	}
-	return max(c + base * fallback, vec3f(0.0));
+	return c;
 }
 
 // the game's scale on a sky reflection, from the surface's diffuse irradiance against the sky probe's L1 along the
