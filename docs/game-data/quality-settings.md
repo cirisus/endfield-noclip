@@ -87,10 +87,11 @@ constant across all desktop levels:
 - **shadows**: 3 cascades split at 0.15 and 0.375 of reach (12, 30, 80 m at high), 2×2 atlas, 16-bit
   depth, hardware depth/normal bias 3, re-rendered every frame (cascade cache off, no occlusion
   culling), caster screen-size skips 0.005 / 0.01 / 0.02. far map: 800 m, 256² tiles, ≤ 8
-  tiles/frame, skip < 0.01. shadow views use camera LODs (no shadow LOD), shadow proxies on, sun
-  shadow resolved to screen-space mask. local-light shadows within 200 m: 40 cached static tiles +
-  up to 6 still and 2 moving per-frame dynamic tiles
-  ([local light shadows](lighting.md#local-light-shadows)).
+  tiles/frame, skip < 0.01. shadow views reuse the main camera's perspective `LODCrossFadeConfig`
+  (no shadow LOD), comparing the camera-view squared relative screen size against
+  `CSMScreenSizeMin<i>²` and `ASMScreenSizeMin²`, with shadow proxies on and sun shadow resolved to
+  a screen-space mask. local-light shadows within 200 m: 40 cached static tiles + up to 6 still and
+  2 moving per-frame dynamic tiles ([local light shadows](lighting.md#local-light-shadows)).
 - **reflection march**: step count decays with depth by `clamp(2 · e^(−0.07 · depth), 0.125, 1)` to
   a floor of 32 (only very high's 128 steps vary: full to ~10 m, floor by ~30 m).
 - **local lights**: max 256 per frame (`PunctualLightMaxCount`; 32 on mobile).
@@ -106,8 +107,7 @@ constant across all desktop levels:
 
 ## open
 
-- how shadow maps measure caster screen size, and whether characters skip cascade 3
-  (`CSMStopRenderCharacterCascade` 2).
+- whether characters skip cascade 3 (`CSMStopRenderCharacterCascade` 2).
 - whether software occlusion culling runs on PC, whether map data holds its occluders, and what its
   size threshold (0.05) gates.
 - whether the client's GPU-driven meshlet renderer is ever enabled (appears gated by launch

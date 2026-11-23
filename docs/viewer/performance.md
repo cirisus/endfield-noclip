@@ -25,11 +25,13 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
   by the settings panel's applied volumes and look legend. scene conditions sections render lazily
   when expanded (`LazyDetails`), cutting map02 re-renders from > 100 ms to a few tens of ms (still
   re-renders on level change).
-- **group culling.** mesh selection rejects 32-row groups before testing individual rows
+- **group culling.** mesh selection rejects 64-row groups before testing individual rows
   ([per-instance LOD](streaming.md#per-instance-lod)), cutting ~20% off dense map02 views.
-- **GPU culling and occlusion.** resident groups cull in compute and emit indirect draws
-  ([GPU culling](streaming.md#gpu-culling)), cutting ~25% off dense Jingyu frames (halving mesh
-  selection). last-frame depth-pyramid occlusion culling cuts ~5% GPU time flying over Jingyu.
+- **GPU culling and occlusion.** resident groups cull in compute (`@workgroup_size(64)`) and emit
+  indirect draws ([GPU culling](streaming.md#gpu-culling)), cutting ~25% off dense Jingyu frames
+  (halving mesh selection). last-frame depth-pyramid occlusion culling cuts ~5% GPU time flying over
+  Jingyu. small shadow casters are culled per layer on both CPU and GPU using the game's camera-view
+  screen-size minimums (`0.005` / `0.01` / `0.02` for cascades 0–2, `0.01` for the far layer).
 - **game detail radius.** detail draws within `detailDistance` (default 160 m, game's high preset)
   and HLOD past it ([instance selection](streaming.md#instance-selection)); mesh selection scales
   with rows in reach (a few hundred thousand foliage rows in Jingyu ≈ half the frame).
@@ -50,10 +52,18 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
   pixels, then opaque meshes shade at `depthCompare: 'equal'` using the same `@invariant` position
   function. saves ~1/7 GPU time on dense RDNA 2 2560×1600 views.
 - **early depth with alpha test.** opaque pipelines never discard (shadow pipelines have no fragment
-  stage). alpha-tested meshes write cut-out depth before terrain, then shade at
-  `depthCompare: 'equal'` without discarding, cutting main-pass time ~25% at dense Jingyu views.
-  alpha-tested materials draw opaque until their
-  [alpha texture](../game-data/materials.md#alpha-testing) streams in.
+  stage). alpha-tested meshes write cut-out depth before terrain (sampling only the map that holds
+  their alpha, plus the dither mask when needed), then shade at `depthCompare: 'equal'` without
+  discarding, cutting main-pass time ~25% at dense Jingyu views. alpha-tested materials draw opaque
+  until their [alpha texture](../game-data/materials.md#alpha-testing) streams in.
+- **lean Lit opaque pipeline.** plain base+normal opaque Lit materials (~86% of map02 opaque
+  materials) route to a compact `fs_opaque_lit` pipeline (2 texture samples, no parallax/layer/
+  foliage/erosion/unlit branches), cutting main-pass GPU time ~13% on dense views while complex
+  materials bail out to the full `fs_opaque` shader.
+- **16-bit sun shadow map.** when `depth-clip-control` is supported, the sun shadow map uses
+  `depth16unorm` (32 MiB instead of 64 MiB) with near-plane clamping (`unclippedDepth: true`) and a
+  tighter `2·radius + 64 m` depth range, halving shadow write and PCF gather bandwidth. without
+  `depth-clip-control`, it falls back to `depth32float`.
 - **no MSAA.** at 2560×1600 on Apple M-series, 4× MSAA cost ~3× the GPU time of TAA (< 1 ms) and
   > 2× target memory. `renderScale` 0.5 cuts GPU time to ~1/3.
 - **half-resolution SSR and AO.** [SSR](lighting.md#screen-space-reflections) runs at half
@@ -151,11 +161,6 @@ see [quality settings](../game-data/quality-settings.md) for what the game toggl
   their settle frames skip re-traversal too.
 - **shadow caching.** cache cascades across selections when fit and casters match; tile the far
   shadow layer (game caches 200 m tiles and redraws ≤ 8/frame instead of the whole layer).
-- **small shadow-caster culling.** game culls casters by `CSMScreenSizeMin` / `ASMScreenSizeMin`
-  (metric undecoded; verify against in-game shots at 30–80 m first).
-- **16-bit sun shadow map.** tighten depth range (caster bounds or `depth-clip-control` near-plane
-  clamping) to switch from `depth32float` (1500 m reach, 64 MiB) to `depth16unorm` (32 MiB, half
-  bandwidth; requires bias retuning).
 - **pack ambient + sky reflection.** combine both `rgba16float` targets (16 B/px, reflection alpha
   unused) into one `rg32uint` (shared-exponent or 11-11-10) to save ~32 MiB at 2560×1600 and
   matching reads (`celestial` would need its own target).
