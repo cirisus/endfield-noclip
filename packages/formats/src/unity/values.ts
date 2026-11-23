@@ -114,6 +114,21 @@ export const arrayField = (parent: TypeTreeObject, name: string): TypeTreeValue[
 	throw new FormatError(`field ${name} is not an array`);
 };
 
+/**
+ * @param parent class instance
+ * @param name field name
+ * @returns the field as an array of class instances
+ * @throws {FormatError} if it's missing, not an array, or holds a non-object element
+ */
+export const objectsField = (parent: TypeTreeObject, name: string): TypeTreeObject[] => {
+	return arrayField(parent, name).map((item, i) => {
+		if (!isObject(item)) {
+			throw new FormatError(`field ${name}[${i}] is not an object`);
+		}
+		return item;
+	});
+};
+
 const isNumberArray = (value: readonly TypeTreeValue[]): value is number[] =>
 	value.every((item) => typeof item === 'number');
 
@@ -233,12 +248,45 @@ export const streamingInfo = (object: TypeTreeObject): StreamingInfo | undefined
 
 /**
  * @param parent class instance
+ * @param name field name of a `Vector2f`
+ * @returns `[x, y]`
+ * @throws {FormatError} if it's missing or not a `Vector2f`
+ */
+export const vector2Field = (parent: TypeTreeObject, name: string): [number, number] => {
+	const value = objectField(parent, name);
+	return [numberField(value, 'x'), numberField(value, 'y')];
+};
+
+/**
+ * @param parent class instance
  * @param name field name of a `Vector3f`
  * @returns `[x, y, z]`
  */
 export const vector3Field = (parent: TypeTreeObject, name: string): [number, number, number] => {
 	const value = objectField(parent, name);
 	return [numberField(value, 'x'), numberField(value, 'y'), numberField(value, 'z')];
+};
+
+/**
+ * @param parent class instance
+ * @param name field name of a `Vector4f` or `Quaternionf`
+ * @returns `[x, y, z, w]`
+ * @throws {FormatError} if it's missing or not a 4-component vector
+ */
+export const vector4Field = (parent: TypeTreeObject, name: string): [number, number, number, number] => {
+	const value = objectField(parent, name);
+	return [numberField(value, 'x'), numberField(value, 'y'), numberField(value, 'z'), numberField(value, 'w')];
+};
+
+/**
+ * @param parent class instance
+ * @param name field name of a `ColorRGBA`
+ * @returns `[r, g, b, a]`
+ * @throws {FormatError} if it's missing or not a `ColorRGBA`
+ */
+export const colorField = (parent: TypeTreeObject, name: string): [number, number, number, number] => {
+	const value = objectField(parent, name);
+	return [numberField(value, 'r'), numberField(value, 'g'), numberField(value, 'b'), numberField(value, 'a')];
 };
 
 /** an axis-aligned box as Unity stores it: centre and half-extents */

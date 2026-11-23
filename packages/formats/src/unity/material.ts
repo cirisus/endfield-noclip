@@ -17,6 +17,7 @@ import {
 	type PPtr,
 	pptrField,
 	stringField,
+	vector2Field,
 } from './values.ts';
 
 // #region record
@@ -76,12 +77,10 @@ export const parseMaterial = (material: TypeTreeObject): MaterialRecord => {
 			throw new FormatError(`material ${name} has a malformed m_TexEnvs entry`);
 		}
 		const texture = asPPtr(value.m_Texture);
-		const scale = objectField(value, 'm_Scale');
-		const offset = objectField(value, 'm_Offset');
 		textures[slot] = {
 			texture: texture.pathId === 0n ? null : texture,
-			scale: [numberField(scale, 'x'), numberField(scale, 'y')],
-			offset: [numberField(offset, 'x'), numberField(offset, 'y')],
+			scale: vector2Field(value, 'm_Scale'),
+			offset: vector2Field(value, 'm_Offset'),
 			uvSet: optionalNumberField(value, 'm_UVSetIndex') ?? 0,
 		};
 	}

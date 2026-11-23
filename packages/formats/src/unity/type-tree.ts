@@ -50,16 +50,16 @@ export interface TypeTreeObject {
 	[field: string]: TypeTreeValue;
 }
 
-/** a TypeTree compiled into readers; build once per type with {@link compileTypeTree} */
+/** a TypeTree compiled into a flat op table; build once per type with {@link compileTypeTree} */
 export interface CompiledTypeTree {
 	/** root type name, e.g. `Mesh` */
 	type: string;
 	/** top-level field names, in serialized order */
 	fields: string[];
-	/** @internal */
-	readonly root: CompiledClass;
-	/** @internal top-level field readers, in serialized order */
-	readonly children: readonly CompiledNode[];
+	/** @internal flat compiled node table; index 0 is the root class */
+	readonly ops: readonly CompiledOp[];
+	/** @internal indices into `ops` of top-level fields, parallel to `fields` */
+	readonly fieldIndices: readonly number[];
 }
 
 /** options for {@link readTypeTree} */
@@ -80,26 +80,46 @@ export type RefTypeResolver = (
 	asmName: string,
 ) => CompiledTypeTree | undefined;
 
-interface CompiledNode {
+const OpKind = {
+	Primitive: 0,
+	PrimitiveArray: 1,
+	String: 2,
+	TypelessData: 3,
+	ReferencedObjectData: 4,
+	Array: 5,
+	Class: 6,
+} as const;
+
+interface CompiledOpBase {
 	type: string;
 	name: string;
-	read: (c: Cursor) => TypeTreeValue;
-	skip: (c: Cursor) => void;
-	/**
-	 * reader for nodes whose layout depends on fields read before them; takes precedence over `read` when the
-	 * node is a class member
-	 */
-	readInClass?: (c: Cursor, siblings: TypeTreeObject) => TypeTreeValue;
+	/** index in `ops` immediately after this op and all its descendants */
+	end: number;
 	/** byte size if every instance has the same size and no internal alignment, else -1 */
 	fixedSize: number;
+	/** whether to 4-byte align the cursor after reading or skipping this op */
+	align: boolean;
 	/** whether the layout depends on data, so skipping requires reading */
 	dynamic: boolean;
+	/** set on a `Class` child when Hypergryph serializes it conditionally */
+	condition?: (siblings: TypeTreeObject) => boolean;
 }
 
-/** a compiled class node, whose reader always produces an object */
-interface CompiledClass extends CompiledNode {
-	read: (c: Cursor) => TypeTreeObject;
+interface PrimitiveOp extends CompiledOpBase {
+	kind: typeof OpKind.Primitive | typeof OpKind.PrimitiveArray;
+	primitive: Primitive;
 }
+
+interface CompoundOp extends CompiledOpBase {
+	kind:
+		| typeof OpKind.String
+		| typeof OpKind.TypelessData
+		| typeof OpKind.ReferencedObjectData
+		| typeof OpKind.Array
+		| typeof OpKind.Class;
+}
+
+type CompiledOp = PrimitiveOp | CompoundOp;
 
 interface Cursor {
 	bytes: Uint8Array;
@@ -131,23 +151,240 @@ export interface TreeNode {
 const ALIGN_FLAG = 0x4000;
 const ARRAY_FLAG = 0x1;
 
+const isArrayNode = (node: TypeTreeNode): boolean => {
+	return (node.typeFlags & ARRAY_FLAG) !== 0 || node.type === 'Array';
+};
+
+/** computes `ends[i]` = index immediately after node `i`'s subtree, validating level nesting */
+const computeSubtreeEnds = (nodes: readonly TypeTreeNode[]): Int32Array => {
+	const ends = new Int32Array(nodes.length);
+	const stack: number[] = [0];
+	for (let i = 1; i < nodes.length; i++) {
+		const node = nodes[i];
+		let top = stack.at(-1);
+		while (top !== undefined && nodes[top].level >= node.level) {
+			stack.pop();
+			ends[top] = i;
+			top = stack.at(-1);
+		}
+		if (top === undefined || node.level !== nodes[top].level + 1) {
+			throw new FormatError(`TypeTree node ${i} (${node.name}) has level ${node.level} without a parent`);
+		}
+		stack.push(i);
+	}
+	for (const index of stack) {
+		ends[index] = nodes.length;
+	}
+	return ends;
+};
+
 /**
  * @param nodes a flattened TypeTree, as in `SerializedType.nodes`
- * @returns readers for the tree
+ * @returns flat compiled op table for the tree
  * @throws {FormatError} if the tree is empty or uses an unknown primitive
  */
 export const compileTypeTree = (nodes: readonly TypeTreeNode[]): CompiledTypeTree => {
 	if (nodes.length === 0) {
 		throw new FormatError('empty TypeTree (was the file built without TypeTrees?)');
 	}
-	const root = buildTree(nodes);
-	const children = root.children.map(compileNode);
-	return {
-		type: root.node.type,
-		fields: children.map((child) => child.name),
-		root: compileClass(root, children),
-		children,
+	const ends = computeSubtreeEnds(nodes);
+	const ops: CompiledOp[] = [];
+
+	const emitClass = (nodeIndex: number, name: string, align: boolean): number => {
+		const node = nodes[nodeIndex];
+		const nodeEnd = ends[nodeIndex];
+		const opIndex = ops.length;
+		const op: CompoundOp = {
+			kind: OpKind.Class,
+			type: node.type,
+			name,
+			end: 0,
+			fixedSize: -1,
+			align,
+			dynamic: false,
+		};
+		ops.push(op);
+
+		const conditionTable = Object.hasOwn(HG_FIELD_CONDITIONS, node.type)
+			? HG_FIELD_CONDITIONS[node.type]
+			: undefined;
+		let dynamic = false;
+		let fixedSize = 0;
+		for (let child = nodeIndex + 1; child < nodeEnd; child = ends[child]) {
+			const childOpIndex = emitOp(child, undefined, false);
+			const childOp = ops[childOpIndex];
+			if (conditionTable !== undefined && Object.hasOwn(conditionTable, childOp.name)) {
+				childOp.condition = conditionTable[childOp.name];
+				dynamic = true;
+			}
+			if (childOp.dynamic || childOp.kind === OpKind.ReferencedObjectData) {
+				dynamic = true;
+			}
+			if (fixedSize >= 0) {
+				fixedSize = childOp.fixedSize >= 0 ? fixedSize + childOp.fixedSize : -1;
+			}
+		}
+
+		op.end = ops.length;
+		op.dynamic = dynamic;
+		op.fixedSize = align || dynamic ? -1 : fixedSize;
+		return opIndex;
 	};
+
+	const emitOp = (nodeIndex: number, nameOverride: string | undefined, extraAlign: boolean): number => {
+		const node = nodes[nodeIndex];
+		const nodeEnd = ends[nodeIndex];
+		const hasChildren = nodeIndex + 1 < nodeEnd;
+		const onlyChild = hasChildren && ends[nodeIndex + 1] === nodeEnd ? nodeIndex + 1 : -1;
+		const ownAlign =
+			(node.metaFlag & ALIGN_FLAG) !== 0 ||
+			(onlyChild >= 0 && isArrayNode(nodes[onlyChild]) && (nodes[onlyChild].metaFlag & ALIGN_FLAG) !== 0);
+		const align = extraAlign || ownAlign;
+		const name = nameOverride ?? node.name;
+
+		if (isArrayNode(node)) {
+			const c0 = nodeIndex + 1;
+			const c1 = c0 < nodeEnd ? ends[c0] : nodeEnd;
+			if (c1 >= nodeEnd || ends[c1] !== nodeEnd) {
+				let count = 0;
+				for (let c = nodeIndex + 1; c < nodeEnd; c = ends[c]) {
+					count++;
+				}
+				throw new FormatError(`Array node ${node.name} has ${count} children, expected 2`);
+			}
+			const elemNode = nodes[c1];
+			// numeric fast path
+			if (c1 + 1 === ends[c1] && (elemNode.metaFlag & ALIGN_FLAG) === 0) {
+				const primitive = primitiveOf(elemNode);
+				const opIndex = ops.length;
+				ops.push({
+					kind: OpKind.PrimitiveArray,
+					type: node.type,
+					name,
+					end: opIndex + 1,
+					fixedSize: -1,
+					align,
+					dynamic: false,
+					primitive,
+				});
+				return opIndex;
+			}
+			const opIndex = ops.length;
+			const op: CompoundOp = {
+				kind: OpKind.Array,
+				type: node.type,
+				name,
+				end: 0,
+				fixedSize: -1,
+				align,
+				dynamic: false,
+			};
+			ops.push(op);
+			const elemOpIndex = emitOp(c1, undefined, false);
+			op.end = ops.length;
+			op.dynamic = ops[elemOpIndex].dynamic;
+			return opIndex;
+		}
+
+		if (node.type === 'ReferencedObjectData') {
+			const opIndex = ops.length;
+			ops.push({
+				kind: OpKind.ReferencedObjectData,
+				type: 'ReferencedObjectData',
+				name,
+				end: opIndex + 1,
+				fixedSize: -1,
+				align,
+				dynamic: true,
+			});
+			return opIndex;
+		}
+
+		if (!hasChildren && node.byteSize === 0 && !Object.hasOwn(PRIMITIVES, node.type)) {
+			// a struct without serialized fields
+			const opIndex = ops.length;
+			ops.push({
+				kind: OpKind.Class,
+				type: node.type,
+				name,
+				end: opIndex + 1,
+				fixedSize: align ? -1 : 0,
+				align,
+				dynamic: false,
+			});
+			return opIndex;
+		}
+
+		if (!hasChildren) {
+			const primitive = primitiveOf(node);
+			const opIndex = ops.length;
+			ops.push({
+				kind: OpKind.Primitive,
+				type: node.type,
+				name,
+				end: opIndex + 1,
+				fixedSize: align ? -1 : primitive.size,
+				align,
+				dynamic: false,
+				primitive,
+			});
+			return opIndex;
+		}
+
+		switch (node.type) {
+			case 'string': {
+				// a string can wrap another string (e.g. PropertyName's `string id`)
+				if (onlyChild >= 0 && nodes[onlyChild].type === 'string' && !isArrayNode(nodes[onlyChild])) {
+					return emitOp(onlyChild, name, align);
+				}
+				const opIndex = ops.length;
+				ops.push({
+					kind: OpKind.String,
+					type: node.type,
+					name,
+					end: opIndex + 1,
+					fixedSize: -1,
+					align,
+					dynamic: false,
+				});
+				return opIndex;
+			}
+			case 'TypelessData': {
+				const opIndex = ops.length;
+				ops.push({
+					kind: OpKind.TypelessData,
+					type: 'TypelessData',
+					name,
+					end: opIndex + 1,
+					fixedSize: -1,
+					align,
+					dynamic: false,
+				});
+				return opIndex;
+			}
+			default: {
+				// containers (vector, staticvector, map, set, …) wrap a single Array node
+				if (onlyChild >= 0 && isArrayNode(nodes[onlyChild])) {
+					const opIndex = emitOp(onlyChild, name, align);
+					ops[opIndex].type = node.type;
+					return opIndex;
+				}
+				return emitClass(nodeIndex, name, align);
+			}
+		}
+	};
+
+	emitClass(0, nodes[0].name, false);
+
+	const fields: string[] = [];
+	const fieldIndices: number[] = [];
+	const rootEnd = ops[0].end;
+	for (let i = 1; i < rootEnd; i = ops[i].end) {
+		fields.push(ops[i].name);
+		fieldIndices.push(i);
+	}
+
+	return { type: nodes[0].type, fields, ops, fieldIndices };
 };
 
 const hierarchies = new WeakMap<readonly TypeTreeNode[], TreeNode>();
@@ -185,146 +422,15 @@ const buildTree = (nodes: readonly TypeTreeNode[]): TreeNode => {
 	return root;
 };
 
-const compileNode = (tree: TreeNode): CompiledNode => {
-	const { node } = tree;
-	let inner: CompiledNode;
-	if (isArrayNode(tree)) {
-		inner = compileArray(tree);
-	} else if (node.type === 'ReferencedObjectData') {
-		inner = compileReferencedObjectData();
-	} else if (tree.children.length === 0 && node.byteSize === 0 && !Object.hasOwn(PRIMITIVES, node.type)) {
-		// a struct without serialized fields
-		inner = compileClass(tree, []);
-	} else if (tree.children.length === 0) {
-		inner = compilePrimitive(node);
-	} else {
-		switch (node.type) {
-			case 'string': {
-				const [only] = tree.children;
-				// a string can wrap another string (e.g. PropertyName's `string id`)
-				inner =
-					tree.children.length === 1 && only.node.type === 'string' && !isArrayNode(only)
-						? compileNode(only)
-						: compileString(tree);
-				break;
-			}
-			case 'TypelessData': {
-				inner = compileTypelessData();
-				break;
-			}
-			default: {
-				const [only] = tree.children;
-				// containers (vector, staticvector, map, set, …) wrap a single Array node
-				inner =
-					tree.children.length === 1 && isArrayNode(only)
-						? compileNode(only)
-						: compileClass(tree, tree.children.map(compileNode));
-			}
-		}
-	}
-	return withAlignment(tree, inner);
-};
+// #endregion
 
-const isArrayNode = (tree: TreeNode): boolean => {
-	return (tree.node.typeFlags & ARRAY_FLAG) !== 0 || tree.node.type === 'Array';
-};
-
-/** applies 4-byte alignment after the node when it or its wrapped Array asks for it */
-const withAlignment = (tree: TreeNode, inner: CompiledNode): CompiledNode => {
-	const align =
-		(tree.node.metaFlag & ALIGN_FLAG) !== 0 ||
-		(tree.children.length === 1 &&
-			isArrayNode(tree.children[0]) &&
-			(tree.children[0].node.metaFlag & ALIGN_FLAG) !== 0);
-	const base = { type: tree.node.type, name: tree.node.name };
-	if (!align) {
-		return { ...inner, ...base };
-	}
-	const { read, skip, readInClass } = inner;
-	return {
-		...base,
-		read: (c) => {
-			const value = read(c);
-			alignCursor(c);
-			return value;
-		},
-		skip: (c) => {
-			skip(c);
-			alignCursor(c);
-		},
-		readInClass:
-			readInClass &&
-			((c, siblings) => {
-				const value = readInClass(c, siblings);
-				alignCursor(c);
-				return value;
-			}),
-		fixedSize: -1,
-		dynamic: inner.dynamic,
-	};
-};
+// #region cursor and errors
 
 const alignCursor = (c: Cursor): void => {
 	c.offset = (c.offset + 3) & ~3;
 	if (c.offset > c.bytes.length) {
 		throw new FormatError(`alignment ran past the end of the ${c.bytes.length}-byte object`);
 	}
-};
-
-const compileClass = (tree: TreeNode, children: readonly CompiledNode[]): CompiledClass => {
-	const names = children.map((child) => child.name);
-	const readers = children.map((child) => child.read);
-	const skippers = children.map((child) => child.skip);
-	const conditionTable = Object.hasOwn(HG_FIELD_CONDITIONS, tree.node.type)
-		? HG_FIELD_CONDITIONS[tree.node.type]
-		: undefined;
-	const conditions = names.map((name) =>
-		conditionTable !== undefined && Object.hasOwn(conditionTable, name) ? conditionTable[name] : undefined,
-	);
-	const inClass = children.map((child) => child.readInClass);
-	const count = children.length;
-	const dynamic =
-		children.some((child) => child.dynamic || child.readInClass !== undefined) ||
-		conditions.some((condition) => condition !== undefined);
-	const fixedSize =
-		!dynamic && children.every((child) => child.fixedSize >= 0)
-			? children.reduce((sum, child) => sum + child.fixedSize, 0)
-			: -1;
-
-	const read = (c: Cursor): TypeTreeObject => {
-		const out: TypeTreeObject = {};
-		for (let i = 0; i < count; i++) {
-			const condition = conditions[i];
-			if (condition !== undefined && !condition(out)) {
-				continue;
-			}
-			try {
-				const special = inClass[i];
-				out[names[i]] = special === undefined ? readers[i](c) : special(c, out);
-			} catch (error) {
-				throw prefixError(error, names[i]);
-			}
-		}
-		return out;
-	};
-	return {
-		type: tree.node.type,
-		name: tree.node.name,
-		read,
-		skip: (c) => {
-			if (fixedSize >= 0) {
-				advance(c, fixedSize);
-			} else if (dynamic) {
-				read(c);
-			} else {
-				for (let i = 0; i < count; i++) {
-					skippers[i](c);
-				}
-			}
-		},
-		fixedSize,
-		dynamic,
-	};
 };
 
 /** prepends a path segment (`name` or `[index]`) to a FormatError's `at <path>: ` prefix */
@@ -474,164 +580,180 @@ const primitiveOf = (node: TypeTreeNode): Primitive => {
 	return primitive;
 };
 
-const compilePrimitive = (node: TypeTreeNode): CompiledNode => {
-	const { size, read } = primitiveOf(node);
-	return {
-		type: node.type,
-		name: node.name,
-		read: (c) => read(c, advance(c, size)),
-		skip: (c) => {
-			advance(c, size);
-		},
-		fixedSize: size,
-		dynamic: false,
-	};
-};
-
 // #endregion
 
-// #region strings, blobs and arrays
+// #region interpreter
 
 const utf8 = new TextDecoder('utf-8');
-
-const compileString = (tree: TreeNode): CompiledNode => {
-	return {
-		type: tree.node.type,
-		name: tree.node.name,
-		read: (c) => {
-			const length = readCount(c);
-			const at = advance(c, length);
-			return utf8.decode(c.bytes.subarray(at, at + length));
-		},
-		skip: (c) => {
-			advance(c, readCount(c));
-		},
-		fixedSize: -1,
-		dynamic: false,
-	};
-};
-
-const compileTypelessData = (): CompiledNode => {
-	return {
-		type: 'TypelessData',
-		name: '',
-		read: (c) => {
-			const length = readCount(c);
-			const at = advance(c, length);
-			return c.bytes.subarray(at, at + length);
-		},
-		skip: (c) => {
-			advance(c, readCount(c));
-		},
-		fixedSize: -1,
-		dynamic: false,
-	};
-};
 
 const orphanReferencedObjectData = (): never => {
 	throw new FormatError('ReferencedObjectData outside a ReferencedObject');
 };
 
 /**
- * a managed reference's payload: its layout is the ref type named by the sibling `type`
+ * reads a managed reference's payload: its layout is the ref type named by the sibling `type`
  * (`ReferencedManagedType { class, ns, asm }`); an empty class name is a null reference with no payload
  */
-const compileReferencedObjectData = (): CompiledNode => {
-	return {
-		type: 'ReferencedObjectData',
-		name: 'data',
-		read: orphanReferencedObjectData,
-		skip: orphanReferencedObjectData,
-		readInClass: (c, siblings) => {
-			const { type } = siblings;
-			if (!isObject(type)) {
-				throw new FormatError('ReferencedObjectData without a preceding ReferencedManagedType');
-			}
-			const { class: klass, ns, asm } = type;
-			if (typeof klass !== 'string' || typeof ns !== 'string' || typeof asm !== 'string') {
-				throw new FormatError('malformed ReferencedManagedType');
-			}
-			if (klass === '') {
-				return {};
-			}
-			const tree = c.resolveRefType?.(klass, ns, asm);
-			if (tree === undefined) {
-				throw new FormatError(`unknown managed reference type ${ns}.${klass} (${asm})`);
-			}
-			return tree.root.read(c);
-		},
-		fixedSize: -1,
-		dynamic: true,
-	};
+const readReferencedObjectData = (op: CompiledOp, c: Cursor, siblings: TypeTreeObject): TypeTreeObject => {
+	const { type } = siblings;
+	if (!isObject(type)) {
+		throw new FormatError('ReferencedObjectData without a preceding ReferencedManagedType');
+	}
+	const { class: klass, ns, asm } = type;
+	if (typeof klass !== 'string' || typeof ns !== 'string' || typeof asm !== 'string') {
+		throw new FormatError('malformed ReferencedManagedType');
+	}
+	let value: TypeTreeObject;
+	if (klass === '') {
+		value = {};
+	} else {
+		const tree = c.resolveRefType?.(klass, ns, asm);
+		if (tree === undefined) {
+			throw new FormatError(`unknown managed reference type ${ns}.${klass} (${asm})`);
+		}
+		value = readClass(tree.ops, 0, c);
+	}
+	if (op.align) {
+		alignCursor(c);
+	}
+	return value;
 };
 
-const compileArray = (tree: TreeNode): CompiledNode => {
-	const element = tree.children[1];
-	if (tree.children.length !== 2 || element === undefined) {
-		throw new FormatError(`Array node ${tree.node.name} has ${tree.children.length} children, expected 2`);
-	}
-	const base = { type: tree.node.type, name: tree.node.name, fixedSize: -1, dynamic: false };
-
-	// numeric fast path
-	if (element.children.length === 0 && (element.node.metaFlag & ALIGN_FLAG) === 0) {
-		const primitive = primitiveOf(element.node);
-		const { size, read: readOne, array } = primitive;
-		const skip = (c: Cursor): void => {
-			const count = readCount(c);
-			advance(c, count * size);
-		};
-		if (array !== undefined) {
-			return {
-				...base,
-				read: (c) => {
-					const count = readCount(c);
-					return array(c, advance(c, count * size), count);
-				},
-				skip,
-			};
+const readClass = (ops: readonly CompiledOp[], index: number, c: Cursor): TypeTreeObject => {
+	const classOp = ops[index];
+	const out: TypeTreeObject = {};
+	for (let childIdx = index + 1; childIdx < classOp.end; childIdx = ops[childIdx].end) {
+		const child = ops[childIdx];
+		if (child.condition !== undefined && !child.condition(out)) {
+			continue;
 		}
-		return {
-			...base,
-			read: (c) => {
-				const count = readCount(c);
-				const at = advance(c, count * size);
+		try {
+			out[child.name] =
+				child.kind === OpKind.ReferencedObjectData
+					? readReferencedObjectData(child, c, out)
+					: readOp(ops, childIdx, c);
+		} catch (error) {
+			throw prefixError(error, child.name);
+		}
+	}
+	return out;
+};
+
+const readOp = (ops: readonly CompiledOp[], index: number, c: Cursor): TypeTreeValue => {
+	const op = ops[index];
+	let value: TypeTreeValue;
+	switch (op.kind) {
+		case OpKind.Primitive: {
+			value = op.primitive.read(c, advance(c, op.primitive.size));
+			break;
+		}
+		case OpKind.PrimitiveArray: {
+			const { size, read: readOne, array } = op.primitive;
+			const count = readCount(c);
+			const at = advance(c, count * size);
+			if (array !== undefined) {
+				value = array(c, at, count);
+			} else {
 				const out: TypeTreeValue[] = Array.from({ length: count });
 				for (let i = 0; i < count; i++) {
 					out[i] = readOne(c, at + i * size);
 				}
-				return out;
-			},
-			skip,
-		};
-	}
-
-	const { read, skip, fixedSize, dynamic } = compileNode(element);
-	return {
-		...base,
-		dynamic,
-		read: (c) => {
+				value = out;
+			}
+			break;
+		}
+		case OpKind.String: {
+			const length = readCount(c);
+			const at = advance(c, length);
+			value = utf8.decode(c.bytes.subarray(at, at + length));
+			break;
+		}
+		case OpKind.TypelessData: {
+			const length = readCount(c);
+			const at = advance(c, length);
+			value = c.bytes.subarray(at, at + length);
+			break;
+		}
+		case OpKind.ReferencedObjectData: {
+			return orphanReferencedObjectData();
+		}
+		case OpKind.Array: {
 			const count = readCount(c);
+			const elemIdx = index + 1;
 			const out: TypeTreeValue[] = Array.from({ length: count });
 			for (let i = 0; i < count; i++) {
 				try {
-					out[i] = read(c);
+					out[i] = readOp(ops, elemIdx, c);
 				} catch (error) {
 					throw prefixError(error, `[${i}]`);
 				}
 			}
-			return out;
-		},
-		skip: (c) => {
+			value = out;
+			break;
+		}
+		case OpKind.Class: {
+			value = readClass(ops, index, c);
+			break;
+		}
+	}
+	if (op.align) {
+		alignCursor(c);
+	}
+	return value;
+};
+
+const skipOp = (ops: readonly CompiledOp[], index: number, c: Cursor): void => {
+	const op = ops[index];
+	if (op.fixedSize >= 0) {
+		advance(c, op.fixedSize);
+		return;
+	}
+	switch (op.kind) {
+		case OpKind.Primitive: {
+			advance(c, op.primitive.size);
+			break;
+		}
+		case OpKind.PrimitiveArray: {
 			const count = readCount(c);
-			if (fixedSize >= 0) {
-				advance(c, count * fixedSize);
-				return;
+			advance(c, count * op.primitive.size);
+			break;
+		}
+		case OpKind.String:
+		case OpKind.TypelessData: {
+			advance(c, readCount(c));
+			break;
+		}
+		case OpKind.ReferencedObjectData: {
+			orphanReferencedObjectData();
+			break;
+		}
+		case OpKind.Array: {
+			const count = readCount(c);
+			const elemIdx = index + 1;
+			const elemFixed = ops[elemIdx].fixedSize;
+			if (elemFixed >= 0) {
+				advance(c, count * elemFixed);
+			} else {
+				for (let i = 0; i < count; i++) {
+					skipOp(ops, elemIdx, c);
+				}
 			}
-			for (let i = 0; i < count; i++) {
-				skip(c);
+			break;
+		}
+		case OpKind.Class: {
+			if (op.dynamic) {
+				readClass(ops, index, c);
+			} else {
+				for (let childIdx = index + 1; childIdx < op.end; childIdx = ops[childIdx].end) {
+					skipOp(ops, childIdx, c);
+				}
 			}
-		},
-	};
+			break;
+		}
+	}
+	if (op.align) {
+		alignCursor(c);
+	}
 };
 
 // #endregion
@@ -663,7 +785,7 @@ export const readTypeTree = (
 	options: ReadTypeTreeOptions,
 ): TypeTreeObject => {
 	const c = cursor(bytes, options);
-	const value = tree.root.read(c);
+	const value = readClass(tree.ops, 0, c);
 	if (c.offset !== bytes.length) {
 		throw new FormatError(`${tree.type} read ${c.offset} of ${bytes.length} bytes`);
 	}
@@ -672,6 +794,7 @@ export const readTypeTree = (
 
 /**
  * reads one top-level field, skipping (without materializing, where the layout allows) the fields before it
+ * and stopping immediately once the target field is read
  *
  * @param tree compiled TypeTree of the object's type
  * @param bytes the object's bytes
@@ -686,36 +809,152 @@ export const readTypeTreeField = (
 	options: ReadTypeTreeOptions,
 	field: string,
 ): TypeTreeValue | undefined => {
-	const index = tree.fields.indexOf(field);
-	if (index < 0) {
+	const target = tree.fields.indexOf(field);
+	if (target < 0) {
 		return undefined;
 	}
 	const c = cursor(bytes, options);
-	const fields = tree.children;
-	for (let i = 0; i < index; i++) {
-		if (fields[i].dynamic || fields[i].readInClass !== undefined || tree.root.dynamic) {
-			// conditional or data-dependent layouts need the preceding values, so read the whole object
-			c.offset = 0;
-			return tree.root.read(c)[field];
+	const { ops, fieldIndices } = tree;
+	// only materialize preceding fields if one of 0..target depends on sibling values
+	let needsSiblings = false;
+	for (let i = 0; i <= target; i++) {
+		const op = ops[fieldIndices[i]];
+		if (op.condition !== undefined || op.kind === OpKind.ReferencedObjectData) {
+			needsSiblings = true;
+			break;
 		}
-		fields[i].skip(c);
 	}
-	return fields[index].read(c);
+	if (needsSiblings) {
+		const out: TypeTreeObject = {};
+		for (let i = 0; i <= target; i++) {
+			const opIdx = fieldIndices[i];
+			const op = ops[opIdx];
+			if (op.condition !== undefined && !op.condition(out)) {
+				continue;
+			}
+			try {
+				out[op.name] =
+					op.kind === OpKind.ReferencedObjectData
+						? readReferencedObjectData(op, c, out)
+						: readOp(ops, opIdx, c);
+			} catch (error) {
+				throw prefixError(error, op.name);
+			}
+		}
+		return out[field];
+	}
+	for (let i = 0; i < target; i++) {
+		skipOp(ops, fieldIndices[i], c);
+	}
+	const targetIdx = fieldIndices[target];
+	try {
+		return readOp(ops, targetIdx, c);
+	} catch (error) {
+		throw prefixError(error, ops[targetIdx].name);
+	}
 };
 
 // #endregion
 
 // #region SerializedFile integration
 
-const compiledTypes = new WeakMap<SerializedType, CompiledTypeTree>();
+const compiledByType = new WeakMap<SerializedType, CompiledTypeTree>();
+const compiledByHash = new Map<string, CompiledTypeTree>();
+const compiledRefByHash = new Map<string, CompiledTypeTree>();
 
 /**
- * @param type a type entry; its compiled tree is cached
+ * packs a non-zero 16-byte `oldTypeHash` plus node count into a compact cache key so identical Unity types
+ * compile once across all bundles; returns `undefined` when the hash is absent or all zeros
+ */
+const typeHashKey = (type: SerializedType): string | undefined => {
+	const hash = type.oldTypeHash;
+	if (hash === undefined || hash.length !== 16 || type.nodes.length === 0) {
+		return undefined;
+	}
+	let nonZero = 0;
+	for (let i = 0; i < 16; i++) {
+		nonZero |= hash[i];
+	}
+	if (nonZero === 0) {
+		return undefined;
+	}
+	return (
+		String.fromCharCode(
+			(hash[0] << 8) | hash[1],
+			(hash[2] << 8) | hash[3],
+			(hash[4] << 8) | hash[5],
+			(hash[6] << 8) | hash[7],
+			(hash[8] << 8) | hash[9],
+			(hash[10] << 8) | hash[11],
+			(hash[12] << 8) | hash[13],
+			(hash[14] << 8) | hash[15],
+		) + `:${type.nodes.length}`
+	);
+};
+
+/**
+ * @param type a type entry; its compiled tree is cached across files by `oldTypeHash` (or by identity when
+ *   absent)
  * @returns the compiled TypeTree
  * @throws {FormatError} if the type has no TypeTree or it doesn't compile
  */
 export const compiledTypeOf = (type: SerializedType): CompiledTypeTree => {
-	return compiledTypes.getOrInsertComputed(type, () => compileTypeTree(type.nodes));
+	const cached = compiledByType.get(type);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const key = typeHashKey(type);
+	if (key !== undefined) {
+		const shared = compiledByHash.get(key);
+		if (shared !== undefined) {
+			compiledByType.set(type, shared);
+			return shared;
+		}
+		const compiled = compileTypeTree(type.nodes);
+		compiledByHash.set(key, compiled);
+		compiledByType.set(type, compiled);
+		return compiled;
+	}
+	const compiled = compileTypeTree(type.nodes);
+	compiledByType.set(type, compiled);
+	return compiled;
+};
+
+const EMPTY_FIELD_NAMES: ReadonlySet<string> = new Set();
+const fieldNamesByType = new WeakMap<SerializedType, ReadonlySet<string>>();
+
+/**
+ * @param type a type entry, or `undefined`
+ * @returns the top-level (level-1) field names of `type`, cached per type
+ */
+export const typeFieldNames = (type: SerializedType | undefined): ReadonlySet<string> => {
+	if (type === undefined || type.nodes.length === 0) {
+		return EMPTY_FIELD_NAMES;
+	}
+	return fieldNamesByType.getOrInsertComputed(type, () => {
+		const names = new Set<string>();
+		for (const node of type.nodes) {
+			if (node.level === 1) {
+				names.add(node.name);
+			}
+		}
+		return names;
+	});
+};
+
+/**
+ * @param type a type entry, or `undefined`
+ * @param names top-level field names to check for
+ * @returns whether `type` declares every name in `names` at level 1
+ */
+export const hasTypeFields = (type: SerializedType | undefined, ...names: string[]): boolean => {
+	const fields = typeFieldNames(type);
+	for (const name of names) {
+		if (!fields.has(name)) {
+			return false;
+		}
+	}
+	return true;
 };
 
 const readOptions = new WeakMap<SerializedFile, ReadTypeTreeOptions>();
@@ -757,7 +996,25 @@ export const readOptionsOf = (file: SerializedFile): ReadTypeTreeOptions => {
 			if (type === undefined) {
 				return undefined;
 			}
-			return compiled.getOrInsertComputed(type, () => compileTypeTree(withoutRegistry(type.nodes)));
+			const local = compiled.get(type);
+			if (local !== undefined) {
+				return local;
+			}
+			const key = typeHashKey(type);
+			if (key !== undefined) {
+				const shared = compiledRefByHash.get(key);
+				if (shared !== undefined) {
+					compiled.set(type, shared);
+					return shared;
+				}
+				const built = compileTypeTree(withoutRegistry(type.nodes));
+				compiledRefByHash.set(key, built);
+				compiled.set(type, built);
+				return built;
+			}
+			const built = compileTypeTree(withoutRegistry(type.nodes));
+			compiled.set(type, built);
+			return built;
 		};
 		return { littleEndian: file.header.littleEndian, resolveRefType };
 	});

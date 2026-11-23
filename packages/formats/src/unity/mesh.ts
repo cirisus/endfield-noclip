@@ -20,6 +20,7 @@ import {
 	numberField,
 	numbersField,
 	objectField,
+	objectsField,
 	optionalNumberField,
 	streamingInfo,
 	stringField,
@@ -210,10 +211,7 @@ export const decodeMesh = (mesh: TypeTreeObject, streamData: Uint8Array | undefi
 
 	const vertexData = objectField(mesh, 'm_VertexData');
 	const vertexCount = numberField(vertexData, 'm_VertexCount');
-	const channels = arrayField(vertexData, 'm_Channels').map((value, channel) => {
-		if (!isObject(value)) {
-			throw new FormatError(`m_Channels[${channel}] is not an object`);
-		}
+	const channels = objectsField(vertexData, 'm_Channels').map((value, channel) => {
 		const dimensionByte = numberField(value, 'dimension');
 		return {
 			channel,
@@ -309,10 +307,7 @@ export const decodeMesh = (mesh: TypeTreeObject, streamData: Uint8Array | undefi
 	const indexCopy = indexBytes.slice().buffer;
 	const indices = indexSize === 2 ? new Uint16Array(indexCopy) : new Uint32Array(indexCopy);
 
-	const submeshes = arrayField(mesh, 'm_SubMeshes').map((value, i): MeshSubmesh => {
-		if (!isObject(value)) {
-			throw new FormatError(`m_SubMeshes[${i}] is not an object`);
-		}
+	const submeshes = objectsField(mesh, 'm_SubMeshes').map((value, i): MeshSubmesh => {
 		const firstByte = numberField(value, 'firstByte');
 		const submesh = {
 			firstIndex: firstByte / indexSize,
@@ -597,8 +592,6 @@ export const decodeOctahedral = (
 	return out;
 };
 
-const octScratch: [number, number] = [0, 0];
-
 /**
  * decodes Hypergryph's packed vertex normal. bits 0–9 and 10–19 are signed 10-bit octahedral coordinates
  * (÷{@link OCT10_RANGE}); the normal is the standard octahedral unfold of them, normalized. bits 20–31 hold
@@ -611,7 +604,8 @@ const octScratch: [number, number] = [0, 0];
  * @returns `out`
  */
 export const unpackHgNormal = (word: number, out: [number, number, number]): [number, number, number] => {
-	const [x, y] = unpackOct10(word, octScratch);
+	const x = (word << 22) >> 22;
+	const y = (word << 12) >> 22;
 	return decodeOctahedral(x / OCT10_RANGE, y / OCT10_RANGE, out);
 };
 

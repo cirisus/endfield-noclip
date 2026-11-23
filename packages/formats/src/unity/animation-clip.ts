@@ -2,15 +2,15 @@ import { FormatError } from '../binary/binary-reader.ts';
 
 import { ACL_TRANSFORM_STRIDE, decodeAclTransforms } from './acl.ts';
 import { UnityClass } from './serialized-file.ts';
+import { multiplyQuaternions, unityEulerQuaternion } from './transform.ts';
 import type { TypeTreeObject } from './type-tree.ts';
 import {
-	arrayField,
 	booleanField,
 	bytesField,
-	isObject,
 	numberField,
 	numbersField,
 	objectField,
+	objectsField,
 	optionalNumberField,
 } from './values.ts';
 
@@ -61,12 +61,7 @@ const MATERIAL_FLOAT = 8;
 
 /** @returns a clip's `genericBindings` validated as objects */
 const genericBindings = (clip: TypeTreeObject): TypeTreeObject[] => {
-	return arrayField(objectField(clip, 'm_ClipBindingConstant'), 'genericBindings').map((binding) => {
-		if (!isObject(binding)) {
-			throw new FormatError('invalid AnimationClip binding');
-		}
-		return binding;
-	});
+	return objectsField(objectField(clip, 'm_ClipBindingConstant'), 'genericBindings');
 };
 
 /**
@@ -115,18 +110,16 @@ const eulerQuaternion = (
 	angles: readonly [number, number, number],
 	order: number,
 ): [number, number, number, number] => {
+	if (order === 4) {
+		return unityEulerQuaternion(angles);
+	}
 	let q: [number, number, number, number] = [0, 0, 0, 1];
 	for (const axis of ROTATION_ORDERS[order]) {
 		const half = angles[axis] * DEGREES * 0.5;
 		const r: [number, number, number, number] = [0, 0, 0, Math.cos(half)];
 		r[axis] = Math.sin(half);
 		// a later axis applies after: r · q
-		q = [
-			r[3] * q[0] + r[0] * q[3] + r[1] * q[2] - r[2] * q[1],
-			r[3] * q[1] - r[0] * q[2] + r[1] * q[3] + r[2] * q[0],
-			r[3] * q[2] + r[0] * q[1] - r[1] * q[0] + r[2] * q[3],
-			r[3] * q[3] - r[0] * q[0] - r[1] * q[1] - r[2] * q[2],
-		];
+		q = multiplyQuaternions(r, q);
 	}
 	return q;
 };
@@ -145,13 +138,9 @@ export const readClipEndPose = (clip: TypeTreeObject): ClipEndPose => {
 	if (booleanField(clip, 'm_Legacy')) {
 		throw new FormatError('legacy AnimationClip');
 	}
-	const deltas = arrayField(objectField(clip, 'm_MuscleClip'), 'm_ValueArrayDelta');
-	const stops = deltas.map((delta) => {
-		if (!isObject(delta)) {
-			throw new FormatError('invalid AnimationClip value delta');
-		}
-		return numberField(delta, 'm_Stop');
-	});
+	const stops = objectsField(objectField(clip, 'm_MuscleClip'), 'm_ValueArrayDelta').map((delta) =>
+		numberField(delta, 'm_Stop'),
+	);
 	const transforms = new Map<number, ClipTransformValue[]>();
 	const active = new Map<number, boolean>();
 	const materials = new Map<number, ClipMaterialValue[]>();
@@ -673,7 +662,7 @@ export const readClipActivity = (clip: TypeTreeObject): Map<number, boolean> => 
 	if (booleanField(clip, 'm_Legacy')) {
 		throw new FormatError('legacy AnimationClip');
 	}
-	const deltas = arrayField(objectField(clip, 'm_MuscleClip'), 'm_ValueArrayDelta');
+	const deltas = objectsField(objectField(clip, 'm_MuscleClip'), 'm_ValueArrayDelta');
 	const activity = new Map<number, boolean>();
 	let at = 0;
 	for (const binding of genericBindings(clip)) {
@@ -683,7 +672,7 @@ export const readClipActivity = (clip: TypeTreeObject): Map<number, boolean> => 
 		const type = numberField(binding, 'typeID');
 		if (type === UnityClass.GameObject && numberField(binding, 'attribute') >>> 0 === IS_ACTIVE) {
 			const delta = deltas[at];
-			if (!isObject(delta)) {
+			if (delta === undefined) {
 				throw new FormatError('AnimationClip has fewer values than bindings');
 			}
 			activity.set(

@@ -3,8 +3,16 @@ import { describe, it } from 'node:test';
 
 import { FormatError } from '../binary/binary-reader.ts';
 
-import type { TypeTreeNode } from './serialized-file.ts';
-import { compileTypeTree, readTypeTree, readTypeTreeField, type RefTypeResolver } from './type-tree.ts';
+import type { SerializedType, TypeTreeNode } from './serialized-file.ts';
+import {
+	compiledTypeOf,
+	compileTypeTree,
+	hasTypeFields,
+	readTypeTree,
+	readTypeTreeField,
+	type RefTypeResolver,
+	typeFieldNames,
+} from './type-tree.ts';
 
 // #region builders
 
@@ -336,5 +344,77 @@ describe('readTypeTreeField', () => {
 		assert.equal(readTypeTreeField(compiled, bytes, LE, 'm_Name'), 'Cube');
 		assert.equal(readTypeTreeField(compiled, bytes, LE, 'm_Layer'), 8);
 		assert.equal(readTypeTreeField(compiled, bytes, LE, 'missing'), undefined);
+	});
+
+	it('stops early on a Mesh with conditional fields, even on truncated bytes', () => {
+		const compiled = compileTypeTree(
+			tree([
+				[0, 'Mesh', 'Base', -1],
+				...stringRows(1, 'm_Name'),
+				[1, 'int', 'm_MeshUsageFlags', 4],
+				[1, 'bool', 'm_CollisionMeshBaked', 1, ALIGN],
+				[1, 'CompressedMesh', 'm_CompressedMesh', -1],
+				[2, 'int', 'm_Vertices', 4],
+				[1, 'int', 'm_Tail', 4],
+				[1, 'int', 'm_Trailing', 4],
+			]),
+		);
+		// prefix covering only m_Name and m_MeshUsageFlags — truncated before the conditional fields
+		const prefix = new Bytes().string('Rock').align().i32(42).build();
+		assert.equal(readTypeTreeField(compiled, prefix, LE, 'm_Name'), 'Rock');
+		assert.equal(readTypeTreeField(compiled, prefix, LE, 'm_MeshUsageFlags'), 42);
+
+		// baked mesh truncated before m_Trailing — reading m_CompressedMesh or m_Tail stops before m_Trailing
+		const bakedPrefix = new Bytes().string('Col').align().i32(0).u8(1).align().i32(7).build();
+		assert.equal(readTypeTreeField(compiled, bakedPrefix, LE, 'm_CompressedMesh'), undefined);
+		assert.equal(readTypeTreeField(compiled, bakedPrefix, LE, 'm_Tail'), 7);
+	});
+});
+
+describe('compiledTypeOf and typeFieldNames', () => {
+	const makeType = (nodes: TypeTreeNode[], oldTypeHash: Uint8Array): SerializedType => ({
+		classId: 4,
+		isStripped: false,
+		scriptTypeIndex: -1,
+		scriptId: undefined,
+		oldTypeHash,
+		nodes,
+		klassName: undefined,
+		nameSpace: undefined,
+		asmName: undefined,
+		typeDependencies: [],
+	});
+
+	it('shares compiled trees across SerializedTypes with the same non-zero oldTypeHash', () => {
+		const nodes = tree([
+			[0, 'Transform', 'Base', -1],
+			[1, 'int', 'm_Tag', 4],
+		]);
+		const hash = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+		const a = makeType(nodes, hash);
+		const b = makeType(nodes, hash.slice());
+		assert.equal(compiledTypeOf(a), compiledTypeOf(b));
+
+		// all-zero hash falls back to per-instance caching
+		const z1 = makeType(nodes, new Uint8Array(16));
+		const z2 = makeType(nodes, new Uint8Array(16));
+		assert.notEqual(compiledTypeOf(z1), compiledTypeOf(z2));
+		assert.equal(compiledTypeOf(z1), compiledTypeOf(z1));
+	});
+
+	it('caches level-1 field names per SerializedType', () => {
+		const type = makeType(
+			tree([
+				[0, 'MonoBehaviour', 'Base', -1],
+				[1, 'int', 'alpha', 4],
+				[1, 'Pair', 'beta', -1],
+				[2, 'int', 'nested', 4],
+			]),
+			new Uint8Array(16),
+		);
+		assert.equal(typeFieldNames(type), typeFieldNames(type));
+		assert.equal(hasTypeFields(type, 'alpha', 'beta'), true);
+		assert.equal(hasTypeFields(type, 'alpha', 'nested'), false);
+		assert.equal(hasTypeFields(undefined, 'alpha'), false);
 	});
 });

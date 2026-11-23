@@ -101,7 +101,7 @@ export interface SerializedFile {
 // #region header and metadata
 
 /** bytes needed by {@link parseSerializedFileHeader} */
-export const SERIALIZED_FILE_HEADER_SIZE = 48;
+const SERIALIZED_FILE_HEADER_SIZE = 48;
 
 /** Unity class ids of the object types this project reads */
 export const UnityClass = {
@@ -151,7 +151,7 @@ export const isTextureClass = (classId: number): boolean =>
 	classId === UnityClass.CubemapArray;
 
 /**
- * @param prefix at least the first {@link SERIALIZED_FILE_HEADER_SIZE} bytes
+ * @param prefix at least the first 48 bytes of the file
  * @returns the header
  * @throws {FormatError} if the version is unsupported or the fields are implausible
  */

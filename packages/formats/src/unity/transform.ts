@@ -128,10 +128,8 @@ export const transformPoint = (matrix: Float32Array, point: readonly number[]): 
 	return out;
 };
 
-const adj = new Float64Array(9);
-
-/** writes the 3×3 linear part's adjugate (row-major) into `adj` and returns its determinant */
-const linearAdjugate = (matrix: Float32Array): number => {
+/** computes the 3×3 linear part's row-major adjugate and determinant */
+const linearAdjugate = (matrix: Float32Array): { det: number; adj: Float64Array } => {
 	const m00 = matrix[0],
 		m01 = matrix[4],
 		m02 = matrix[8];
@@ -148,16 +146,18 @@ const linearAdjugate = (matrix: Float32Array): number => {
 	if (Math.abs(det) < 1e-12) {
 		throw new RangeError('the matrix has no inverse');
 	}
-	adj[0] = a00;
-	adj[1] = m02 * m21 - m01 * m22;
-	adj[2] = m01 * m12 - m02 * m11;
-	adj[3] = a10;
-	adj[4] = m00 * m22 - m02 * m20;
-	adj[5] = m02 * m10 - m00 * m12;
-	adj[6] = a20;
-	adj[7] = m01 * m20 - m00 * m21;
-	adj[8] = m00 * m11 - m01 * m10;
-	return det;
+	const adj = new Float64Array([
+		a00,
+		m02 * m21 - m01 * m22,
+		m01 * m12 - m02 * m11,
+		a10,
+		m00 * m22 - m02 * m20,
+		m02 * m10 - m00 * m12,
+		a20,
+		m01 * m20 - m00 * m21,
+		m00 * m11 - m01 * m10,
+	]);
+	return { det, adj };
 };
 
 /**
@@ -170,7 +170,7 @@ export const inverseTransformPoint = (
 	matrix: Float32Array,
 	point: readonly number[],
 ): [number, number, number] => {
-	const det = linearAdjugate(matrix);
+	const { det, adj } = linearAdjugate(matrix);
 	const dx = point[0] - matrix[12];
 	const dy = point[1] - matrix[13];
 	const dz = point[2] - matrix[14];
@@ -187,7 +187,7 @@ export const inverseTransformPoint = (
  * @throws {RangeError} if the matrix's linear part is singular
  */
 export const inverseAffine = (matrix: Float32Array): Float32Array => {
-	const det = linearAdjugate(matrix);
+	const { det, adj } = linearAdjugate(matrix);
 	const out = new Float32Array(16);
 	out[0] = adj[0] / det;
 	out[1] = adj[3] / det;
