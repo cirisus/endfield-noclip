@@ -30,6 +30,7 @@ import {
 	loadLevelScripts,
 	loadScriptDrivers,
 } from '../../game/script-drivers.ts';
+import { interactiveStateGates } from '../../game/state/interactive-variables.ts';
 import { derivedSource, type DraftControl, scriptControlTarget } from '../../game/state/scene-control.ts';
 import {
 	scriptWaterLevels,
@@ -134,6 +135,10 @@ export const collectInteractives = async (
 	content.count('decorationAnimatorGroupsUntraced', decorationAnimators.untraced);
 
 	const scriptedInteractives = entityVisibilityTargets(levelScripts.scripts, levelScripts.ownLevels);
+	const interactiveStates =
+		scene.variables === null
+			? new Map()
+			: await interactiveStateGates(context.world, scene.variables, scene.game);
 	type FacilitiesResult = Awaited<ReturnType<typeof loadInteractiveFacilities>>;
 	let facilities: FacilitiesResult | undefined;
 	let facilitiesMemoKey: string | null = null;
@@ -151,6 +156,8 @@ export const collectInteractives = async (
 			scripted: [...scriptedInteractives].sort(),
 			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
 			erosionCores: [...dynamic.erosionCores.entries()].sort(([a], [b]) => compareStrings(a, b)),
+			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+			interactiveStates: [...interactiveStates.entries()].sort(([a], [b]) => compareStrings(a, b)),
 			jsonHash,
 			tableHash,
 		});
@@ -172,6 +179,7 @@ export const collectInteractives = async (
 				partition: scene.partition,
 				scripted: scriptedInteractives,
 				erosionCores: dynamic.erosionCores,
+				interactiveStates,
 			}),
 		);
 		facilities = result;

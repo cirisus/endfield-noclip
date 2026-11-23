@@ -5,6 +5,7 @@ import { unityEulerQuaternion } from '@endfield-noclip/formats/unity/transform';
 import { mapDefined, unique } from '@mary-ext/array-fns';
 
 import type { PrefabPose } from '../prefabs/prefab.ts';
+import type { InteractiveStateGate } from '../state/interactive-variables.ts';
 import { type DraftControl, sceneControl, switchValues } from '../state/scene-control.ts';
 
 import type { FacilityContext, FacilitySources, PrefabHashes } from './facility-sources.ts';
@@ -29,6 +30,41 @@ export const VERTICAL_ROPE_COMPONENTS = ['_InteractiveVerticalRopeComponentDataF
 
 /** the placement property naming the other port of a vertical rope */
 const TARGET_KEY = 'target';
+
+/**
+ * interactive component types whose `target_list` links a switch to the interactive it toggles: `WaterSwitch`
+ * (98), `CommonSwitchComponent` (102), and `SwitchCommonNoElectric` (175)
+ */
+const SWITCH_TARGET_COMPONENTS = [98, 102, 175];
+
+/**
+ * @param row a placed interactive
+ * @param targets by target interactive logic id, the control conditions for its off/on state
+ * @returns the unique target state gate this switch drives, or `null` when it targets none or several
+ */
+export const switchTargetGate = (
+	row: LevelInteractive,
+	targets: ReadonlyMap<string, InteractiveStateGate>,
+): InteractiveStateGate | null => {
+	const matched = new Map<string, InteractiveStateGate>();
+	for (const component of SWITCH_TARGET_COMPONENTS) {
+		const list = row.componentProperties.get(component)?.find((param) => param.key === 'target_list');
+		if (list === undefined) {
+			continue;
+		}
+		for (const value of list.values) {
+			if (value.bits === 0n || value.bits === row.id) {
+				continue;
+			}
+			const id = value.bits.toString();
+			const gate = targets.get(id);
+			if (gate !== undefined) {
+				matched.set(id, gate);
+			}
+		}
+	}
+	return matched.size === 1 ? matched.values().next().value! : null;
+};
 
 /**
  * @param row a vertical rope's port
@@ -185,6 +221,7 @@ export class RestLooks implements InteractiveKind {
 	readonly #progressions: DraftControl[];
 	readonly #doodads: { has(key: string): boolean };
 	readonly #rows: ReadonlyMap<bigint, LevelInteractive>;
+	readonly #targetStates: ReadonlyMap<string, InteractiveStateGate>;
 	/** by template key */
 	readonly #templates = new Map<string, TemplateLooks>();
 	/** by model and what it's settled with; `null` without view states or when they can't be read */
@@ -196,6 +233,7 @@ export class RestLooks implements InteractiveKind {
 	 * @param options.progressions where campfires' activation controls go
 	 * @param options.doodads doodad-group shells, which draw no look of their own
 	 * @param options.rows placed rows by id, where a vertical rope's port finds its other port
+	 * @param options.targetStates by target logic id, off/on conditions for interactives that switches toggle
 	 */
 	constructor(
 		sources: FacilitySources,
@@ -204,11 +242,13 @@ export class RestLooks implements InteractiveKind {
 			progressions,
 			doodads,
 			rows,
+			targetStates,
 		}: {
 			prefabs: PrefabHashes;
 			progressions: DraftControl[];
 			doodads: { has(key: string): boolean };
 			rows: ReadonlyMap<bigint, LevelInteractive>;
+			targetStates: ReadonlyMap<string, InteractiveStateGate>;
 		},
 	) {
 		this.#sources = sources;
@@ -216,6 +256,7 @@ export class RestLooks implements InteractiveKind {
 		this.#progressions = progressions;
 		this.#doodads = doodads;
 		this.#rows = rows;
+		this.#targetStates = targetStates;
 	}
 
 	async prepare(key: string, { model }: SingleModelTemplate, traits: TemplateTraits): Promise<void> {
@@ -275,6 +316,27 @@ export class RestLooks implements InteractiveKind {
 			looks = (await this.#looksOf(rest.model, { campfire, keys: rest.keys, state, numbers })) ?? looks;
 		}
 		const [form] = placed.template.forms;
+		// a switch linked via `target_list` to a controlled bridge or door follows its target's off/on state
+		if (!campfire && rest.state !== null && numbers.size === 0 && !lift) {
+			const target = switchTargetGate(row, this.#targetStates);
+			if (target !== null) {
+				const [offLooks, onLooks] = await Promise.all([
+					this.#looksOf(rest.model, { campfire: false, keys: rest.keys, state: 0, numbers }),
+					this.#looksOf(rest.model, { campfire: false, keys: rest.keys, state: 1, numbers }),
+				]);
+				if (
+					offLooks !== null &&
+					onLooks !== null &&
+					offLooks.near === null &&
+					onLooks.near === null &&
+					offLooks.away[0].states.join() !== onLooks.away[0].states.join()
+				) {
+					placed.placeLook(form, { alternatives: target.off }, offLooks.away[0]);
+					placed.placeLook(form, { alternatives: target.on }, onLooks.away[0]);
+					return true;
+				}
+			}
+		}
 		if (lift && !('reason' in lift)) {
 			const posed = await this.#sources.attempt(
 				form.prefab,

@@ -7,7 +7,7 @@ import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-p
 import { fenceStartsOn } from './electric-fences.ts';
 import { fixableRobotInts } from './fixable-robots.ts';
 import { jumpPadArrow, verticalPadEffect } from './jump-pads.ts';
-import { verticalRopeFloats } from './rest-looks.ts';
+import { switchTargetGate, verticalRopeFloats } from './rest-looks.ts';
 import { startState, stateOf } from './template-data.ts';
 import { readTemplateTraits } from './template-traits.ts';
 
@@ -240,4 +240,35 @@ test('a door component wins over a telescopic bridge logic, which needs a piece 
 	assert.deepEqual(readTemplateTraits({ componentList: [telescopicLogic], configProperties: [] }, 'bridge'), {
 		failure: 'bridge is a telescopic bridge without a valid pieces count',
 	});
+});
+
+test('a switch follows its target when target_list names a single controlled interactive', () => {
+	const gateA = {
+		off: [[{ control: 'mapVar:85:#27', mask: 23 }]],
+		on: [[{ control: 'mapVar:85:#27', mask: 8 }]],
+	};
+	const gateB = {
+		off: [[{ control: 'door:200', mask: 1 }]],
+		on: [[{ control: 'door:200', mask: 2 }]],
+	};
+	const targets = new Map([
+		['22800030026', gateA],
+		['200', gateB],
+	]);
+	const sw = (component: number, ids: bigint[]): LevelInteractive => ({
+		...row(null, []),
+		id: 22800030028n,
+		template: 'int_switch_wuling',
+		componentProperties: new Map([
+			[component, [{ key: 'target_list', type: 14, values: ids.map((bits) => ({ bits, text: null })) }]],
+		]),
+	});
+	// single controlled target matches (ignoring self-references and uncontrolled siblings)
+	assert.deepEqual(switchTargetGate(sw(102, [22800030026n, 999n, 22800030028n]), targets), gateA);
+	assert.deepEqual(switchTargetGate(sw(175, [200n]), targets), gateB);
+	// two distinct controlled targets stay unlinked
+	assert.equal(switchTargetGate(sw(102, [22800030026n, 200n]), targets), null);
+	// uncontrolled target or non-switch component returns null
+	assert.equal(switchTargetGate(sw(102, [999n]), targets), null);
+	assert.equal(switchTargetGate(sw(50, [22800030026n]), targets), null);
 });

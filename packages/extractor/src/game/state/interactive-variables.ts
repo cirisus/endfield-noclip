@@ -2,7 +2,7 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import type { WorldIndex } from '../world/world-index.ts';
 
-import type { MapVariables } from './game-state.ts';
+import type { Alternatives, GameCondition, GameState, MapVariables } from './game-state.ts';
 import type { DraftControl } from './scene-control.ts';
 
 // map variables that are an interactive's saved property (docs/game-data/scene-states.md#variables): the
@@ -16,6 +16,12 @@ export interface InteractiveVariable {
 	property: string;
 	/** a fresh world's value */
 	initial: number;
+}
+
+/** control conditions under which a target interactive's `state` is 0 (off) or 1 (on) */
+export interface InteractiveStateGate {
+	off: Alternatives;
+	on: Alternatives;
 }
 
 const TABLE = 'Data/Json/GameplayConfig/AutoNameMapVarTable.json';
@@ -112,6 +118,43 @@ export const nameInteractiveVariable = (
 		control.place ??= { position: [...placement.position], bounds: null, label: null };
 	}
 	control.assumption = `${control.assumption}; the variable is interactive ${variable.interactive}’s ${variable.property}, which a fresh world starts at ${variable.initial}`;
+};
+
+/**
+ * finds the interactive-backed `state` map variables that the scene's game state already tracks, and returns
+ * the conditions under which each interactive's `state` is 0 (off) or 1 (on)
+ *
+ * @param world world index
+ * @param variables how the scene's MapConfig names its map's variables
+ * @param game the scene's game state, after dynamic structures have noted and translated their variables
+ * @returns by interactive logic id, the `off` (`state ≠ 1`) and `on` (`state = 1`) conditions
+ */
+export const interactiveStateGates = async (
+	world: WorldIndex,
+	variables: Pick<MapVariables, 'map' | 'mapId'>,
+	game: GameState,
+): Promise<Map<string, InteractiveStateGate>> => {
+	const tracked = new Set(game.controls().map((control) => control.id));
+	const gates = new Map<string, InteractiveStateGate>();
+	for (const [id, variable] of await loadInteractiveVariables(world, variables)) {
+		if (variable.property !== 'state' || !tracked.has(id)) {
+			continue;
+		}
+		const name = id.slice(id.lastIndexOf(':') + 1);
+		const isOn: GameCondition = {
+			kind: 'mapVar',
+			mapId: String(variables.mapId),
+			name,
+			compare: 0,
+			target: 1,
+		};
+		const on = game.requirements(isOn);
+		const off = game.requirements({ kind: 'all', reverse: true, conditions: [isOn] });
+		if (on.length > 0 && off.length > 0) {
+			gates.set(variable.interactive, { off, on });
+		}
+	}
+	return gates;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

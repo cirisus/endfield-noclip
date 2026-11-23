@@ -229,6 +229,18 @@ implemented in [bridges.ts](../../packages/extractor/src/game/interactives/bridg
 [poses](prefabs-and-interactives.md#view-state-poses). unreadable bridge prefabs log to
 `unsupported-interactives.json` and draw as saved.
 
+## linked switches
+
+a switch interactive with `WaterSwitch` (98), `CommonSwitchComponent` (102), or
+`SwitchCommonNoElectric` (175) whose `target_list` names a single interactive driven by a `door:`,
+`bridge:`, or tracked `state` `mapVar:` control (`interactiveStateGates` in
+[interactive-variables.ts](../../packages/extractor/src/game/state/interactive-variables.ts),
+`switchTargetGate` in [rest-looks.ts](../../packages/extractor/src/game/interactives/rest-looks.ts))
+emits both its `state` 0 and `state` 1 settled looks under that target's control (when the two looks
+differ). Wuling magic-bridge switches therefore show green (`openidle`) while their bridge is
+extended by default and turn red (`closeidle`) when the bridge's `mapVar` is switched off; door and
+telescopic-bridge switches follow their door or bridge control the same way.
+
 ## variable-driven view states
 
 for a DynamicStreaming entity whose current-version view-state controller reads a variable

@@ -96,6 +96,14 @@ export class TelescopicBridges implements InteractiveKind {
 		}
 	}
 
+	/**
+	 * @param template a template key
+	 * @returns whether this kind draws rows of that template under a `bridge:<id>` control
+	 */
+	handles(template: string): boolean {
+		return this.#bridges.has(template);
+	}
+
 	async place(placed: InteractiveRow): Promise<boolean> {
 		const { row, template } = placed;
 		const bridge = this.#bridges.get(row.template);

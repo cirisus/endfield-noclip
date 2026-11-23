@@ -54,6 +54,14 @@ export class InteractiveDoors implements InteractiveKind {
 		}
 	}
 
+	/**
+	 * @param template a template key
+	 * @returns whether this kind draws rows of that template under a `door:<id>` control
+	 */
+	handles(template: string): boolean {
+		return this.#poses.has(template);
+	}
+
 	place(placed: InteractiveRow): boolean {
 		const { row, template } = placed;
 		const poses = this.#poses.get(row.template);

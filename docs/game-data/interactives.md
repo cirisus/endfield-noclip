@@ -442,6 +442,11 @@ drivers are in [telescopic bridges](scene-states.md#telescopic-bridges).
   `int_bridge_wuling_<length>_postmodel`). the bridge itself is a DynamicStreaming prefab row named
   by `dynamic_entity_id`; common-perform drives that row's view controller (`on`/`off` `SetActive`
   on deck copies plus effects; no clips).
+- **switches**: `WaterSwitch` (component 98), `CommonSwitchComponent` (component 102, e.g.
+  `int_switch_wuling`), and `SwitchCommonNoElectric` (component 175, e.g. `int_switch_common`) list
+  the interactives they toggle in component parameter `target_list`. activating the switch requests
+  `state` 1 from the server, which updates both the switch (e.g. `int_switch_wltech01_postmodel`
+  `closeidle` red → `openidle` green) and its targets (magic bridges, doors, telescopic bridges).
 
 ## auto-moving platforms
 

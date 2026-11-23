@@ -3,6 +3,7 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import type { StructureModel } from '../dynamic/dynamic-structures.ts';
 import type { Alternatives } from '../state/game-state.ts';
+import type { InteractiveStateGate } from '../state/interactive-variables.ts';
 import type { DraftControl, Visibility } from '../state/scene-control.ts';
 
 import { AnimatorStarts } from './animator-starts.ts';
@@ -64,6 +65,8 @@ export interface InteractiveStandIn {
  * @param options.partition numeric level tags
  * @param options.scripted logic ids of the interactives level scripts show and hide
  * @param options.erosionCores by logic id, the conditions a blight core's erosion root loads under
+ * @param options.interactiveStates by logic id, off/on conditions for map-variable-backed `state`
+ *   interactives
  * @returns placements, controls, explicit unsupported-file diagnostics and the placements of interactives
  *   whose model wasn't found (a template that's missing or can't be read, or a model id the model table
  *   lacks); no partial file is used
@@ -77,12 +80,14 @@ export const loadInteractiveFacilities = async (
 		partition,
 		scripted,
 		erosionCores,
+		interactiveStates,
 	}: {
 		scene: string;
 		level: string | null;
 		partition: LevelPartition | undefined;
 		scripted: ReadonlySet<string>;
 		erosionCores: ReadonlyMap<string, Alternatives>;
+		interactiveStates: ReadonlyMap<string, InteractiveStateGate>;
 	},
 ): Promise<{
 	models: StructureModel[];
@@ -129,7 +134,8 @@ export const loadInteractiveFacilities = async (
 	const fences = new ElectricFences(sources, prefabs, effects);
 	const bridges = new TelescopicBridges(sources, prefabs);
 	const doors = new InteractiveDoors(sources);
-	const restLooks = new RestLooks(sources, { prefabs, progressions, doodads, rows });
+	const targetStates = new Map<string, InteractiveStateGate>(interactiveStates);
+	const restLooks = new RestLooks(sources, { prefabs, progressions, doodads, rows, targetStates });
 	const animatorStarts = new AnimatorStarts(sources, { prefabs, progressions, doodads });
 	const regionWalls = new RegionWalls(sources);
 	const cranes = new CraneTowers(sources, prefabs);
@@ -150,6 +156,21 @@ export const loadInteractiveFacilities = async (
 				// oxlint-disable-next-line no-await-in-loop -- a few view state files and one-frame clips per model
 				await reader.prepare(key, single, traitsOf);
 			}
+		}
+	}
+	for (const { row } of placed) {
+		if (doors.handles(row.template)) {
+			const control = `door:${row.id}`;
+			targetStates.set(row.id.toString(), {
+				off: [[{ control, mask: 1 }]],
+				on: [[{ control, mask: 2 }]],
+			});
+		} else if (bridges.handles(row.template)) {
+			const control = `bridge:${row.id}`;
+			targetStates.set(row.id.toString(), {
+				off: [[{ control, mask: 1 }]],
+				on: [[{ control, mask: 2 }]],
+			});
 		}
 	}
 	{
