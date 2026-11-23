@@ -1,16 +1,20 @@
+import { readdir } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
+import type { Rect } from '@endfield-noclip/package-format/values';
 
 import { definite, mapDefined } from '@mary-ext/array-fns';
 
 import { DEFAULT_OUT, parseBounds, parseInteger, parseZstdLevel } from '../cli-args.ts';
-import { compareNumbers } from '../compare.ts';
+import { compareNumbers, compareStrings } from '../compare.ts';
 import { withContext } from '../context.ts';
+import { ignoreMissing } from '../errors.ts';
 import { packScene } from '../pack/packer.ts';
+import { PackedPackage } from '../pack/read-package.ts';
 import type { PackReport } from '../pack/report.ts';
 
 export const summary = 'build a viewer package for a scene, level or world rectangle';
@@ -19,13 +23,17 @@ export const summary = 'build a viewer package for a scene, level or world recta
 export const usage = `usage:
   pack <scene> [-o <dir>] [--level <id>] [--bounds xmin,xmax,zmin,zmax] [--zstd-level n]
        [--texture-zstd-level n] [--jobs n] [--cache <dir> | --no-cache] [--no-assets] [--json]
+  pack --existing [-o <outDir>] [--zstd-level n] [--texture-zstd-level n] [--jobs n]
+       [--cache <dir> | --no-cache] [--no-assets] [--json]
 
-writes the package for one streaming scene (e.g. map02). --level keeps the content one level owns and the
-terrain under its cells; --bounds keeps content whose centre lies in the world x, z rectangle. the output
-directory must be empty, absent, or hold a previous package; it defaults to out/<scene>[-<level>] at the
-repository root, which git ignores. --no-assets skips geometry, material and texture conversion, leaving
-their table entries pending. texture blobs use their own zstd level (default 9; 19 saves ~2% at 10× the time).
---jobs sets the worker threads converting meshes and textures (default: one per core but one, at most 8).
+writes the package for one streaming scene (e.g. map02), or with --existing repacks every package already
+under out/ (preserving each package's scene, --level and --bounds from its manifest) using one install
+session. --level keeps the content one level owns and the terrain under its cells; --bounds keeps content
+whose centre lies in the world x, z rectangle. the output directory must be empty, absent, or hold a previous
+package; it defaults to out/<scene>[-<level>] at the repository root, which git ignores. --no-assets skips
+geometry, material and texture conversion, leaving their table entries pending. texture blobs use their own
+zstd level (default 9; 19 saves ~2% at 10× the time). --jobs sets the worker threads converting meshes and
+textures (default: one per core but one, at most 8).
 
 converted meshes and textures, and every blob, are cached across packs (default out/.cache): a re-pack
 converts only what the install or the converter changed. the cache keeps what the packages it built hold and
@@ -38,6 +46,42 @@ deletes the rest after each pack; a package directory deleted by hand releases i
  */
 const MAX_DEFAULT_JOBS = 8;
 
+interface PackTarget {
+	scene: string;
+	outDir: string;
+	level: string | null;
+	bounds: Rect | null;
+}
+
+const discoverExistingPackages = async (outRoot: string): Promise<PackTarget[]> => {
+	const entries = await ignoreMissing(readdir(outRoot, { withFileTypes: true }), []);
+	const dirs = entries
+		.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+		.map((entry) => entry.name)
+		.toSorted(compareStrings);
+	const targets: PackTarget[] = [];
+	for (const name of dirs) {
+		const outDir = join(outRoot, name);
+		// oxlint-disable-next-line no-await-in-loop -- opens manifests sequentially to keep fd count low
+		const pkg = await ignoreMissing(PackedPackage.open(outDir), null);
+		if (pkg === null) {
+			continue;
+		}
+		try {
+			targets.push({
+				scene: pkg.manifest.scene.id,
+				outDir,
+				level: pkg.manifest.subset?.level ?? null,
+				bounds: pkg.manifest.subset?.bounds ?? null,
+			});
+		} finally {
+			// oxlint-disable-next-line no-await-in-loop -- paired with open above
+			await pkg[Symbol.asyncDispose]();
+		}
+	}
+	return targets;
+};
+
 export const run = async (args: string[]): Promise<void> => {
 	const { values, positionals } = parseArgs({
 		args,
@@ -47,6 +91,7 @@ export const run = async (args: string[]): Promise<void> => {
 			output: { type: 'string', short: 'o' },
 			level: { type: 'string' },
 			bounds: { type: 'string' },
+			existing: { type: 'boolean', default: false },
 			'zstd-level': { type: 'string', default: '19' },
 			'texture-zstd-level': { type: 'string', default: '9' },
 			jobs: {
@@ -60,41 +105,75 @@ export const run = async (args: string[]): Promise<void> => {
 		},
 	});
 	const [scene] = positionals;
-	if (scene === undefined) {
-		throw new Error(usage);
-	}
-	const level = values.level ?? null;
-	let outDir: string;
-	if (values.output === undefined) {
-		const name = level === null ? scene : `${scene}-${level}`;
-		outDir = resolve(new URL(name, DEFAULT_OUT).pathname);
-	} else {
-		outDir = resolve(values.output);
-	}
 	const zstdLevel = parseZstdLevel(values['zstd-level'], '--zstd-level');
 	const textureZstdLevel = parseZstdLevel(values['texture-zstd-level'], '--texture-zstd-level');
 	const jobs = parseInteger(values.jobs, '--jobs');
 	if (jobs < 1) {
 		throw new Error(`--jobs must be at least 1, got ${values.jobs}`);
 	}
+	const cacheDir = values['no-cache']
+		? null
+		: resolve(values.cache ?? fileURLToPath(new URL('.cache', DEFAULT_OUT)));
+
+	let targets: PackTarget[];
+	if (values.existing) {
+		if (scene !== undefined || values.level !== undefined || values.bounds !== undefined) {
+			throw new Error('--existing cannot be combined with <scene>, --level, or --bounds');
+		}
+		const outRoot = values.output === undefined ? fileURLToPath(DEFAULT_OUT) : resolve(values.output);
+		targets = await discoverExistingPackages(outRoot);
+		if (targets.length === 0) {
+			throw new Error(`no packed packages found in ${outRoot}`);
+		}
+	} else {
+		if (scene === undefined) {
+			throw new Error(usage);
+		}
+		const level = values.level ?? null;
+		let outDir: string;
+		if (values.output === undefined) {
+			const name = level === null ? scene : `${scene}-${level}`;
+			outDir = resolve(new URL(name, DEFAULT_OUT).pathname);
+		} else {
+			outDir = resolve(values.output);
+		}
+		targets = [
+			{
+				scene,
+				outDir,
+				level,
+				bounds: values.bounds === undefined ? null : parseBounds(values.bounds),
+			},
+		];
+	}
 
 	await withContext(values.config, async (context) => {
-		console.error(`packing ${scene}${level === null ? '' : ` (${level})`} into ${outDir}`);
-		const report = await packScene(context, {
-			scene,
-			outDir,
-			level,
-			bounds: values.bounds === undefined ? null : parseBounds(values.bounds),
-			zstdLevel,
-			textureZstdLevel,
-			jobs,
-			cacheDir: values['no-cache']
-				? null
-				: resolve(values.cache ?? fileURLToPath(new URL('.cache', DEFAULT_OUT))),
-			convertAssets: !values['no-assets'],
-			log: (line) => console.error(line),
-		});
-		console.log(values.json ? JSON.stringify(report, null, '\t') : formatReport(report));
+		const reports: PackReport[] = [];
+		for (const target of targets) {
+			console.error(
+				`packing ${target.scene}${target.level === null ? '' : ` (${target.level})`} into ${target.outDir}`,
+			);
+			// oxlint-disable-next-line no-await-in-loop -- packs sequentially to avoid memory and cache contention
+			const report = await packScene(context, {
+				scene: target.scene,
+				outDir: target.outDir,
+				level: target.level,
+				bounds: target.bounds,
+				zstdLevel,
+				textureZstdLevel,
+				jobs,
+				cacheDir,
+				convertAssets: !values['no-assets'],
+				log: (line) => console.error(line),
+			});
+			reports.push(report);
+			if (!values.json) {
+				console.log(formatReport(report));
+			}
+		}
+		if (values.json) {
+			console.log(JSON.stringify(values.existing ? reports : reports[0], null, '\t'));
+		}
 	});
 };
 

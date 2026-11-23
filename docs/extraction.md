@@ -421,6 +421,8 @@ staged in a hidden sibling and atomically renamed on success ([layout](package-f
 - `--bounds`: keeps content whose centre lies inside an x/z world rectangle (recorded in manifest).
 - `--no-assets`: skips mesh, material, and texture conversion (leaves table entries pending) for
   fast iteration.
+- `--existing`: repacks every package already under `out/` (or `-o <outDir>`), preserving each
+  package's `scene`, `--level`, and `--bounds` from its manifest in one install session.
 
 ### phases
 
