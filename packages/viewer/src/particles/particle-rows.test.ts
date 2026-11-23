@@ -269,6 +269,61 @@ describe('ParticleField', () => {
 		assert.ok(field.rows(block, 1, 0, 1301, { time: 1301 / 60, ...view }).length > 0);
 		assert.equal(allocated.size, 2);
 	});
+
+	it('refreshes active emitters in place while live count fits, and falls back when it grows', () => {
+		const writes: { rows: Uint32Array; count: number }[] = [];
+		let next = 0;
+		const store: ParticleRowStore = {
+			allocateRows: (count) => {
+				const start = next;
+				next += count;
+				return { start, count };
+			},
+			freeRows: () => {},
+			writeRows: (_start, rows, count) => {
+				writes.push({ rows: rows.slice(0, count * ROW_WORDS), count });
+			},
+		};
+		const rowsF32 = new Float32Array(ROW_WORDS);
+		rowsF32[0] = 1;
+		rowsF32[5] = 1;
+		rowsF32[10] = 1;
+		const block = { rowsF32, origin: [0, 0, 0], blockSlot: 3 } satisfies EmitterBlock;
+		const field = new ParticleField(
+			{
+				systems: [
+					system({
+						duration: 2,
+						looping: false,
+						startLifetime: constant(0.5),
+						rate: constant(4),
+					}),
+				],
+			},
+			store,
+		);
+		const view = {
+			eye,
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, 1, 0],
+			forward: [0, 0, 1],
+		} satisfies Omit<ParticleView, 'time'>;
+		// emitter starts at view.time = 0 (1 particle at t = 0); at t = 0.1 still 1 → refresh fits in place
+		const initial = field.rows(block, 0, 0, 1, { time: 0, ...view });
+		assert.equal(initial.length, 1);
+		assert.equal(field.refreshActive(2, { time: 0.1, ...view }), true);
+		// at t = 0.4, 2 particles are alive (> listed 1) → refresh asks for a full traversal
+		assert.equal(field.refreshActive(3, { time: 0.4, ...view }), false);
+		assert.equal(field.rows(block, 0, 0, 4, { time: 0.4, ...view }).length, 2);
+		// at t = 3, all particles have died → refresh pads the 2 listed slots to zero-scale rows
+		assert.equal(field.refreshActive(5, { time: 3, ...view }), true);
+		const last = writes.at(-1)!;
+		assert.equal(last.count, 2);
+		assert.equal(last.rows[0], 0);
+		assert.equal(last.rows[ROW_WORDS], 0);
+		assert.equal(last.rows[RowWord.block], 3);
+	});
 });
 
 describe('turnedByBillboard', () => {

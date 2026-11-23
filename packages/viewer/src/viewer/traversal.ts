@@ -68,6 +68,30 @@ export class Traversal {
 	}
 
 	/**
+	 * refreshes active particle emitters in place for a still view (settle/adapt frames) without re-running the
+	 * tile tree, mesh selection, or draw preparation
+	 *
+	 * @param scene the loaded package
+	 * @param input camera and animation clock
+	 * @returns whether the refresh succeeded; `false` means a full {@link run} is needed
+	 */
+	refreshParticles(scene: LoadedScene, { camera, time }: { camera: Camera; time: number }): boolean {
+		if (scene.meshes === null) {
+			return false;
+		}
+		const { targets } = this.#renderer;
+		const aspect = targets.outputWidth / targets.outputHeight;
+		return scene.meshes.refreshParticles({
+			time,
+			eye: camera.position,
+			widthPerDepth: 2 * Math.tan(camera.fovY / 2) * aspect,
+			right: camera.right(),
+			up: camera.up(),
+			forward: camera.forward(),
+		});
+	}
+
+	/**
 	 * @param scene the loaded package
 	 * @param input what to select for
 	 */

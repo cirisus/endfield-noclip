@@ -289,6 +289,20 @@ export class MeshSelector {
 	}
 
 	/**
+	 * refreshes active particle emitters in place for a still view (settle/adapt frames) without re-running
+	 * mesh selection. returns `false` if any emitter grew past its listed row span or casts shadows
+	 *
+	 * @param view the clock and camera axes
+	 * @returns whether the existing selection and visible list remain valid
+	 */
+	refreshParticles(view: ParticleView): boolean {
+		if (!this.selection.particles || this.selection.shadowParticles) {
+			return false;
+		}
+		return this.#particles.refreshActive(++this.#frame, view);
+	}
+
+	/**
 	 * @param ranges the instance ranges the tree traversal selected
 	 * @param view camera inputs
 	 * @returns buckets and box fallbacks (the same object every frame)

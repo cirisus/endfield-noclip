@@ -710,11 +710,23 @@ export class Viewer {
 			this.#windClock += windClockRate(look.environment.wind) * dt;
 		}
 		// frames that only settle or adapt reuse the last selection, unless it holds particles or spinning or
-		// riding rows, which move by the clock while it runs. with nothing rendering and nothing loading, the
-		// traversal would repeat the last frame's
+		// riding rows, which move by the clock while it runs. when only non-casting particles move on a still
+		// idle view, update their emitter rows in place instead of re-traversing the scene
+		const onlyParticles =
+			scene !== null &&
+			render &&
+			!changed &&
+			options.animate &&
+			traversal.particlesShown &&
+			!traversal.movingShown &&
+			scene.stream.idle &&
+			!traversal.textureReduction.raising;
+		const refreshed =
+			onlyParticles && traversal.refreshParticles(scene, { camera: this.camera, time: this.#time });
 		const moving = options.animate && (traversal.particlesShown || traversal.movingShown);
 		const traverse =
 			scene !== null &&
+			!refreshed &&
 			((render && (changed || moving)) || !scene.stream.idle || traversal.textureReduction.raising);
 		if (settings.shadows && (traverse || render)) {
 			// once a frame, for both the mesh selection, which groups instances by the layers they reach, and the

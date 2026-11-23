@@ -457,6 +457,8 @@ interface Emitter {
 	frame: number;
 	/** global indices of the rows holding live particles */
 	live: number[];
+	/** how many rows the last full traversal listed for this emitter */
+	listedCount: number;
 }
 
 /**
@@ -515,6 +517,10 @@ export class ParticleField {
 	readonly #trail = new Float32Array(TRAIL_POINTS * TRAIL_POINT_FLOATS);
 	/** the frame {@link #prune} last ran */
 	#prunedAt = 0;
+	/** emitters written during the last full traversal, for {@link refreshActive} */
+	readonly #active: { block: EmitterBlock; row: number; emitter: Emitter }[] = [];
+	readonly #activePool: { block: EmitterBlock; row: number; emitter: Emitter }[] = [];
+	#activeFrame = -1;
 
 	/**
 	 * turns a world direction into the emitter's frame: the inverse of a rotation times a scale, so it projects
@@ -606,8 +612,13 @@ export class ParticleField {
 				offset,
 				frame: -1,
 				live: [],
+				listedCount: 0,
 			};
 			emitters.set(key, emitter);
+		}
+		if (frame !== this.#activeFrame) {
+			this.#active.length = 0;
+			this.#activeFrame = frame;
 		}
 		if (emitter.frame !== frame) {
 			emitter.frame = frame;
@@ -616,8 +627,49 @@ export class ParticleField {
 			} else {
 				this.#writeTrails(block, row, emitter, view);
 			}
+			emitter.listedCount = emitter.live.length;
+			const entry = this.#activePool[this.#active.length];
+			if (entry === undefined) {
+				const created = { block, row, emitter };
+				this.#activePool.push(created);
+				this.#active.push(created);
+			} else {
+				entry.block = block;
+				entry.row = row;
+				entry.emitter = emitter;
+				this.#active.push(entry);
+			}
 		}
 		return emitter.live;
+	}
+
+	/**
+	 * updates the active emitters from the last full traversal in place without changing the visible list.
+	 * unused slots up to each emitter's listed count are collapsed to degenerate rows; if any emitter grew past
+	 * its listed count, returns `false` so the caller can run a full traversal instead
+	 *
+	 * @param frame the frame number
+	 * @param view the clock and camera
+	 * @returns whether every active emitter fit within its listed row span
+	 */
+	refreshActive(frame: number, view: ParticleView): boolean {
+		const active = this.#active;
+		if (active.length === 0) {
+			return true;
+		}
+		for (let i = 0; i < active.length; i++) {
+			const { block, row, emitter } = active[i];
+			const listed = emitter.listedCount;
+			const fitted =
+				emitter.simulation.info.trail === null
+					? this.#write(block, row, emitter, view, listed)
+					: this.#writeTrails(block, row, emitter, view, listed);
+			if (!fitted) {
+				return false;
+			}
+			emitter.frame = frame;
+		}
+		return true;
 	}
 
 	/** forgets a released block's emitters and frees their rows */
@@ -724,9 +776,12 @@ export class ParticleField {
 		);
 	}
 
-	#write(block: EmitterBlock, row: number, emitter: Emitter, view: ParticleView): void {
+	#write(block: EmitterBlock, row: number, emitter: Emitter, view: ParticleView, padTo?: number): boolean {
 		const info = emitter.simulation.info;
 		const count = this.#evaluate(block, row, emitter, view, emitter.rows.count);
+		if (padTo !== undefined && count > padTo) {
+			return false;
+		}
 		const m = this.#m;
 		const particles = this.#particles;
 		const context =
@@ -898,16 +953,29 @@ export class ParticleField {
 			}
 			emitter.live.push(emitter.rows.start + i);
 		}
-		if (count > 0) {
-			this.#store.writeRows(emitter.rows.start, words, count);
+		const uploadCount = padTo !== undefined ? padTo : count;
+		for (let i = count; i < uploadCount; i++) {
+			const o = i * ROW_WORDS;
+			words.fill(0, o, o + ROW_WORDS);
+			words[o + RowWord.block] = slot;
 		}
+		if (uploadCount > 0) {
+			this.#store.writeRows(emitter.rows.start, words, uploadCount);
+		}
+		return true;
 	}
 	/**
 	 * writes each particle's trail as a row per segment: the quad stretched from one point to the next along
 	 * its x, with its UVs' x remapped to the segment's share of the trail, and turned about the segment to face
 	 * the camera as far as it can
 	 */
-	#writeTrails(block: EmitterBlock, row: number, emitter: Emitter, view: ParticleView): void {
+	#writeTrails(
+		block: EmitterBlock,
+		row: number,
+		emitter: Emitter,
+		view: ParticleView,
+		padTo?: number,
+	): boolean {
 		const simulation = emitter.simulation;
 		const count = this.#evaluate(block, row, emitter, view, Math.floor(emitter.rows.count / TRAIL_SEGMENTS));
 		const m = this.#m;
@@ -977,8 +1045,18 @@ export class ParticleField {
 				written++;
 			}
 		}
-		if (written > 0) {
-			this.#store.writeRows(emitter.rows.start, words, written);
+		if (padTo !== undefined && written > padTo) {
+			return false;
 		}
+		const uploadCount = padTo !== undefined ? padTo : written;
+		for (let i = written; i < uploadCount; i++) {
+			const o = i * ROW_WORDS;
+			words.fill(0, o, o + ROW_WORDS);
+			words[o + RowWord.block] = slot;
+		}
+		if (uploadCount > 0) {
+			this.#store.writeRows(emitter.rows.start, words, uploadCount);
+		}
+		return true;
 	}
 }
