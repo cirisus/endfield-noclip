@@ -21,7 +21,12 @@ import {
 	type LevelPartition,
 } from '@endfield-noclip/formats/endfield/level-partition';
 import { CELL_SIZE } from '@endfield-noclip/formats/endfield/map-config';
-import { parseStreamingChunk, type HlodLink } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
+import {
+	DECAL_MATERIAL_KEY,
+	parseStreamingChunk,
+	WATER_DECAL_MESH_KEY,
+	type HlodLink,
+} from '@endfield-noclip/formats/endfield/streaming-chunk-data';
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import { ruleText } from '@endfield-noclip/package-format/conditions';
 import { compareVolumes, distanceInsideVolume } from '@endfield-noclip/package-format/environment-volumes';
@@ -682,7 +687,7 @@ async function* staticCandidates(
 ): AsyncGenerator<FoundCandidate> {
 	const { names, standIns, partition } = lookups;
 	const cellFilter = nearCellFilter(options.near, options.radius);
-	for await (const { entity, decalMaterial, hlodLink } of world.sceneEntitiesWithDecals(
+	for await (const { entity, decalMaterial, waterDecalMesh, hlodLink } of world.sceneEntitiesWithDecals(
 		scene,
 		(file) =>
 			(options.sceneState === undefined || file.sceneState === options.sceneState) &&
@@ -695,14 +700,24 @@ async function* staticCandidates(
 		}
 		const position = entity.pivot === null ? null : [entity.pivot.x, entity.pivot.y, entity.pivot.z];
 		const decal = decalMaterial === null ? null : (names.pathOf(decalMaterial) ?? hashText(decalMaterial));
+		const decalBundle = decalMaterial === null ? null : names.bundleOf(decalMaterial);
+		const waterMesh =
+			waterDecalMesh === null ? null : (names.pathOf(waterDecalMesh) ?? hashText(waterDecalMesh));
 		const hlodNote = options.hlodLinks ? `  ${formatHlodLink(hlodLink)}` : '';
 		yield {
 			bounds: entity.bounds,
 			position,
-			labels: () => [entity.name, ...drawLabels(entity, names), ...(decal === null ? [] : [decal])],
+			labels: () => [
+				entity.name,
+				...drawLabels(entity, names),
+				...(decal === null ? [] : [decal]),
+				...(waterMesh === null ? [] : [waterMesh]),
+			],
 			row: (distance) => {
 				const visibility = describeAlternatives(sourceVisibility([entity.source])?.alternatives ?? [[]]);
 				const reasons = standIns.atEntity(entity.name, position);
+				const decalNote = decal === null ? '' : `  ${decal}${decalBundle === null ? '' : `  ${decalBundle}`}`;
+				const waterMeshNote = waterMesh === null ? '' : `  mesh=${waterMesh.split('##').pop()}`;
 				return {
 					kind: 'static',
 					name: entity.name,
@@ -710,12 +725,13 @@ async function* staticCandidates(
 					level: entity.membership.level?.id ?? entity.membership.bucket,
 					visibility,
 					source: basename(entity.source.name),
-					summary: `${drawSummary(entity, names)}${decal === null ? '' : `  ${decal}`}  layer ${layerName(entity.layer)}${hlodNote}`,
+					summary: `${drawSummary(entity, names)}${decalNote}${waterMeshNote}  layer ${layerName(entity.layer)}${hlodNote}`,
 					standIns: reasons,
 					json: {
 						kind: 'static',
 						...entityJson(entity, partition, names),
-						...(decal === null ? {} : { decalMaterial: decal }),
+						...(decal === null ? {} : { decalMaterial: decal, decalMaterialBundle: decalBundle }),
+						...(waterMesh === null ? {} : { waterDecalMesh: waterMesh }),
 						...(options.hlodLinks ? { hlodLink } : {}),
 						visibility,
 						standIns: reasons,
@@ -1129,7 +1145,13 @@ const foundLine = (row: FoundRow): string => {
 const drawSummary = (entity: ChunkEntity, { pathOf, bundleOf }: AssetNames): string => {
 	const { renderer } = entity;
 	if (renderer === null) {
-		return `${entity.decal === null ? 'no renderer' : 'rect decal'} (components ${entity.components.join(' ')})`;
+		let label = 'no renderer';
+		if (entity.waterDecal !== null) {
+			label = 'water decal';
+		} else if (entity.decal !== null) {
+			label = 'rect decal';
+		}
+		return `${label} (components ${entity.components.join(' ')})`;
 	}
 	const first = renderer.draws[0];
 	if (first === undefined) {
@@ -1448,6 +1470,7 @@ const chunkEntityJson = (entity: ChunkEntity, { pathOf, bundleOf }: AssetNames):
 	matrix: entity.matrix === null ? null : [...entity.matrix],
 	bounds: entity.bounds,
 	decal: entity.decal,
+	waterDecal: entity.waterDecal,
 	components: entity.components,
 	renderer:
 		entity.renderer === null
@@ -1649,10 +1672,24 @@ const inspectChunk = async (
 				{
 					chunk: basename(file.name),
 					hasStreaming: streaming !== null,
-					entities: shown.map((entity) => ({
-						...entityJson(entity, partition, names),
-						hlodLink: streaming?.hlodLink(entity.id) ?? null,
-					})),
+					entities: shown.map((entity) => {
+						const decalKey =
+							entity.decal !== null || entity.waterDecal !== null
+								? streaming?.assetProperty(entity.id, DECAL_MATERIAL_KEY)
+								: undefined;
+						const waterMeshKey =
+							entity.waterDecal !== null
+								? streaming?.assetProperty(entity.id, WATER_DECAL_MESH_KEY)
+								: undefined;
+						return {
+							...entityJson(entity, partition, names),
+							...(decalKey === undefined ? {} : { decalMaterial: pathOf(decalKey) ?? hashText(decalKey) }),
+							...(waterMeshKey === undefined
+								? {}
+								: { waterDecalMesh: pathOf(waterMeshKey) ?? hashText(waterMeshKey) }),
+							hlodLink: streaming?.hlodLink(entity.id) ?? null,
+						};
+					}),
 				},
 				jsonReplacer,
 				'\t',
@@ -1668,7 +1705,14 @@ const inspectChunk = async (
 				: `${entity.pivot.x.toFixed(1)},${entity.pivot.y.toFixed(1)},${entity.pivot.z.toFixed(1)}`;
 		const size = entity.bounds === null ? '-' : `${(2 * Math.max(...entity.bounds.extents)).toFixed(0)}m`;
 		const link = formatHlodLink(streaming?.hlodLink(entity.id) ?? null);
-		const lods = entity.renderer === null ? 'no-renderer' : `${entity.renderer.lodCount} lods`;
+		let lods = 'no-renderer';
+		if (entity.renderer !== null) {
+			lods = `${entity.renderer.lodCount} lods`;
+		} else if (entity.waterDecal !== null) {
+			lods = 'water-decal';
+		} else if (entity.decal !== null) {
+			lods = 'rect-decal';
+		}
 		console.log(
 			`  ${String(entity.id).padEnd(11)} ${layerName(entity.layer).padEnd(14)} ${link.padEnd(22)} ${lods.padEnd(11)} ${size.padStart(5)}  ${pos.padEnd(22)} ${entity.name}`,
 		);

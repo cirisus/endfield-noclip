@@ -74,7 +74,7 @@ pnpm extract bundle find --class Shader --group initial --limit 20
 
 visibility prints as package scene controls under default game state: alternatives joined by `|`,
 requirements by `&`, each `control=values` (or `always` when ungated). `static` rows also show their
-[streaming layer](game-data/world.md#streaming-layers), and rect decals show their material
+[streaming layer](game-data/world.md#streaming-layers), and rect/water decals show their material
 (accepted by `inspect material`).
 
 - `--name`: matches entity names, mesh/material paths (including rect decals), prefab paths, and row

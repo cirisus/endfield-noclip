@@ -579,14 +579,14 @@ export class WorldIndex {
 	}
 
 	/**
-	 * reads one chunk file's entities and, when the chunk has rect decals (or `hlodLinks` is requested), reads
-	 * decal materials and/or HLOD links from its StreamingChunkData sibling
+	 * reads one chunk file's entities and, when the chunk has rect/water decals (or `hlodLinks` is requested),
+	 * reads decal materials, water-decal meshes, and/or HLOD links from its StreamingChunkData sibling
 	 *
 	 * @param file chunk file
 	 * @param partition the scene's partition, or `undefined` for scenes without levels
 	 * @param options whether to also read every entity's HLOD link
-	 * @returns its entities, rect-decal material keys, and HLOD links by entity id
-	 * @throws {Error} if the chunk has rect decals but no StreamingChunkData sibling
+	 * @returns its entities, decal material keys, water-decal mesh keys, and HLOD links by entity id
+	 * @throws {Error} if the chunk has decals but no StreamingChunkData sibling
 	 */
 	async readChunkWithDecals(
 		file: ChunkFile,
@@ -595,13 +595,20 @@ export class WorldIndex {
 	): Promise<{
 		entities: IndexedEntity[];
 		decalMaterials: Map<number, bigint>;
+		waterDecalMeshes: Map<number, bigint>;
 		hlodLinks: Map<number, HlodLink>;
 	}> {
 		const chunk = parseInitChunk(await this.readInitPayload(file));
 		const entities = indexEntities(chunk, file, partition);
 		const decalMaterials = new Map<number, bigint>();
+		const waterDecalMeshes = new Map<number, bigint>();
 		const hlodLinks = new Map<number, HlodLink>();
-		const decalIds = mapDefined(entities, (entity) => (entity.decal === null ? undefined : entity.id));
+		const decalIds = mapDefined(entities, (entity) =>
+			entity.decal === null && entity.waterDecal === null ? undefined : entity.id,
+		);
+		const waterDecalIds = mapDefined(entities, (entity) =>
+			entity.waterDecal === null ? undefined : entity.id,
+		);
 		if (decalIds.length > 0 || options.hlodLinks) {
 			const data = await this.readStreamingPayload(file);
 			if (data === null && decalIds.length > 0) {
@@ -615,6 +622,12 @@ export class WorldIndex {
 						decalMaterials.set(id, material);
 					}
 				}
+				for (const id of waterDecalIds) {
+					const mesh = streaming.assetProperty(id, WATER_DECAL_MESH_KEY);
+					if (mesh !== undefined) {
+						waterDecalMeshes.set(id, mesh);
+					}
+				}
 				if (options.hlodLinks) {
 					for (const entity of entities) {
 						const link = streaming.hlodLink(entity.id);
@@ -625,7 +638,7 @@ export class WorldIndex {
 				}
 			}
 		}
-		return { entities, decalMaterials, hlodLinks };
+		return { entities, decalMaterials, waterDecalMeshes, hlodLinks };
 	}
 
 	/**
@@ -684,7 +697,12 @@ export class WorldIndex {
 		scene: string,
 		filter: ((file: ChunkFile) => boolean) | undefined,
 		options: { hlodLinks: boolean },
-	): AsyncGenerator<{ entity: IndexedEntity; decalMaterial: bigint | null; hlodLink: HlodLink | null }> {
+	): AsyncGenerator<{
+		entity: IndexedEntity;
+		decalMaterial: bigint | null;
+		waterDecalMesh: bigint | null;
+		hlodLink: HlodLink | null;
+	}> {
 		const partition = await this.partition(scene);
 		const selected = (await this.chunkFiles()).filter(
 			(file) => file.scene === scene && (filter === undefined || filter(file)),
@@ -695,6 +713,7 @@ export class WorldIndex {
 			Promise<{
 				entities: IndexedEntity[];
 				decalMaterials: Map<number, bigint>;
+				waterDecalMeshes: Map<number, bigint>;
 				hlodLinks: Map<number, HlodLink>;
 			}>
 		>();
@@ -709,7 +728,7 @@ export class WorldIndex {
 		try {
 			for (let i = 0; i < selected.length; i++) {
 				// oxlint-disable-next-line no-await-in-loop -- entities stream out in file order with read-ahead
-				const { entities, decalMaterials, hlodLinks } = await pending.get(i)!;
+				const { entities, decalMaterials, waterDecalMeshes, hlodLinks } = await pending.get(i)!;
 				pending.delete(i);
 				prefetch(i + READ_CONCURRENCY);
 				for (const entity of entities) {
@@ -718,6 +737,7 @@ export class WorldIndex {
 						yield {
 							entity,
 							decalMaterial: decalMaterials.get(entity.id) ?? null,
+							waterDecalMesh: waterDecalMeshes.get(entity.id) ?? null,
 							hlodLink: hlodLinks.get(entity.id) ?? null,
 						};
 					}
