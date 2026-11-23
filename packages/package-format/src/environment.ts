@@ -8,8 +8,8 @@ import type { Color, Mat3, Vec2, Vec3, Vec4 } from './values.ts';
  * (`LevelEnvironment`) and the volumes applying over it. each section is the game's `HG*Config` with the
  * game's field names: colours as {@link Color}, vectors as arrays, `SphericalHarmonicsL2` as 27 numbers in
  * the game's order, flags as booleans, nested structs as objects, textures as {@link TextureRef}s and
- * materials as {@link EnvironmentMaterial}s. colour curves, editor state and other object references are left
- * out
+ * celestial materials as lowered {@link SkyPlanetMaterial} / {@link RayPlanetMaterial} structs. colour
+ * curves, editor state and other object references are left out
  */
 export interface EnvironmentProfile {
 	/** the level phase's asset name, e.g. `Env_map02_lv001_art_Global_01` */
@@ -403,26 +403,63 @@ export interface CloudConfig {
 }
 
 /**
- * a material an environment section draws with (the celestial bodies'), flattened: its shader's name and its
- * properties under Unity's names
+ * lowered material for the ray-traced planet (`HGRP/Planet/PlanetBillboard`), in the material's units
+ * (metres) with all colours in linear RGB
  */
-export interface EnvironmentMaterial {
-	/** e.g. `HGRP/SkydomeStar` */
-	shader: string;
-	/** enabled keywords, space-separated as in Unity's `m_ShaderKeywords` */
-	keywords: string;
-	/**
-	 * every float, range and int property the shader declares, with the material's value or the declared
-	 * default; properties left from the material's earlier shaders are dropped. a shader that declares nothing
-	 * keeps the material's values as stored
-	 */
-	floats: Record<string, number>;
-	/** every colour and vector property the shader declares, as for {@link floats} */
-	colors: Record<string, Color>;
-	/** texture slots the shader declares that resolved, by property name */
-	textures: Record<string, TextureRef>;
-	/** texture scale (xy) and offset (zw) per slot, as the material stores them */
-	textureTransforms: Record<string, Vec4>;
+export interface RayPlanetMaterial {
+	textures: {
+		base: TextureRef;
+		rsm: TextureRef;
+		clouds: TextureRef;
+		lut: TextureRef;
+	};
+	/** world position of the planet centre */
+	center: Vec3;
+	radius: number;
+	groundRadius: number;
+	topRadius: number;
+	cloudRadius: number;
+	viewSamples: number;
+	scaleHeights: [rayleigh: number, mie: number];
+	mieAnisotropy: number;
+	useLut: boolean;
+	rayleigh: Vec3;
+	mie: Vec3;
+	brightness: number;
+	cloudShadows: boolean;
+	/** unit direction towards its light, or `null` for the scene's sun */
+	light: Vec3 | null;
+	/** linear surface light colour, or `null` for the scene's sun; multiplied by `lightScale` */
+	lightColor: Vec3 | null;
+	lightScale: number;
+	/** columns of the texture-space tilt matrix */
+	tilt: [Vec3, Vec3, Vec3];
+	spin: number;
+	/** base colour map scale (xy) and offset (zw) */
+	baseTransform: Vec4;
+	tint: Vec3;
+	seaShallow: Vec3;
+	seaDeep: Vec3;
+	fresnel: Vec3;
+	indirect: Vec3;
+	cloudShadow: Vec3;
+	ambient: Vec3;
+	cloudAlpha: number;
+	cloudBrightness: number;
+	roughness: number;
+	roughnessFromMap: boolean;
+}
+
+/** lowered material for a planet painted on the sky dome (`HGRP/SkydomeStar`), colours in linear RGB */
+export interface SkyPlanetMaterial {
+	mainTexture: TextureRef;
+	emissiveTexture: TextureRef;
+	ringTexture: TextureRef;
+	color: Vec3;
+	emissive: Vec3;
+	sharpness: number;
+	backFace: number;
+	ringShadowSoftness: number;
 }
 
 /** `RingProperty`: a planet's ring, in the planet's radius units */
@@ -445,7 +482,7 @@ export interface CelestialObjectProperty {
 /** `CelestialDrawer`: how a body is painted on the sky dome */
 export interface CelestialDrawer {
 	drawMode: number;
-	drawMaterial: EnvironmentMaterial | null;
+	drawMaterial: SkyPlanetMaterial | null;
 	/** degrees: where on the sky the body sits */
 	pitchYaw: Vec2;
 	/** degrees: where its light comes from */
@@ -491,7 +528,7 @@ export interface CelestialObjectConfig {
 /** `HGCelestialAdvancedObjectConfig`: a ray-traced planet with its own material */
 export interface CelestialAdvancedObjectConfig {
 	drawAdvancedPlanet: boolean;
-	advancedPlanetMat: EnvironmentMaterial | null;
+	advancedPlanetMat: RayPlanetMaterial | null;
 }
 
 /** `HGCelestialConfig`: planets and moons in the sky */

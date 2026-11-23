@@ -4,19 +4,61 @@ import { describe, it } from 'node:test';
 import type {
 	CelestialAtmosphereObjectConfig,
 	CelestialConfig,
-	EnvironmentMaterial,
+	RayPlanetMaterial,
+	SkyPlanetMaterial,
 	StarConfig,
 } from '@endfield-noclip/package-format/environment';
 
 import { type CelestialInput, celestialLook } from './celestial-look.ts';
 
-const material = (overrides: Partial<EnvironmentMaterial>): EnvironmentMaterial => ({
-	shader: 'HGRP/SkydomeStar',
-	keywords: '',
-	floats: {},
-	colors: {},
-	textures: {},
-	textureTransforms: {},
+const skyMaterial = (overrides: Partial<SkyPlanetMaterial>): SkyPlanetMaterial => ({
+	mainTexture: null,
+	emissiveTexture: null,
+	ringTexture: null,
+	color: [1, 1, 1],
+	emissive: [1, 1, 1],
+	sharpness: 0,
+	backFace: 0,
+	ringShadowSoftness: 0,
+	...overrides,
+});
+
+const rayMaterial = (overrides: Partial<RayPlanetMaterial>): RayPlanetMaterial => ({
+	textures: { base: 1, rsm: 2, clouds: 3, lut: 4 },
+	center: [0, 0, 0],
+	radius: 100,
+	groundRadius: 92,
+	topRadius: 120,
+	cloudRadius: 105,
+	viewSamples: 8,
+	scaleHeights: [1.68, 1.68],
+	mieAnisotropy: 0.76,
+	useLut: false,
+	rayleigh: [0, 0, 0],
+	mie: [0, 0, 0],
+	brightness: 1,
+	cloudShadows: false,
+	light: null,
+	lightColor: null,
+	lightScale: 1,
+	tilt: [
+		[1, 0, 0],
+		[0, 1, 0],
+		[0, 0, 1],
+	],
+	spin: 0,
+	baseTransform: [1, 1, 0, 0],
+	tint: [1, 1, 1],
+	seaShallow: [0, 0, 0],
+	seaDeep: [0, 0, 0],
+	fresnel: [0, 0, 0],
+	indirect: [0, 0, 0],
+	cloudShadow: [1, 1, 1],
+	ambient: [0, 0, 0],
+	cloudAlpha: 1,
+	cloudBrightness: 1,
+	roughness: 0.5,
+	roughnessFromMap: false,
 	...overrides,
 });
 
@@ -26,7 +68,7 @@ const skyPlanet = (drawn: boolean): CelestialAtmosphereObjectConfig => ({
 	objectProperty: { radius: 1000, selfTiltX: 0, selfTiltZ: 0, selfRotationY: 0 },
 	skydomeDrawer: {
 		drawMode: 1,
-		drawMaterial: material({ textures: { _MainTex: 1 } }),
+		drawMaterial: skyMaterial({ mainTexture: 1 }),
 		pitchYaw: [30, 0],
 		incidentLightingPitchYaw: [45, 90],
 	},
@@ -82,19 +124,17 @@ describe('celestialLook', () => {
 		assert.ok(Math.abs(0.3 * scale + offset - 1) < 1e-9);
 	});
 
-	it('places the ray-traced planet from its material', () => {
-		const advancedPlanetMat = material({
-			shader: 'HGRP/Planet/PlanetBillboard',
-			floats: { _RealPlanetRadius: 100, _Dist: 1000, _Phi2: 0, _Theta2: -90 },
-			colors: { _PlanetWSBase: [0, 0, 0, 0] },
-			textures: { _BaseColorMap: 1, _RSM: 2, _CloudsTexMain: 3, _TransmittanceLLUT: 4 },
+	it('places the ray-traced planet from its lowered material', () => {
+		const advancedPlanetMat = rayMaterial({
+			center: [0, -1000, 0],
+			radius: 100,
+			textures: { base: 1, rsm: 2, clouds: 3, lut: 4 },
 		});
 		const look = celestialLook({
 			celestial: celestial({ advancedPlanetConfig: { drawAdvancedPlanet: true, advancedPlanetMat } }),
 		});
 		assert.ok(look.ray !== null);
 		const [x, y, z] = look.ray.center;
-		// θ = −90° puts it straight down
 		assert.ok(Math.abs(x) < 1e-9 && Math.abs(y + 1000) < 1e-9 && Math.abs(z) < 1e-9);
 	});
 

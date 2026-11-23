@@ -9,12 +9,12 @@
 import type {
 	CelestialAtmosphereObjectConfig,
 	CelestialConfig,
-	EnvironmentMaterial,
 	LightConfig,
+	RayPlanetMaterial,
 	SkyConfig,
 	StarConfig,
 } from '@endfield-noclip/package-format/environment';
-import type { Color, Vec3, Vec4 } from '@endfield-noclip/package-format/values';
+import type { Vec3, Vec4 } from '@endfield-noclip/package-format/values';
 
 import { linearRgb } from '../math/color.ts';
 import { times3Columns } from '../math/mat3.ts';
@@ -169,10 +169,6 @@ const DEG = Math.PI / 180;
 const rgb = (c: readonly number[] | undefined, scale = 1): Vec3 =>
 	c === undefined ? [0, 0, 0] : [c[0] * scale, c[1] * scale, c[2] * scale];
 
-/** a gamma-encoded colour linearised, as Unity's `Color.linear` does, times `scale` */
-const linear = (c: Readonly<Color> | undefined, scale = 1): Vec3 =>
-	rgb(c === undefined ? undefined : linearRgb(c), scale);
-
 const nebulaLook = (star: StarConfig | undefined): NebulaLook | null => {
 	if (star === undefined || !star.enableNebula || star.nebulaMap === null) {
 		return null;
@@ -211,84 +207,13 @@ const starLook = (star: StarConfig | undefined): StarLook | null => {
 	};
 };
 
-/**
- * a material's properties by their Unity names. the package fills in every property the shader declares, so a
- * missing one is a shader that doesn't declare it, read as 0
- */
-const propertiesOf = (material: EnvironmentMaterial) => ({
-	float: (name: string): number => material.floats[name] ?? 0,
-	color: (name: string): Color | undefined => material.colors[name],
-	texture: (name: string): number | null => material.textures[name] ?? null,
-	transform: (name: string): Vec4 | undefined => material.textureTransforms[name],
-});
-
-/**
- * the ray-traced planet's constants, which the game fills from the material: floats and vectors as stored,
- * colours linearised
- */
-const rayPlanetLook = (material: EnvironmentMaterial): RayPlanetLook | null => {
-	const { float: f, color, texture, transform } = propertiesOf(material);
-	const base = texture('_BaseColorMap');
-	const rsm = texture('_RSM');
-	const clouds = texture('_CloudsTexMain');
-	const lut = texture('_TransmittanceLLUT');
+/** the ray-traced planet's constants, already lowered in the package */
+const rayPlanetLook = (material: RayPlanetMaterial): RayPlanetLook | null => {
+	const { base, rsm, clouds, lut } = material.textures;
 	if (base === null || rsm === null || clouds === null || lut === null) {
 		return null;
 	}
-	const radius = f('_RealPlanetRadius');
-	const offset = f('_GlobalRadiusOffset');
-	const groundRadius = 0.92 * radius + offset;
-	const topRadius = f('_AtmosphereRatios') * radius + offset;
-	const rayleighHeight = 0.06 * (topRadius - groundRadius);
-	const density = f('_Density_Multiplier');
-	const phi = f('_Phi2') * DEG;
-	const theta = f('_Theta2') * DEG;
-	const distance = f('_Dist');
-	const origin = rgb(color('_PlanetWSBase'));
-	const pitch = f('_Pitch') * DEG;
-	const roll = f('_Roll') * DEG;
-	const ambient = color('_Ambient') ?? [0, 0, 0, 0];
-	return {
-		textures: { base, rsm, clouds, lut },
-		center: [
-			origin[0] - Math.sin(phi) * distance,
-			origin[1] + Math.sin(theta) * distance,
-			origin[2] - Math.cos(theta) * Math.cos(phi) * distance,
-		],
-		radius,
-		groundRadius,
-		topRadius,
-		cloudRadius: radius + f('_CloudsHeight'),
-		viewSamples: f('_StepsI'),
-		scaleHeights: [rayleighHeight, rayleighHeight * f('_Mie_Height_Scale')],
-		mieAnisotropy: f('_g'),
-		useLut: f('_Use_Lut') !== 0,
-		rayleigh: linear(color('_Ray'), density),
-		mie: linear(color('_Mie'), density),
-		brightness: f('_Light_Intensity_Multiplier'),
-		cloudShadows: material.keywords.split(' ').includes('_ENABLE_CLOUDS_SHADOW'),
-		light: f('_CustomLightDirection') !== 0 ? normalize(rgb(color('_CustomLightDir'))) : null,
-		lightColor: f('_CustomLightColorPla') !== 0 ? linear(color('_CustomLightColPla')) : null,
-		lightScale: f('_DirectLightIntensityBillboard'),
-		tilt: [
-			[Math.cos(roll), -Math.sin(roll) * Math.cos(pitch), Math.sin(roll) * Math.sin(pitch)],
-			[Math.sin(roll), Math.cos(roll) * Math.cos(pitch), -Math.cos(roll) * Math.sin(pitch)],
-			[0, Math.sin(pitch), Math.cos(pitch)],
-		],
-		spin: f('_PlanetRotateStart') * 0.001,
-		baseTransform: transform('_BaseColorMap') ?? [1, 1, 0, 0],
-		tint: linear(color('_TintColor') ?? [1, 1, 1, 1]),
-		seaShallow: linear(color('_SeaShallow')),
-		seaDeep: linear(color('_SeaDeep')),
-		fresnel: linear(color('_FresnelColor')),
-		indirect: linear(color('_IndirectColor'), f('_IndirectIntensity')),
-		cloudShadow: linear(color('_CloudsShadowColor') ?? [1, 1, 1, 1]),
-		ambient: linear(ambient, density * ambient[3]),
-		cloudAlpha: f('_CloudsAlphaMain'),
-		cloudBrightness: f('_Light_Intensity_Clouds_Multiplier'),
-		roughness: f('_Roughness'),
-		roughnessFromMap: f('_UseRoughnessMap') !== 0,
-	};
+	return { ...material, textures: { base, rsm, clouds, lut } };
 };
 
 /** a 3×3 rotation as columns; Unity's quaternions rotate with the same matrices as a right-handed frame */
@@ -317,15 +242,6 @@ const euler = (x: number, y: number, z: number): Mat3 => {
 };
 
 /**
- * a material colour as `Material.SetColor` hands it to a shader in linear colour space. HDR colours (any
- * channel past 1) are taken as authored linear, as for emission
- */
-const materialColor = (c: Readonly<Color> | undefined, fallback: Color): Vec3 => {
-	const color = c ?? fallback;
-	return color[0] > 1 || color[1] > 1 || color[2] > 1 ? rgb(color) : linearRgb(color);
-};
-
-/**
  * a planet painted on the sky dome, as the game packs it: a sphere seen at the distance `moon.orbitRadius −
  * moon.radius` (the moon is the body the map stands on), along its pitch and yaw
  */
@@ -337,7 +253,6 @@ const skyPlanetLook = (
 	if (!planet.drawPlanetInSkydome || material === null) {
 		return null;
 	}
-	const { float, color, texture } = propertiesOf(material);
 	const property = planet.objectProperty;
 	const distance = moon.orbitRadius - moon.radius;
 	if (distance <= 0) {
@@ -361,9 +276,9 @@ const skyPlanetLook = (
 	const atmosphere = planet.enableAtmosphere ? planet.atmosphere : null;
 	return {
 		textures: {
-			main: texture('_MainTex'),
-			emissive: texture('_EmissiveTex'),
-			ring: ringParams[1] === 0 ? null : texture('_RingTex'),
+			main: material.mainTexture,
+			emissive: material.emissiveTexture,
+			ring: ringParams[1] === 0 ? null : material.ringTexture,
 		},
 		center: towardsLight(planet.skydomeDrawer.pitchYaw),
 		up,
@@ -373,11 +288,11 @@ const skyPlanetLook = (
 		radius: property.radius / distance,
 		ring: ringParams,
 		ringColor: [...linearRgb(ringColor), ringColor[3]],
-		color: materialColor(color('_Color'), [1, 1, 1, 1]),
-		emissive: materialColor(color('_PlanetEmissive'), [1, 1, 1, 1]),
-		sharpness: float('_StarNdlSharp'),
-		backFace: float('_StarBackFaceAlpha'),
-		ringShadowSoftness: float('_RingShadowSoftness'),
+		color: material.color,
+		emissive: material.emissive,
+		sharpness: material.sharpness,
+		backFace: material.backFace,
+		ringShadowSoftness: material.ringShadowSoftness,
 		horizonFade: planet.drawPlanetBelowHorizon ? 1 : 0,
 		atmosphere:
 			atmosphere === null

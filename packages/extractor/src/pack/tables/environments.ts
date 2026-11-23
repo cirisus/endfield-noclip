@@ -7,7 +7,7 @@ import {
 	type EnvironmentSectionName,
 } from '@endfield-noclip/formats/hg/environment-phase';
 import { type LensFlareDataSRP, readLensFlareData } from '@endfield-noclip/formats/unity/lens-flare-data';
-import { ShaderPropertyType } from '@endfield-noclip/formats/unity/material';
+import { ShaderPropertyFlags, ShaderPropertyType } from '@endfield-noclip/formats/unity/material';
 import type { PlainKinds, PlainObject } from '@endfield-noclip/formats/unity/plain-object';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type {
@@ -22,8 +22,11 @@ import type {
 	EnvironmentTable,
 	EnvironmentVolumeInfo,
 	PostProfile,
+	RayPlanetMaterial,
+	SkyPlanetMaterial,
 } from '@endfield-noclip/package-format/environment';
 import type { LevelEnvironment } from '@endfield-noclip/package-format/manifest';
+import type { Color, Vec3, Vec4 } from '@endfield-noclip/package-format/values';
 
 import { compareNumbers, compareStrings } from '../../compare.ts';
 import type { Context } from '../../context.ts';
@@ -51,6 +54,7 @@ import {
 	type SectionSource,
 } from '../../game/environment.ts';
 import { type LoadedMaterial, loadMaterial } from '../../game/materials/material-load.ts';
+import { linearRgb, scaleRgb } from '../../game/materials/material-values.ts';
 import { allOf } from '../../game/state/game-state.ts';
 import {
 	type DraftControl,
@@ -412,9 +416,9 @@ export const planEnvironments = async (
 			});
 		}
 
-		for (const { phase: info } of plan.phases) {
+		for (const { phase: info, slots } of plan.phases) {
 			if (info.active.includes('celestial')) {
-				checkRayPlanet(info.name, info.sections.celestial, report);
+				checkRayPlanet(info.name, info.sections.celestial, slots, report);
 			}
 		}
 		return plan;
@@ -431,10 +435,20 @@ export const planEnvironments = async (
 };
 
 /** the textures the ray-traced planet's shader samples; without any of them it isn't drawn */
-const RAY_PLANET_TEXTURES = ['_BaseColorMap', '_RSM', '_CloudsTexMain', '_TransmittanceLLUT'];
+const RAY_PLANET_TEXTURES: readonly [key: keyof RayPlanetMaterial['textures'], slot: string][] = [
+	['base', '_BaseColorMap'],
+	['rsm', '_RSM'],
+	['clouds', '_CloudsTexMain'],
+	['lut', '_TransmittanceLLUT'],
+];
 
 /** reports a ray-traced planet that's on but lacks its material or one of its textures */
-const checkRayPlanet = (phase: string, celestial: CelestialConfig, report: ReportProblem): void => {
+const checkRayPlanet = (
+	phase: string,
+	celestial: CelestialConfig,
+	slots: readonly TextureSlot[],
+	report: ReportProblem,
+): void => {
 	const { drawAdvancedPlanet, advancedPlanetMat } = celestial.advancedPlanetConfig;
 	if (!drawAdvancedPlanet) {
 		return;
@@ -450,7 +464,10 @@ const checkRayPlanet = (phase: string, celestial: CelestialConfig, report: Repor
 		});
 		return;
 	}
-	const missing = RAY_PLANET_TEXTURES.filter((slot) => !Object.hasOwn(advancedPlanetMat.textures, slot));
+	const bound = new Set(
+		slots.filter((s) => s.holder === (advancedPlanetMat.textures as unknown)).map((s) => s.key),
+	);
+	const missing = RAY_PLANET_TEXTURES.filter(([key]) => !bound.has(key)).map(([, slot]) => slot);
 	if (missing.length > 0) {
 		report({
 			kind: 'reference',
@@ -691,13 +708,15 @@ const buildPhase = (
  * or else the declared default. Unity keeps properties from a material's earlier shaders, so undeclared ones
  * are dropped; a shader that declares nothing keeps the material's values as they are
  *
- * @returns the floats (ints included), the colours and vectors, and whether a texture slot is declared
+ * @returns the floats (ints included), the colours and vectors, hdr-linear colour flags, and whether a
+ *   texture slot is declared
  */
 const materialValues = (
 	material: LoadedMaterial,
 ): {
 	floats: Record<string, number>;
-	colors: Record<string, [number, number, number, number]>;
+	colors: Record<string, Color>;
+	hdrLinear: ReadonlySet<string>;
 	declares: (slot: string) => boolean;
 } => {
 	const { record, shader } = material;
@@ -705,13 +724,15 @@ const materialValues = (
 		return {
 			floats: { ...record.ints, ...record.floats },
 			colors: { ...record.colors },
+			hdrLinear: new Set(),
 			declares: () => true,
 		};
 	}
 	const floats: Record<string, number> = {};
-	const colors: Record<string, [number, number, number, number]> = {};
+	const colors: Record<string, Color> = {};
+	const hdrLinear = new Set<string>();
 	const textures = new Set<string>();
-	for (const { name, type, default: fallback } of shader.properties) {
+	for (const { name, type, flags, default: fallback } of shader.properties) {
 		switch (type) {
 			case ShaderPropertyType.Float:
 			case ShaderPropertyType.Range:
@@ -722,6 +743,9 @@ const materialValues = (
 			case ShaderPropertyType.Color:
 			case ShaderPropertyType.Vector: {
 				colors[name] = record.colors[name] ?? fallback;
+				if ((flags & ShaderPropertyFlags.Hdr) !== 0 && (flags & ShaderPropertyFlags.Gamma) === 0) {
+					hdrLinear.add(name);
+				}
 				break;
 			}
 			case ShaderPropertyType.Texture: {
@@ -733,12 +757,136 @@ const materialValues = (
 			}
 		}
 	}
-	return { floats, colors, declares: (slot) => textures.has(slot) };
+	return { floats, colors, hdrLinear, declares: (slot) => textures.has(slot) };
+};
+
+const DEG = Math.PI / 180;
+
+const normalizeVec3 = (v: Readonly<Vec3>): Vec3 => {
+	const len = Math.hypot(v[0], v[1], v[2]);
+	return len === 0 ? [0, 0, 0] : [v[0] / len, v[1] / len, v[2] / len];
+};
+
+const rgbOf = (c: Readonly<Color> | undefined): Vec3 => (c === undefined ? [0, 0, 0] : [c[0], c[1], c[2]]);
+
+const linearOf = (c: Readonly<Color> | undefined, scale = 1): Vec3 =>
+	c === undefined ? [0, 0, 0] : scaleRgb(linearRgb(c), scale);
+
+const lowerRayPlanetMaterial = (
+	material: LoadedMaterial,
+	slotFor: <T extends object>(holder: T, key: keyof T & string, ref: ObjectRef | null) => void,
+): RayPlanetMaterial => {
+	const { record } = material;
+	const { floats, colors, declares } = materialValues(material);
+	const f = (name: string): number => floats[name] ?? 0;
+	const color = (name: string): Color | undefined => colors[name];
+	const resolvedTex = (slot: string): ObjectRef | null => {
+		const entry = material.textures[slot];
+		return entry !== undefined && entry.ref !== null && declares(slot) ? entry.ref : null;
+	};
+	const textures: RayPlanetMaterial['textures'] = { base: null, rsm: null, clouds: null, lut: null };
+	for (const [key, slot] of RAY_PLANET_TEXTURES) {
+		slotFor(textures, key, resolvedTex(slot));
+	}
+	const baseSlot = record.textures['_BaseColorMap'];
+	const baseTransform: Vec4 =
+		baseSlot !== undefined && declares('_BaseColorMap')
+			? [baseSlot.scale[0], baseSlot.scale[1], baseSlot.offset[0], baseSlot.offset[1]]
+			: [1, 1, 0, 0];
+
+	const radius = f('_RealPlanetRadius');
+	const offset = f('_GlobalRadiusOffset');
+	const groundRadius = 0.92 * radius + offset;
+	const topRadius = f('_AtmosphereRatios') * radius + offset;
+	const rayleighHeight = 0.06 * (topRadius - groundRadius);
+	const density = f('_Density_Multiplier');
+	const phi = f('_Phi2') * DEG;
+	const theta = f('_Theta2') * DEG;
+	const distance = f('_Dist');
+	const origin = rgbOf(color('_PlanetWSBase'));
+	const pitch = f('_Pitch') * DEG;
+	const roll = f('_Roll') * DEG;
+	const ambient = color('_Ambient') ?? [0, 0, 0, 0];
+
+	return {
+		textures,
+		center: [
+			origin[0] - Math.sin(phi) * distance,
+			origin[1] + Math.sin(theta) * distance,
+			origin[2] - Math.cos(theta) * Math.cos(phi) * distance,
+		],
+		radius,
+		groundRadius,
+		topRadius,
+		cloudRadius: radius + f('_CloudsHeight'),
+		viewSamples: f('_StepsI'),
+		scaleHeights: [rayleighHeight, rayleighHeight * f('_Mie_Height_Scale')],
+		mieAnisotropy: f('_g'),
+		useLut: f('_Use_Lut') !== 0,
+		rayleigh: linearOf(color('_Ray'), density),
+		mie: linearOf(color('_Mie'), density),
+		brightness: f('_Light_Intensity_Multiplier'),
+		cloudShadows: record.keywords.includes('_ENABLE_CLOUDS_SHADOW'),
+		light: f('_CustomLightDirection') !== 0 ? normalizeVec3(rgbOf(color('_CustomLightDir'))) : null,
+		lightColor: f('_CustomLightColorPla') !== 0 ? linearOf(color('_CustomLightColPla')) : null,
+		lightScale: f('_DirectLightIntensityBillboard'),
+		tilt: [
+			[Math.cos(roll), -Math.sin(roll) * Math.cos(pitch), Math.sin(roll) * Math.sin(pitch)],
+			[Math.sin(roll), Math.cos(roll) * Math.cos(pitch), -Math.cos(roll) * Math.sin(pitch)],
+			[0, Math.sin(pitch), Math.cos(pitch)],
+		],
+		spin: f('_PlanetRotateStart') * 0.001,
+		baseTransform,
+		tint: linearOf(color('_TintColor') ?? [1, 1, 1, 1]),
+		seaShallow: linearOf(color('_SeaShallow')),
+		seaDeep: linearOf(color('_SeaDeep')),
+		fresnel: linearOf(color('_FresnelColor')),
+		indirect: linearOf(color('_IndirectColor'), f('_IndirectIntensity')),
+		cloudShadow: linearOf(color('_CloudsShadowColor') ?? [1, 1, 1, 1]),
+		ambient: linearOf(ambient, density * ambient[3]),
+		cloudAlpha: f('_CloudsAlphaMain'),
+		cloudBrightness: f('_Light_Intensity_Clouds_Multiplier'),
+		roughness: f('_Roughness'),
+		roughnessFromMap: f('_UseRoughnessMap') !== 0,
+	};
+};
+
+const lowerSkyPlanetMaterial = (
+	material: LoadedMaterial,
+	slotFor: <T extends object>(holder: T, key: keyof T & string, ref: ObjectRef | null) => void,
+): SkyPlanetMaterial => {
+	const { floats, colors, hdrLinear, declares } = materialValues(material);
+	const f = (name: string): number => floats[name] ?? 0;
+	const resolvedTex = (slot: string): ObjectRef | null => {
+		const entry = material.textures[slot];
+		return entry !== undefined && entry.ref !== null && declares(slot) ? entry.ref : null;
+	};
+	const colorOf = (name: string, fallback: Color): Vec3 => {
+		const c = colors[name] ?? fallback;
+		if (hdrLinear.has(name) || c[0] > 1 || c[1] > 1 || c[2] > 1) {
+			return [c[0], c[1], c[2]];
+		}
+		return linearRgb(c);
+	};
+	const lowered: SkyPlanetMaterial = {
+		mainTexture: null,
+		emissiveTexture: null,
+		ringTexture: null,
+		color: colorOf('_Color', [1, 1, 1, 1]),
+		emissive: colorOf('_PlanetEmissive', [1, 1, 1, 1]),
+		sharpness: f('_StarNdlSharp'),
+		backFace: f('_StarBackFaceAlpha'),
+		ringShadowSoftness: f('_RingShadowSoftness'),
+	};
+	slotFor(lowered, 'mainTexture', resolvedTex('_MainTex'));
+	slotFor(lowered, 'emissiveTexture', resolvedTex('_EmissiveTex'));
+	slotFor(lowered, 'ringTexture', resolvedTex('_RingTex'));
+	return lowered;
 };
 
 /**
  * nulls a section's texture fields and records where each resolved texture goes; material fields become
- * flattened materials whose texture slots are recorded the same way
+ * lowered semantic celestial material structs whose texture slots are recorded the same way
  */
 const fillTextureSlots = (
 	value: PlainObject,
@@ -748,12 +896,14 @@ const fillTextureSlots = (
 	textures: LocatedObject[],
 	textureIndex: Map<string, number>,
 ): void => {
-	const slotFor = (holder: Record<string, unknown>, key: string, ref: ObjectRef | null): void => {
-		holder[key] = null;
+	const slotFor = <T extends object>(holder: T, key: keyof T & string, ref: ObjectRef | null): void => {
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- texture slot holder filled in finishEnvironments
+		const record = holder as Record<string, unknown>;
+		record[key] = null;
 		if (ref !== null) {
 			const located = locatedObject(ref);
 			slots.push({
-				holder,
+				holder: record,
 				key,
 				texture: textureIndex.getOrInsertComputed(located.key, () => textures.push(located) - 1),
 			});
@@ -770,26 +920,15 @@ const fillTextureSlots = (
 			holder[key] = null;
 			continue;
 		}
-		const { record } = material;
-		const { floats, colors, declares } = materialValues(material);
-		const materialTextures: PlainObject = {};
-		const textureTransforms: PlainObject = {};
-		for (const [slot, resolved] of Object.entries(material.textures)) {
-			if (resolved.ref === null || !declares(slot)) {
-				continue;
-			}
-			const { scale, offset } = record.textures[slot];
-			textureTransforms[slot] = [scale[0], scale[1], offset[0], offset[1]];
-			slotFor(materialTextures, slot, resolved.ref);
+		if (key === 'advancedPlanetMat') {
+			// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- lowered semantic material replaces raw PPtr
+			holder[key] = lowerRayPlanetMaterial(material, slotFor) as unknown as PlainObject;
+		} else if (key === 'drawMaterial') {
+			// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- lowered semantic material replaces raw PPtr
+			holder[key] = lowerSkyPlanetMaterial(material, slotFor) as unknown as PlainObject;
+		} else {
+			holder[key] = null;
 		}
-		holder[key] = {
-			shader: material.shader.name,
-			keywords: record.keywords.join(' '),
-			floats,
-			colors,
-			textures: materialTextures,
-			textureTransforms,
-		};
 	}
 	for (const [i, { path }] of section.flares.entries()) {
 		const holder = objectAt(value, path.slice(0, -1));
