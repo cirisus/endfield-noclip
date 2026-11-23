@@ -5,6 +5,11 @@ import { parseArgs } from 'node:util';
 import { LightType, readChunkLights, type ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
 import type { EnvironmentVolume } from '@endfield-noclip/formats/endfield/environment-volume';
 import {
+	FoliageGridType,
+	hasFoliageGrids,
+	readFoliageGrids,
+} from '@endfield-noclip/formats/endfield/foliage-grids';
+import {
 	parseInitChunk,
 	StreamingLayer,
 	type ChunkEntity,
@@ -16,6 +21,7 @@ import {
 	type LevelPartition,
 } from '@endfield-noclip/formats/endfield/level-partition';
 import { CELL_SIZE } from '@endfield-noclip/formats/endfield/map-config';
+import { parseStreamingChunk, type HlodLink } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import { ruleText } from '@endfield-noclip/package-format/conditions';
 import { compareVolumes, distanceInsideVolume } from '@endfield-noclip/package-format/environment-volumes';
@@ -80,12 +86,16 @@ export const usage = `usage:
                                            streaming scenes (with terrain/level counts), or dungeon entries
   scene levels <map> [--verify]            levels with tag, cells and names; --verify votes tags against cells
   scene find <scene> [--name re] [--near x,y,z --radius n] [--kind k,…] [--max-size n] [--no-hlod]
-      [--scene-state n] [--area n] [--limit n] [--json]
+      [--hlod-links] [--scene-state n] [--area n] [--limit n] [--json]
                                            everything placed in a scene: static, dynamic, model, effect,
                                            facility, cabin, light, water, env (default all)
                                            --near: Unity coordinates, nearest then smallest first; annotates
                                            stand-ins from out/<scene>/debug/stand-ins.json
-                                           --max-size drops bounds longer than n m; --no-hlod drops HLOD layers
+                                           --max-size drops bounds longer than n m; --no-hlod drops HLOD layers;
+                                           --hlod-links reads StreamingChunkData HLOD parent/child links
+  scene chunk <scene> <chunk> [--name re] [--hlod-stats] [--foliage] [--limit n] [--json]
+                                           inspect one InitChunkData + StreamingChunkData pair
+                                           (<chunk> is e.g. -13_-10_0_0, -13_-10, or Global_0_0)
   scene env <map|level> [--at x,y,z] [--json]
                                            base environment per level, or with --at the volume stack at a point
   scene controls <scene> [--json]          scene states, stream areas and progression controllers`;
@@ -103,6 +113,9 @@ const OPTIONS = {
 	kind: { type: 'string' },
 	'max-size': { type: 'string' },
 	'no-hlod': { type: 'boolean', default: false },
+	'hlod-links': { type: 'boolean', default: false },
+	'hlod-stats': { type: 'boolean', default: false },
+	foliage: { type: 'boolean', default: false },
 	at: { type: 'string' },
 	limit: { type: 'string' },
 	json: { type: 'boolean', default: false },
@@ -114,7 +127,7 @@ export const run = async (args: string[]): Promise<void> => {
 		allowPositionals: true,
 		options: OPTIONS,
 	});
-	const [sub, target] = positionals;
+	const [sub, target, third] = positionals;
 
 	await withContext(values.config, async (context) => {
 		switch (sub) {
@@ -150,10 +163,21 @@ export const run = async (args: string[]): Promise<void> => {
 							? undefined
 							: parseNumbers(values['max-size'], 1, '--max-size')[0],
 					noHlod: values['no-hlod'],
+					hlodLinks: values['hlod-links'],
 					limit: searchLimit(values.limit),
 					json: values.json,
 					sceneState: parseOptionalInteger(values['scene-state'], '--scene-state'),
 					area: parseOptionalInteger(values.area, '--area'),
+				});
+				break;
+			}
+			case 'chunk': {
+				await inspectChunk(context.world, needArg(target, 'scene', usage), needArg(third, 'chunk', usage), {
+					pattern: values.name === undefined ? undefined : new RegExp(values.name, 'i'),
+					hlodStats: values['hlod-stats'],
+					foliage: values.foliage,
+					limit: searchLimit(values.limit),
+					json: values.json,
 				});
 				break;
 			}
@@ -362,6 +386,7 @@ interface FindOptions {
 	kinds: Set<PlacementKind>;
 	maxSize: number | undefined;
 	noHlod: boolean;
+	hlodLinks: boolean;
 	limit: number;
 	json: boolean;
 	sceneState: number | undefined;
@@ -635,26 +660,42 @@ const nearCellFilter = (
 		file.cell === null || (Math.abs(file.cell.x - cx) <= reach && Math.abs(file.cell.z - cz) <= reach);
 };
 
+const formatHlodLink = (link: HlodLink | null): string => {
+	if (link === null) {
+		return 'hlod:none';
+	}
+	const parts: string[] = [];
+	if (link.parent !== null) {
+		parts.push(`parent=${link.parent}`);
+	}
+	if (link.childCount > 0) {
+		parts.push(`children=${link.childCount}`);
+	}
+	return parts.length === 0 ? 'hlod:none' : `hlod:${parts.join(',')}`;
+};
+
 async function* staticCandidates(
 	world: WorldIndex,
 	scene: string,
-	options: Pick<FindOptions, 'near' | 'radius' | 'sceneState' | 'area' | 'noHlod'>,
+	options: Pick<FindOptions, 'near' | 'radius' | 'sceneState' | 'area' | 'noHlod' | 'hlodLinks'>,
 	lookups: FindLookups,
 ): AsyncGenerator<FoundCandidate> {
 	const { names, standIns, partition } = lookups;
 	const cellFilter = nearCellFilter(options.near, options.radius);
-	for await (const { entity, decalMaterial } of world.sceneEntitiesWithDecals(
+	for await (const { entity, decalMaterial, hlodLink } of world.sceneEntitiesWithDecals(
 		scene,
 		(file) =>
 			(options.sceneState === undefined || file.sceneState === options.sceneState) &&
 			(options.area === undefined || file.area === options.area) &&
 			(cellFilter === undefined || cellFilter(file)),
+		{ hlodLinks: options.hlodLinks },
 	)) {
 		if (options.noHlod && HLOD_LAYERS.has(entity.layer)) {
 			continue;
 		}
 		const position = entity.pivot === null ? null : [entity.pivot.x, entity.pivot.y, entity.pivot.z];
 		const decal = decalMaterial === null ? null : (names.pathOf(decalMaterial) ?? hashText(decalMaterial));
+		const hlodNote = options.hlodLinks ? `  ${formatHlodLink(hlodLink)}` : '';
 		yield {
 			bounds: entity.bounds,
 			position,
@@ -669,12 +710,13 @@ async function* staticCandidates(
 					level: entity.membership.level?.id ?? entity.membership.bucket,
 					visibility,
 					source: basename(entity.source.name),
-					summary: `${drawSummary(entity, names)}${decal === null ? '' : `  ${decal}`}  layer ${layerName(entity.layer)}`,
+					summary: `${drawSummary(entity, names)}${decal === null ? '' : `  ${decal}`}  layer ${layerName(entity.layer)}${hlodNote}`,
 					standIns: reasons,
 					json: {
 						kind: 'static',
 						...entityJson(entity, partition, names),
 						...(decal === null ? {} : { decalMaterial: decal }),
+						...(options.hlodLinks ? { hlodLink } : {}),
 						visibility,
 						standIns: reasons,
 						distance,
@@ -1425,5 +1467,215 @@ const chunkEntityJson = (entity: ChunkEntity, { pathOf, bundleOf }: AssetNames):
 					})),
 				},
 });
+
+// #endregion
+
+// #region chunk
+
+const resolveChunkFile = async (world: WorldIndex, scene: string, query: string): Promise<ChunkFile> => {
+	const files = (await world.chunkFiles()).filter((file) => file.scene === scene);
+	if (files.length === 0) {
+		throw new Error(`unknown streaming scene ${scene}`);
+	}
+	const exact = files.find(
+		(file) =>
+			file.name === query ||
+			basename(file.name) === query ||
+			basename(file.name) === `InitChunkData_${query}.bytes`,
+	);
+	if (exact !== undefined) {
+		return exact;
+	}
+	const defaultArea = files.find((file) => basename(file.name) === `InitChunkData_${query}_0_0.bytes`);
+	if (defaultArea !== undefined) {
+		return defaultArea;
+	}
+	const partial = files.filter((file) => basename(file.name).includes(query));
+	if (partial.length === 1) {
+		return partial[0];
+	}
+	const hint =
+		partial.length === 0
+			? ''
+			: `\nmatching chunks:\n${partial
+					.slice(0, 10)
+					.map((f) => `  ${basename(f.name)}`)
+					.join('\n')}`;
+	throw new Error(
+		partial.length === 0
+			? `chunk ${query} not found in ${scene}`
+			: `chunk ${query} matched ${partial.length} files in ${scene}${hint}`,
+	);
+};
+
+const inspectChunk = async (
+	world: WorldIndex,
+	scene: string,
+	query: string,
+	options: {
+		pattern: RegExp | undefined;
+		hlodStats: boolean;
+		foliage: boolean;
+		limit: number;
+		json: boolean;
+	},
+): Promise<void> => {
+	const file = await resolveChunkFile(world, scene, query);
+	const [initBytes, streamingBytes, partition, pathOf] = await Promise.all([
+		world.readInitPayload(file),
+		world.readStreamingPayload(file),
+		world.partition(scene),
+		world.pathLookup(),
+	]);
+	const init = parseInitChunk(initBytes);
+	const streaming = streamingBytes === null ? null : parseStreamingChunk(streamingBytes);
+
+	if (options.foliage) {
+		const grids =
+			hasFoliageGrids(init.rows) && streaming !== null ? readFoliageGrids(init.rows, streaming.raw) : [];
+		const matched =
+			options.pattern === undefined ? grids : grids.filter((grid) => options.pattern!.test(grid.name));
+		const rows = matched.map((grid) => {
+			const instances = grid.clusters.reduce((sum, cluster) => sum + cluster.instanceCount, 0);
+			const meshes = new Set<string>();
+			for (const cluster of grid.clusters) {
+				for (const draw of cluster.renderer.draws) {
+					if (meshes.size < 4) {
+						meshes.add((pathOf(draw.meshHash) ?? hashText(draw.meshHash)).split('##').pop()!);
+					}
+				}
+			}
+			return {
+				id: grid.id,
+				type: grid.type === FoliageGridType.Tree ? 'tree' : 'grass',
+				level: (partition && levelOfTag(partition, grid.levelTag)?.id) ?? `tag ${grid.levelTag}`,
+				name: grid.name,
+				clusters: grid.clusters.length,
+				instances,
+				sampleMeshes: [...meshes],
+			};
+		});
+		if (options.json) {
+			console.log(JSON.stringify({ chunk: basename(file.name), foliage: rows }, null, '\t'));
+			return;
+		}
+		console.log(`${basename(file.name)}: ${rows.length} foliage grids`);
+		for (const row of rows) {
+			console.log(
+				`  ${row.type.padEnd(5)} id=${String(row.id).padEnd(11)} ${String(row.clusters).padStart(5)} clusters  ${String(row.instances).padStart(7)} instances  ${row.name}  (${row.sampleMeshes.join(', ')})`,
+			);
+		}
+		return;
+	}
+
+	const entities = await world.readChunk(file, partition);
+	const matched =
+		options.pattern === undefined
+			? entities
+			: entities.filter((entity) => options.pattern!.test(entity.name));
+
+	if (options.hlodStats) {
+		const stats = new Map<
+			string,
+			{ layer: string; total: number; withParent: number; clusters: number; noHlod: number }
+		>();
+		let totalWithParent = 0;
+		let totalClusters = 0;
+		let totalNoHlod = 0;
+		for (const entity of matched) {
+			const layer = layerName(entity.layer);
+			const bucket = stats.getOrInsertComputed(layer, () => ({
+				layer,
+				total: 0,
+				withParent: 0,
+				clusters: 0,
+				noHlod: 0,
+			}));
+			bucket.total++;
+			const link = streaming?.hlodLink(entity.id) ?? null;
+			const hasParent = link !== null && link.parent !== null;
+			const isCluster = link !== null && link.childCount > 0;
+			if (hasParent) {
+				bucket.withParent++;
+				totalWithParent++;
+			}
+			if (isCluster) {
+				bucket.clusters++;
+				totalClusters++;
+			}
+			if (!hasParent && !isCluster) {
+				bucket.noHlod++;
+				totalNoHlod++;
+			}
+		}
+		const layers = [...stats.values()].toSorted(
+			(a, b) => b.total - a.total || compareStrings(a.layer, b.layer),
+		);
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{
+						chunk: basename(file.name),
+						hasStreaming: streaming !== null,
+						total: matched.length,
+						withParent: totalWithParent,
+						clusters: totalClusters,
+						noHlod: totalNoHlod,
+						layers,
+					},
+					null,
+					'\t',
+				),
+			);
+			return;
+		}
+		console.log(
+			`${basename(file.name)}: ${matched.length} entities (withParent=${totalWithParent}, clusters=${totalClusters}, noHlod=${totalNoHlod})`,
+		);
+		console.log('  layer              total  withParent  clusters  noHlod');
+		for (const row of layers) {
+			console.log(
+				`  ${row.layer.padEnd(17)} ${String(row.total).padStart(6)}  ${String(row.withParent).padStart(10)}  ${String(row.clusters).padStart(8)}  ${String(row.noHlod).padStart(6)}`,
+			);
+		}
+		return;
+	}
+
+	const shown = matched.slice(0, options.limit);
+	const names: AssetNames = { pathOf, assetPathOf: () => undefined, bundleOf: () => null };
+	if (options.json) {
+		console.log(
+			JSON.stringify(
+				{
+					chunk: basename(file.name),
+					hasStreaming: streaming !== null,
+					entities: shown.map((entity) => ({
+						...entityJson(entity, partition, names),
+						hlodLink: streaming?.hlodLink(entity.id) ?? null,
+					})),
+				},
+				jsonReplacer,
+				'\t',
+			),
+		);
+		return;
+	}
+	console.log(`${basename(file.name)}: ${matched.length} matching entities`);
+	for (const entity of shown) {
+		const pos =
+			entity.pivot === null
+				? '-'
+				: `${entity.pivot.x.toFixed(1)},${entity.pivot.y.toFixed(1)},${entity.pivot.z.toFixed(1)}`;
+		const size = entity.bounds === null ? '-' : `${(2 * Math.max(...entity.bounds.extents)).toFixed(0)}m`;
+		const link = formatHlodLink(streaming?.hlodLink(entity.id) ?? null);
+		const lods = entity.renderer === null ? 'no-renderer' : `${entity.renderer.lodCount} lods`;
+		console.log(
+			`  ${String(entity.id).padEnd(11)} ${layerName(entity.layer).padEnd(14)} ${link.padEnd(22)} ${lods.padEnd(11)} ${size.padStart(5)}  ${pos.padEnd(22)} ${entity.name}`,
+		);
+	}
+	console.error(
+		`${shown.length} of ${matched.length} entities${matched.length > options.limit ? ' (raise --limit for more)' : ''}`,
+	);
+};
 
 // #endregion

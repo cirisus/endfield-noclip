@@ -579,36 +579,53 @@ export class WorldIndex {
 	}
 
 	/**
-	 * reads one chunk file's entities and, when the chunk has rect decals, each decal's material key from its
-	 * StreamingChunkData sibling (skipping lights, foliage and HLOD)
+	 * reads one chunk file's entities and, when the chunk has rect decals (or `hlodLinks` is requested), reads
+	 * decal materials and/or HLOD links from its StreamingChunkData sibling
 	 *
 	 * @param file chunk file
 	 * @param partition the scene's partition, or `undefined` for scenes without levels
-	 * @returns its entities and rect-decal material keys by entity id
+	 * @param options whether to also read every entity's HLOD link
+	 * @returns its entities, rect-decal material keys, and HLOD links by entity id
 	 * @throws {Error} if the chunk has rect decals but no StreamingChunkData sibling
 	 */
 	async readChunkWithDecals(
 		file: ChunkFile,
 		partition: LevelPartition | undefined,
-	): Promise<{ entities: IndexedEntity[]; decalMaterials: Map<number, bigint> }> {
+		options: { hlodLinks: boolean },
+	): Promise<{
+		entities: IndexedEntity[];
+		decalMaterials: Map<number, bigint>;
+		hlodLinks: Map<number, HlodLink>;
+	}> {
 		const chunk = parseInitChunk(await this.readInitPayload(file));
 		const entities = indexEntities(chunk, file, partition);
 		const decalMaterials = new Map<number, bigint>();
+		const hlodLinks = new Map<number, HlodLink>();
 		const decalIds = mapDefined(entities, (entity) => (entity.decal === null ? undefined : entity.id));
-		if (decalIds.length > 0) {
+		if (decalIds.length > 0 || options.hlodLinks) {
 			const data = await this.readStreamingPayload(file);
-			if (data === null) {
+			if (data === null && decalIds.length > 0) {
 				throw new Error(`${file.name} has decals but no StreamingChunkData`);
 			}
-			const streaming = parseStreamingChunk(data);
-			for (const id of decalIds) {
-				const material = streaming.assetProperty(id, DECAL_MATERIAL_KEY);
-				if (material !== undefined) {
-					decalMaterials.set(id, material);
+			if (data !== null) {
+				const streaming = parseStreamingChunk(data);
+				for (const id of decalIds) {
+					const material = streaming.assetProperty(id, DECAL_MATERIAL_KEY);
+					if (material !== undefined) {
+						decalMaterials.set(id, material);
+					}
+				}
+				if (options.hlodLinks) {
+					for (const entity of entities) {
+						const link = streaming.hlodLink(entity.id);
+						if (link !== null) {
+							hlodLinks.set(entity.id, link);
+						}
+					}
 				}
 			}
 		}
-		return { entities, decalMaterials };
+		return { entities, decalMaterials, hlodLinks };
 	}
 
 	/**
@@ -653,19 +670,21 @@ export class WorldIndex {
 	}
 
 	/**
-	 * {@link sceneEntities} with each rect decal's material. reads StreamingChunkData siblings only for selected
-	 * files that hold rect decals
+	 * {@link sceneEntities} with each rect decal's material and optionally each entity's HLOD link. reads
+	 * StreamingChunkData siblings only for selected files that hold rect decals (or all selected files when
+	 * `hlodLinks` is true)
 	 *
 	 * @param scene streaming scene, e.g. `map02`
 	 * @param filter optional chunk-file predicate
-	 * @returns each unique entity with its decal material's path hash (`null` for other entities, and for a
-	 *   decal without one)
+	 * @param options whether to also read HLOD links
+	 * @returns each unique entity with its decal material's path hash and HLOD link
 	 * @throws {Error} if such a file has no StreamingChunkData sibling
 	 */
 	async *sceneEntitiesWithDecals(
 		scene: string,
-		filter?: (file: ChunkFile) => boolean,
-	): AsyncGenerator<{ entity: IndexedEntity; decalMaterial: bigint | null }> {
+		filter: ((file: ChunkFile) => boolean) | undefined,
+		options: { hlodLinks: boolean },
+	): AsyncGenerator<{ entity: IndexedEntity; decalMaterial: bigint | null; hlodLink: HlodLink | null }> {
 		const partition = await this.partition(scene);
 		const selected = (await this.chunkFiles()).filter(
 			(file) => file.scene === scene && (filter === undefined || filter(file)),
@@ -673,11 +692,15 @@ export class WorldIndex {
 		const seen = new Set<number>();
 		const pending = new Map<
 			number,
-			Promise<{ entities: IndexedEntity[]; decalMaterials: Map<number, bigint> }>
+			Promise<{
+				entities: IndexedEntity[];
+				decalMaterials: Map<number, bigint>;
+				hlodLinks: Map<number, HlodLink>;
+			}>
 		>();
 		const prefetch = (index: number): void => {
 			if (index < selected.length) {
-				pending.set(index, this.readChunkWithDecals(selected[index], partition));
+				pending.set(index, this.readChunkWithDecals(selected[index], partition, options));
 			}
 		};
 		for (let i = 0; i < Math.min(READ_CONCURRENCY, selected.length); i++) {
@@ -686,13 +709,17 @@ export class WorldIndex {
 		try {
 			for (let i = 0; i < selected.length; i++) {
 				// oxlint-disable-next-line no-await-in-loop -- entities stream out in file order with read-ahead
-				const { entities, decalMaterials } = await pending.get(i)!;
+				const { entities, decalMaterials, hlodLinks } = await pending.get(i)!;
 				pending.delete(i);
 				prefetch(i + READ_CONCURRENCY);
 				for (const entity of entities) {
 					if (!seen.has(entity.id)) {
 						seen.add(entity.id);
-						yield { entity, decalMaterial: decalMaterials.get(entity.id) ?? null };
+						yield {
+							entity,
+							decalMaterial: decalMaterials.get(entity.id) ?? null,
+							hlodLink: hlodLinks.get(entity.id) ?? null,
+						};
 					}
 				}
 			}

@@ -33,7 +33,7 @@ resolver lazily.
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init`    | writes `endfield.local.json` with `Endfield_Data` path and validated keys                                                                                             |
 | `pack`    | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                                       |
-| `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`: scenery, prefabs, lights, water, env), `env` (level or `--at`), `controls`                    |
+| `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`), single chunks (`chunk`: entities, HLOD stats, foliage), `env` (level or `--at`), `controls`  |
 | `inspect` | decodes and summarizes a `prefab` (hierarchy + packer output), `material` (declared props + surface), `mesh`, `texture`, or `water-config`                            |
 | `audit`   | queries packed packages under `out/` without opening the install: `list`, `tree`, `instances`, `materials`, `geometries`, `stand-ins`, `interactives`, `water`, `env` |
 | `data`    | path catalog `paths`/`resolve`, SparkBuffer `tables`/`table`, and MemoryPack level `scripts`/`interactives`                                                           |
@@ -82,8 +82,11 @@ requirements by `&`, each `control=values` (or `always` when ungated). `static` 
 - `--near x,y,z --radius n`: keeps rows whose world bounds (or pivot/placement) lie within `n` m in
   Unity coordinates; sorted nearest first, then smallest bounds first among containing boxes.
   `--max-size n` drops rows whose longest bound side exceeds `n` m (and global env volumes);
-  `--no-hlod` drops static `HLOD0`/`HLOD1`/`HLOD2` layers. prefab rows have positions only, no
-  bounds.
+  `--no-hlod` drops static `HLOD0`/`HLOD1`/`HLOD2` layers; `--hlod-links` reads `StreamingChunkData`
+  to show each static entity's HLOD parent/child link. prefab rows have positions only, no bounds.
+- **`scene chunk <scene> <chunk>`**: inspects one `InitChunkData` + `StreamingChunkData` pair (e.g.
+  `-13_-10_0_0`, `-13_-10`, or `Global_0_0`) for entities and HLOD links, `--hlod-stats` (per-layer
+  parent/cluster/no-HLOD counts, filterable with `--name`), or `--foliage` (grass/tree grids).
 - `--scene-state` and `--area`: filter static chunk files and chunk lights; other kinds are
   unaffected.
 - if `out/<scene>/debug/stand-ins.json` exists, rows drawn as
