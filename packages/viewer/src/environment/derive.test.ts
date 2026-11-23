@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { DEFAULT_PROFILE } from './default-profile.ts';
-import { cloudLook, deriveEnvironment, shaderShL1, skyViewScale } from './derive.ts';
+import { cloudLook, deriveEnvironment, reflectionProbeLumaSh, shaderShL1, skyViewScale } from './derive.ts';
 import type { CloudInput } from './profile-input.ts';
 
 // Power Plateau's overcast phase once e3m5 reaches state 3 (Env_map01_lv007_art_overcast_brightness)
@@ -107,5 +107,31 @@ describe('deriveEnvironment ivDefaultSh', () => {
 			},
 		});
 		assert.deepEqual([...env.ivDefaultSh], [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+	});
+});
+
+describe('reflectionProbeLumaSh', () => {
+	it('packs unscaled pure L1 luminance with Y and Z swapped as PrepareConstantBuffer does', () => {
+		const sh = Array.from({ length: 27 }, () => 0);
+		// uniform white across channels: u0=1, u1=2, u2=3, u3=4, u6=10 (ignored)
+		for (let c = 0; c < 3; c++) {
+			sh[c * 9 + 0] = 1;
+			sh[c * 9 + 1] = 2;
+			sh[c * 9 + 2] = 3;
+			sh[c * 9 + 3] = 4;
+			sh[c * 9 + 6] = 10;
+		}
+		const out = reflectionProbeLumaSh(sh);
+		assert.ok(Math.abs(out[0] - 4) < 1e-6);
+		assert.ok(Math.abs(out[1] - 3) < 1e-6);
+		assert.ok(Math.abs(out[2] - 2) < 1e-6);
+		assert.ok(Math.abs(out[3] - 1) < 1e-6);
+
+		const env = deriveEnvironment({
+			...DEFAULT_PROFILE,
+			light: { ...DEFAULT_PROFILE.light, indirectDiffuseFactor: 3 },
+			sky: { ...DEFAULT_PROFILE.sky, skyAmbientSH: sh, skyDirectIntensity: 5 },
+		});
+		assert.deepEqual(env.reflectionProbeSh, out);
 	});
 });

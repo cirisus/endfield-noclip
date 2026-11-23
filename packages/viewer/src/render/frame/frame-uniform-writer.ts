@@ -16,7 +16,7 @@ import { DEBUG_VIEWS, type DebugView } from './debug-views.ts';
 import type { FrameBindings } from './frame-bindings.ts';
 
 /** byte size of `Frame` */
-export const FRAME_UNIFORM_BYTES = 976;
+export const FRAME_UNIFORM_BYTES = 992;
 
 /** float offsets of `Frame` fields */
 export const FrameOffsets = {
@@ -60,6 +60,8 @@ export const FrameOffsets = {
 	wind: 228,
 	/** three vec4s: `_IVDefaultSHAr/g/b` × `indirectDiffuseFactor` */
 	ivDefaultSh: 232,
+	/** luminance L1 SH for sky reflection normalisation (`_ReflectionProbeGlobalParam3`) */
+	reflectionProbeSh: 244,
 } as const;
 
 /** what {@link writeFrameUniforms} packs */
@@ -146,6 +148,7 @@ export const writeFrameUniforms = (f32: Float32Array, u32: Uint32Array, inputs: 
 		f32[FrameOffsets.sunColor + 3] = environment.sunSpecular;
 		f32.set(environment.sh, FrameOffsets.sh);
 		f32.set(environment.ivDefaultSh, FrameOffsets.ivDefaultSh);
+		f32.set(environment.reflectionProbeSh, FrameOffsets.reflectionProbeSh);
 		f32[FrameOffsets.ambient] = environment.indirectSpecular;
 		// emitters marked `_IgnorePostExposure` divide out the post exposure (the game's adapted exposure)
 		// the post chain applies, which debug views turn off

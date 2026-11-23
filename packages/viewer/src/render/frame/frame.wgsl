@@ -71,6 +71,8 @@ struct Frame {
 	// the irradiance volume's default L1 SH (`_IVDefaultSHAr/g/b`), pre-scaled by `skyDirectIntensity` and
 	// `indirectDiffuseFactor`
 	iv_default_sh: array<vec4f, 3>,
+	// luminance L1 SH of `skyAmbientSH` (`_ReflectionProbeGlobalParam3`), unscaled by `indirectDiffuseFactor`
+	reflection_probe_sh: vec4f,
 	// #endregion
 }
 
@@ -529,12 +531,11 @@ fn ambient_irradiance(world: vec3f, n: vec3f) -> vec3f {
 	return c;
 }
 
-// the game's scale on a sky reflection, from the surface's diffuse irradiance against the sky probe's L1 along the
-// normal (docs/game-data/lighting.md#ambient)
+// the game's scale on a sky reflection, from the surface's diffuse irradiance against `_ReflectionProbeGlobalParam3`
+// along the normal (docs/game-data/lighting.md#ambient)
 fn reflection_normalisation(irradiance: vec3f, n: vec3f) -> f32 {
 	let d = dot(irradiance, LUMINANCE);
-	let sky = LUMINANCE.x * frame.sh[0] + LUMINANCE.y * frame.sh[1] + LUMINANCE.z * frame.sh[2];
-	let p = max(1e-4, dot(sky, vec4f(n, 1.0)));
+	let p = max(1e-4, max(0.0, dot(frame.reflection_probe_sh, vec4f(n, 1.0))));
 	return (2.0 * clamp(d / p, 0.0, 1.0) + d) / (2.0 + p);
 }
 

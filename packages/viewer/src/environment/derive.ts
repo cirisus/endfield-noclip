@@ -73,6 +73,19 @@ export const shaderShL1 = (sh: readonly number[], factor: number): Float32Array 
 	return out;
 };
 
+/**
+ * packs `_ReflectionProbeGlobalParam3` as `ReflectionProbeBinningPassConstructor.PrepareConstantBuffer` does:
+ * Rec. 709 luminance of pure L1 `skyAmbientSH` (unscaled by `indirectDiffuseFactor` or `skyDirectIntensity`),
+ * with the Y and Z components (`u2`, `u1`) swapped relative to `GetCoefficientsL1`
+ *
+ * @param sh 27 coefficients
+ * @returns `[luma(u3), luma(u2), luma(u1), luma(u0)]`
+ */
+export const reflectionProbeLumaSh = (sh: readonly number[]): [number, number, number, number] => {
+	const luma = (i: number): number => rec709Luminance([sh[i] ?? 0, sh[9 + i] ?? 0, sh[18 + i] ?? 0]);
+	return [luma(3), luma(2), luma(1), luma(0)];
+};
+
 /** the height fog's density and falloff per profile unit, as the game packs them (its shaders use base 2) */
 const FOG_UNIT = 0.1;
 
@@ -368,6 +381,7 @@ export const deriveEnvironment = (profile: EnvironmentInput | null): Environment
 			sky.useCustomIVDefaultSH ? sky.customIVDefaultSH : sky.skyAmbientSH,
 			sky.skyDirectIntensity * light.indirectDiffuseFactor,
 		),
+		reflectionProbeSh: reflectionProbeLumaSh(sky.skyAmbientSH),
 		indirectDiffuse: light.indirectDiffuseFactor,
 		indirectSpecular: light.indirectSpecularFactor,
 		reflection: sky.reflectionMap,

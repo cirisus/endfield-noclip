@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { Vec2, Vec3 } from '@endfield-noclip/package-format/values';
+import type { Vec2, Vec3, Vec4 } from '@endfield-noclip/package-format/values';
 
 import type { Grading } from './color-grading.ts';
 import type { AutoExposureSettings } from './exposure.ts';
@@ -204,6 +204,11 @@ export interface Environment {
 	 * `light.indirectDiffuseFactor`
 	 */
 	ivDefaultSh: Float32Array;
+	/**
+	 * luminance L1 SH of `skyAmbientSH` (`_ReflectionProbeGlobalParam3`), unscaled by `indirectDiffuseFactor`
+	 * or `skyDirectIntensity`, with Y and Z swapped as `ReflectionProbeBinningPassConstructor` packs it
+	 */
+	reflectionProbeSh: Vec4;
 	/**
 	 * `light.indirectDiffuseFactor`, the game's scale on all diffuse ambient (`_EnvironmentGlobalParams0.x`);
 	 * {@link sh} already carries it, the irradiance volume doesn't

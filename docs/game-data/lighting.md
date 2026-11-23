@@ -140,8 +140,10 @@ cubemaps can be black (e.g. Dijiang's `T_reflectionprobe_envdefault0`), leaving 
 reflection probes.
 
 sky reflections normalise against local diffuse irradiance: with `d` = diffuse irradiance luminance
-and `p` = ambient probe L1 luminance along the normal, the scale is
-`(2 · min(d / p, 1) + d) / (2 + p)` (~`d / p` indoors, ~1 outdoors).
+and `p` = `_ReflectionProbeGlobalParam3` dotted with `(N, 1)` (the Rec. 709 luminance of pure L1
+`sky.skyAmbientSH`, unscaled by `indirectDiffuseFactor` or `skyDirectIntensity`, with Y and Z
+swapped relative to `GetCoefficientsL1`), the scale is `(2 · min(d / p, 1) + d) / (2 + p)` (~`d / p`
+indoors, ~1 outdoors).
 
 local reflection probes are octahedral, box-projected, priority-blended over the sky cubemap, binned
 into screen tiles and depth slices like [local lights](#local-lights), and normalised against their

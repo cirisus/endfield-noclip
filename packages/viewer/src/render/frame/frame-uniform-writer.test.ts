@@ -112,10 +112,15 @@ describe('writeFrameUniforms', () => {
 	it('packs the irradiance volume default SH at FrameOffsets.ivDefaultSh', () => {
 		const environment = deriveEnvironment(null);
 		environment.ivDefaultSh.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+		environment.reflectionProbeSh = [13, 14, 15, 16];
 		const { f32 } = write({ environment });
 		assert.deepEqual(
 			[...f32.subarray(FrameOffsets.ivDefaultSh, FrameOffsets.ivDefaultSh + 12)],
 			[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+		);
+		assert.deepEqual(
+			[...f32.subarray(FrameOffsets.reflectionProbeSh, FrameOffsets.reflectionProbeSh + 4)],
+			[13, 14, 15, 16],
 		);
 	});
 });
