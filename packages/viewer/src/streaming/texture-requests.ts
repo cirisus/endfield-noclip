@@ -22,12 +22,13 @@ export type TextureKind = '2d' | 'cube' | '2d-array' | '3d';
 const requestPieces = (
 	stream: TextureStream,
 	textures: RequestedTextures,
-	texture: { id: number; entry: ReadyTexture },
+	id: number,
+	entry: ReadyTexture,
 	level: number,
 	priority: number,
 ): void => {
-	const pieces = texture.entry.pieces;
-	const integrated = textures.integrated(texture.id);
+	const pieces = entry.pieces;
+	const integrated = textures.integrated(id);
 	for (let i = 0; i < pieces.length; i++) {
 		const piece = pieces[i];
 		const blob = piece.blob;
@@ -35,7 +36,7 @@ const requestPieces = (
 			stream.markUsed(blob);
 		} else {
 			// a piece left over from before a coarser one was evicted lost its levels: fetch it again
-			if (stream.isReady(blob) && !textures.waiting(texture.id, i)) {
+			if (stream.isReady(blob) && !textures.waiting(id, i)) {
 				stream.discard(blob);
 			}
 			stream.want(blob, priority / (1 + i));
@@ -84,7 +85,7 @@ export class TextureRequests {
 			entry.mipCount - 1,
 			Math.max(0, Math.floor(Math.log2(texels / Math.max(pixels, 1)))),
 		);
-		requestPieces(this.#stream, this.#textures, { id, entry }, level, priority);
+		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
 	}
 
 	/**
@@ -112,7 +113,7 @@ export class TextureRequests {
 				Math.ceil(Math.log2(side / UNSEEN_TEXELS)),
 			),
 		);
-		requestPieces(this.#stream, this.#textures, { id, entry }, level, priority);
+		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
 	}
 
 	/**
@@ -136,7 +137,7 @@ export class TextureRequests {
 		// a sampler that blends neighbouring levels reads the finer of the two; one that doesn't rounds
 		const sampled = Math.floor(this.#textures.blendsLevels(id) ? lod : lod + 0.5);
 		const level = Math.min(entry.mipCount - 1, Math.max(0, sampled + Math.ceil(bias)));
-		requestPieces(this.#stream, this.#textures, { id, entry }, level, priority);
+		requestPieces(this.#stream, this.#textures, id, entry, level, priority);
 	}
 
 	/**
@@ -153,7 +154,7 @@ export class TextureRequests {
 		}
 		const entry = this.#textures.streamable(id, kind);
 		if (entry !== null) {
-			requestPieces(this.#stream, this.#textures, { id, entry }, 0, priority);
+			requestPieces(this.#stream, this.#textures, id, entry, 0, priority);
 		}
 		return entry;
 	}
@@ -188,6 +189,6 @@ export const streamWholeTexture = (request: {
 	if (entry === null) {
 		return null;
 	}
-	requestPieces(stream, textures, { id, entry }, 0, priority);
+	requestPieces(stream, textures, id, entry, 0, priority);
 	return { entry, binding: textures.binding(id) };
 };

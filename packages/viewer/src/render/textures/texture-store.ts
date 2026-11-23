@@ -90,10 +90,14 @@ export class TextureStore {
 	bytes = 0;
 	/** bumped whenever any texture's binding changes, so users can keep what they derived from bindings */
 	version = 0;
-	/** by texture id: the {@link version} its binding last changed at */
-	#changed = new Map<number, number>();
-	/** by texture id: {@link blendsLevels}, once asked */
-	#blends = new Map<number, boolean>();
+	/** by texture id: the {@link version} its binding last changed at (-1 before first change) */
+	#changed: Int32Array;
+	/** by texture id: {@link blendsLevels} (-1 unknown, 0 nearest, 1 linear) */
+	#blends: Int8Array;
+	/** by texture id: {@link integrated} count, kept in sync with {@link TextureState.integrated} */
+	#integrated: Uint8Array;
+	/** by texture id: cached result of {@link streamable} for 2D textures (`undefined` until first asked) */
+	#streamable2d: (ReadyTexture | null | undefined)[];
 
 	/**
 	 * @param device the device
@@ -104,6 +108,10 @@ export class TextureStore {
 		this.#device = device;
 		this.#table = table;
 		this.#supported = formats.bc;
+		this.#changed = new Int32Array(table.count).fill(-1);
+		this.#blends = new Int8Array(table.count).fill(-1);
+		this.#integrated = new Uint8Array(table.count);
+		this.#streamable2d = Array.from({ length: table.count });
 		// from the piece records, so entries are only decoded once they're used
 		for (let texture = 0; texture < table.count; texture++) {
 			const count = table.pieceCount(texture);
@@ -119,18 +127,29 @@ export class TextureStore {
 	 * @returns the entry if this viewer can stream it (that kind, a supported format, block-aligned size)
 	 */
 	streamable(id: number, kind: '2d' | 'cube' | '2d-array' | '3d'): ReadyTexture | null {
+		if (kind === '2d' && id >= 0 && id < this.#streamable2d.length) {
+			const cached = this.#streamable2d[id];
+			if (cached !== undefined) {
+				return cached;
+			}
+		}
 		const entry = this.#table.entry(id);
-		if (entry?.status !== 'ready' || entry.kind !== kind) {
-			return null;
+		let result: ReadyTexture | null = null;
+		if (entry?.status === 'ready' && entry.kind === kind) {
+			const info = TEXTURE_FORMATS[entry.format];
+			if (
+				info !== undefined &&
+				(info.blockWidth <= 1 || this.#supported) &&
+				entry.width % info.blockWidth === 0 &&
+				entry.height % info.blockHeight === 0
+			) {
+				result = entry;
+			}
 		}
-		const info = TEXTURE_FORMATS[entry.format];
-		if (info === undefined || (info.blockWidth > 1 && !this.#supported)) {
-			return null;
+		if (kind === '2d' && id >= 0 && id < this.#streamable2d.length) {
+			this.#streamable2d[id] = result;
 		}
-		if (entry.width % info.blockWidth !== 0 || entry.height % info.blockHeight !== 0) {
-			return null;
-		}
-		return entry;
+		return result;
 	}
 
 	/**
@@ -139,13 +158,18 @@ export class TextureStore {
 	 *   rather than taking the nearest; `true` for a texture that isn't in the table
 	 */
 	blendsLevels(id: number): boolean {
-		let blends = this.#blends.get(id);
-		if (blends === undefined) {
+		if (id >= 0 && id < this.#blends.length) {
+			const cached = this.#blends[id];
+			if (cached !== -1) {
+				return cached === 1;
+			}
 			const entry = this.#table.entry(id);
-			blends = entry?.status !== 'ready' || this.#table.samplers[entry.sampler]?.mipmapFilter !== 'nearest';
-			this.#blends.set(id, blends);
+			const blends =
+				entry?.status !== 'ready' || this.#table.samplers[entry.sampler]?.mipmapFilter !== 'nearest';
+			this.#blends[id] = blends ? 1 : 0;
+			return blends;
 		}
-		return blends;
+		return true;
 	}
 
 	/**
@@ -153,7 +177,7 @@ export class TextureStore {
 	 * @returns how many pieces (from the tail) are integrated
 	 */
 	integrated(id: number): number {
-		return this.#states.get(id)?.integrated ?? 0;
+		return this.#integrated[id] ?? 0;
 	}
 
 	/**
@@ -163,7 +187,7 @@ export class TextureStore {
 	 *   piece released since the last {@link commit}) counts as unchanged until it does
 	 */
 	unchangedSince(id: number, version: number): boolean {
-		return (this.#changed.get(id) ?? -1) <= version;
+		return (this.#changed[id] ?? -1) <= version;
 	}
 
 	/**
@@ -233,6 +257,7 @@ export class TextureStore {
 			state.waiting.delete(ref.index);
 			// finer integrated pieces lose their levels too
 			state.integrated = Math.min(state.integrated, ref.index);
+			this.#integrated[ref.texture] = state.integrated;
 			this.#released.add(state);
 		}
 	}
@@ -247,10 +272,20 @@ export class TextureStore {
 		}
 		this.#retiring = this.#retired;
 		this.#retired = [];
-		for (const state of this.#released) {
-			this.#shrink(state);
+		if (this.#released.size > 0) {
+			const batch: { encoder: GPUCommandEncoder | null } = { encoder: null };
+			const getEncoder = (): GPUCommandEncoder => {
+				batch.encoder ??= this.#device.createCommandEncoder({ label: 'texture levels' });
+				return batch.encoder;
+			};
+			for (const state of this.#released) {
+				this.#shrink(state, getEncoder);
+			}
+			if (batch.encoder !== null) {
+				this.#device.queue.submit([batch.encoder.finish()]);
+			}
+			this.#released.clear();
 		}
-		this.#released.clear();
 	}
 
 	/** frees every texture */
@@ -265,7 +300,8 @@ export class TextureStore {
 		this.#retiring = [];
 		this.#states.clear();
 		this.#released.clear();
-		this.#changed.clear();
+		this.#changed.fill(-1);
+		this.#integrated.fill(0);
 		this.bytes = 0;
 	}
 
@@ -304,11 +340,19 @@ export class TextureStore {
 	}
 
 	/** swaps in `next` (holding levels `top…`), copying the levels both have from the current texture */
-	#replace(state: TextureState, next: GPUTexture | null, top: number): void {
+	#replace(
+		state: TextureState,
+		next: GPUTexture | null,
+		top: number,
+		batchEncoder?: () => GPUCommandEncoder,
+	): void {
 		const previous = state.gpu;
 		const info = TEXTURE_FORMATS[state.entry.format];
 		if (previous !== null && next !== null) {
-			const encoder = this.#device.createCommandEncoder({ label: 'texture levels' });
+			const encoder =
+				batchEncoder !== undefined
+					? batchEncoder()
+					: this.#device.createCommandEncoder({ label: 'texture levels' });
 			for (let level = Math.max(top, state.top); level < state.entry.mipCount; level++) {
 				const layout = textureLevelLayout(state.entry, level);
 				encoder.copyTextureToTexture(
@@ -321,7 +365,9 @@ export class TextureStore {
 					],
 				);
 			}
-			this.#device.queue.submit([encoder.finish()]);
+			if (batchEncoder === undefined) {
+				this.#device.queue.submit([encoder.finish()]);
+			}
 		}
 		this.bytes -= this.#levelBytes(state.entry, state.top);
 		if (previous !== null) {
@@ -331,7 +377,7 @@ export class TextureStore {
 		state.top = next === null ? state.entry.mipCount : top;
 		state.version++;
 		this.version++;
-		this.#changed.set(state.id, this.version);
+		this.#changed[state.id] = this.version;
 		state.binding =
 			next === null
 				? null
@@ -344,13 +390,13 @@ export class TextureStore {
 	}
 
 	/** drops levels of released pieces from the GPU texture */
-	#shrink(state: TextureState): void {
+	#shrink(state: TextureState, batchEncoder?: () => GPUCommandEncoder): void {
 		const pieces = state.entry.pieces;
 		const top = state.integrated === 0 ? state.entry.mipCount : pieces[state.integrated - 1].firstLevel;
 		if (state.top >= top) {
 			return;
 		}
-		this.#replace(state, state.integrated === 0 ? null : this.#create(state, top), top);
+		this.#replace(state, state.integrated === 0 ? null : this.#create(state, top), top, batchEncoder);
 	}
 
 	#levelBytes(entry: ReadyTexture, top: number): number {
@@ -388,6 +434,7 @@ export class TextureStore {
 			}
 			state.integrated++;
 		}
+		this.#integrated[state.id] = state.integrated;
 		// the large levels in one staging buffer: written straight to the queue, they stall the main thread
 		writeTexturesStaged(this.#device, writes);
 	}
