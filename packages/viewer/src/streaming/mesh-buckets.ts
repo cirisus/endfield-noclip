@@ -149,6 +149,12 @@ const BUCKET_VARIANTS = 8;
 export const gpuBucketIndex = (mirrored: 0 | 1, shadowOnly: boolean): number =>
 	4 + mirrored + (shadowOnly ? 2 : 0);
 
+/** scratch arrays reused by {@link sortFarToNear} to avoid per-bucket allocations */
+const sortOrder: number[] = [];
+const sortRows: number[] = [];
+const sortBands: number[] = [];
+const sortDistances: number[] = [];
+
 /**
  * orders a sorted bucket's rows by their {@link MeshBucket.bands}, then far to near by their
  * {@link MeshBucket.distances}, all in place. rows of one instance (a particle system's particles) share its
@@ -167,16 +173,20 @@ export const sortFarToNear = (bucket: MeshBucket): void => {
 	if (sorted) {
 		return;
 	}
-	const order = Array.from({ length: n }, (_, i) => i);
-	// stable, so a system's particles stay together in their order
-	order.sort((a, b) => bands[a] - bands[b] || distances[b] - distances[a]);
-	const oldRows = rows.slice();
-	const oldBands = bands.slice();
-	const oldDistances = distances.slice();
+	sortOrder.length = n;
 	for (let i = 0; i < n; i++) {
-		rows[i] = oldRows[order[i]];
-		bands[i] = oldBands[order[i]];
-		distances[i] = oldDistances[order[i]];
+		sortOrder[i] = i;
+		sortRows[i] = rows[i];
+		sortBands[i] = bands[i];
+		sortDistances[i] = distances[i];
+	}
+	// stable, so a system's particles stay together in their order
+	sortOrder.sort((a, b) => sortBands[a] - sortBands[b] || sortDistances[b] - sortDistances[a]);
+	for (let i = 0; i < n; i++) {
+		const k = sortOrder[i];
+		rows[i] = sortRows[k];
+		bands[i] = sortBands[k];
+		distances[i] = sortDistances[k];
 	}
 };
 

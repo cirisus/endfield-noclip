@@ -391,15 +391,20 @@ export class MeshSelector {
 				const rowEnd = Math.min(end, (g + 1) * GROUP_ROWS);
 				// a group holding moving rows has no bounds to pick its LODs by
 				if (view.gpuCulling && radius !== Infinity) {
+					const layer =
+						view.shadowLayers === null
+							? SHADOW_LAYERS
+							: firstShadowLayer(view.shadowLayers, gx, gy, gz, radius);
+					// an out-of-view group outside every shadow layer can neither draw nor cast
+					if (!inView && layer === SHADOW_LAYERS) {
+						continue;
+					}
 					const group = this.#group;
 					group.first = rowFirst;
 					group.end = rowEnd;
 					group.inside = inside;
 					group.inView = inView;
-					group.layer =
-						view.shadowLayers === null
-							? SHADOW_LAYERS
-							: firstShadowLayer(view.shadowLayers, gx, gy, gz, radius);
+					group.layer = layer;
 					this.#cullGroup(instances, block, g);
 				} else {
 					this.#selectRows(instances, rowFirst, rowEnd, { inside, block });
@@ -537,6 +542,14 @@ export class MeshSelector {
 			const sx = this.#ox + segments[at + SegmentFloat.center];
 			const sy = this.#oy + segments[at + SegmentFloat.center + 1];
 			const sz = this.#oz + segments[at + SegmentFloat.center + 2];
+			// the segment's own sphere reaches fewer layers than its group's
+			const segmentLayer =
+				group.layer === SHADOW_LAYERS || view.shadowLayers === null
+					? SHADOW_LAYERS
+					: firstShadowLayer(view.shadowLayers, sx, sy, sz, segments[at + SegmentFloat.radius]);
+			if (castOnly && segmentLayer === SHADOW_LAYERS) {
+				continue;
+			}
 			const centre = Math.sqrt(sx * sx + sy * sy + sz * sz);
 			const centersRadius = segments[at + SegmentFloat.centersRadius];
 			const nearest = Math.max(centre - centersRadius, 0.1);
@@ -551,15 +564,27 @@ export class MeshSelector {
 			const scale = castOnly ? CASTER_PRIORITY : 1;
 			const priority = largest * viewportHeight * scale;
 			const slots = block.slots[run];
+			const checkedFrame = this.#checkedFrame;
+			const readyArr = this.#ready;
+			const wantedArr = this.#wanted;
 			let count = 0;
 			let ready = true;
-			for (const slot of slots) {
+			for (let i = 0; i < slots.length; i++) {
+				const slot = slots[i];
 				if (slot.maxSquared < low || slot.minSquared >= high || (castOnly && !slot.castsShadows)) {
 					continue;
 				}
 				candidates[count++] = slot;
 				const slotPriority = Math.min(priority, bandPixels(slot, viewportHeight) * scale);
-				if (!this.#geometryReady(slot.geometry, slotPriority, frame)) {
+				const geom = slot.geometry;
+				if (checkedFrame[geom] === frame) {
+					if (slotPriority > wantedArr[geom]) {
+						wantedArr[geom] = slotPriority;
+					}
+					if (readyArr[geom] === 0) {
+						ready = false;
+					}
+				} else if (!this.#geometryReady(geom, slotPriority, frame)) {
 					ready = false;
 				}
 			}
@@ -579,11 +604,7 @@ export class MeshSelector {
 			segment.handedness = segments[at + SegmentFloat.handedness];
 			segment.priority = priority;
 			segment.nearest = nearest;
-			// the segment's own sphere reaches fewer layers than its group's
-			segment.layer =
-				group.layer === SHADOW_LAYERS || view.shadowLayers === null
-					? SHADOW_LAYERS
-					: firstShadowLayer(view.shadowLayers, sx, sy, sz, segments[at + SegmentFloat.radius]);
+			segment.layer = segmentLayer;
 			if (ready) {
 				for (let c = 0; c < count; c++) {
 					this.#addSlot(candidates[c], candidates[c]);

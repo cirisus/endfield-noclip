@@ -154,7 +154,10 @@ const withRoom = (array: Uint32Array<ArrayBuffer>, words: number): Uint32Array<A
  * @param flags {@link ItemFlags}
  */
 export const addItem = (work: GpuCullWork, row: number, count: number, flags: number): void => {
-	work.items = withRoom(work.items, (work.itemCount + 1) * ITEM_WORDS);
+	const needed = (work.itemCount + 1) * ITEM_WORDS;
+	if (needed > work.items.length) {
+		work.items = withRoom(work.items, needed);
+	}
 	const at = work.itemCount * ITEM_WORDS;
 	work.items[at] = row;
 	work.items[at + 1] = count | flags;
