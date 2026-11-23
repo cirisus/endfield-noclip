@@ -5,13 +5,43 @@
  * @module
  */
 
-import { LookFlags, type MaterialLook } from '../../looks/look.ts';
+import { GAPS_FLOAT, LookFlags, LookRow, type MaterialLook } from '../../looks/look.ts';
 import type { MeshBucket } from '../../streaming/mesh-buckets.ts';
 import type { ListedSpan } from '../instances/instance-renderer.ts';
 
 import type { DrawRange, RangeOrder } from './draw-ranges.ts';
 import type { MaterialState } from './material-bindings.ts';
 import { faceCullIndex, faceCullOf, uvFormatIndex, uvFormatOf } from './pipeline-variants.ts';
+
+/** look flags that bail out of the lean `opaqueLit` shader into the full `opaque` uber-shader */
+const COMPLEX_OPAQUE_FLAGS =
+	LookFlags.Unlit |
+	LookFlags.Erosion |
+	LookFlags.DetailMap |
+	LookFlags.LayerBlend |
+	LookFlags.TriChannelMask |
+	LookFlags.ParallaxMap |
+	LookFlags.ParallaxNoiseMap |
+	LookFlags.Foliage |
+	LookFlags.FoliageLeaf |
+	LookFlags.Trunk |
+	LookFlags.VertexOffset |
+	LookFlags.Effect |
+	LookFlags.MaskMap |
+	LookFlags.EmissiveMap |
+	LookFlags.EmissiveMask;
+
+/**
+ * @returns whether an opaque look uses only base + normal PBR terms and can run the lean `fs_opaque_lit`
+ *   shader
+ */
+const isSimpleOpaqueLit = (look: MaterialLook): boolean =>
+	(look.flags & COMPLEX_OPAQUE_FLAGS) === 0 &&
+	look.stencil === null &&
+	look.params[LookRow.parallax + 2] === 0 &&
+	look.params[LookRow.foliage + 3] === 0 &&
+	look.params[LookRow.canopy + 3] === 0 &&
+	look.params[GAPS_FLOAT] === 0;
 
 /**
  * @param look a bucket's look
@@ -44,7 +74,9 @@ export const drawRangeOf = (
 		return null;
 	}
 	switch (queue) {
-		case 'opaque':
+		case 'opaque': {
+			return isSimpleOpaqueLit(look) ? 'opaqueLit' : 'opaque';
+		}
 		case 'transparent': {
 			return queue;
 		}

@@ -411,6 +411,12 @@ fn slot_set(uv: vec4f, flags: u32, slot: u32) -> vec2f {
 	return select(uv.xy, uv.zw, (flags & (1u << (UV1_SHIFT + slot))) != 0u);
 }
 
+// read through the buffer: arrays in a `let` copy can't be indexed by a variable
+fn slot_uv(look_id: u32, uv: vec4f, flags: u32, slot: u32) -> vec2f {
+	let t = looks[look_id].slot_uv[slot];
+	return slot_set(uv, flags, slot) * t.xy + t.zw;
+}
+
 // samples a material slot with explicit screen-space derivatives (already scaled by exp2(bias)), so optional
 // maps can be skipped in non-uniform control flow without changing mip selection
 fn sample_slot(
@@ -560,6 +566,74 @@ fn fs_opaque(in: VertexOut) -> Shaded {
 	return out;
 }
 
+// lean shading path for plain opaque Lit looks (base + normal only, no mask/emissive/detail/layer/parallax/
+// foliage/erosion/unlit/dither/gaps); keeps VGPRs low for the ~86% of opaque materials that need nothing else
+@fragment
+fn fs_opaque_lit(in: VertexOut) -> Shaded {
+	let draw = draws[in.draw];
+	let flags = bitcast<u32>(draw.offset.w);
+	let id = look_slot(draw);
+	let look = looks[id];
+	let feedback = pack_mip_feedback(id, in.uv, in.rel, frame.params.y);
+	let faceted = cross(dpdy(in.rel), dpdx(in.rel));
+	let bias = frame.params.y;
+	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
+	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
+
+	var albedo = clamp(base.rgb * look.tint.rgb * look.surface2.w, vec3f(0.0), vec3f(1.0));
+	if ((flags & BASE_MAP) == 0u) {
+		albedo = vec3f(1.0);
+	}
+	albedo = mix(albedo, look.tint.rgb, look.emissive.w);
+	let has_normal = (flags & NORMAL_MAP) != 0u;
+
+	var n = in.normal;
+	if (dot(n, n) < 1e-6) {
+		n = faceted;
+	}
+	n = normalize(n);
+	let towards_viewer = dot(n, in.rel) <= 0.0;
+	if (!towards_viewer) {
+		n = -n;
+	}
+	if (has_normal && in.tangent.w != 0.0) {
+		var rg = packed.rg;
+		if ((flags & NORMAL_RAG) != 0u) {
+			rg.x = packed.r * packed.a;
+		}
+		let xy = unpack_normal_xy(rg);
+		let tn = vec3f(xy * look.surface.w, normal_z(xy));
+		let t = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
+		var b = cross(in.normal, in.tangent.xyz) * in.tangent.w;
+		if (!towards_viewer) {
+			b = -b;
+		}
+		b = normalize(b - n * dot(b, n));
+		n = normalize(t * tn.x + b * tn.y + n * tn.z);
+	}
+
+	var s = default_surface(albedo, n);
+	s.roughness = look.surface.y;
+	if (has_normal && (flags & NORMAL_ROUGHNESS) != 0u) {
+		s.roughness = mix(look.surface.x, look.surface.y, packed.b);
+	}
+	s.metallic = look.surface.z;
+	if ((flags & METALLIC_BASE_ALPHA) != 0u) {
+		s.metallic = select(0.0, base.a, (flags & BASE_MAP) != 0u);
+	}
+	s.f0 = look.surface2.y;
+	if ((flags & (NORMAL_MAP | NORMAL_OCCLUSION)) == (NORMAL_MAP | NORMAL_OCCLUSION)) {
+		s.occlusion = mix(1.0, packed.a, look.surface2.x);
+	}
+	s = rain_wet_surface(s, in.rel);
+	var out = shade_surface(s, in.rel, in.position.xy);
+	if (look.detail2.w > 0.5) {
+		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
+	}
+	out.mip_feedback = feedback;
+	return out;
+}
+
 // alpha-blended materials (`transparent` in look.ts), shaded like opaque ones and fogged at their own depth,
 // drawn far to near over the composited scene (`TRANSPARENT_TARGETS` in render-targets.ts): premultiplied
 // colour and the opacity, the alpha the alpha test would read times `_BaseColor.a`
@@ -623,37 +697,21 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
 	let look = looks[id];
-	// derivatives must happen in uniform control flow; sampling with explicit gradients lets each optional
-	// texture skip its fetch when its flag is unset
+	// derivatives (and implicit-LOD sampling) must happen in uniform control flow
 	let rel_dx = dpdx(in.rel);
 	let rel_dy = dpdy(in.rel);
 	let faceted = cross(rel_dy, rel_dx);
-	let gradient_scale = exp2(frame.params.y);
+	let bias = frame.params.y;
+	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
+	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
+	let mask = textureSampleBias(mask_map, detail_sampler, slot_uv(id, in.uv, flags, MASK_SLOT), bias);
+	let glow = textureSampleBias(emissive_map, base_sampler, slot_uv(id, in.uv, flags, EMISSIVE_SLOT), bias);
+	let detail = textureSampleBias(detail_map, detail_sampler, slot_uv(id, in.uv, flags, DETAIL_SLOT), bias);
+	let gradient_scale = exp2(bias);
 	let uv0_dx = dpdx(in.uv.xy) * gradient_scale;
 	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
 	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
 	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
-
-	var base = vec4f(1.0);
-	if ((flags & BASE_MAP) != 0u) {
-		base = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT);
-	}
-	var packed = vec4f(0.5, 0.5, 1.0, 1.0);
-	if ((flags & NORMAL_MAP) != 0u) {
-		packed = sample_slot(normal_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, NORMAL_SLOT);
-	}
-	var mask = vec4f(1.0);
-	if ((flags & MASK_MAP) != 0u) {
-		mask = sample_slot(mask_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, MASK_SLOT);
-	}
-	var glow = vec4f(0.0);
-	if ((flags & EMISSIVE_MAP) != 0u) {
-		glow = sample_slot(emissive_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, EMISSIVE_SLOT);
-	}
-	var detail = vec4f(0.5, 0.5, 1.0, 1.0);
-	if ((flags & DETAIL_MAP) != 0u) {
-		detail = sample_slot(detail_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, DETAIL_SLOT);
-	}
 
 	// the gaps view (`DEBUG_VIEWS` in debug-views.ts): a material drawn without something the game draws
 	// (`GAPS_FLOAT` in look.ts) shows amber and black stripes, 25 cm wide in world space, over its base map's

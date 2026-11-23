@@ -14,6 +14,8 @@ const ready = { slots: [bound], alphaReady: true, complete: true };
 
 test('a look draws in its queue, alpha-tested ones as opaque until their alpha is bound', () => {
 	const context = { castOnly: false, stencil: true, state: ready };
+	assert.equal(drawRangeOf(look({}), context), 'opaqueLit');
+	assert.equal(drawRangeOf(look({ flags: LookFlags.ParallaxMap }), context), 'opaque');
 	assert.equal(drawRangeOf(look({ queue: 'transparent' }), context), 'transparent');
 	assert.equal(drawRangeOf(look({ queue: 'cutout' }), context), 'cutout');
 	assert.equal(
@@ -38,7 +40,7 @@ test('effects wait for all their textures, unlit looks for their base colour', (
 
 test('cast-only buckets draw only shadow-casting surfaces, and stencil looks need a stencil', () => {
 	const castOnly = { castOnly: true, stencil: false, state: ready };
-	assert.equal(drawRangeOf(look({}), castOnly), 'opaque');
+	assert.equal(drawRangeOf(look({}), castOnly), 'opaqueLit');
 	assert.equal(drawRangeOf(look({ castsShadows: false }), castOnly), null);
 	assert.equal(drawRangeOf(look({ queue: 'transparent' }), castOnly), null);
 	const mask = look({

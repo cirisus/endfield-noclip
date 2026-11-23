@@ -204,10 +204,12 @@ export const prepareMeshPipelines = (
 	};
 	const noColor = format.targets.map((target) => ({ ...target, writeMask: 0 }));
 	const shade: GPUFragmentState = { module, entryPoint: 'fs_opaque', targets: format.targets };
+	const shadeLit: GPUFragmentState = { module, entryPoint: 'fs_opaque_lit', targets: format.targets };
 	const depthOnly: GPUFragmentState = { module, entryPoint: 'fs_depth', targets: noColor };
 	describeMesh(PHASES.prepass, { fragment: depthOnly, depthStencil: depthWrite });
 	// each mask draws through a stencil variant; this one only completes the phase
 	describeMesh(PHASES.stencilMask, { fragment: depthOnly, depthStencil: depthTest });
+	describeMesh(PHASES.opaqueLit, { fragment: shadeLit, depthStencil: depthEqual });
 	describeMesh(PHASES.opaque, { fragment: shade, depthStencil: depthEqual });
 	describeMesh(PHASES.cutoutDepth, {
 		fragment: { module, entryPoint: 'fs_cutout_depth', targets: noColor },

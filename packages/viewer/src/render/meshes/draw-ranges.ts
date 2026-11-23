@@ -8,8 +8,8 @@
 
 import type { LookQueue } from '../../looks/look.ts';
 
-/** the draws a phase runs over: those of one look queue */
-export type DrawRange = LookQueue;
+/** the draws a phase runs over: those of one look queue, or the lean Lit subset of opaque */
+export type DrawRange = LookQueue | 'opaqueLit';
 
 /** how a range's buckets are sorted (comparators in draw-order.ts) */
 export type RangeOrder = 'pipelineThenNearest' | 'bindings' | 'stencilWritesThenBindings';
@@ -28,6 +28,7 @@ export interface DrawRangeInfo {
 /** every range, in the order the frame's draws are prepared */
 export const DRAW_RANGES: readonly DrawRangeInfo[] = [
 	// depth-writing draws: early depth testing rewards nearest first
+	{ range: 'opaqueLit', order: 'pipelineThenNearest', effect: false },
 	{ range: 'opaque', order: 'pipelineThenNearest', effect: false },
 	{ range: 'cutout', order: 'pipelineThenNearest', effect: false },
 	{ range: 'effectOpaque', order: 'bindings', effect: true },
@@ -83,7 +84,15 @@ export const PHASES = {
 	 * the opaque meshes' depth, laid down before the terrain and the shading so each pixel is shaded once: the
 	 * opaque phase then shades only where its depth equals this
 	 */
+	prepassLit: {
+		key: 'mesh/prepass',
+		range: 'opaqueLit',
+		textured: false,
+		shadow: false,
+		streams: 'position',
+	},
 	prepass: { key: 'mesh/prepass', range: 'opaque', textured: false, shadow: false, streams: 'position' },
+	opaqueLit: shading('mesh/opaque-lit', 'opaqueLit'),
 	opaque: shading('mesh/opaque', 'opaque'),
 	cutoutDepth: { key: 'mesh/cutout-depth', range: 'cutout', textured: true, shadow: false, streams: 'uv' },
 	cutoutShade: shading('mesh/cutout-shade', 'cutout'),
@@ -108,6 +117,13 @@ export const PHASES = {
 	waterFoam: shading('mesh/water-foam', 'waterFoam'),
 	waterFoamBehind: shading('mesh/water-foam-behind', 'waterFoamBehind'),
 	waterFoamThrough: shading('mesh/water-foam-through', 'waterFoamThrough'),
+	shadowOpaqueLit: {
+		key: 'mesh/shadow/opaque',
+		range: 'opaqueLit',
+		textured: false,
+		shadow: true,
+		streams: 'position',
+	},
 	shadowOpaque: {
 		key: 'mesh/shadow/opaque',
 		range: 'opaque',
@@ -137,9 +153,9 @@ export type EffectPass =
 /** each pass's phases, in the order they draw */
 export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// alpha-tested cut-outs lay down their depth before the terrain too, so it isn't shaded under leaves and grass
-	prepass: [PHASES.prepass, PHASES.cutoutDepth],
+	prepass: [PHASES.prepassLit, PHASES.prepass, PHASES.cutoutDepth],
 	// stencil masks after the surfaces they're tested against
-	main: [PHASES.opaque, PHASES.cutoutShade, PHASES.effectOpaque, PHASES.stencilMask],
+	main: [PHASES.opaqueLit, PHASES.opaque, PHASES.cutoutShade, PHASES.effectOpaque, PHASES.stencilMask],
 	// lit decals that change only the surface's normal, roughness or occlusion, run between the main and the
 	// transparent pass: they add the change in the surface's light to the radiance
 	relight: [PHASES.decalRelight],
@@ -157,7 +173,7 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// WaterDecal boxes, drawn into the water's foam before the water draws: those the game depth-tests in front
 	// of the scene, then those it tests behind it, then those it doesn't test
 	waterFoam: [PHASES.waterFoam, PHASES.waterFoamBehind, PHASES.waterFoamThrough],
-	shadow: [PHASES.shadowOpaque, PHASES.shadowCutout],
+	shadow: [PHASES.shadowOpaqueLit, PHASES.shadowOpaque, PHASES.shadowCutout],
 };
 
 /**
