@@ -13,6 +13,7 @@ import {
 	type InstanceBlock,
 } from '@endfield-noclip/package-format/instances';
 import { decodeIrradianceTable, type IrradianceTable } from '@endfield-noclip/package-format/irradiance';
+import { decodeLightsTable, type LightsTable } from '@endfield-noclip/package-format/lights';
 import {
 	CORE_ARCHIVE,
 	CORE_ARCHIVE_INDEX,
@@ -59,6 +60,7 @@ export class PackedPackage implements AsyncDisposable {
 	#materials: Promise<MaterialTable> | undefined;
 	#water: Promise<WaterTable> | undefined;
 	#environment: Promise<EnvironmentTable> | undefined;
+	#lights: Promise<LightsTable> | undefined;
 	#irradiance: Promise<IrradianceTable> | undefined;
 
 	private constructor(
@@ -162,6 +164,12 @@ export class PackedPackage implements AsyncDisposable {
 			return table;
 		});
 		return this.#environment;
+	}
+
+	/** @returns decoded `tables/lights.bin.zst` */
+	lights(): Promise<LightsTable> {
+		this.#lights ??= readCoreMember(this.#core, CORE_PATHS.lights).then(decodeLightsTable);
+		return this.#lights;
 	}
 
 	/** @returns decoded `tables/irradiance.bin` */

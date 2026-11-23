@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { encodeGeometryTable } from '@endfield-noclip/package-format/geometry-table';
 import { encodeChains } from '@endfield-noclip/package-format/instances';
 import { encodeIrradianceTable } from '@endfield-noclip/package-format/irradiance';
+import { encodeLightsTable } from '@endfield-noclip/package-format/lights';
 import {
 	CORE_ARCHIVE,
 	CORE_PATHS,
@@ -340,7 +341,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				data: binaryTable(encodeTextureTable(assetTables.textures.samplers, assetTables.textures.entries)),
 			},
 			{ path: CORE_PATHS.water, data: jsonTable(waterTable) },
-			{ path: CORE_PATHS.lights, data: jsonTable(lights) },
+			{ path: CORE_PATHS.lights, data: binaryTable(encodeLightsTable(lights)) },
 			{ path: CORE_PATHS.particles, data: jsonTable(content.particles.table()) },
 			{ path: CORE_PATHS.environment, data: jsonTable(environmentTable) },
 			{
@@ -359,6 +360,9 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			{
 				format: PACKAGE_FORMAT,
 				version: PACKAGE_VERSION,
+				minReaderVersion: PACKAGE_VERSION,
+				features: [],
+				requiredFeatures: [],
 				source: scene.source,
 				scene: { id: scene.id, name: scene.names.get(scene.id) ?? null },
 				subset: scene.subset.info,

@@ -7,14 +7,13 @@ import {
 import { decodeGeometryTable, type GeometryTable } from '@endfield-noclip/package-format/geometry-table';
 import { decodeChains, type Chain } from '@endfield-noclip/package-format/instances';
 import { decodeIrradianceTable, type IrradianceTable } from '@endfield-noclip/package-format/irradiance';
-import type { LightsTable } from '@endfield-noclip/package-format/lights';
+import { decodeLightsTable, type LightsTable } from '@endfield-noclip/package-format/lights';
 import {
 	CORE_ARCHIVE,
 	CORE_ARCHIVE_INDEX,
 	CORE_PATHS,
-	PACKAGE_FORMAT,
-	PACKAGE_VERSION,
 	type PackageManifest,
+	validateManifest,
 } from '@endfield-noclip/package-format/manifest';
 import type { MaterialTable } from '@endfield-noclip/package-format/materials';
 import type { ParticlesTable } from '@endfield-noclip/package-format/particles';
@@ -107,37 +106,41 @@ export const openViewerPackage = async (
 	const json = async (path: string): Promise<unknown> =>
 		JSON.parse(new TextDecoder().decode(await member(path)));
 
-	const manifestValue = await json(CORE_PATHS.manifest);
-	if (
-		typeof manifestValue !== 'object' ||
-		manifestValue === null ||
-		!('format' in manifestValue) ||
-		manifestValue.format !== PACKAGE_FORMAT
-	) {
-		throw new PackageError(`not an endfield-noclip package`);
+	let manifest: PackageManifest;
+	try {
+		manifest = validateManifest(await json(CORE_PATHS.manifest));
+	} catch (error) {
+		throw new PackageError(error instanceof Error ? error.message : String(error));
 	}
-	if (!('version' in manifestValue) || manifestValue.version !== PACKAGE_VERSION) {
-		const version = 'version' in manifestValue ? String(manifestValue.version) : 'unknown';
-		throw new PackageError(`package version ${version} isn't supported (expected ${PACKAGE_VERSION})`);
-	}
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- format and version checked above
-	const manifest = manifestValue as PackageManifest;
-	const tree = decodeTree(await member(CORE_PATHS.tree));
-	const blobs = decodeBlobTable(await member(CORE_PATHS.blobs));
-	const chains = decodeChains(await member(CORE_PATHS.chains));
-	const geometries = decodeGeometryTable(await member(CORE_PATHS.geometries));
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
-	const materials = (await json(CORE_PATHS.materials)) as MaterialTable;
-	const textures = decodeTextureTable(await member(CORE_PATHS.textures));
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
-	const water = (await json(CORE_PATHS.water)) as WaterTable;
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
-	const lights = (await json(CORE_PATHS.lights)) as LightsTable;
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
-	const particles = (await json(CORE_PATHS.particles)) as ParticlesTable;
-	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
-	const environment = resolveEnvironment((await json(CORE_PATHS.environment)) as EnvironmentTable);
-	const irradiance = decodeIrradianceTable(await member(CORE_PATHS.irradiance));
+	const [
+		tree,
+		blobs,
+		chains,
+		geometries,
+		materials,
+		textures,
+		water,
+		lights,
+		particles,
+		environment,
+		irradiance,
+	] = await Promise.all([
+		member(CORE_PATHS.tree).then(decodeTree),
+		member(CORE_PATHS.blobs).then(decodeBlobTable),
+		member(CORE_PATHS.chains).then(decodeChains),
+		member(CORE_PATHS.geometries).then(decodeGeometryTable),
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
+		json(CORE_PATHS.materials) as Promise<MaterialTable>,
+		member(CORE_PATHS.textures).then(decodeTextureTable),
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
+		json(CORE_PATHS.water) as Promise<WaterTable>,
+		member(CORE_PATHS.lights).then(decodeLightsTable),
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
+		json(CORE_PATHS.particles) as Promise<ParticlesTable>,
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
+		(json(CORE_PATHS.environment) as Promise<EnvironmentTable>).then(resolveEnvironment),
+		member(CORE_PATHS.irradiance).then(decodeIrradianceTable),
+	]);
 
 	return {
 		source,

@@ -406,6 +406,10 @@ const auditCore = async (packageDir: string, member: string | undefined, json: b
 			console.log(JSON.stringify(await pkg.tree(), null, '\t'));
 			return;
 		}
+		case CORE_PATHS.lights: {
+			console.log(JSON.stringify(await pkg.lights(), null, '\t'));
+			return;
+		}
 		case CORE_PATHS.irradiance: {
 			const table = await pkg.irradiance();
 			const entries = Array.from({ length: table.keys.length }, (_, i) => ({

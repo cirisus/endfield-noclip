@@ -29,6 +29,8 @@ import {
 	type InstanceBlock,
 } from './instances.ts';
 import { decodeIrradianceTable, encodeIrradianceTable } from './irradiance.ts';
+import { decodeLightsTable, encodeLightsTable, LightKind, type LightsTable } from './lights.ts';
+import { PACKAGE_FORMAT, PACKAGE_VERSION, validateManifest } from './manifest.ts';
 import {
 	decodeSplatPage,
 	decodeHeightPage,
@@ -341,6 +343,88 @@ describe('texture table', () => {
 		const badSampler = table.slice();
 		badSampler[at + 10] = 2;
 		assert.throws(() => decodeTextureTable(badSampler), /sampler is past the palette/);
+	});
+});
+
+describe('lights table', () => {
+	it('round-trips lights with optional shadows, culling boxes, and distance fades', () => {
+		const table: LightsTable = {
+			lights: [
+				{
+					kind: LightKind.Spot,
+					entityId: 1001,
+					group: 3,
+					position: [1, 2, 3],
+					direction: [0, -1, 0],
+					color: [1.5, 1.0, 0.5],
+					range: 20,
+					spotAngle: 45,
+					innerSpotAngle: 20,
+					tubeLength: 0,
+					softSourceRadius: 0.25,
+					falloffExponent: 2,
+					specularIntensity: 1,
+					volumetricScatteringIntensity: 0.5,
+					priority: -2,
+					distanceFade: { falloff: 40, culling: 60 },
+					cullingBox: { matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], falloffThreshold: 0.25 },
+					shadow: {
+						strength: 0.75,
+						normalBias: 1.5,
+						nearPlane: 0.25,
+						farPlane: 20,
+						guardAngle: 4,
+						faces: 0,
+						cullDistance: 50,
+						fadeRatio: 0.75,
+					},
+				},
+				{
+					kind: LightKind.Point,
+					entityId: 1002,
+					group: 0,
+					position: [-5, 10, 15],
+					direction: [1, 0, 0],
+					color: [2, 2, 2],
+					range: 12,
+					spotAngle: 0,
+					innerSpotAngle: 0,
+					tubeLength: 3,
+					softSourceRadius: 0.125,
+					falloffExponent: -1,
+					specularIntensity: 1,
+					volumetricScatteringIntensity: 0,
+					priority: 0,
+					distanceFade: null,
+					cullingBox: null,
+					shadow: null,
+				},
+			],
+		};
+		assert.deepEqual(decodeLightsTable(encodeLightsTable(table)), table);
+	});
+});
+
+describe('manifest validation', () => {
+	it('validates format, version, minReaderVersion, and requiredFeatures', () => {
+		const base = {
+			format: PACKAGE_FORMAT,
+			version: PACKAGE_VERSION,
+			minReaderVersion: PACKAGE_VERSION,
+			features: ['lite-textures'],
+			requiredFeatures: [],
+		};
+		assert.equal(validateManifest(base).version, PACKAGE_VERSION);
+		assert.throws(() => validateManifest({ ...base, format: 'wrong' }), PackageFormatError);
+		assert.throws(() => validateManifest({ ...base, version: PACKAGE_VERSION + 1 }), PackageFormatError);
+		assert.throws(
+			() => validateManifest({ ...base, requiredFeatures: ['unknown-feature'] }),
+			/unsupported feature 'unknown-feature'/,
+		);
+		assert.equal(
+			validateManifest({ ...base, requiredFeatures: ['hlod-links'] }, new Set(['hlod-links'])).version,
+			PACKAGE_VERSION,
+		);
 	});
 });
 

@@ -11,6 +11,7 @@
  * @module
  */
 
+import { PackageFormatError } from './errors.ts';
 import type { IrradianceRegionInfo } from './irradiance.ts';
 import type { StatesInfo } from './states.ts';
 import type { TerrainInfo } from './terrain.ts';
@@ -22,10 +23,10 @@ import type { Rect, Bounds } from './values.ts';
 export const PACKAGE_FORMAT = 'endfield-noclip.package';
 
 /**
- * bumped on any incompatible change to the manifest or a table. binary encodings carry their own versions in
- * their headers
+ * major package format version (v2). bumped only on incompatible changes; additive fields use defaulted
+ * optional JSON fields, `features`/`requiredFeatures`, and FourCC TLV binary sections
  */
-export const PACKAGE_VERSION = 131;
+export const PACKAGE_VERSION = 2;
 
 /** the archive every package has; the viewer opens it first */
 export const CORE_ARCHIVE = 'core.czar';
@@ -46,7 +47,7 @@ export const CORE_PATHS = {
 	materials: 'tables/materials.json.zst',
 	textures: 'tables/textures.bin.zst',
 	water: 'tables/water.json.zst',
-	lights: 'tables/lights.json.zst',
+	lights: 'tables/lights.bin.zst',
 	particles: 'tables/particles.json.zst',
 	environment: 'tables/environment.json.zst',
 	irradiance: 'tables/irradiance.bin',
@@ -63,6 +64,12 @@ export const CORE_PATHS = {
 export interface PackageManifest {
 	format: typeof PACKAGE_FORMAT;
 	version: number;
+	/** lowest reader major version that can open this package */
+	minReaderVersion?: number;
+	/** optional capabilities present in this package (informational) */
+	features?: string[];
+	/** capabilities a reader must understand to open this package */
+	requiredFeatures?: string[];
 	/**
 	 * hash over the core's binary and table members (not this manifest): equal generations mean equal tables
 	 * and blob placement, so a reader can key caches of decoded tables by it
@@ -73,6 +80,8 @@ export interface PackageManifest {
 	scene: SceneInfo;
 	/** the slice of the scene that was packed, or `null` for all of it */
 	subset: SubsetInfo | null;
+	/** max packed texture edge (e.g. 1024 for lite packages), or `null` for native resolution */
+	maxTextureSize?: number | null;
 	/** archives by index; {@link BlobRecord.archive} indexes this list. entry 0 is the core */
 	archives: ArchiveInfo[];
 	tree: TreeInfo;
@@ -89,6 +98,45 @@ export interface PackageManifest {
 	/** the player's fire seed, or `null` when no level script of the scene sets it */
 	fireSeed: FireSeedInfo | null;
 }
+
+/**
+ * validates a parsed manifest object's format, version, minReaderVersion, and requiredFeatures
+ *
+ * @param value parsed JSON from `manifest.json.zst`
+ * @param supportedFeatures feature tags this reader understands
+ * @returns typed {@link PackageManifest}
+ * @throws {PackageFormatError} on wrong format, unsupported version, or unknown required feature
+ */
+export const validateManifest = (
+	value: unknown,
+	supportedFeatures: ReadonlySet<string> = new Set(),
+): PackageManifest => {
+	if (
+		typeof value !== 'object' ||
+		value === null ||
+		!('format' in value) ||
+		value.format !== PACKAGE_FORMAT
+	) {
+		throw new PackageFormatError('not an endfield-noclip package');
+	}
+	if (!('version' in value) || typeof value.version !== 'number') {
+		throw new PackageFormatError('package manifest has no numeric version');
+	}
+	// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- format and version validated above
+	const manifest = value as PackageManifest;
+	const minReader = manifest.minReaderVersion ?? manifest.version;
+	if (manifest.version !== PACKAGE_VERSION || minReader > PACKAGE_VERSION) {
+		throw new PackageFormatError(
+			`package version ${manifest.version} isn't supported (expected ${PACKAGE_VERSION})`,
+		);
+	}
+	for (const feature of manifest.requiredFeatures ?? []) {
+		if (!supportedFeatures.has(feature)) {
+			throw new PackageFormatError(`package requires unsupported feature '${feature}'`);
+		}
+	}
+	return manifest;
+};
 
 /**
  * the fire seed the player carries, which reveals invisible bridges around them

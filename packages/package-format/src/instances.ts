@@ -408,7 +408,7 @@ const readSparseF32 = (
 	words: number,
 	rowCount: number,
 	label: string,
-): RowSection<Float32Array> => {
+): RowSection => {
 	if (section === undefined) {
 		return { rows: new Uint32Array(0), values: new Float32Array(0) };
 	}
