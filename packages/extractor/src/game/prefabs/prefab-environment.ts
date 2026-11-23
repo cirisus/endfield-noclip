@@ -25,8 +25,23 @@ import {
 import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 
 import { formatErrorOnly } from '../../errors.ts';
+import type { BundleSource } from '../../pack/convert/convert-pool.ts';
+import {
+	bundleSources,
+	relocateSaved,
+	type SavedLocator,
+	saveLocated,
+	sourcesCurrent,
+} from '../../pack/store/bundle-memo.ts';
+import type { PackCache } from '../../pack/store/pack-cache.ts';
 import { mapPool } from '../../pool.ts';
-import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
+import {
+	type AssetResolver,
+	type LocatedObject,
+	locatedObject,
+	type ObjectRef,
+	recordBundleReads,
+} from '../assets/assets.ts';
 import type { SceneEnvironmentVolume } from '../environment.ts';
 import type { Visibility } from '../state/scene-control.ts';
 
@@ -61,6 +76,134 @@ export interface PlacedPrefab {
 	visibility: Visibility;
 }
 
+const PREFAB_ENV_ENTRY = new URL(import.meta.url);
+
+/** a prefab's environment volume in prefab-local space, independent of placement */
+interface LocalPrefabVolume {
+	name: string;
+	local: Placement;
+	volumeType: number;
+	blendMode: number;
+	priority: number;
+	blendDistance: number;
+	fadeInDuration: number;
+	fadeOutDuration: number;
+	shape: PolyLineShape | null;
+	phase: LocatedObject | null;
+}
+
+interface SavedLocalPrefabVolume extends Omit<LocalPrefabVolume, 'phase'> {
+	phase: SavedLocator | null;
+}
+
+interface PrefabVolumesMemo {
+	label: string;
+	sources: BundleSource[];
+	volumes: SavedLocalPrefabVolume[];
+}
+
+const IDENTITY_PLACEMENT: Placement = {
+	position: [0, 0, 0],
+	rotation: [0, 0, 0, 1],
+	scale: [1, 1, 1],
+};
+
+const composePlacement = (parent: Placement, local: Placement): Placement => {
+	const [px, py, pz] = rotate(parent.rotation, [
+		local.position[0] * parent.scale[0],
+		local.position[1] * parent.scale[1],
+		local.position[2] * parent.scale[2],
+	]);
+	return {
+		position: [parent.position[0] + px, parent.position[1] + py, parent.position[2] + pz],
+		rotation: multiplyQuaternions(parent.rotation, local.rotation),
+		scale: local.scale.map((s, i) => s * parent.scale[i]),
+	};
+};
+
+const isIdentityPlacement = (placement: Placement): boolean =>
+	placement.position.every((v) => v === 0) &&
+	placement.rotation.slice(0, 3).every((v) => v === 0) &&
+	placement.scale.every((v) => v === 1);
+
+const readLocalVolumes = async (resolver: AssetResolver, root: ObjectRef): Promise<LocalPrefabVolume[]> => {
+	if (!fileMayHaveVolumes(root)) {
+		return [];
+	}
+	const result: LocalPrefabVolume[] = [];
+	await walkPrefab<Placement>(
+		resolver,
+		root,
+		{
+			enter: (node, parent) => {
+				if (!node.active) {
+					return PRUNE;
+				}
+				if (node.isRoot) {
+					return parent;
+				}
+				return composePlacement(parent, node.saved);
+			},
+			visit: async (node, local) => {
+				for (const component of node.behaviours(isVolumeType)) {
+					const value = await component.read();
+					if (!booleanField(value, 'm_Enabled')) {
+						continue;
+					}
+					const phaseRef = await resolver.resolve(component.ref, pptrField(value, '_envPhase'));
+					result.push({
+						name: node.name,
+						local,
+						volumeType: numberField(value, '_volumeType'),
+						blendMode: numberField(value, '_blendMode'),
+						priority: numberField(value, '_priority'),
+						blendDistance: numberField(value, '_blendDistance'),
+						fadeInDuration: numberField(value, '_fadeInDuration'),
+						fadeOutDuration: numberField(value, '_fadeOutDuration'),
+						shape: readShape(objectField(value, '_polyLineShape')),
+						phase: phaseRef === null ? null : locatedObject(phaseRef),
+					});
+				}
+			},
+		},
+		IDENTITY_PLACEMENT,
+	);
+	return result;
+};
+
+const placeLocalVolumes = (
+	localVolumes: readonly LocalPrefabVolume[],
+	placement: Placement,
+): { volume: EnvironmentVolume; phase: LocatedObject | null }[] => {
+	const identity = isIdentityPlacement(placement);
+	return localVolumes.map((entry) => {
+		if (entry.shape !== null && entry.volumeType === EnvironmentVolumeType.PolyArea && !identity) {
+			throw new FormatError('prefab prism volume under a moved placement');
+		}
+		const world = composePlacement(placement, entry.local);
+		return {
+			volume: {
+				id: 0,
+				name: entry.name,
+				transform: {
+					position: [world.position[0], world.position[1], world.position[2]],
+					rotation: quaternionUnityEuler(world.rotation),
+					scale: [world.scale[0], world.scale[1], world.scale[2]],
+				},
+				volumeType: entry.volumeType,
+				blendMode: entry.blendMode,
+				priority: entry.priority,
+				blendDistance: entry.blendDistance,
+				fadeInDuration: entry.fadeInDuration,
+				fadeOutDuration: entry.fadeOutDuration,
+				envPhase: null,
+				shape: entry.shape,
+			},
+			phase: entry.phase,
+		};
+	});
+};
+
 /**
  * reads the environment volumes of placed prefabs. each volume belongs to its placement's level and loads
  * with its visibility
@@ -68,48 +211,92 @@ export interface PlacedPrefab {
  * @param roots the placed prefabs' roots
  * @param placements dynamic model placements
  * @param defaults every control's default value, to tell which volumes load by default
+ * @param cache optional pack cache for per-prefab local volumes
  * @returns the volumes, in placement order, and the prefabs that couldn't be read (path and reason)
  */
 export const loadPlacedVolumes = async (
 	roots: PrefabRoots,
 	placements: readonly PlacedPrefab[],
 	defaults: Readonly<Record<string, number>>,
+	cache: PackCache | null = null,
 ): Promise<{ volumes: SceneEnvironmentVolume[]; unsupported: { path: string; reason: string }[] }> => {
-	// prefetch unique prefab roots concurrently; most prefabs have no volume components at all
+	const { resolver } = roots;
+	const fp = cache === null ? null : await cache.fingerprint(PREFAB_ENV_ENTRY);
 	const uniqueHashes = [...new Set(placements.map(({ model }) => model.pathHash))];
-	await mapPool(uniqueHashes, PREFAB_CONCURRENCY, (hash) => roots.root(hash));
-	/** prefabs already confirmed to carry no environment volumes, so repeated placements skip the walk */
-	const emptyPrefabs = new Set<bigint>();
+	const loadedList = await mapPool(uniqueHashes, PREFAB_CONCURRENCY, async (hash) => {
+		const memoKey =
+			cache === null || fp === null ? null : cache.keyWith(fp, { kind: 'prefabEnvVolumes', hash });
+		if (memoKey !== null) {
+			const recalled = await cache!.recallValue<PrefabVolumesMemo>(memoKey);
+			if (recalled !== undefined && (await sourcesCurrent(resolver, recalled.sources))) {
+				const relocated: LocalPrefabVolume[] = [];
+				let ok = true;
+				for (const item of recalled.volumes) {
+					if (item.phase === null) {
+						relocated.push({ ...item, phase: null });
+					} else {
+						const phase = relocateSaved(resolver.manifest, item.phase);
+						if (phase === undefined) {
+							ok = false;
+							break;
+						}
+						relocated.push({ ...item, phase });
+					}
+				}
+				if (ok) {
+					return { label: recalled.label, read: relocated as LocalPrefabVolume[] | FormatError };
+				}
+			}
+		}
+		const { result: loaded, bundles } = await recordBundleReads(async () => {
+			const { label, root } = await roots.root(hash);
+			if (root instanceof FormatError) {
+				return { label, read: root as LocalPrefabVolume[] | FormatError };
+			}
+			const read = await readLocalVolumes(resolver, root).catch(formatErrorOnly);
+			return { label, read };
+		});
+		if (memoKey !== null && !(loaded.read instanceof FormatError)) {
+			await cache!.rememberValue(memoKey, {
+				label: loaded.label,
+				sources: await bundleSources(resolver, bundles),
+				volumes: loaded.read.map((item) => ({
+					...item,
+					phase: item.phase === null ? null : saveLocated(resolver.manifest, item.phase),
+				})),
+			} satisfies PrefabVolumesMemo);
+		}
+		return loaded;
+	});
+	const byHash = new Map(uniqueHashes.map((hash, i) => [hash, loadedList[i]]));
+
 	const volumes: SceneEnvironmentVolume[] = [];
 	const unsupported: { path: string; reason: string }[] = [];
 	for (const { model, levelTag, visibility } of placements) {
-		if (emptyPrefabs.has(model.pathHash)) {
+		const { label, read } = byHash.get(model.pathHash)!;
+		if (read instanceof FormatError) {
+			unsupported.push({ path: label, reason: read.message });
 			continue;
 		}
-		// oxlint-disable-next-line no-await-in-loop -- placement order; roots are already cached above
-		const { label, root } = await roots.root(model.pathHash);
-		if (!(root instanceof FormatError) && !fileMayHaveVolumes(root)) {
-			emptyPrefabs.add(model.pathHash);
+		if (read.length === 0) {
 			continue;
 		}
-		// oxlint-disable-next-line no-await-in-loop -- as above
-		const found = await (root instanceof FormatError
-			? root
-			: readPrefabEnvironmentVolumes(roots.resolver, root, {
-					position: model.position,
-					rotation: unityEulerQuaternion(model.rotation),
-					scale: model.scale,
-				}).catch(formatErrorOnly));
-		if (found instanceof FormatError) {
-			unsupported.push({ path: label, reason: found.message });
-			continue;
-		}
-		if (found.length === 0) {
-			emptyPrefabs.add(model.pathHash);
-			continue;
+		let placed: { volume: EnvironmentVolume; phase: LocatedObject | null }[];
+		try {
+			placed = placeLocalVolumes(read, {
+				position: model.position,
+				rotation: unityEulerQuaternion(model.rotation),
+				scale: model.scale,
+			});
+		} catch (error) {
+			if (error instanceof FormatError) {
+				unsupported.push({ path: label, reason: error.message });
+				continue;
+			}
+			throw error;
 		}
 		const loadedByDefault = conditionVisible(visibility, defaults);
-		for (const { volume, phase } of found) {
+		for (const { volume, phase } of placed) {
 			volumes.push({
 				tag: levelTag,
 				sceneStates: [],

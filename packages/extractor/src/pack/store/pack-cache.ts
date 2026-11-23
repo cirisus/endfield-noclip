@@ -87,19 +87,7 @@ export class PackCache {
 	 * @returns the conversion's key
 	 */
 	key(parts: object): string {
-		return shortHash(
-			JSON.stringify([this.#fingerprint, parts], (_, value: unknown) => {
-				if (typeof value === 'bigint') {
-					return value.toString();
-				}
-				// an animation's frames run to megabytes as JSON; their digest stands in for them
-				if (ArrayBuffer.isView(value)) {
-					const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-					return `${value.constructor.name}:${createHash('sha256').update(bytes).digest('hex')}`;
-				}
-				return value;
-			}),
-		);
+		return shortHash(JSON.stringify([this.#fingerprint, parts], keyReplacer));
 	}
 
 	/**
@@ -141,22 +129,34 @@ export class PackCache {
 	}
 
 	/**
+	 * @param entry a module whose workspace import graph decides cached results
+	 * @returns its cached code fingerprint
+	 */
+	fingerprint(entry: URL): Promise<string> {
+		return this.#stepFingerprints.getOrInsertComputed(entry.href, () => moduleFingerprint(entry));
+	}
+
+	/**
+	 * computes a step memo key from a precomputed {@link fingerprint} without awaiting
+	 *
+	 * @param fingerprint code fingerprint from {@link fingerprint}
+	 * @param parts what the step's output depends on besides its code; bigints and typed arrays are allowed
+	 * @returns the step's key
+	 */
+	keyWith(fingerprint: string, parts: object): string {
+		return shortHash(JSON.stringify(['step', fingerprint, parts], keyReplacer));
+	}
+
+	/**
 	 * keys a whole pack step (terrain, irradiance) whose output depends only on its inputs and its code. inputs
 	 * should name what the step reads by content (VFS data md5s, bundle md5s), so an install update misses
 	 *
 	 * @param entry the step's module; the key covers it and every workspace module it imports
-	 * @param parts what the step's output depends on besides its code; bigints are allowed
+	 * @param parts what the step's output depends on besides its code; bigints and typed arrays are allowed
 	 * @returns the step's key
 	 */
 	async stepKey(entry: URL, parts: object): Promise<string> {
-		const fingerprint = await this.#stepFingerprints.getOrInsertComputed(entry.href, () =>
-			moduleFingerprint(entry),
-		);
-		return shortHash(
-			JSON.stringify(['step', fingerprint, parts], (_, value: unknown) =>
-				typeof value === 'bigint' ? value.toString() : value,
-			),
-		);
+		return this.keyWith(await this.fingerprint(entry), parts);
 	}
 
 	/**
@@ -298,6 +298,19 @@ export class PackCache {
 		await rm(join(this.root, 'lock'), { force: true });
 	}
 }
+
+/** JSON replacer for cache keys: stringifies bigints and digests typed arrays */
+const keyReplacer = (_key: string, value: unknown): unknown => {
+	if (typeof value === 'bigint') {
+		return value.toString();
+	}
+	// an animation's frames run to megabytes as JSON; their digest stands in for them
+	if (ArrayBuffer.isView(value)) {
+		const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+		return `${value.constructor.name}:${createHash('sha256').update(bytes).digest('hex')}`;
+	}
+	return value;
+};
 
 /** @returns the hashes of a result's blobs */
 const resultBlobs = (result: ConvertResult): string[] => {

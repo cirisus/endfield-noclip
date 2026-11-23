@@ -8,6 +8,7 @@ import type { DraftControl } from '../../game/state/scene-control.ts';
 import type { SceneWater } from '../../game/water/water-source.ts';
 import { readWaterVolumes } from '../../game/water/water-volumes.ts';
 import { defaultValues } from '../states.ts';
+import type { PackCache } from '../store/pack-cache.ts';
 import type { CabinRoomGroup } from '../tables/irradiance.ts';
 import type { WaterVolumeInput } from '../tables/water.ts';
 
@@ -53,6 +54,7 @@ export const collectEntities = async (
 	context: Context,
 	content: PackContent,
 	progressions: readonly DraftControl[],
+	cache: PackCache | null = null,
 ): Promise<SceneEntities> => {
 	const { scene, controls } = content;
 	const { hlodNameMatches, chunkVolumes, sceneWater } = await collectStaticChunks(context.world, content);
@@ -73,8 +75,8 @@ export const collectEntities = async (
 	}
 
 	const { roots } = sources;
-	await placePrefabs(context.world, roots, content, sources.placements, floaterVolume);
-	const placedVolumes = await collectPlacedVolumes(roots, content, sources.placements, progressions);
+	await placePrefabs(context.world, roots, content, sources.placements, floaterVolume, cache);
+	const placedVolumes = await collectPlacedVolumes(roots, content, sources.placements, progressions, cache);
 	content.count('unsupportedPrefabs', content.unsupportedPrefabs.length);
 	content.count('standIns', content.standInReports().length);
 	return {
@@ -161,11 +163,13 @@ export const collectPlacedVolumes = async (
 	content: PackContent,
 	placements: readonly PlacedPrefab[],
 	progressions: readonly DraftControl[],
+	cache: PackCache | null = null,
 ): Promise<SceneEnvironmentVolume[]> => {
 	const placed = await loadPlacedVolumes(
 		roots,
 		placements,
 		defaultValues(content.scene, content.controls, progressions),
+		cache,
 	);
 	content.count('prefabEnvironmentVolumes', placed.volumes.length);
 	for (const failure of placed.unsupported) {

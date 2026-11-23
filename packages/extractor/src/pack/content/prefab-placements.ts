@@ -12,7 +12,13 @@ import { type ChainDraw, DrawRole, type RowPath } from '@endfield-noclip/package
 import { mapDefined } from '@mary-ext/array-fns';
 
 import { formatErrorOnly } from '../../errors.ts';
-import type { AssetResolver, ObjectRef } from '../../game/assets/assets.ts';
+import {
+	type AssetResolver,
+	type LocatedObject,
+	locatedObject,
+	type ObjectRef,
+	recordBundleReads,
+} from '../../game/assets/assets.ts';
 import { RENDER_PIPELINE_QUAD_PATH } from '../../game/assets/builtin-resources.ts';
 import { gridIdReach } from '../../game/dynamic/dynamic-grids.ts';
 import type { StructureModel } from '../../game/dynamic/dynamic-structures.ts';
@@ -24,7 +30,16 @@ import type { PrefabRoots } from '../../game/prefabs/prefab-root.ts';
 import { type EffectLodSource, readPrefabRenderers, type PrefabRenderer } from '../../game/prefabs/prefab.ts';
 import type { WorldIndex } from '../../game/world/world-index.ts';
 import { mapPool } from '../../pool.ts';
+import type { BundleSource } from '../convert/convert-pool.ts';
 import { chainDistanceOrigin } from '../instances/chains.ts';
+import {
+	bundleSources,
+	relocateSaved,
+	type SavedLocator,
+	saveLocated,
+	sourcesCurrent,
+} from '../store/bundle-memo.ts';
+import type { PackCache } from '../store/pack-cache.ts';
 
 import { onPivot } from './interactives.ts';
 import {
@@ -43,6 +58,59 @@ import {
 /** unique prefabs decoded concurrently while prefetching */
 const PREFAB_CONCURRENCY = 16;
 
+const PREFAB_RENDERERS_ENTRY = new URL('../../game/prefabs/prefab.ts', import.meta.url);
+const PREFAB_LIGHTS_ENTRY = new URL('../../game/prefabs/prefab-lights.ts', import.meta.url);
+
+/** a {@link PrefabRenderer} whose mesh and material refs are located without holding bundles open */
+type LocatedPrefabRenderer = Omit<PrefabRenderer, 'mesh' | 'materials'> & {
+	mesh: LocatedObject;
+	materials: (LocatedObject | null)[];
+};
+
+type SavedPrefabRenderer = Omit<PrefabRenderer, 'mesh' | 'materials'> & {
+	mesh: SavedLocator;
+	materials: (SavedLocator | null)[];
+};
+
+interface PrefabRenderersMemo {
+	label: string;
+	sources: BundleSource[];
+	renderers: SavedPrefabRenderer[];
+}
+
+interface PrefabLightsMemo {
+	label: string;
+	sources: BundleSource[];
+	lights: PrefabLight[];
+}
+
+const relocateRenderers = (
+	manifest: AssetResolver['manifest'],
+	saved: readonly SavedPrefabRenderer[],
+): LocatedPrefabRenderer[] | undefined => {
+	const out: LocatedPrefabRenderer[] = [];
+	for (const renderer of saved) {
+		const mesh = relocateSaved(manifest, renderer.mesh);
+		if (mesh === undefined) {
+			return undefined;
+		}
+		const materials: (LocatedObject | null)[] = [];
+		for (const material of renderer.materials) {
+			if (material === null) {
+				materials.push(null);
+			} else {
+				const relocated = relocateSaved(manifest, material);
+				if (relocated === undefined) {
+					return undefined;
+				}
+				materials.push(relocated);
+			}
+		}
+		out.push({ ...renderer, mesh, materials });
+	}
+	return out;
+};
+
 /**
  * places the lights and renderers of every placed prefab. a prefab's lights take their synthetic ids before
  * its renderers, placement by placement, so ids follow placement order
@@ -52,6 +120,7 @@ const PREFAB_CONCURRENCY = 16;
  * @param content the pack's content; rows, lights, stand-ins and unsupported prefabs are added
  * @param placements every placed prefab, in placement order
  * @param floaterVolume by floating interactive's level logic id, its water volume's id
+ * @param cache optional pack cache for per-prefab renderers and lights
  */
 export const placePrefabs = async (
 	world: WorldIndex,
@@ -59,14 +128,25 @@ export const placePrefabs = async (
 	content: PackContent,
 	placements: readonly StructureModel[],
 	floaterVolume: ReadonlyMap<string, string>,
+	cache: PackCache | null = null,
 ): Promise<void> => {
 	const { scene } = content;
 	const { subset } = scene;
 	const { resolver } = roots;
-	const [particleQuad, decalCube] = await Promise.all([
-		findMesh(world, resolver, RENDER_PIPELINE_QUAD_PATH),
-		findMesh(world, resolver, DECAL_CUBE_PATH),
-	]);
+	const [renderersFp, lightsFp] =
+		cache === null
+			? [null, null]
+			: await Promise.all([
+					cache.fingerprint(PREFAB_RENDERERS_ENTRY),
+					cache.fingerprint(PREFAB_LIGHTS_ENTRY),
+				]);
+	// particleQuad and decalCube are only needed on a prefab renderer cache miss
+	let builtinsPromise: Promise<[ObjectRef | null, ObjectRef | null]> | undefined;
+	const loadBuiltins = (): Promise<[ObjectRef | null, ObjectRef | null]> =>
+		(builtinsPromise ??= Promise.all([
+			findMesh(world, resolver, RENDER_PIPELINE_QUAD_PATH),
+			findMesh(world, resolver, DECAL_CUBE_PATH),
+		]));
 	content.count('prefabLights', 0);
 
 	// filter placements first, then prefetch every unique prefab and its lights concurrently while committing
@@ -104,32 +184,104 @@ export const placePrefabs = async (
 
 	const hashList = [...uniqueHashes];
 	const lightsList = await mapPool(hashList, PREFAB_CONCURRENCY, async (hash) => {
-		const { label, root } = await roots.root(hash);
-		if (root instanceof FormatError) {
-			return { label, lights: [] as PrefabLight[], error: null as FormatError | null };
+		const memoKey =
+			cache === null || lightsFp === null ? null : cache.keyWith(lightsFp, { kind: 'prefabLights', hash });
+		if (memoKey !== null) {
+			const recalled = await cache!.recallValue<PrefabLightsMemo>(memoKey);
+			if (recalled !== undefined && (await sourcesCurrent(resolver, recalled.sources))) {
+				return { label: recalled.label, lights: recalled.lights, error: null as FormatError | null };
+			}
 		}
-		const lights = await readPrefabLights(resolver, root).catch(formatErrorOnly);
-		if (lights instanceof FormatError) {
-			return { label, lights: [] as PrefabLight[], error: lights };
+		const { result: loaded, bundles } = await recordBundleReads(async () => {
+			const { label, root } = await roots.root(hash);
+			if (root instanceof FormatError) {
+				return { label, lights: [] as PrefabLight[], error: null as FormatError | null, cacheable: false };
+			}
+			const lights = await readPrefabLights(resolver, root).catch(formatErrorOnly);
+			if (lights instanceof FormatError) {
+				return { label, lights: [] as PrefabLight[], error: lights, cacheable: false };
+			}
+			return { label, lights, error: null as FormatError | null, cacheable: true };
+		});
+		if (memoKey !== null && loaded.cacheable) {
+			await cache!.rememberValue(memoKey, {
+				label: loaded.label,
+				sources: await bundleSources(resolver, bundles),
+				lights: loaded.lights,
+			} satisfies PrefabLightsMemo);
 		}
-		return { label, lights, error: null as FormatError | null };
+		return loaded;
 	});
 	const prefabLights = new Map(hashList.map((hash, i) => [hash, lightsList[i]]));
 
 	const workList = [...uniqueWork.values()];
 	const renderersList = await mapPool(workList, PREFAB_CONCURRENCY, async (work) => {
-		const { label, root } = await roots.root(work.pathHash);
-		if (root instanceof FormatError) {
-			return { label, read: root as PrefabRenderer[] | FormatError };
+		const memoKey =
+			cache === null || renderersFp === null
+				? null
+				: cache.keyWith(renderersFp, {
+						kind: 'prefabRenderers',
+						pathHash: work.pathHash,
+						pose: work.pose,
+						locked: work.locked,
+						effectLod: work.effectLod,
+					});
+		if (memoKey !== null) {
+			const recalled = await cache!.recallValue<PrefabRenderersMemo>(memoKey);
+			if (recalled !== undefined && (await sourcesCurrent(resolver, recalled.sources))) {
+				const relocated = relocateRenderers(resolver.manifest, recalled.renderers);
+				if (relocated !== undefined) {
+					return { label: recalled.label, read: relocated as LocatedPrefabRenderer[] | FormatError };
+				}
+			}
 		}
-		const read = await readPrefabRenderers(resolver, root, {
-			viewPose: work.pose,
-			particleQuad,
-			decalCube,
-			locked: work.locked,
-			effectLod: work.effectLod,
-		}).catch(formatErrorOnly);
-		return { label, read };
+		const [particleQuad, decalCube] = await loadBuiltins();
+		const { result: loaded, bundles } = await recordBundleReads(async () => {
+			const { label, root } = await roots.root(work.pathHash);
+			if (root instanceof FormatError) {
+				return { label, read: root as PrefabRenderer[] | FormatError };
+			}
+			const read = await readPrefabRenderers(resolver, root, {
+				viewPose: work.pose,
+				particleQuad,
+				decalCube,
+				locked: work.locked,
+				effectLod: work.effectLod,
+			}).catch(formatErrorOnly);
+			return { label, read };
+		});
+		if (loaded.read instanceof FormatError) {
+			return { label: loaded.label, read: loaded.read as LocatedPrefabRenderer[] | FormatError };
+		}
+		const located: LocatedPrefabRenderer[] = loaded.read.map((renderer) => ({
+			...renderer,
+			mesh: locatedObject(renderer.mesh),
+			materials: renderer.materials.map((material) => (material === null ? null : locatedObject(material))),
+		}));
+		if (memoKey !== null) {
+			const extraBundles = new Set(bundles);
+			if (particleQuad !== null) {
+				extraBundles.add(particleQuad.bundleIndex);
+			}
+			if (decalCube !== null) {
+				extraBundles.add(decalCube.bundleIndex);
+			}
+			await cache!.rememberValue(memoKey, {
+				label: loaded.label,
+				sources: await bundleSources(
+					resolver,
+					[...extraBundles].toSorted((a, b) => a - b),
+				),
+				renderers: located.map((renderer) => ({
+					...renderer,
+					mesh: saveLocated(resolver.manifest, renderer.mesh),
+					materials: renderer.materials.map((material) =>
+						material === null ? null : saveLocated(resolver.manifest, material),
+					),
+				})),
+			} satisfies PrefabRenderersMemo);
+		}
+		return { label: loaded.label, read: located as LocatedPrefabRenderer[] | FormatError };
 	});
 	const prefabs = new Map(workList.map((work, i) => [work.key, renderersList[i]]));
 
@@ -203,7 +355,7 @@ export const placePrefabs = async (
 /** places one renderer of a placed prefab */
 const placeRenderer = (
 	content: PackContent,
-	renderer: PrefabRenderer,
+	renderer: LocatedPrefabRenderer,
 	{
 		rootMatrix,
 		owner,
@@ -261,7 +413,7 @@ const placeRenderer = (
 };
 
 /** @returns a prefab renderer's draws: one per material and LOD span */
-const rendererDraws = (content: PackContent, renderer: PrefabRenderer): ChainDraw[] => {
+const rendererDraws = (content: PackContent, renderer: LocatedPrefabRenderer): ChainDraw[] => {
 	let geometry: number;
 	if (renderer.decal !== null) {
 		// shared with the world's rect decals, which intern the cube by its path

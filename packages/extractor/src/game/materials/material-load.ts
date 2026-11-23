@@ -11,11 +11,13 @@ import { loadShaderSummary } from '../assets/asset-decode.ts';
 import {
 	type AssetRef,
 	type AssetResolver,
-	locateObject,
-	type ObjectLocator,
+	type LocatedObject,
+	locatedObject,
 	objectKey,
 	type ObjectRef,
 } from '../assets/assets.ts';
+
+export { type LocatedObject, locatedObject };
 
 import { classifyHgrpMaterial, type MaterialClassification } from './material-classify.ts';
 
@@ -40,24 +42,12 @@ export interface LoadedMaterial {
 	textures: Record<string, ResolvedTextureSlot>;
 }
 
-/** an object by key and locator, which, unlike an {@link ObjectRef}, doesn't keep its bundle loaded */
-export interface LocatedObject {
-	key: string;
-	locator: ObjectLocator;
-}
-
 /** a {@link LoadedMaterial} with its object and textures located rather than referenced */
 export interface LocatedMaterial extends Omit<LoadedMaterial, 'textures'> {
 	/** the Material's {@link objectKey} */
 	object: string;
 	textures: Record<string, { texture: LocatedObject | null; error?: string }>;
 }
-
-/** @returns the object's key and locator */
-export const locatedObject = (ref: ObjectRef): LocatedObject => ({
-	key: objectKey(ref),
-	locator: locateObject(ref),
-});
 
 /**
  * {@link loadMaterial} by asset, keeping nothing that holds its bundles: a pack keeps every material's load

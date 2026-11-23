@@ -31,7 +31,7 @@ import { mapDefined } from '@mary-ext/array-fns';
 
 import { mapPool } from '../pool.ts';
 
-import { type AssetResolver, objectKey, type ObjectRef } from './assets/assets.ts';
+import type { AssetResolver, LocatedObject, ObjectRef } from './assets/assets.ts';
 import type { Visibility } from './state/scene-control.ts';
 import type { ChunkFile, WorldIndex } from './world/world-index.ts';
 
@@ -58,7 +58,7 @@ export interface TaggedVolume<T> {
  */
 export interface SceneEnvironmentVolume extends TaggedVolume<EnvironmentVolume> {
 	/** a prefab volume's `HGEnvironmentPhase` object (its `envPhase` is `null`); `null` for chunk volumes */
-	phaseObject: ObjectRef | null;
+	phaseObject: LocatedObject | null;
 	/** a prefab volume's load condition (its placing entity's), `null` for chunk volumes */
 	condition: Visibility | null;
 	/** whether {@link condition} holds under the default scene values; true without one */
@@ -412,7 +412,12 @@ export const scenePhaseLoader = (
 	return (volume) => {
 		const object = phaseObjects.get(volume) ?? null;
 		if (object !== null) {
-			return loads.getOrInsertComputed(objectKey(object), () => loadEnvironmentPhaseObject(resolver, object));
+			return loads.getOrInsertComputed(object.key, async () =>
+				loadEnvironmentPhaseObject(
+					resolver,
+					await resolver.objectIn(object.locator.bundleIndex, object.locator.file, object.locator.pathId),
+				),
+			);
 		}
 		const hash = volume.envPhase;
 		return hash === null

@@ -1,9 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import { type AssetRef, locateObject, objectKey, type ObjectRef } from '../../game/assets/assets.ts';
+import {
+	type AssetRef,
+	type LocatedObject,
+	locatedObject,
+	type ObjectRef,
+} from '../../game/assets/assets.ts';
 import type { RendererMotion } from '../../game/prefabs/prefab.ts';
 
 import { type SyntheticMesh, syntheticMeshKey } from './synthetic-mesh.ts';
+
+/** normalizes an {@link ObjectRef} or {@link LocatedObject} into its key and locator */
+const asLocated = (ref: ObjectRef | LocatedObject): LocatedObject =>
+	'locator' in ref ? ref : locatedObject(ref);
 
 // the packer references assets by dense ids handed out here, in first-reference order; `convertAssets`
 // converts them in id order
@@ -51,8 +60,8 @@ export class AssetIds {
 	 * @param ref resolved dependency
 	 * @returns its asset id; negative hashes occupy a namespace separate from unsigned game hashes
 	 */
-	internObject(ref: ObjectRef): number {
-		const key = objectKey(ref);
+	internObject(ref: ObjectRef | LocatedObject): number {
+		const { key, locator } = asLocated(ref);
 		const hash = objectHash(key);
 		const existing = this.#ids.get(hash);
 		if (existing !== undefined) {
@@ -60,7 +69,7 @@ export class AssetIds {
 		}
 		const id = this.assets.length;
 		this.#ids.set(hash, id);
-		this.assets.push({ hash, path: key, locator: locateObject(ref) });
+		this.assets.push({ hash, path: key, locator });
 		return id;
 	}
 
@@ -72,10 +81,10 @@ export class AssetIds {
 	 * @param variant tells variants of one object apart
 	 * @returns the variant's id
 	 */
-	internObjectVariant(ref: ObjectRef, variant: string): number {
-		const key = objectKey(ref);
+	internObjectVariant(ref: ObjectRef | LocatedObject, variant: string): number {
+		const { key, locator } = asLocated(ref);
 		return this.#variants.getOrInsertComputed(`${key}/${variant}`, (variantKey) => {
-			const id = this.assets.push({ hash: objectHash(key), path: key, locator: locateObject(ref) }) - 1;
+			const id = this.assets.push({ hash: objectHash(key), path: key, locator }) - 1;
 			this.#variantKeys.set(id, variantKey);
 			return id;
 		});
@@ -108,8 +117,8 @@ export class AssetIds {
 	 * @param pose mesh-to-prefab bone matrices, including bind poses
 	 * @returns a geometry id distinct for each authored pose of the mesh
 	 */
-	internPosedObject(ref: ObjectRef, pose: Float32Array[]): number {
-		const key = objectKey(ref);
+	internPosedObject(ref: ObjectRef | LocatedObject, pose: Float32Array[]): number {
+		const { key, locator } = asLocated(ref);
 		const digest = createHash('sha256').update(key).update('pose');
 		for (const matrix of pose) {
 			digest.update(new Uint8Array(matrix.buffer, matrix.byteOffset, matrix.byteLength));
@@ -124,7 +133,7 @@ export class AssetIds {
 		this.assets.push({
 			hash,
 			path: key,
-			locator: locateObject(ref),
+			locator,
 			pose: pose.map((matrix) => matrix.slice()),
 		});
 		return id;
@@ -135,8 +144,8 @@ export class AssetIds {
 	 * @param motion the looping animation it plays
 	 * @returns a geometry id distinct for each animation of the mesh
 	 */
-	internAnimatedObject(ref: ObjectRef, motion: RendererMotion): number {
-		const key = objectKey(ref);
+	internAnimatedObject(ref: ObjectRef | LocatedObject, motion: RendererMotion): number {
+		const { key, locator } = asLocated(ref);
 		const { kind, skin } = motion;
 		const { matrices } = skin;
 		const digest = createHash('sha256')
@@ -150,7 +159,7 @@ export class AssetIds {
 				this.assets.push({
 					hash,
 					path: key,
-					locator: locateObject(ref),
+					locator,
 					motion: { kind, skin: { ...skin, matrices: matrices.slice() } },
 				}) - 1,
 		);

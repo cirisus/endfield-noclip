@@ -76,6 +76,21 @@ export const locateObject = (ref: ObjectRef): ObjectLocator => ({
 	pathId: ref.info.pathId,
 });
 
+/** an object identified by its key and locator, without holding its bundle open */
+export interface LocatedObject {
+	key: string;
+	locator: ObjectLocator;
+}
+
+/**
+ * @param ref an object
+ * @returns its key and locator
+ */
+export const locatedObject = (ref: ObjectRef): LocatedObject => ({
+	key: objectKey(ref),
+	locator: locateObject(ref),
+});
+
 /** a game asset as InitChunkData names it */
 export interface AssetRef {
 	/** StringPathHash key */

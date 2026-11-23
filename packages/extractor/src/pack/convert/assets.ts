@@ -39,6 +39,7 @@ import { orderedPool } from '../../pool.ts';
 import { PhaseTimer } from '../phase-timer.ts';
 import type { BlobMeta } from '../store/blob-file.ts';
 import type { BlobPlacement, BlobStore } from '../store/blob-store.ts';
+import { bundleSources, sourcesCurrent } from '../store/bundle-memo.ts';
 import type { PackCache } from '../store/pack-cache.ts';
 
 import { type AssetArchives, type Place, mergePlaces } from './asset-placement.ts';
@@ -273,6 +274,7 @@ class ConvertJobs {
 	readonly #input: Pick<AssetConversionInput, 'resolver' | 'pool' | 'cache'>;
 	/** shader summaries by shader object, recalled or loaded this pack; `undefined` where the cache had none */
 	readonly #shaders = new Map<string, Promise<ShaderSummary | undefined>>();
+	#materialFp: Promise<string> | undefined;
 
 	constructor(input: Pick<AssetConversionInput, 'resolver' | 'pool' | 'cache'>) {
 		this.#input = input;
@@ -309,7 +311,8 @@ class ConvertJobs {
 		if (cache === null) {
 			return locateMaterial(resolver, asset);
 		}
-		const key = await cache.stepKey(MATERIAL_LOAD_ENTRY, { asset });
+		const fp = await (this.#materialFp ??= cache.fingerprint(MATERIAL_LOAD_ENTRY));
+		const key = cache.keyWith(fp, { asset });
 		const recalled = await cache.recallValue<MaterialMemo>(key);
 		const relocated =
 			recalled === undefined || !(await this.#sourcesCurrent(recalled.sources))
@@ -317,7 +320,7 @@ class ConvertJobs {
 				: this.#relocated(recalled);
 		if (relocated !== undefined) {
 			const shader = await this.#shaders.getOrInsertComputed(relocated.shaderObject.key, async () =>
-				cache.recallValue<ShaderSummary>(await this.#shaderKey(cache, relocated.shaderObject)),
+				cache.recallValue<ShaderSummary>(await this.#shaderKey(cache, fp, relocated.shaderObject)),
 			);
 			if (shader !== undefined) {
 				cache.hits.materials++;
@@ -325,18 +328,13 @@ class ConvertJobs {
 			}
 		}
 		const { result, bundles } = await recordBundleReads(() => locateMaterial(resolver, asset));
-		const sources = await Promise.all(
-			bundles.map(async (index) => ({
-				bundle: resolver.manifest.bundleName(index),
-				md5: await resolver.bundleMd5(index),
-			})),
-		);
+		const sources = await bundleSources(resolver, bundles);
 		// a shader's summary is most of a material's load and shared by thousands of them, so it's stored once
 		const { shader, ...material } = result;
 		// stored by the first fresh load of each shader, including one whose summary the cache didn't have
 		if ((await this.#shaders.get(result.shaderObject.key)) === undefined) {
 			this.#shaders.set(result.shaderObject.key, Promise.resolve(shader));
-			await cache.rememberValue(await this.#shaderKey(cache, result.shaderObject), shader);
+			await cache.rememberValue(await this.#shaderKey(cache, fp, result.shaderObject), shader);
 		}
 		const bundleName = ({ locator }: LocatedObject): string =>
 			resolver.manifest.bundleName(locator.bundleIndex);
@@ -391,9 +389,9 @@ class ConvertJobs {
 	}
 
 	/** @returns the cache key of a shader's summary, which its bundle's md5 keeps current */
-	async #shaderKey(cache: PackCache, { key, locator }: LocatedObject): Promise<string> {
+	async #shaderKey(cache: PackCache, fp: string, { key, locator }: LocatedObject): Promise<string> {
 		const md5 = await this.#input.resolver.bundleMd5(locator.bundleIndex);
-		return cache.stepKey(MATERIAL_LOAD_ENTRY, { shader: key, md5 });
+		return cache.keyWith(fp, { shader: key, md5 });
 	}
 
 	/** counts a failure by kind and reason; @returns the error's message, for the debug index */
@@ -404,15 +402,8 @@ class ConvertJobs {
 	}
 
 	/** @returns whether every bundle still has the md5 it had when the conversion read it */
-	async #sourcesCurrent(sources: readonly BundleSource[]): Promise<boolean> {
-		const { resolver } = this.#input;
-		const md5s = await Promise.all(
-			sources.map(async ({ bundle }) => {
-				const index = resolver.manifest.findBundle(bundle);
-				return index === undefined ? undefined : resolver.bundleMd5(index);
-			}),
-		);
-		return sources.every(({ md5 }, i) => md5s[i] === md5);
+	#sourcesCurrent(sources: readonly BundleSource[]): Promise<boolean> {
+		return sourcesCurrent(this.#input.resolver, sources);
 	}
 }
 

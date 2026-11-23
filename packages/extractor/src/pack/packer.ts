@@ -114,7 +114,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		timer.end('setup');
 		// #endregion
 
-		const entities = await collectEntities(context, content, progressions);
+		const entities = await collectEntities(context, content, progressions, cache);
 		// only the entities phase decodes MemoryPack data
 		context.releaseMemoryPack();
 		timer.end('entities');
