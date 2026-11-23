@@ -13,8 +13,10 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
   - animated content (scrolling UVs, water, clouds, particles, drifting
     [flow noise](../game-data/sky-and-fog.md#flow-noise)) reads one animation clock that advances
     only on rendered frames with `animate` on, pausing cleanly when idle.
-  - settle/adapt frames reuse the last selection unless `animate` is on and particles or
-    spinning/riding rows are visible.
+  - settle/adapt frames reuse the last selection; when only non-casting particles animate on a still
+    idle view, `ParticleField.refreshActive` updates active emitter rows in place (padding shrunk
+    counts to degenerate rows and falling back to a full traversal if any emitter grows). spinning
+    or riding rows still re-traverse.
   - traverses without rendering while `!stream.idle` or while a saturated stream may raise
     [texture reduction](streaming.md#residency-and-budgets); does nothing when still and idle.
   - environment re-blends only when eye, settings, or a fade changes.
@@ -34,8 +36,9 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
 - **capped particle replay.** full emitters jump directly to the earliest particle death time using
   a min-heap of end times, avoiding hundreds-of-ms hitches on map02 effects emitting 10M/s capped at
   1 particle.
-- **one traversal, many passes.** shadow layers reuse the frame's selection buckets. settle/adapt
-  frames keep cached shadow layers unless a fit moved or pipelines were compiling.
+- **one traversal, many passes.** shadow layers reuse the frame's selection buckets and track
+  per-cascade fits. still views keep cached shadow layers when only non-casting particles animate
+  (or during settle/adapt frames unless a fit moved or pipelines were compiling).
 - **few draws, pooled geometry.** terrain is 1 draw/pass, ordered by first reachable shadow layer
   (cutting lv008 sharp shadow layer time to ~1/3). each mesh bucket is 1 instanced `drawIndexed`.
   depth-writing draws sort by `(pipeline, pool, nearest-first)` for early-Z; others by
@@ -69,11 +72,16 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
   [decode workers](loading.md#decode-workers-and-zstd)) cut map02 teleport settle from 2.5 s to ~1 s
   and page load from 5 s to ~2 s; [multi-range requests](streaming.md#residency-and-budgets) halved
   flight request counts.
-- **tabulated particles.** velocity-curve integrals read from precomputed tables
-  ([motion](particles.md#motion)); colours evaluate without allocating.
-- **zero per-frame hot-path allocation.** selections, buckets, and plane arrays reuse storage across
-  frames; per-bucket texture requests allocate nothing. the stream manager evicts from a ready
-  unpinned set and reads each shard blob's byte range once.
+- **tabulated and cached particles.** immutable per-particle birth attributes and over-lifetime
+  random draws are cached in a pooled frame-stamped map while particles live; velocity/spin curve
+  integrals are pre-resolved per system, single-curve `sizeOverLifetime`/`colorOverLifetime` and
+  sRGB conversion use lookup tables, and constant-zero motion/spin/custom modules are skipped
+  ([motion](particles.md#motion)).
+- **zero per-frame hot-path allocation.** selections, buckets, sort scratch, and plane arrays reuse
+  storage across frames; per-bucket texture requests allocate nothing and read flat cached tables in
+  `TextureStore` (which batches shrink copies per commit). the stream manager evicts from a ready
+  unpinned set (biasing LRU eviction toward textures before geometry/instances) and reads each shard
+  blob's byte range once.
 
 target reuse: `composite` needs its own HDR target so next frame's SSR can read it after `main`
 overwrites radiance; `celestial` reuses the sky reflection target after SSR finishes.
@@ -133,16 +141,14 @@ see [quality settings](../game-data/quality-settings.md) for what the game toggl
 
 - **GPU LOD selection.** moving slot picking and bucket allocation to GPU (count, prefix sum, write)
   would reduce CPU work from per-segment to per-row-group.
-- **particle caching / offload.** cache immutable per-particle start attributes instead of
-  re-hashing every frame (~1 µs/particle on CPU), or move placement to a worker or compute shader.
-- **eviction policy.** keeping integrated texture mips +0.5 level past use cut repeat uploads by 1/3
-  on Wuling walk but triggered saturation/reduction (reverted). untried: evict textures before
-  geometry (geometry is ~1/7 the bytes and costlier to reload), or size budget to the device.
+- **particle offload.** moving remaining per-frame particle placement to a worker or compute shader.
+- **eviction policy.** sizing the stream budget to the device or adding mip hysteresis without
+  triggering saturation.
 - **16-bit local-light shadow atlas.** currently `depth32float` (64 MiB); `depth16unorm` needs a
   larger near plane for short-range perspective depth.
 - **empty GPU-culled draws.** segment-range picking leaves empty buckets the CPU still encodes.
-- **settle-frame selection reuse.** fixed row spans for emitters and swept bounds for moving rows
-  would let settle frames skip re-traversal.
+- **settle-frame selection reuse for moving rows.** swept bounds for spinning/riding rows would let
+  their settle frames skip re-traversal too.
 - **shadow caching.** cache cascades across selections when fit and casters match; tile the far
   shadow layer (game caches 200 m tiles and redraws ≤ 8/frame instead of the whole layer).
 - **small shadow-caster culling.** game culls casters by `CSMScreenSizeMin` / `ASMScreenSizeMin`
