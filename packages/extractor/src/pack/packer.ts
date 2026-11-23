@@ -266,6 +266,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				gameData: context.config.gameData,
 				keys: context.keys,
 				blobDir: store.dir.root,
+				memoDir: cache?.memosDir ?? null,
 				manifest: (await context.world.manifest()).bytes,
 			});
 			try {
@@ -413,8 +414,14 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 
 		await rm(spool, { recursive: true, force: true });
 		await swapIn(stage, options.outDir);
-		// after the swap: the cache keeps blobs only for roots whose package exists
-		const cacheReport = (await cache?.finish(options.outDir, store.hashes())) ?? null;
+		// after the swap: the cache keeps blobs only for roots whose package exists.
+		// --no-assets leaves the existing root untouched so it doesn't sweep cached asset blobs
+		const cacheReport =
+			cache === null
+				? null
+				: options.convertAssets
+					? await cache.finish(options.outDir, store.hashes())
+					: cache.report();
 		if (cacheReport !== null) {
 			timer.end('cache sweep');
 		}

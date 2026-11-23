@@ -8,7 +8,7 @@ import { BlobCodec, BlobKind } from '@endfield-noclip/package-format/blobs';
 
 import type { ConvertResult } from '../convert/convert-pool.ts';
 
-import { BlobDir } from './blob-file.ts';
+import { BlobDir, storeCompressed } from './blob-file.ts';
 import { BlobStore } from './blob-store.ts';
 import { PackCache } from './pack-cache.ts';
 
@@ -132,6 +132,26 @@ describe('PackCache', () => {
 			assert.deepEqual(await cache.recall(key, async (_sources, hash) => hash === 'hash-1'), failed);
 			assert.equal(cache.hits.geometries, 1);
 			await cache.close();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('storeCompressed skips recompressing identical raw blobs', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'pack-cache-test-'));
+		try {
+			const blobs = new BlobDir(join(dir, 'blobs'));
+			const memos = new BlobDir(join(dir, 'memo'));
+			const raw = new Uint8Array(4096).fill(7);
+			let calls = 0;
+			const compress = (data: Uint8Array): Uint8Array => {
+				calls++;
+				return data.slice(0, 64);
+			};
+			const first = await storeCompressed(blobs, memos, raw, 9, compress);
+			const second = await storeCompressed(blobs, memos, raw, 9, compress);
+			assert.equal(calls, 1);
+			assert.deepEqual(second, first);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

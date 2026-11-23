@@ -6,7 +6,7 @@ import { errorText } from '../../errors.ts';
 import { loadMesh, loadTexture } from '../../game/assets/asset-decode.ts';
 import { type AssetResolver, type ObjectLocator, objectKey } from '../../game/assets/assets.ts';
 import { zstdSync } from '../../zstd.ts';
-import { type BlobDir, type BlobMeta, storedBlob } from '../store/blob-file.ts';
+import { type BlobDir, storeCompressed } from '../store/blob-file.ts';
 
 import type { ConvertJob, ConvertOutput } from './convert-pool.ts';
 import { convertMesh, geometryReady, rigidSkin } from './geometry.ts';
@@ -15,12 +15,6 @@ import { boneVatSkin, type VatBake, vatSkin, type VatTexels, vatTexels } from '.
 
 type GeometryJob = Extract<ConvertJob, { kind: 'geometry' }>;
 type GeometryOutput = Extract<ConvertOutput, { kind: 'geometry' }>;
-
-const store = async (blobs: BlobDir, raw: Uint8Array, zstdLevel: number): Promise<BlobMeta> => {
-	const { meta, stored } = storedBlob(raw, zstdSync(raw, zstdLevel));
-	await blobs.write(meta.hash, stored);
-	return meta;
-};
 
 /** @returns a VAT texture's texels */
 const loadVatTexels = async (
@@ -57,12 +51,14 @@ const bakeVat = async (
  *
  * @param resolver asset resolver
  * @param blobs blob directory to write the stored blob into
+ * @param memos optional memo directory for raw-byte compression deduplication
  * @param job geometry conversion job
  * @returns converted geometry output
  */
 export const convertGeometryJob = async (
 	resolver: AssetResolver,
 	blobs: BlobDir,
+	memos: BlobDir | null,
 	job: GeometryJob,
 ): Promise<GeometryOutput> => {
 	await geometryReady;
@@ -77,7 +73,7 @@ export const convertGeometryJob = async (
 			name: syntheticMeshKey(job.asset.synthetic),
 			entry: converted.entry,
 			gpuBytes: converted.gpuBytes,
-			blob: await store(blobs, converted.blob, job.zstdLevel),
+			blob: await storeCompressed(blobs, memos, converted.blob, job.zstdLevel, zstdSync),
 		};
 	}
 	const ref = await resolver.findUnique(job.asset, UnityClass.Mesh);
@@ -114,7 +110,7 @@ export const convertGeometryJob = async (
 		name: mesh.name,
 		entry: converted.entry,
 		gpuBytes: converted.gpuBytes,
-		blob: await store(blobs, converted.blob, job.zstdLevel),
+		blob: await storeCompressed(blobs, memos, converted.blob, job.zstdLevel, zstdSync),
 		...(unanimated === undefined ? {} : { unanimated }),
 	};
 };

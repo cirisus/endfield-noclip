@@ -29,6 +29,7 @@ const data = workerData as ConvertWorkerData;
 const port = parentPort!;
 const vfs = new Vfs(data.gameData, data.keys.vfsKey);
 const blobs = new BlobDir(data.blobDir);
+const memos = data.memoDir === null ? null : new BlobDir(data.memoDir);
 const resolver = new AssetResolver({ vfs, keys: data.keys }, sharedBundleManifest(data.manifest));
 
 const convert = async (job: ConvertJob): Promise<ConvertResult> => {
@@ -37,10 +38,10 @@ const convert = async (job: ConvertJob): Promise<ConvertResult> => {
 			try {
 				switch (job.kind) {
 					case 'geometry': {
-						return await convertGeometryJob(resolver, blobs, job);
+						return await convertGeometryJob(resolver, blobs, memos, job);
 					}
 					case 'texture': {
-						return await convertTextureJob(resolver, blobs, job);
+						return await convertTextureJob(resolver, blobs, memos, job);
 					}
 				}
 			} catch (error) {

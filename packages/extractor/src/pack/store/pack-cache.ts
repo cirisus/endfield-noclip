@@ -9,7 +9,7 @@ import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 import { errorCode, ignoreMissing } from '../../errors.ts';
 import type { BundleSource, ConvertJob, ConvertResult } from '../convert/convert-pool.ts';
 
-import { BlobDir, type BlobMeta, shortHash } from './blob-file.ts';
+import { BlobDir, type BlobMeta, shortHash, storedBlobKey } from './blob-file.ts';
 
 // caches converted assets and pack steps by code fingerprint, options and input catalog MD5s.
 // each live package roots its blobs and memos; unreferenced entries are swept after packing.
@@ -231,8 +231,21 @@ export class PackCache {
 	 * @returns the key of its stored form, for {@link recallStored} and {@link rememberStored}
 	 */
 	storedKey(raw: Uint8Array, level: number): string {
-		// node's zstd decides the frame's bytes, so another version compresses again
-		return shortHash(`stored ${shortHash(raw)} ${level} ${process.versions.zstd}`);
+		return storedBlobKey(raw, level);
+	}
+
+	/** directory holding cache memos, passed to conversion workers for raw-byte deduplication */
+	get memosDir(): string {
+		return this.#memos.root;
+	}
+
+	/** @returns current hit counts without updating roots or sweeping */
+	report(): CacheReport {
+		return {
+			dir: this.root,
+			hits: { ...this.hits },
+			swept: { blobs: 0, memos: 0, bytes: 0 },
+		};
 	}
 
 	/**

@@ -23,6 +23,8 @@ export interface ConvertWorkerData {
 	keys: Keys;
 	/** the {@link BlobDir} root blobs are written to */
 	blobDir: string;
+	/** optional {@link BlobDir} root for raw-byte compression dedup memos */
+	memoDir: string | null;
 	/** the packer's decompressed bundle manifest, shared rather than loaded by each worker (~150 MB) */
 	manifest: Uint8Array;
 }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { crc32 } from 'node:zlib';
 
@@ -54,6 +54,51 @@ export const storedBlob = (
 		},
 		stored,
 	};
+};
+
+/**
+ * @param raw a blob's bytes before compression
+ * @param level the zstd level it would be compressed at
+ * @returns the memo key of its stored form (includes Node's zstd version)
+ */
+export const storedBlobKey = (raw: Uint8Array, level: number): string =>
+	shortHash(`stored ${shortHash(raw)} ${level} ${process.versions.zstd}`);
+
+/**
+ * compresses and writes `raw` into `blobs`, reusing a previously stored form in `memos` when the same raw
+ * bytes were already compressed at `zstdLevel` (deduplicating before zstd runs)
+ *
+ * @param blobs blob directory for stored bytes
+ * @param memos optional memo directory for raw-to-stored lookups
+ * @param raw uncompressed blob bytes
+ * @param zstdLevel zstd compression level
+ * @param compress synchronous compressor
+ * @returns stored blob metadata
+ */
+export const storeCompressed = async (
+	blobs: BlobDir,
+	memos: BlobDir | null,
+	raw: Uint8Array,
+	zstdLevel: number,
+	compress: (data: Uint8Array, level: number) => Uint8Array,
+): Promise<BlobMeta> => {
+	const key = memos === null ? null : storedBlobKey(raw, zstdLevel);
+	if (memos !== null && key !== null) {
+		const text = await ignoreMissing(readFile(memos.path(key), 'utf8'), undefined);
+		if (text !== undefined) {
+			// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- written below as BlobMeta JSON
+			const cached = JSON.parse(text) as BlobMeta;
+			if (await blobs.has(cached.hash)) {
+				return cached;
+			}
+		}
+	}
+	const { meta, stored } = storedBlob(raw, compress(raw, zstdLevel));
+	await blobs.write(meta.hash, stored);
+	if (memos !== null && key !== null) {
+		await memos.write(key, JSON.stringify(meta));
+	}
+	return meta;
 };
 
 /**

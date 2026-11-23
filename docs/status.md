@@ -550,7 +550,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 ## packaging
 
 - **pack cache** ([extraction](extraction.md#pack-cache)): entities phase (~20 s on map02) isn't
-  cached; duplicate textures compress before deduplication.
+  cached.
 - **duplicate asset IDs** ([conversion](extraction.md#asset-conversion-and-workers)): assets reached
   both by path hash (static) and object (prefab) convert and store twice.
 - **prefab LODGroups**: switch on per-renderer bounds rather than LODGroup size/reference point,
