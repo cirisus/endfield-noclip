@@ -7,6 +7,7 @@ import { BlobCodec, BlobKind } from '@endfield-noclip/package-format/blobs';
 import type { EnvironmentTable } from '@endfield-noclip/package-format/environment';
 import { decodeGeometryTable, type GeometryTable } from '@endfield-noclip/package-format/geometry-table';
 import {
+	chainHashMap,
 	decodeChains,
 	decodeInstanceBlock,
 	type Chain,
@@ -56,6 +57,7 @@ export class PackedPackage implements AsyncDisposable {
 	#tree: Promise<Tree> | undefined;
 	#blobs: Promise<BlobRecord[]> | undefined;
 	#chains: Promise<Chain[]> | undefined;
+	#chainHashes: Promise<Map<bigint, number>> | undefined;
 	#geometries: Promise<GeometryTable> | undefined;
 	#materials: Promise<MaterialTable> | undefined;
 	#water: Promise<WaterTable> | undefined;
@@ -330,8 +332,11 @@ export class PackedPackage implements AsyncDisposable {
 	 * @throws {Error} if `blobId` is out of range or not an instance block
 	 */
 	async readInstanceBlock(blobId: number): Promise<InstanceBlock> {
-		const raw = await this.readBlob(blobId, BlobKind.Instances);
-		return decodeInstanceBlock(raw);
+		const [raw, chainHashes] = await Promise.all([
+			this.readBlob(blobId, BlobKind.Instances),
+			(this.#chainHashes ??= this.chains().then(chainHashMap)),
+		]);
+		return decodeInstanceBlock(raw, chainHashes);
 	}
 
 	/** closes the core archive handle */

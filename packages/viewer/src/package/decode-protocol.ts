@@ -177,6 +177,8 @@ export type Decoded =
  * and is released after them
  */
 export type WorkerMessage =
+	/** canonical 64-bit chain hashes in global chain-id order, for resolving `.inst` `PLTT` palettes */
+	| { type: 'chains'; hashes: BigUint64Array }
 	/** stored bytes later requests read ranges of; transferred */
 	| { type: 'buffer'; buffer: number; data: ArrayBuffer }
 	| { type: 'decode'; request: DecodeRequest }

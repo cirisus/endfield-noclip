@@ -201,27 +201,29 @@ skipped, unknown `Required` sections fail explicitly, and fixed-stride record se
 `stride` so trailing fields added later don't break older readers. `.bin.zst` tables are single zstd
 frames; `.bin` tables are uncompressed.
 
-| member                      | magic                    | sections                                                                                                                                  |
-| --------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `tree.bin`                  | `EFTR`                   | `NODE` (52 B, includes `parent: i32`), `REFS` (24 B, includes `streamingLayer`), `GLOB` (24 B), optional `RCHS` (16 B)                    |
-| `tables/chains.bin`         | `EFCH`                   | `CHNS` (16 B, includes `u64 contentHash`), `DRWS` (32 B, includes `sortingBand`), optional `DORG` (16 B: `chainIndex` + `distanceOrigin`) |
-| `tables/blobs.bin`          | `EFBX`                   | `BLBS` (16 B: `kind`, `codec`, `archive`, `offset`, `length`, `rawLength`)                                                                |
-| `tables/irradiance.bin`     | `EFIV`                   | `KEYS` (`u32[]`), `BLBS` (`u32[]`), `GRPS` (`u32[]`)                                                                                      |
-| `tables/geometries.bin.zst` | `EFGE`                   | `GEOM` (44 B records, [asset tables](#asset-tables))                                                                                      |
-| `tables/textures.bin.zst`   | `EFTX`                   | `SAMP` (12 B), `TEXS` (20 B, includes `droppedMips`), `PCES` (8 B) ([asset tables](#asset-tables))                                        |
-| `tables/lights.bin.zst`     | `EFLT`                   | `LGHT` (100 B), optional `SHDW` (32 B), optional `CBOX` (52 B)                                                                            |
-| `.inst`                     | `EFIN`                   | `HEAD`, `CHNS`, `XFRM`, `BNDS`, optional sparse `DECL`, `SPIN`, `FLOT`, `RIDE`, optional `PATH`                                           |
-| `.mesh`                     | `EFGM`                   | `HEAD`, `STRM` (36 B), `SUBM` (40 B), `VBUF`, `IBUF`, optional `ANIM`                                                                     |
-| `.hgt` / `.tsp` / `.tsl`    | `EFHT` / `EFTS` / `EFSL` | `HEAD` + `HGTS` / (`ALBD`, `NORM`) / (`CTRL`, `TINT`, `INDX`)                                                                             |
-| `.anim`                     | `EFAN`                   | `HEAD` + kind-specific section (`SKIN`, `TRNS`, `SPIN`, `FLOT`, `VATC`, or `MATR` + `MSMP`)                                               |
-| `tables/luts.bin.zst`       | `EFLU`                   | optional `CRVH`/`CRVS`, `GRDH`/`GRDS`, `PMSH`/`PMPO`/`PMNM`/`PMCL`/`PMPR`/`PMCD`                                                          |
+| member                      | magic                    | sections                                                                                                                                      |
+| --------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tree.bin`                  | `EFTR`                   | `NODE` (52 B, includes `parent: i32`), `REFS` (24 B, includes `streamingLayer`), `GLOB` (24 B), optional `RCHS` (16 B)                        |
+| `tables/chains.bin`         | `EFCH`                   | `CHNS` (16 B, includes `u64 contentHash`), `DRWS` (32 B, includes `sortingBand`), optional `DORG` (16 B: `chainIndex` + `distanceOrigin`)     |
+| `tables/blobs.bin`          | `EFBX`                   | `BLBS` (16 B: `kind`, `codec`, `archive`, `offset`, `length`, `rawLength`)                                                                    |
+| `tables/irradiance.bin`     | `EFIV`                   | `KEYS` (`u32[]`), `BLBS` (`u32[]`), `GRPS` (`u32[]`)                                                                                          |
+| `tables/geometries.bin.zst` | `EFGE`                   | `GEOM` (44 B records, [asset tables](#asset-tables))                                                                                          |
+| `tables/textures.bin.zst`   | `EFTX`                   | `SAMP` (12 B), `TEXS` (20 B, includes `droppedMips`), `PCES` (8 B) ([asset tables](#asset-tables))                                            |
+| `tables/lights.bin.zst`     | `EFLT`                   | `LGHT` (100 B), optional `SHDW` (32 B), optional `CBOX` (52 B)                                                                                |
+| `.inst`                     | `EFIN`                   | `HEAD`, optional `PLTT` (`u64[]` chain hash palette), `CHNS`, `XFRM`, `BNDS`, optional sparse `DECL`, `SPIN`, `FLOT`, `RIDE`, optional `PATH` |
+| `.mesh`                     | `EFGM`                   | `HEAD`, `STRM` (36 B), `SUBM` (40 B), `VBUF`, `IBUF`, optional `ANIM`                                                                         |
+| `.hgt` / `.tsp` / `.tsl`    | `EFHT` / `EFTS` / `EFSL` | `HEAD` + `HGTS` / (`ALBD`, `NORM`) / (`CTRL`, `TINT`, `INDX`)                                                                                 |
+| `.anim`                     | `EFAN`                   | `HEAD` + kind-specific section (`SKIN`, `TRNS`, `SPIN`, `FLOT`, `VATC`, or `MATR` + `MSMP`)                                                   |
+| `tables/luts.bin.zst`       | `EFLU`                   | optional `CRVH`/`CRVS`, `GRDH`/`GRDS`, `PMSH`/`PMPO`/`PMNM`/`PMCL`/`PMPR`/`PMCD`                                                              |
 
 tree nodes sort coarse to fine (`level`, `z`, `x`). children of `(l, x, z)` are
 `(l + 1, 2x + dx, 2z + dz)`. node bounds enclose the node, its descendants, and overhang.
 
 **chains** are LOD-chain templates deduplicated by ordered draws and f32 threshold bit patterns
-([chains.ts](../packages/extractor/src/pack/instances/chains.ts)), with IDs preserved across packs
-([chain ids](extraction.md#code-layout)). a 0-draw chain is a free id.
+([chains.ts](../packages/extractor/src/pack/instances/chains.ts)), sorted deterministically by
+64-bit `contentHash`. `.inst` blocks store a local `PLTT` (`u64[]`) of the chain hashes they
+reference so their bytes are independent of global chain numbering across packs; decoders remap
+local palette indices to global chain IDs via `chainHashMap(chains.hashes)`.
 
 - **thresholds**: a draw is active while `minSquared < s² ≤ maxSquared`, where `s` is Unity's
   screen-relative height (negative `minSquared` disables size culling). the viewer computes `s` as

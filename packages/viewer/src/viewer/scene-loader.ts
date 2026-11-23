@@ -71,6 +71,7 @@ export interface SceneDeps {
  */
 export const openScene = (pkg: ViewerPackage, deps: SceneDeps): LoadedScene => {
 	const { terrain, instances, meshes, irradiance, waterLevels } = deps;
+	deps.pool.setChains(pkg.chains);
 	const manifest = pkg.manifest;
 	const tree = buildTileTree(manifest, pkg.tree);
 	const textures = new TextureStore(deps.device, pkg.textures, { bc: deps.bc });

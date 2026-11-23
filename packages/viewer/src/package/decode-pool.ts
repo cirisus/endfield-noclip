@@ -1,3 +1,5 @@
+import type { Chain } from '@endfield-noclip/package-format/instances';
+
 import type {
 	BlobEncoding,
 	Decoded,
@@ -89,6 +91,22 @@ export class DecodePool {
 			worker.addEventListener('error', (event) => console.error('decode worker:', event.message));
 			this.#workers.push(worker);
 			this.#busy.push(0);
+		}
+	}
+
+	/**
+	 * broadcasts the active package's canonical chain hashes to every worker so `.inst` `PLTT` palettes resolve
+	 * to global chain indices off the main thread
+	 *
+	 * @param chains package chain table
+	 */
+	setChains(chains: readonly Chain[]): void {
+		const hashes = new BigUint64Array(chains.length);
+		for (let i = 0; i < chains.length; i++) {
+			hashes[i] = chains[i].contentHash ?? 0n;
+		}
+		for (let i = 0; i < this.#workers.length; i++) {
+			this.#send(i, { type: 'chains', hashes });
 		}
 	}
 

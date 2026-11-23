@@ -118,6 +118,12 @@ export interface Chain {
 export interface InstanceBlock {
 	/** world position the rows' translations and bounds centres are relative to */
 	origin: [x: number, y: number, z: number];
+	/**
+	 * optional per-block local chain palette (`PLTT`): 64-bit canonical chain hashes. when present,
+	 * {@link chains} holds local indices into this palette rather than global `chains.bin` indices, isolating
+	 * shard bytes from global chain ID shifts
+	 */
+	palette?: BigUint64Array;
 	/** chain index per row; rows are grouped by chain, so equal chains form contiguous instanced ranges */
 	chains: Uint32Array;
 	/**
@@ -211,6 +217,7 @@ const TAG_DORG = fourcc('DORG');
 const CHAINS_TAGS = new Set([TAG_CHNS, TAG_DRWS, TAG_DORG]);
 
 const TAG_HEAD = fourcc('HEAD');
+const TAG_PLTT = fourcc('PLTT');
 const TAG_XFRM = fourcc('XFRM');
 const TAG_BNDS = fourcc('BNDS');
 const TAG_DECL = fourcc('DECL');
@@ -220,6 +227,7 @@ const TAG_RIDE = fourcc('RIDE');
 const TAG_PATH = fourcc('PATH');
 const INSTANCES_TAGS = new Set([
 	TAG_HEAD,
+	TAG_PLTT,
 	TAG_CHNS,
 	TAG_XFRM,
 	TAG_BNDS,
@@ -400,7 +408,24 @@ export const decodeChains = (data: Uint8Array): Chain[] => {
 	return chains;
 };
 
-const bytesOf = (a: Uint32Array | Float32Array): Uint8Array =>
+/**
+ * builds a lookup map from 64-bit canonical {@link Chain.contentHash} to global chain index
+ *
+ * @param chains decoded chain table
+ * @returns map of content hash → chain index
+ */
+export const chainHashMap = (chains: readonly Chain[]): Map<bigint, number> => {
+	const map = new Map<bigint, number>();
+	for (let i = 0; i < chains.length; i++) {
+		const hash = chains[i].contentHash;
+		if (hash !== undefined && hash !== 0n) {
+			map.set(hash, i);
+		}
+	}
+	return map;
+};
+
+const bytesOf = (a: Uint32Array | Float32Array | BigUint64Array): Uint8Array =>
 	new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
 
 const readSparseF32 = (
@@ -477,6 +502,17 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
 
 	const sections: ContainerSectionInput[] = [
 		{ tag: TAG_HEAD, required: true, data: head },
+		...(block.palette !== undefined
+			? [
+					{
+						tag: TAG_PLTT,
+						required: true,
+						data: bytesOf(block.palette),
+						count: block.palette.length,
+						stride: 8,
+					},
+				]
+			: []),
 		{ tag: TAG_CHNS, required: true, data: bytesOf(block.chains), count, stride: 4 },
 		{ tag: TAG_XFRM, required: true, data: bytesOf(block.transforms), count, stride: 48 },
 		{ tag: TAG_BNDS, required: true, data: bytesOf(block.bounds), count, stride: 24 },
@@ -535,11 +571,17 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
  * decodes an instance block (`.inst`, `EFIN` v2 TLV container)
  *
  * @param data an instance block
+ * @param chainIndex optional map from 64-bit chain content hash → global chain index (from
+ *   {@link chainHashMap}); when given and a `PLTT` section is present, remaps `chains` to global indices
  * @returns its rows (zero-copy views when 4-byte aligned)
  * @throws {PackageFormatError} on a bad header or length, a row section whose rows aren't ascending rows of
- *   the block, a ride naming no path, or a path without frames or a frame rate above 0
+ *   the block, a ride naming no path, a missing palette hash, or a path without frames or a frame rate above
+ *   0
  */
-export const decodeInstanceBlock = (data: Uint8Array): InstanceBlock => {
+export const decodeInstanceBlock = (
+	data: Uint8Array,
+	chainIndex?: ReadonlyMap<bigint, number>,
+): InstanceBlock => {
 	const container = decodeContainer(data, {
 		magic: INSTANCES_MAGIC,
 		majorVersion: MAJOR_VERSION,
@@ -558,11 +600,42 @@ export const decodeInstanceBlock = (data: Uint8Array): InstanceBlock => {
 	];
 	const count = hv.getUint32(12, true);
 
-	const chains = sectionU32(requireSection(container, TAG_CHNS, 'instance block'));
+	let chains = sectionU32(requireSection(container, TAG_CHNS, 'instance block'));
 	const transforms = sectionF32(requireSection(container, TAG_XFRM, 'instance block'));
 	const bounds = sectionF32(requireSection(container, TAG_BNDS, 'instance block'));
 	if (chains.length !== count || transforms.length !== count * 12 || bounds.length !== count * 6) {
 		throw new PackageFormatError('instance block core sections disagree with rowCount');
+	}
+
+	let palette: BigUint64Array | undefined;
+	const plttSec = container.sections.get(TAG_PLTT);
+	if (plttSec !== undefined) {
+		checkStride(plttSec, 8, 'PLTT');
+		const rawPalette =
+			(plttSec.data.byteOffset & 7) === 0
+				? new BigUint64Array(plttSec.data.buffer, plttSec.data.byteOffset, plttSec.count)
+				: new BigUint64Array(plttSec.data.slice(0, plttSec.count * 8).buffer);
+		if (chainIndex !== undefined) {
+			const remap = new Uint32Array(rawPalette.length);
+			for (let i = 0; i < rawPalette.length; i++) {
+				const globalId = chainIndex.get(rawPalette[i]);
+				if (globalId === undefined) {
+					throw new PackageFormatError(`instance block PLTT hash 0x${rawPalette[i].toString(16)} not found`);
+				}
+				remap[i] = globalId;
+			}
+			const resolved = new Uint32Array(count);
+			for (let r = 0; r < count; r++) {
+				const local = chains[r];
+				if (local >= remap.length) {
+					throw new PackageFormatError(`instance block row ${r} chain ${local} past PLTT`);
+				}
+				resolved[r] = remap[local];
+			}
+			chains = resolved;
+		} else {
+			palette = rawPalette;
+		}
 	}
 
 	const decals = readSparseF32(container.sections.get(TAG_DECL), DECAL_PLACEMENT_FLOATS, count, 'DECL');
@@ -598,5 +671,16 @@ export const decodeInstanceBlock = (data: Uint8Array): InstanceBlock => {
 	if (rides.values.some((path) => path >= paths.length)) {
 		throw new PackageFormatError('an instance block ride names a path the block lacks');
 	}
-	return { origin, chains, transforms, bounds, decals, spins, floaters, rides, paths };
+	return {
+		origin,
+		...(palette !== undefined ? { palette } : {}),
+		chains,
+		transforms,
+		bounds,
+		decals,
+		spins,
+		floaters,
+		rides,
+		paths,
+	};
 };

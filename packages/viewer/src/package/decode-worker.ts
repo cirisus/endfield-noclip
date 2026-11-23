@@ -417,7 +417,7 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 			return { response: { id: request.id, kind: request.kind, data }, transfer: [data] };
 		}
 		case 'instances': {
-			const built = buildInstanceRows(decodeInstanceBlock(raw), request.rowKinds ?? []);
+			const built = buildInstanceRows(decodeInstanceBlock(raw, chainIndex), request.rowKinds ?? []);
 			const bounds = buildRowBounds({
 				rowsF32: new Float32Array(built.rows.buffer),
 				cull: built.cull,
@@ -478,11 +478,24 @@ const decode = (request: DecodeRequest): void => {
 	}
 };
 
+let chainIndex = new Map<bigint, number>();
+
 self.addEventListener('message', async (event: MessageEvent<WorkerMessage>) => {
 	const message = event.data;
 	// every message waits, so they're handled in the order they came
 	await wasmReady;
 	switch (message.type) {
+		case 'chains': {
+			const next = new Map<bigint, number>();
+			for (let i = 0; i < message.hashes.length; i++) {
+				const hash = message.hashes[i];
+				if (hash !== 0n) {
+					next.set(hash, i);
+				}
+			}
+			chainIndex = next;
+			return;
+		}
 		case 'buffer': {
 			buffers.set(message.buffer, message.data);
 			return;

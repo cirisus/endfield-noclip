@@ -17,6 +17,7 @@ import {
 	VertexAttribute,
 } from './geometry.ts';
 import {
+	chainHashMap,
 	decodeChains,
 	decodeInstanceBlock,
 	encodeChains,
@@ -493,6 +494,35 @@ describe('instance blocks', () => {
 						{ frameRate: 15, offsets: Float32Array.of(0, 0, 0) },
 						{ frameRate: 7.5, offsets: Float32Array.of(0, 0, 0, 1, 2, 3, 4, 5, 6) },
 					],
+	});
+
+	it('round-trips a per-block PLTT chain hash palette and remaps to global chain indices', () => {
+		const h0 = 0x1111_2222_3333_4444n;
+		const h1 = 0x5555_6666_7777_8888n;
+		const encoded = encodeInstanceBlock({
+			origin: [10, 20, 30],
+			chains: Uint32Array.of(0, 1, 0),
+			palette: BigUint64Array.of(h0, h1),
+			transforms: new Float32Array(36),
+			bounds: new Float32Array(18),
+			decals: { rows: new Uint32Array(0), values: new Float32Array(0) },
+			spins: { rows: new Uint32Array(0), values: new Float32Array(0) },
+			floaters: { rows: new Uint32Array(0), values: new Uint32Array(0) },
+			rides: { rows: new Uint32Array(0), values: new Uint32Array(0) },
+			paths: [],
+		});
+		const raw = decodeInstanceBlock(encoded);
+		assert.deepEqual(raw.chains, Uint32Array.of(0, 1, 0));
+		assert.deepEqual(raw.palette, BigUint64Array.of(h0, h1));
+
+		const index = chainHashMap([
+			{ draws: [], flags: 0, distanceOrigin: null, contentHash: 0x9999n },
+			{ draws: [], flags: 0, distanceOrigin: null, contentHash: h1 },
+			{ draws: [], flags: 0, distanceOrigin: null, contentHash: h0 },
+		]);
+		const remapped = decodeInstanceBlock(encoded, index);
+		assert.deepEqual(remapped.chains, Uint32Array.of(2, 1, 2));
+		assert.equal(remapped.palette, undefined);
 	});
 
 	it('finds a path’s offset at a time, blending frames and wrapping to the loop', () => {

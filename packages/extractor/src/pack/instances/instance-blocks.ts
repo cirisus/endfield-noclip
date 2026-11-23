@@ -35,9 +35,9 @@ export const packInstances = async (
 	collector: Collector,
 	{
 		grid,
-		chainIds,
+		chainHashes,
 		volumes,
-	}: { grid: TreeInfo; chainIds: Uint32Array; volumes: ReadonlyMap<string, number> },
+	}: { grid: TreeInfo; chainHashes: BigUint64Array; volumes: ReadonlyMap<string, number> },
 ): Promise<{ rows: InstanceCounts; global: ContentRef[]; hlodClusters: number; tierCounts: number[] }> => {
 	const { store, layout, builder, debugLog } = output;
 	const rows = {
@@ -51,7 +51,7 @@ export const packInstances = async (
 	for (let start = 0; start < detailGroups.length; start += BLOB_BATCH) {
 		const encoded = detailGroups.slice(start, start + BLOB_BATCH).map((group) => {
 			const { minX, minZ } = tileFootprint(grid, group.key);
-			const { block, order } = group.rows.toBlock([minX, 0, minZ], chainIds, volumes);
+			const { block, order } = group.rows.toBlock([minX, 0, minZ], chainHashes, volumes);
 			return { group, block, order };
 		});
 		// oxlint-disable-next-line no-await-in-loop -- batches bound memory and keep blob order stable
@@ -82,7 +82,7 @@ export const packInstances = async (
 		const sorted = [...groups];
 		sorted.sort((a, b) => a[0] - b[0]);
 		const encoded = sorted.map(([visibility, group]) => {
-			const { block, order } = group.rows.toBlock([grid.origin[0], 0, grid.origin[1]], chainIds, volumes);
+			const { block, order } = group.rows.toBlock([grid.origin[0], 0, grid.origin[1]], chainHashes, volumes);
 			return { visibility, group, block, order };
 		});
 		const blobs = await store.putMany(

@@ -28,7 +28,6 @@ import { SHARED_GROUP } from './control-registry.ts';
 import { type AssetConversion, convertAssets, pendingAssets, type PlacedTexture } from './convert/assets.ts';
 import { ConvertPool } from './convert/convert-pool.ts';
 import { assetRows, DebugLog, type DebugFile, STAND_INS_FILE, writeDebug } from './debug.ts';
-import { CHAIN_KEYS_FILE, readChainKeys } from './instances/chains.ts';
 import { packInstances } from './instances/instance-blocks.ts';
 import { TileTreeBuilder } from './instances/tile-tree.ts';
 import { checkOutDir, siblingDir, swapIn } from './output-dir.ts';
@@ -233,17 +232,14 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		// #region instances
 		// spooled, so a failed pack leaves nothing outside the package's own entries
 		const debugLog = await DebugLog.create(join(spool, 'instances.jsonl'));
-		const chainOrder = content.chains.stableOrder(
-			{
-				geometry: (id) => content.geometries.keyOf(id),
-				material: (id) => content.materials.keyOf(id),
-				particles: (id) => content.particles.keyOf(id),
-			},
-			previous === null ? [] : await readChainKeys(previous),
-		);
+		const chainOrder = content.chains.canonicalOrder({
+			geometry: (id) => content.geometries.keyOf(id),
+			material: (id) => content.materials.keyOf(id),
+			particles: (id) => content.particles.keyOf(id),
+		});
 		const instances = await packInstances({ store, layout, builder, debugLog }, content.collector, {
 			grid: scene.grid,
-			chainIds: chainOrder.ids,
+			chainHashes: chainOrder.hashes,
 			volumes: new Map(water.table.volumes.map(({ entityId }, i) => [entityId, i])),
 		});
 		await debugLog.close();
@@ -411,7 +407,6 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				},
 			},
 			{ name: 'chunk-files.json', value: scene.files.map((file) => file.name) },
-			{ name: CHAIN_KEYS_FILE, value: chainOrder.keys },
 		];
 		if (terrain !== null && terrain.debug !== null) {
 			debugFiles.push({ name: 'terrain.json', value: terrain.debug });

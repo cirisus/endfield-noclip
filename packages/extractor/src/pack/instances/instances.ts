@@ -97,23 +97,33 @@ export class InstanceBlockBuilder {
 	}
 
 	/**
-	 * encodes the rows sorted by (group, chain), insertion order breaking ties
+	 * encodes the rows sorted by (group, chainHash), insertion order breaking ties, with a per-block local
+	 * chain hash palette (`PLTT`) so the encoded bytes depend only on this block's own chains
 	 *
 	 * @param origin world position translations and bounds centres are made relative to
-	 * @param chainIds per chain id the rows were added with, its id in the package (`ChainTable.stableOrder`)
+	 * @param chainHashes per interned chain id, its 64-bit canonical hash (`ChainTable.canonicalOrder`)
 	 * @param volumes by water volume id, its index in the water table; a row floating on a volume missing here
 	 *   is stored as not floating
 	 * @returns the block, and per output row its insertion index
 	 */
 	toBlock(
 		origin: [x: number, y: number, z: number],
-		chainIds: Uint32Array,
+		chainHashes: BigUint64Array,
 		volumes: ReadonlyMap<string, number>,
 	): { block: InstanceBlock; order: Uint32Array } {
 		const count = this.#chains.length;
-		const chainOf = (i: number): number => chainIds[this.#chains[i]];
+		const hashOf = (i: number): bigint => chainHashes[this.#chains[i]];
 		const order = Uint32Array.from({ length: count }, (_, i) => i);
-		order.sort((a, b) => this.#groups[a] - this.#groups[b] || chainOf(a) - chainOf(b) || a - b);
+		order.sort((a, b) => {
+			if (this.#groups[a] !== this.#groups[b]) {
+				return this.#groups[a] - this.#groups[b];
+			}
+			const ha = hashOf(a);
+			const hb = hashOf(b);
+			return ha < hb ? -1 : ha > hb ? 1 : a - b;
+		});
+		const paletteIndex = new Map<bigint, number>();
+		const paletteList: bigint[] = [];
 		const chains = new Uint32Array(count);
 		const transforms = new Float32Array(count * 12);
 		const bounds = new Float32Array(count * 6);
@@ -131,7 +141,8 @@ export class InstanceBlockBuilder {
 		let spinning = 0;
 		for (let out = 0; out < count; out++) {
 			const i = order[out];
-			chains[out] = chainOf(i);
+			const hash = hashOf(i);
+			chains[out] = paletteIndex.getOrInsertComputed(hash, () => paletteList.push(hash) - 1);
 			for (let k = 0; k < 12; k++) {
 				transforms[out * 12 + k] = this.#matrices[i * 12 + k];
 			}
@@ -175,6 +186,7 @@ export class InstanceBlockBuilder {
 		return {
 			block: {
 				origin,
+				palette: BigUint64Array.from(paletteList),
 				chains,
 				transforms,
 				bounds,

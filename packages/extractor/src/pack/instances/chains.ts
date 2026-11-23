@@ -1,6 +1,4 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 import { type ChunkEntity, DrawFlags } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import { inverseTransformPoint } from '@endfield-noclip/formats/unity/transform';
@@ -10,10 +8,6 @@ import {
 	ChainFlags,
 	type ChainDraw,
 } from '@endfield-noclip/package-format/instances';
-
-import { compareStrings } from '../../compare.ts';
-import { ignoreMissing } from '../../errors.ts';
-import { DEBUG_DIR } from '../debug.ts';
 
 // float bits make the dedupe key exact: two thresholds are the same only if their f32 bits are
 const f32 = new Float32Array(1);
@@ -100,9 +94,6 @@ export const chunkEntityPlacement = (
 	return { billboard: 0, distanceOrigin: chainDistanceOrigin(entity.matrix, entity.lodDistanceFrom) };
 };
 
-/** what a package id no chain holds stores */
-const EMPTY_CHAIN: Chain = { flags: 0, draws: [], distanceOrigin: null };
-
 /** LOD-chain templates, deduplicated by their ordered draws, billboard mode and distance origin */
 export class ChainTable {
 	readonly chains: Chain[] = [];
@@ -131,83 +122,43 @@ export class ChainTable {
 	}
 
 	/**
-	 * gives chains the ids the replaced package gave them, matched by what their draws are, so instance blocks
-	 * naming them keep their bytes (interned ids follow first-met order, and one early chain would shift the
-	 * rest). new chains take the ids of chains that are gone, then follow at the end, both in key order; ids
-	 * left free hold an empty chain
+	 * assigns each chain its 64-bit canonical content hash and sorts chains ascending by hash. instance blocks
+	 * store a local hash palette (`PLTT`) resolved against `chains.bin` on decode, so shard bytes are 100%
+	 * deterministic and isolated from chains added or removed elsewhere in the scene
 	 *
 	 * @param keys names geometries, materials and particle systems by what they are (`AssetIds.keyOf`)
-	 * @param previous the replaced package's chain keys by id (see the returned `keys`), or empty
-	 * @returns per interned chain id, its id in the package, the chains in package order, and each one's key
-	 *   (empty for a free id), for the next pack to follow
+	 * @returns chains sorted by `contentHash` and per interned id its 64-bit `contentHash`
 	 */
-	stableOrder(
-		keys: {
-			geometry: (id: number) => string;
-			material: (id: number) => string;
-			particles: (id: number) => string;
-		},
-		previous: readonly string[],
-	): { ids: Uint32Array; chains: Chain[]; keys: string[] } {
-		const keyOf = (chain: Chain): string => {
+	canonicalOrder(keys: {
+		geometry: (id: number) => string;
+		material: (id: number) => string;
+		particles: (id: number) => string;
+	}): { chains: Chain[]; hashes: BigUint64Array } {
+		const hashes = new BigUint64Array(this.chains.length);
+		const order: number[] = [];
+		for (const [id, chain] of this.chains.entries()) {
 			let key = `${chain.flags},${chain.distanceOrigin?.map(bits).join(',')}`;
 			for (const draw of chain.draws) {
 				const material = draw.material === null ? '-' : keys.material(draw.material);
 				const particles = draw.particles === null ? '-' : keys.particles(draw.particles);
 				key += `|${keys.geometry(draw.geometry)},${material},${particles},${draw.submesh},${draw.lod},${draw.role},${bits(draw.minSquared)},${bits(draw.maxSquared)},${draw.flags},${draw.sortingLayer},${draw.sortingOrder}`;
 			}
-			return createHash('sha256').update(key).digest('hex').slice(0, 32);
-		};
-		const was = new Map(previous.map((key, id) => [key, id]));
-		const ids = new Uint32Array(this.chains.length);
-		/** per package id, the interned chain that takes it, or `null` while free */
-		const slots: (number | null)[] = previous.map(() => null);
-		const chainKeys = this.chains.map(keyOf);
-		const added: number[] = [];
-		for (const [id, key] of chainKeys.entries()) {
-			const kept = was.get(key);
-			if (kept === undefined) {
-				added.push(id);
-			} else {
-				ids[id] = kept;
-				slots[kept] = id;
-			}
+			// non-zero 64-bit hash (0n is reserved for absent hash)
+			const hash = BigInt(`0x${createHash('sha256').update(key).digest('hex').slice(0, 16)}`) || 1n;
+			hashes[id] = hash;
+			order.push(id);
 		}
-		added.sort((a, b) => compareStrings(chainKeys[a], chainKeys[b]));
-		let free = 0;
-		for (const id of added) {
-			while (free < slots.length && slots[free] !== null) {
-				free++;
-			}
-			ids[id] = free;
-			slots[free] = id;
+		order.sort((a, b) => (hashes[a] < hashes[b] ? -1 : hashes[a] > hashes[b] ? 1 : a - b));
+		const chains: Chain[] = [];
+		for (const id of order) {
+			const chain = this.chains[id];
+			chains.push({
+				contentHash: hashes[id],
+				flags: chain.flags,
+				draws: chain.draws,
+				distanceOrigin: chain.distanceOrigin,
+			});
 		}
-		while (slots.length > 0 && slots.at(-1) === null) {
-			slots.pop();
-		}
-		return {
-			ids,
-			chains: slots.map((id) => (id === null ? EMPTY_CHAIN : this.chains[id])),
-			keys: slots.map((id) => (id === null ? '' : chainKeys[id])),
-		};
+		return { chains, hashes };
 	}
 }
-
-/**
- * the debug file a package records its chains' keys in, which the next pack into its directory keeps the ids
- * of
- */
-export const CHAIN_KEYS_FILE = 'chains.json';
-
-/**
- * @param packageDir a package the pack replaces
- * @returns its chains' keys by id ({@link ChainTable.stableOrder}), or empty when it has none
- */
-export const readChainKeys = async (packageDir: string): Promise<string[]> => {
-	const text = await ignoreMissing(readFile(join(packageDir, DEBUG_DIR, CHAIN_KEYS_FILE), 'utf8'), null);
-	if (text === null) {
-		return [];
-	}
-	const value: unknown = JSON.parse(text);
-	return Array.isArray(value) && value.every((key) => typeof key === 'string') ? value : [];
-};

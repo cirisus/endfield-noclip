@@ -41,7 +41,7 @@ describe('PackedPackage', () => {
 				},
 				0,
 			);
-			const { block } = rows.toBlock([10, 30, 50], Uint32Array.of(0), new Map());
+			const { block } = rows.toBlock([10, 30, 50], BigUint64Array.of(1n), new Map());
 			const encodedBlock = encodeInstanceBlock(block);
 
 			const coreBlobId = await store.put(encodedBlock, {
@@ -59,6 +59,7 @@ describe('PackedPackage', () => {
 
 			const chains: Chain[] = [
 				{
+					contentHash: 1n,
 					flags: 0,
 					distanceOrigin: null,
 					draws: [

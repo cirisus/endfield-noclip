@@ -20,8 +20,6 @@ import { ContentKind } from '@endfield-noclip/package-format/tree';
 import { openArchive } from '@mary-ext/czar';
 import { fromFileHandle } from '@mary-ext/czar/node';
 
-import { compareNumbers } from '../compare.ts';
-
 import { ChainTable } from './instances/chains.ts';
 import { type HlodSample, hlodCandidates, layoutHlodGrid, pickHlodTile } from './instances/hlod-cells.ts';
 import { InstanceBlockBuilder, rowReach } from './instances/instances.ts';
@@ -59,7 +57,7 @@ describe('ChainTable', () => {
 		assert.equal(table.chains.length, 5);
 	});
 
-	it('keeps the replaced package’s chain ids, new chains taking the ones freed', () => {
+	it('assigns deterministic 64-bit content hashes independent of intern order', () => {
 		// geometry ids differ between packs; their keys don't
 		const keys = (names: string[]) => ({
 			geometry: (id: number) => names[id],
@@ -67,30 +65,19 @@ describe('ChainTable', () => {
 			particles: (id: number) => `p${id}`,
 		});
 		const first = new ChainTable();
-		first.intern([draw({ geometry: 0 })]);
-		first.intern([draw({ geometry: 1 })]);
-		const a = first.stableOrder(keys(['a', 'b']), []);
-		assert.deepEqual(
-			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-			[...a.ids].sort(compareNumbers),
-			[0, 1],
-		);
+		const fa = first.intern([draw({ geometry: 0 })]);
+		const fb = first.intern([draw({ geometry: 1 })]);
+		const a = first.canonicalOrder(keys(['a', 'b']));
+		assert.equal(a.chains.length, 2);
+		assert.ok(a.chains[0].contentHash! < a.chains[1].contentHash!);
 
-		// the next pack meets a new chain first, keeps b and drops a
+		// the next pack meets a new chain first, keeps b and drops a: b keeps its exact content hash
 		const second = new ChainTable();
 		second.intern([draw({ geometry: 0 })]);
-		second.intern([draw({ geometry: 1 })]);
-		const b = second.stableOrder(keys(['c', 'b']), a.keys);
-		assert.deepEqual([...b.ids], [a.ids[0], a.ids[1]]);
-		assert.deepEqual(b.keys[b.ids[1]], a.keys[a.ids[1]]);
-
-		// with only b left, the free id holds an empty chain unless it's past the end
-		const third = new ChainTable();
-		third.intern([draw({ geometry: 0 })]);
-		const c = third.stableOrder(keys(['b']), b.keys);
-		assert.equal(c.ids[0], b.ids[1]);
-		assert.equal(c.chains.length, c.ids[0] + 1);
-		assert.ok(c.chains.every((chain, id) => (id === c.ids[0]) === chain.draws.length > 0));
+		const sb = second.intern([draw({ geometry: 1 })]);
+		const b = second.canonicalOrder(keys(['c', 'b']));
+		assert.equal(b.hashes[sb], a.hashes[fb]);
+		assert.notEqual(b.hashes[0], a.hashes[fa]);
 	});
 
 	it('flags how instances are placed, not what their draws are', () => {
@@ -288,14 +275,15 @@ describe('InstanceBlockBuilder', () => {
 		add(2, 1, 1);
 		add(9, 0, 2);
 		add(2, 1, 3);
-		// the package's chain ids, which the rows sort by
-		const chainIds = new Uint32Array(10);
-		chainIds.set([7], 2);
-		chainIds.set([1], 5);
-		chainIds.set([3], 9);
-		const { block, order } = rows.toBlock([64, 0, -256], chainIds, new Map());
+		// the package's canonical chain hashes, which the rows sort by and store in a local palette
+		const chainHashes = new BigUint64Array(10);
+		chainHashes[2] = 7n;
+		chainHashes[5] = 1n;
+		chainHashes[9] = 3n;
+		const { block, order } = rows.toBlock([64, 0, -256], chainHashes, new Map());
 		assert.deepEqual([...order], [2, 0, 1, 3]);
-		assert.deepEqual([...block.chains], [3, 1, 7, 7]);
+		assert.deepEqual([...block.palette!], [3n, 1n, 7n]);
+		assert.deepEqual([...block.chains], [0, 1, 2, 2]);
 		assert.deepEqual(rows.groupsInOrder(order), [0, 1, 1, 1]);
 		assert.deepEqual(rows.entityIdsInOrder(order), [2, 0, 1, 3]);
 		// first output row is entity 2: rows-major 3×4 with the translation in the last column
@@ -322,7 +310,7 @@ describe('InstanceBlockBuilder', () => {
 		add(1, 3, 'left out');
 		const { block, order } = rows.toBlock(
 			[0, 0, 0],
-			Uint32Array.of(0, 1),
+			BigUint64Array.of(1n, 2n),
 			new Map([
 				['7', 0],
 				['13', 4],
@@ -349,7 +337,7 @@ describe('InstanceBlockBuilder', () => {
 		rows.add(row(0, 1), 0);
 		rows.add(row(0, 2, along), 0);
 		rows.add(row(1, 3, up), 0);
-		const { block, order } = rows.toBlock([0, 0, 0], Uint32Array.of(0, 1), new Map());
+		const { block, order } = rows.toBlock([0, 0, 0], BigUint64Array.of(1n, 2n), new Map());
 		assert.deepEqual([...order], [1, 2, 0, 3]);
 		assert.deepEqual([...block.rides.rows], [1, 2, 3]);
 		assert.deepEqual([...block.rides.values], [0, 1, 1]);
@@ -447,7 +435,7 @@ describe('BlobStore', () => {
 				},
 				0,
 			);
-			const { block } = rows.toBlock([0, 0, 0], Uint32Array.of(0, 1), new Map());
+			const { block } = rows.toBlock([0, 0, 0], BigUint64Array.of(1n, 2n), new Map());
 			const index = await store.put(encodeInstanceBlock(block), {
 				kind: BlobKind.Instances,
 				compress: true,
