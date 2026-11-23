@@ -1,6 +1,5 @@
 import { TERRAIN_PAGE_SAMPLES } from '@endfield-noclip/package-format/terrain';
 import type { ContentRef } from '@endfield-noclip/package-format/tree';
-import { rectContains } from '@endfield-noclip/package-format/values';
 
 import { type Camera, type Plane, boxInFrustum, distanceToBox } from '../scene/camera.ts';
 import { type TileNode, type TileTree, isLeaf } from '../scene/tile-tree.ts';
@@ -268,22 +267,36 @@ export class Selector {
 	 */
 	#reached(view: SelectionView): void {
 		const eye = view.camera.position;
-		for (const { reach, refs } of this.#tree.reached) {
-			if (!rectContains(reach, eye[0], eye[2])) {
+		const ex = eye[0];
+		const ez = eye[2];
+		const groupsShown = this.#groupsShown;
+		const reached = this.#tree.reached;
+		let lastNode: TileNode | null = null;
+		let lastDistance = 0;
+		let lastInView: boolean | null = null;
+		for (let i = 0; i < reached.length; i++) {
+			const entry = reached[i];
+			const r = entry.reach;
+			if (ex < r.minX || ex > r.maxX || ez < r.minZ || ez > r.maxZ) {
 				continue;
 			}
-			for (const { node, ref } of refs) {
-				if (!this.#shows(ref)) {
+			const refs = entry.refs;
+			for (let j = 0; j < refs.length; j++) {
+				const { node, ref } = refs[j];
+				if (!(groupsShown[ref.group] ?? false)) {
 					continue;
 				}
-				const distance = Math.max(distanceToBox(node.bounds.min, node.bounds.max, eye), 1);
-				const inView = this.#inView(node, view, distance);
-				if (inView === null) {
+				if (node !== lastNode) {
+					lastNode = node;
+					lastDistance = Math.max(distanceToBox(node.bounds.min, node.bounds.max, eye), 1);
+					lastInView = this.#inView(node, view, lastDistance);
+				}
+				if (lastInView === null) {
 					continue;
 				}
 				const item = this.#stream.want(
 					ref.blob,
-					this.#priority(node, view.pixelFactor / distance, inView, distance),
+					this.#priority(node, view.pixelFactor / lastDistance, lastInView, lastDistance),
 				);
 				if (item !== null) {
 					this.#emitRange(item, ref);
