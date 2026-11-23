@@ -80,6 +80,10 @@ const REQUEST_BYTES = 2 * 1024 * 1024;
  */
 const NON_TEXTURE_EVICT_BIAS = 600;
 
+/** @returns effective eviction age of `item` (lower evicts first) */
+const evictAge = (item: ContentItem): number =>
+	item.usedFrame + (item.kind === BlobKind.Texture ? 0 : NON_TEXTURE_EVICT_BIAS);
+
 /** one request: ranges of one archive, each covering the blobs of a coalesced read */
 interface RangeRequest {
 	shard: ShardRange;
@@ -806,8 +810,6 @@ export class StreamManager {
 			}
 		}
 		const created = this.#created;
-		const evictAge = (item: ContentItem): number =>
-			item.usedFrame + (item.kind === BlobKind.Texture ? 0 : NON_TEXTURE_EVICT_BIAS);
 		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh array
 		candidates.sort(
 			(a, b) => evictAge(a) - evictAge(b) || a.priority - b.priority || created[a.blob] - created[b.blob],
