@@ -96,7 +96,7 @@ describe('ParticleField', () => {
 		const moving = (linear: Vec3, pivot: Vec3 = [0, 0, 0]) =>
 			system({
 				renderMode: ParticleRenderMode.Stretched,
-				stretch: { lengthScale: 2, velocityScale: 0 },
+				stretch: { lengthScale: 2, velocityScale: 0, freeform: false, rotateWithStretchDirection: false },
 				screenSize: { min: 0, max: 2 },
 				looping: false,
 				startLifetime: constant(5),
@@ -154,6 +154,55 @@ describe('ParticleField', () => {
 		// its pivot moves the head along the velocity by its size, and the streak across by half its width
 		const pivoted = written(moving([0, 1, 0], [1, 0.5, 0]), view);
 		assert.ok(near(pivoted, [1, 0, 0, 0, 2, 0, 0, 0, 1, 0.5, -0.5, 0]), [...pivoted.subarray(0, 12)].join());
+	});
+
+	it('keeps a freeform stretched billboard centred on the particle and stretches it linearly along velocity', () => {
+		// Jingyu waterfall mist (`shuiwu` in P_fxmap_common_splashes_middle_2501): downward velocity, freeform stretch
+		const freeform = (linear: Vec3, rotateWithStretchDirection: boolean, pivot: Vec3 = [0, 0, 0]) =>
+			system({
+				renderMode: ParticleRenderMode.Stretched,
+				stretch: { lengthScale: 1.5, velocityScale: 0, freeform: true, rotateWithStretchDirection },
+				screenSize: { min: 0, max: 2 },
+				looping: false,
+				startLifetime: constant(5),
+				rate: constant(0),
+				bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+				shape: null,
+				startSize: [constant(2), constant(3), constant(1)],
+				startRotation: [constant(0), constant(0), constant(0)],
+				gravityModifier: constant(0),
+				pivot,
+				velocity: {
+					linear: [constant(linear[0]), constant(linear[1]), constant(linear[2])],
+					linearInWorld: false,
+					orbital: [constant(0), constant(0), constant(0)],
+					orbitalOffset: [0, 0, 0],
+					radial: constant(0),
+					speedModifier: constant(1),
+				},
+			});
+		const view = {
+			eye,
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, 1, 0],
+			forward: [0, 0, 1],
+		} satisfies Omit<ParticleView, 'time'>;
+		const near = (a: Float32Array, b: number[]) =>
+			b.every((value, i) => Math.abs(a[[0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11][i]] - value) < 1e-5);
+		// moving down without rotateWithStretchDirection: centred at origin, x stays 2, y stretches 3 × 1.5 = 4.5
+		const plain = written(freeform([0, -10, 0], false), view);
+		assert.ok(near(plain, [2, 0, 0, 0, 4.5, 0, 0, 0, 1, 0, 0, 0]), [...plain.subarray(0, 12)].join());
+		// moving right with rotateWithStretchDirection: rotates 90° so x aligns along -vel (stretched 2 × 1.5 = 3),
+		// y stays perpendicular (3), still centred on the particle
+		const turned = written(freeform([10, 0, 0], true), view);
+		assert.ok(near(turned, [-3, 0, 0, 0, -3, 0, 0, 0, 1, 0, 0, 0]), [...turned.subarray(0, 12)].join());
+		// still particle draws unstretched, centred on the particle
+		const still = written(freeform([0, 0, 0], true), view);
+		assert.ok(near(still, [2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0]), [...still.subarray(0, 12)].join());
+		// pivot offset is stretched along velocity too
+		const pivoted = written(freeform([0, -10, 0], false, [0.5, 0.5, 0]), view);
+		assert.ok(near(pivoted, [2, 0, 0, 0, 4.5, 0, 0, 0, 1, 1, 2.25, 0]), [...pivoted.subarray(0, 12)].join());
 	});
 
 	it('writes custom data read at the age over the lifetime, and none for systems without it', () => {

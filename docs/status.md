@@ -365,7 +365,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     whole path; force fields limited to same prefab (no wind zones/scene fields); ring-buffer loop
     replays path; `Facing` → `View`; velocity-billboard roll is viewer-chosen; Loop/PingPong mesh
     bursts pick randomly and count from start delay; cone/circle arc mode/spread (~20 map02 systems)
-    and sphere/hemisphere arcs ignored; stretched quads ignore camera velocity, freeform mode, and
+    and sphere/hemisphere arcs ignored; stretched quads ignore camera velocity and
     `m_NormalDirection < 1`; sheared Hierarchy particles size by axis lengths instead of lossy scale
     (Jingyu big waterwheel splashes ~1/3 wider).
   - **limits**: 1024 live particles/emitter (a few map01 systems exceed slightly); ring-buffered

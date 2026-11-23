@@ -1041,6 +1041,8 @@ export const readParticleSystem = (
 					? {
 							lengthScale: numberField(renderer, 'm_LengthScale'),
 							velocityScale: numberField(renderer, 'm_VelocityScale'),
+							freeform: booleanField(renderer, 'm_FreeformStretching'),
+							rotateWithStretchDirection: booleanField(renderer, 'm_RotateWithStretchDirection'),
 						}
 					: null,
 			screenSize:

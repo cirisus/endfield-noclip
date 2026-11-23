@@ -190,7 +190,12 @@ interface RowContext {
 const vec3 = (): Vec3 => [0, 0, 0];
 const UNIT: Readonly<Vec3> = [1, 1, 1];
 const WORLD_DOWN: Readonly<Vec3> = [0, -1, 0];
-const STILL_STRETCH = { lengthScale: 1, velocityScale: 0 };
+const STILL_STRETCH = {
+	lengthScale: 1,
+	velocityScale: 0,
+	freeform: false,
+	rotateWithStretchDirection: false,
+};
 /** a horizontal quad's frame: lying flat, facing up */
 const FLAT: readonly Vec3[] = [
 	[1, 0, 0],
@@ -317,6 +322,136 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	}
 };
 
+/**
+ * a centred camera-facing billboard linearly stretched along the particle's velocity
+ * (`m_FreeformStretching`). unlike legacy stretched quads, the quad stays centred on the particle (even when
+ * still), keeps its Z rotation (plus the projected velocity angle when `rotateWithStretchDirection` is set),
+ * and stretches its axes and pivot offset by `S(u) = u + (factor - 1) * dot(u, v̂) * v̂`
+ */
+const freeformStretchedShape = (
+	row: RowGeometry,
+	particle: Readonly<ParticleInput>,
+	context: RowContext,
+): void => {
+	const { view, origin, info } = context;
+	const { axes, sizes, center } = row;
+	const [ax0, ax1, face] = axes;
+	const stretch = info.stretch ?? STILL_STRETCH;
+	const v = particle.velocity;
+	const velocity = toWorldInto(scratch.world, context.m, v[0], v[1], v[2]);
+	const speed = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+	const moving = speed > 1e-15;
+	const vx = moving ? velocity[0] / speed : 0;
+	const vy = moving ? velocity[1] / speed : 0;
+	const vz = moving ? velocity[2] / speed : 0;
+	const stretchFactor = Math.abs(
+		(moving && sizes[1] > 1e-15 ? (stretch.velocityScale * speed) / sizes[1] : 0) + stretch.lengthScale,
+	);
+
+	// camera-facing billboard basis (bx, by, bz) at the particle's world position
+	const sight = scratch.sight;
+	sight[0] = origin[0] + center[0] - view.eye[0];
+	sight[1] = origin[1] + center[1] - view.eye[1];
+	sight[2] = origin[2] + center[2] - view.eye[2];
+	const sightLen = Math.sqrt(sight[0] * sight[0] + sight[1] * sight[1] + sight[2] * sight[2]);
+	let bzX: number;
+	let bzY: number;
+	let bzZ: number;
+	if (sightLen > 1e-15) {
+		const inv = 1 / sightLen;
+		bzX = sight[0] * inv;
+		bzY = sight[1] * inv;
+		bzZ = sight[2] * inv;
+	} else {
+		bzX = view.forward[0];
+		bzY = view.forward[1];
+		bzZ = view.forward[2];
+	}
+	const up = view.up;
+	let bxX = up[1] * bzZ - up[2] * bzY;
+	let bxY = up[2] * bzX - up[0] * bzZ;
+	let bxZ = up[0] * bzY - up[1] * bzX;
+	const bxLen = Math.sqrt(bxX * bxX + bxY * bxY + bxZ * bxZ);
+	if (bxLen > 1e-15) {
+		const inv = 1 / bxLen;
+		bxX *= inv;
+		bxY *= inv;
+		bxZ *= inv;
+	} else {
+		bxX = view.right[0];
+		bxY = view.right[1];
+		bxZ = view.right[2];
+	}
+	const byX = bzY * bxZ - bzZ * bxY;
+	const byY = bzZ * bxX - bzX * bxZ;
+	const byZ = bzX * bxY - bzY * bxX;
+
+	// particle's Z rotation, plus the projected velocity angle when rotateWithStretchDirection is set
+	let angle = Math.atan2(ax0[1], ax0[0]);
+	if (stretch.rotateWithStretchDirection && moving) {
+		const vDotZ = vx * bzX + vy * bzY + vz * bzZ;
+		const px = vx - vDotZ * bzX;
+		const py = vy - vDotZ * bzY;
+		const pz = vz - vDotZ * bzZ;
+		const pLen = Math.sqrt(px * px + py * py + pz * pz);
+		if (pLen > 1e-15) {
+			const inv = 1 / pLen;
+			const dx = (bxX * px + bxY * py + bxZ * pz) * inv;
+			const dy = Math.max(-1, Math.min(1, (byX * px + byY * py + byZ * pz) * inv));
+			const sign = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+			angle += Math.acos(dy) * sign + Math.PI * 0.5;
+		} else {
+			angle += Math.PI * 0.5;
+		}
+	}
+	const cos = Math.cos(angle);
+	const sin = Math.sin(angle);
+	const rxX = cos * bxX - sin * byX;
+	const rxY = cos * bxY - sin * byY;
+	const rxZ = cos * bxZ - sin * byZ;
+	const ryX = sin * bxX + cos * byX;
+	const ryY = sin * bxY + cos * byY;
+	const ryZ = sin * bxZ + cos * byZ;
+
+	// apply linear stretch S(u) = u + (stretchFactor - 1) * dot(u, v̂) * v̂ to both axes and pivot offset
+	const k = moving ? stretchFactor - 1 : 0;
+	const rxDot = k * (rxX * vx + rxY * vy + rxZ * vz);
+	ax0[0] = rxX + rxDot * vx;
+	ax0[1] = rxY + rxDot * vy;
+	ax0[2] = rxZ + rxDot * vz;
+	const ryDot = k * (ryX * vx + ryY * vy + ryZ * vz);
+	ax1[0] = ryX + ryDot * vx;
+	ax1[1] = ryY + ryDot * vy;
+	ax1[2] = ryZ + ryDot * vz;
+
+	// face normal, oriented so the quad's -z normal faces the camera
+	normalizeOrZInto(
+		face,
+		ax0[1] * ax1[2] - ax0[2] * ax1[1],
+		ax0[2] * ax1[0] - ax0[0] * ax1[2],
+		ax0[0] * ax1[1] - ax0[1] * ax1[0],
+	);
+	if (face[0] * sight[0] + face[1] * sight[1] + face[2] * sight[2] < 0) {
+		face[0] = -face[0];
+		face[1] = -face[1];
+		face[2] = -face[2];
+	}
+
+	const pivot = info.pivot;
+	if (pivot[0] !== 0 || pivot[1] !== 0 || pivot[2] !== 0) {
+		const p0 = sizes[0] * pivot[0];
+		const p1 = sizes[1] * pivot[1];
+		const p2 = sizes[2] * pivot[2];
+		const px = rxX * p0 + ryX * p1 + bzX * p2;
+		const py = rxY * p0 + ryY * p1 + bzY * p2;
+		const pz = rxZ * p0 + ryZ * p1 + bzZ * p2;
+		const pDot = k * (px * vx + py * vy + pz * vz);
+		center[0] += px + pDot * vx;
+		center[1] += py + pDot * vy;
+		center[2] += pz + pDot * vz;
+	}
+};
+
 /** a locally aligned mesh turns with the emitter's transform, which sizes it only when the system says so */
 const meshLocalShape = (row: RowGeometry, particle: Readonly<ParticleInput>, context: RowContext): void => {
 	const { axes, sizes } = row;
@@ -409,7 +544,12 @@ const fillRowContext = (
 			break;
 		}
 		case ParticleRenderMode.Stretched: {
-			context.shape = stretchedShape;
+			if (info.stretch?.freeform) {
+				context.shape = freeformStretchedShape;
+				context.unitAxes = false;
+			} else {
+				context.shape = stretchedShape;
+			}
 			context.pivoted = false;
 			break;
 		}

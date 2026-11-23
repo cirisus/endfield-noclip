@@ -133,6 +133,8 @@ const renderer = (overrides: Record<string, unknown> = {}): TypeTreeObject => ({
 	m_Pivot: vector(0, 0, 0),
 	m_MinParticleSize: 0,
 	m_MaxParticleSize: 0.5,
+	m_FreeformStretching: false,
+	m_RotateWithStretchDirection: false,
 	m_UseCustomVertexStreams: false,
 	m_VertexStreams: new Uint8Array([0, 1, 3, 4]),
 	...overrides,
@@ -603,10 +605,21 @@ test('billboards draw one quad, stretched ones keep how they lengthen', () => {
 	assert.equal(billboard.info.stretch, null);
 	const stretched = readParticleSystem(
 		system({ scalingMode: 2 }),
-		renderer({ m_RenderMode: 1, m_LengthScale: 1.5, m_VelocityScale: 0.2 }),
+		renderer({
+			m_RenderMode: 1,
+			m_LengthScale: 1.5,
+			m_VelocityScale: 0.2,
+			m_FreeformStretching: true,
+			m_RotateWithStretchDirection: true,
+		}),
 	);
 	assert.ok(stretched !== null && 'info' in stretched);
-	assert.deepEqual(stretched.info.stretch, { lengthScale: 1.5, velocityScale: 0.2 });
+	assert.deepEqual(stretched.info.stretch, {
+		lengthScale: 1.5,
+		velocityScale: 0.2,
+		freeform: true,
+		rotateWithStretchDirection: true,
+	});
 	assert.deepEqual(stretched.info.screenSize, { min: 0, max: 0.5 });
 	assert.equal(stretched.info.sizedByScale, false);
 	assert.equal(billboard.info.sizedByScale, true);

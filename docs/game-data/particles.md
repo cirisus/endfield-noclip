@@ -144,14 +144,26 @@ details:
   - examples: accelerate mushroom arrows (`dajiantou02`/`03`, flat `+z` meshes lifted vertically and
     spun); Jingyu fish (`p_fxmap_map02_lv001_fish_2101`, modelled along `y`, rotated −90° about `x`
     to swim level).
-- **stretched quads** (`m_FreeformStretching` off; freeform path untraced):
-  - length along `−vel`: `size.y · m_LengthScale · emitterScale.x + speed · m_VelocityScale`, using
-    `vel − cameraWorldVel · m_CameraVelocityScale`.
-  - width `size.x` along `vel × (particle − camera)` flattened onto the view plane (particle
-    rotation and `m_RotateWithStretchDirection` unused; zero velocity or velocity along view ray
-    draws nothing).
-  - pivot shifts head forward by `pivot.y · size.y` (no length scale) and sideways by
-    `pivot.x · width / 2` (`pivot.z` unused).
+- **stretched quads** (`m_FreeformStretching` off vs on):
+  - legacy (`m_FreeformStretching` off):
+    - length along `−vel`: `size.y · m_LengthScale · emitterScale.x + speed · m_VelocityScale`,
+      using `vel − cameraWorldVel · m_CameraVelocityScale`.
+    - width `size.x` along `vel × (particle − camera)` flattened onto the view plane (particle
+      rotation and `m_RotateWithStretchDirection` unused; zero velocity or velocity along view ray
+      draws nothing).
+    - pivot shifts head forward by `pivot.y · size.y` (no length scale) and sideways by
+      `pivot.x · width / 2` (`pivot.z` unused).
+  - freeform (`m_FreeformStretching` on, e.g. Jingyu waterfall mist `shuiwu` in
+    `P_fxmap_common_splashes_middle_2501`):
+    - builds a centred camera-facing billboard `(bx, by, bz)` at the particle
+      (`bz = normalize(P − eye)`, `bx = normalize(camUp × bz)`, `by = bz × bx`), rotated in-plane by
+      particle Z rotation (plus `acos(dot(by, vp)) · sign(dot(bx, vp)) + π/2` when
+      `m_RotateWithStretchDirection` is set, where `vp` is velocity projected onto the billboard
+      plane).
+    - stretches each centred corner and pivot offset linearly along unit velocity `v̂` by
+      `S(p) = p + (factor − 1) · dot(p, v̂) · v̂`, where
+      `factor = |m_VelocityScale · |v| / size.y + m_LengthScale|`. still particles stay drawn as
+      unstretched centred billboards.
   - corner normals lean from face normal (toward camera) out along edges by
     `cos(m_NormalDirection · 90°)` (`1` = flat face normal). example: Suiming drifting fog (`smoke`
     in `p_fxmap_map02_lv007_windice01`, 10–13 m streaks at 5–15 m/s, steep Fresnel).
@@ -233,7 +245,7 @@ managed Unity `MinMaxCurve`s (`m_Mode`, `m_ConstantMin/Max`, `m_CurveMultiplier`
 ## open
 
 - [particle systems](#particle-systems): exact per-frame rate-curve integration, donut shape,
-  `separateAxis` speed limits, drag curves, non-sphere force fields, freeform stretch, and Unity
-  trail generation (`minVertexDistance`)
+  `separateAxis` speed limits, drag curves, non-sphere force fields, and Unity trail generation
+  (`minVertexDistance`)
 - [spline movers](#spline-movers): lifetime span formula (`length / speed`, unverified) and how the
   renderer applies `alphaOverLifeTime` fade (untraced)

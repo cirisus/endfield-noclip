@@ -144,6 +144,16 @@ export interface ParticleStretchInfo {
 	lengthScale: number;
 	/** metres added to its length per m/s of speed */
 	velocityScale: number;
+	/**
+	 * whether the quad builds as a centred camera-facing billboard stretched linearly along the velocity
+	 * (`m_FreeformStretching`) rather than a velocity-aligned streak anchored at the particle
+	 */
+	freeform: boolean;
+	/**
+	 * when {@link freeform} is set, whether the quad turns in the billboard plane to align with the projected
+	 * velocity before applying its Z rotation (`m_RotateWithStretchDirection`)
+	 */
+	rotateWithStretchDirection: boolean;
 }
 
 /** {@link ParticleShapeInfo.kind} values, Unity's `ParticleSystemShapeType` (those a viewer emits from) */
