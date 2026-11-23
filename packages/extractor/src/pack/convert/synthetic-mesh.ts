@@ -48,8 +48,9 @@ export const triangulatePolygon = (points: readonly (readonly [number, number])[
 	if (n < 3) {
 		throw new Error(`a polygon needs 3 points, not ${n}`);
 	}
-	// the ring is wound so that its convex corners have cross < 0; a triangle (a, b, c) of it is then emitted
-	// as (a, c, b), whose positive x, z cross product is a front face seen from +y in Unity's left-handed frame
+	// the ring is wound so that its convex corners have cross < 0: in Unity's left-handed frame, a triangle
+	// (a, b, c) with negative x, z cross product winds clockwise seen from +y (a front face, as terrain patches
+	// are wound)
 	let area = 0;
 	for (let i = 0; i < n; i++) {
 		const [ax, az] = points[i];
@@ -85,7 +86,7 @@ export const triangulatePolygon = (points: readonly (readonly [number, number])[
 			if (ring.some((p) => p !== a && p !== b && p !== c && inside(p, a, b, c))) {
 				continue;
 			}
-			indices.push(a, c, b);
+			indices.push(a, b, c);
 			ring.splice(i, 1);
 			clipped = true;
 			break;
@@ -102,7 +103,7 @@ export const triangulatePolygon = (points: readonly (readonly [number, number])[
 		}
 	}
 	if (cross(ring[0], ring[1], ring[2]) < 0) {
-		indices.push(ring[0], ring[2], ring[1]);
+		indices.push(ring[0], ring[1], ring[2]);
 	}
 	return indices;
 };
@@ -199,8 +200,8 @@ const unitCube = (): DecodedMesh => {
 				normals.push(...normal);
 				uvs.push((cu + 1) / 2, (cv + 1) / 2);
 			}
-			// Unity's front faces wind clockwise
-			indices.push(first, first + 2, first + 1, first, first + 3, first + 2);
+			// Unity's front faces wind clockwise (u × v points along `sign · axis`, so (0, 1, 2) faces out)
+			indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
 		}
 	}
 	const bounds: Aabb = { center: [0, 0, 0], extents: [0.5, 0.5, 0.5] };

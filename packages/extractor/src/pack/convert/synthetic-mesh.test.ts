@@ -11,8 +11,8 @@ const triangleStats = (points: readonly (readonly [number, number])[], indices: 
 		const [a, b, c] = [indices[t], indices[t + 1], indices[t + 2]].map((i) => points[i]);
 		const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
 		area += Math.abs(cross) / 2;
-		// as the cube's +y face is wound
-		allUp &&= cross > 0;
+		// clockwise seen from +y in Unity's left-handed frame (+x right, +z up) has cross < 0
+		allUp &&= cross < 0;
 	}
 	return { area, allUp };
 };
@@ -104,8 +104,8 @@ describe('syntheticMesh', () => {
 				ab[0] * ac[1] - ab[1] * ac[0],
 			];
 			const n: number[] = Array.from(normals.subarray(cube.indices[t] * 3, cube.indices[t] * 3 + 3));
-			// seen from outside, a clockwise triangle's edge cross product points inward
-			assert.ok(cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] < 0);
+			// in Unity's left-handed frame, a clockwise front face's algebraic edge cross product points outward
+			assert.ok(cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] > 0);
 		}
 	});
 });
