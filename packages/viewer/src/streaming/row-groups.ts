@@ -7,7 +7,9 @@
  * @module
  */
 
-import { CULL_FLOATS, ROW_WORDS } from '../content/instance-rows.ts';
+import { SPIN_FLOATS } from '@endfield-noclip/package-format/instances';
+
+import { CULL_FLOATS, ROW_WORDS, type RowRides, type RowSpins } from '../content/instance-rows.ts';
 
 /** rows per group; groups don't follow chain runs, so a group can hold rows of several chains */
 export const GROUP_ROWS = 64;
@@ -40,12 +42,101 @@ export interface GroupedRows {
 	cull: Float32Array;
 	/** (chain, first, count) runs */
 	runs: Uint32Array;
-	/**
-	 * rows whose transform changes after the groups are built (spinning and riding rows), ascending; never
-	 * culled by group
-	 */
-	moving: ArrayLike<number> | null;
+	/** the block's spinning rows, whose bounds sweep about their pivots; `null` when none */
+	spins: RowSpins | null;
+	/** the block's riding rows, whose bounds sweep along their paths; `null` when none */
+	rides: RowRides | null;
 }
+
+/** a moving row's swept centre sphere: `[cx, cy, cz, sweepRadius]` relative to the block origin */
+type SweptCenter = readonly [number, number, number, number];
+
+/** f32 per spinning row in `RowSpins.base` */
+const SPIN_BASE_FLOATS = 15;
+/** f32 per riding row in `RowRides.base` */
+const RIDE_BASE_FLOATS = 6;
+
+/**
+ * computes an exact swept sphere for every spinning and riding row's bounds centre, so moving rows stay
+ * finitely bounded and GPU-cullable at all times
+ */
+const sweptCentersOf = (spins: RowSpins | null, rides: RowRides | null): Map<number, SweptCenter> | null => {
+	if (spins === null && rides === null) {
+		return null;
+	}
+	const swept = new Map<number, SweptCenter>();
+	if (spins !== null) {
+		const { rows, values, base } = spins;
+		for (let s = 0; s < rows.length; s++) {
+			const v = s * SPIN_FLOATS;
+			const px = values[v];
+			const py = values[v + 1];
+			const pz = values[v + 2];
+			const b = s * SPIN_BASE_FLOATS;
+			const dx = base[b + 12] - px;
+			const dy = base[b + 13] - py;
+			const dz = base[b + 14] - pz;
+			swept.set(rows[s], [px, py, pz, Math.sqrt(dx * dx + dy * dy + dz * dz)]);
+		}
+	}
+	if (rides !== null) {
+		const { rows, pathOf, base, paths } = rides;
+		const pathBounds: SweptCenter[] = paths.map(({ offsets }) => {
+			if (offsets.length < 3) {
+				return [0, 0, 0, 0];
+			}
+			let minX = Infinity;
+			let minY = Infinity;
+			let minZ = Infinity;
+			let maxX = -Infinity;
+			let maxY = -Infinity;
+			let maxZ = -Infinity;
+			for (let k = 0; k < offsets.length; k += 3) {
+				const x = offsets[k];
+				const y = offsets[k + 1];
+				const z = offsets[k + 2];
+				if (x < minX) {
+					minX = x;
+				}
+				if (y < minY) {
+					minY = y;
+				}
+				if (z < minZ) {
+					minZ = z;
+				}
+				if (x > maxX) {
+					maxX = x;
+				}
+				if (y > maxY) {
+					maxY = y;
+				}
+				if (z > maxZ) {
+					maxZ = z;
+				}
+			}
+			const mx = (minX + maxX) * 0.5;
+			const my = (minY + maxY) * 0.5;
+			const mz = (minZ + maxZ) * 0.5;
+			let maxSq = 0;
+			for (let k = 0; k < offsets.length; k += 3) {
+				const dx = offsets[k] - mx;
+				const dy = offsets[k + 1] - my;
+				const dz = offsets[k + 2] - mz;
+				const sq = dx * dx + dy * dy + dz * dz;
+				if (sq > maxSq) {
+					maxSq = sq;
+				}
+			}
+			return [mx, my, mz, Math.sqrt(maxSq)];
+		});
+		for (let s = 0; s < rows.length; s++) {
+			const b = s * RIDE_BASE_FLOATS;
+			const pb = pathBounds[pathOf[s]];
+			swept.set(rows[s], [base[b + 3] + pb[0], base[b + 4] + pb[1], base[b + 5] + pb[2], pb[3]]);
+		}
+	}
+	return swept;
+};
 
 /**
  * the farthest a chain's instances draw, as a factor of their LODGroup size: Unity's metric is `2 · size ·
@@ -123,6 +214,7 @@ export const groupSegmentsOf = (
 	runs: Uint32Array,
 	cull: Float32Array,
 	mirrored: Uint8Array,
+	swept: Map<number, SweptCenter> | null = null,
 ): { segments: Float32Array<ArrayBuffer>; groupSegments: Uint32Array<ArrayBuffer> } => {
 	const count = cull.length / CULL_FLOATS;
 	const groupCount = Math.ceil(count / GROUP_ROWS);
@@ -142,33 +234,66 @@ export const groupSegmentsOf = (
 			let minSize = Infinity;
 			let maxSize = 0;
 			let handedness = 0;
-			const min = [Infinity, Infinity, Infinity];
-			const max = [-Infinity, -Infinity, -Infinity];
+			let minX = Infinity;
+			let minY = Infinity;
+			let minZ = Infinity;
+			let maxX = -Infinity;
+			let maxY = -Infinity;
+			let maxZ = -Infinity;
 			for (let i = s0; i < s1; i++) {
 				const size = cull[i * CULL_FLOATS + 1];
-				minSize = Math.min(minSize, size);
-				maxSize = Math.max(maxSize, size);
+				if (size < minSize) {
+					minSize = size;
+				}
+				if (size > maxSize) {
+					maxSize = size;
+				}
 				handedness |= mirrored[i] === 1 ? 2 : 1;
-				for (let k = 0; k < 3; k++) {
-					min[k] = Math.min(min[k], rowsF32[i * ROW_WORDS + 12 + k]);
-					max[k] = Math.max(max[k], rowsF32[i * ROW_WORDS + 12 + k]);
+				const sw = swept?.get(i);
+				const x = sw !== undefined ? sw[0] : rowsF32[i * ROW_WORDS + 12];
+				const y = sw !== undefined ? sw[1] : rowsF32[i * ROW_WORDS + 13];
+				const z = sw !== undefined ? sw[2] : rowsF32[i * ROW_WORDS + 14];
+				const sr = sw !== undefined ? sw[3] : 0;
+				if (x - sr < minX) {
+					minX = x - sr;
+				}
+				if (y - sr < minY) {
+					minY = y - sr;
+				}
+				if (z - sr < minZ) {
+					minZ = z - sr;
+				}
+				if (x + sr > maxX) {
+					maxX = x + sr;
+				}
+				if (y + sr > maxY) {
+					maxY = y + sr;
+				}
+				if (z + sr > maxZ) {
+					maxZ = z + sr;
 				}
 			}
-			const centre = [0, 1, 2].map((k) => (min[k] + max[k]) / 2);
+			const cx = (minX + maxX) * 0.5;
+			const cy = (minY + maxY) * 0.5;
+			const cz = (minZ + maxZ) * 0.5;
 			let centers = 0;
 			let radius = 0;
 			for (let i = s0; i < s1; i++) {
-				const at = i * ROW_WORDS + 12;
-				const d = Math.hypot(
-					rowsF32[at] - centre[0],
-					rowsF32[at + 1] - centre[1],
-					rowsF32[at + 2] - centre[2],
-				);
-				centers = Math.max(centers, d);
-				radius = Math.max(radius, d + cull[i * CULL_FLOATS]);
+				const sw = swept?.get(i);
+				const dx = (sw !== undefined ? sw[0] : rowsF32[i * ROW_WORDS + 12]) - cx;
+				const dy = (sw !== undefined ? sw[1] : rowsF32[i * ROW_WORDS + 13]) - cy;
+				const dz = (sw !== undefined ? sw[2] : rowsF32[i * ROW_WORDS + 14]) - cz;
+				const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + (sw !== undefined ? sw[3] : 0);
+				if (d > centers) {
+					centers = d;
+				}
+				const total = d + cull[i * CULL_FLOATS];
+				if (total > radius) {
+					radius = total;
+				}
 			}
 			// a centimetre more covers the centre's rounding to f32
-			out.push(s0, s1, q / 3, minSize, maxSize, handedness, ...centre, centers + 0.01, radius + 0.01);
+			out.push(s0, s1, q / 3, minSize, maxSize, handedness, cx, cy, cz, centers + 0.01, radius + 0.01);
 		}
 	}
 	groupSegments[groupCount] = out.length / SEGMENT_FLOATS;
@@ -196,10 +321,11 @@ export interface RowBounds {
  */
 export const buildRowBounds = (rows: GroupedRows): RowBounds => {
 	const mirrored = mirroredRows(rows.rowsF32, rows.cull.length / CULL_FLOATS);
+	const swept = sweptCentersOf(rows.spins, rows.rides);
 	return {
-		groups: buildRowGroups(rows),
+		groups: buildRowGroupsFromSwept(rows.rowsF32, rows.cull, swept),
 		mirrored,
-		...groupSegmentsOf(rows.rowsF32, rows.runs, rows.cull, mirrored),
+		...groupSegmentsOf(rows.rowsF32, rows.runs, rows.cull, mirrored, swept),
 	};
 };
 
@@ -236,11 +362,16 @@ export const setGroupReaches = (
  * @returns {@link GROUP_FLOATS} floats per group of {@link GROUP_ROWS} rows, the last group possibly shorter,
  *   each with an infinite {@link GroupFloat.reach}
  */
-export const buildRowGroups = (rows: GroupedRows): Float32Array<ArrayBuffer> => {
-	const { rowsF32: f32, cull, moving } = rows;
+export const buildRowGroups = (rows: GroupedRows): Float32Array<ArrayBuffer> =>
+	buildRowGroupsFromSwept(rows.rowsF32, rows.cull, sweptCentersOf(rows.spins, rows.rides));
+
+const buildRowGroupsFromSwept = (
+	f32: Float32Array,
+	cull: Float32Array,
+	swept: Map<number, SweptCenter> | null,
+): Float32Array<ArrayBuffer> => {
 	const count = cull.length / CULL_FLOATS;
 	const groups = new Float32Array(Math.ceil(count / GROUP_ROWS) * GROUP_FLOATS);
-	let next = 0;
 	for (let g = 0; g * GROUP_ROWS < count; g++) {
 		const first = g * GROUP_ROWS;
 		const end = Math.min(count, first + GROUP_ROWS);
@@ -251,36 +382,51 @@ export const buildRowGroups = (rows: GroupedRows): Float32Array<ArrayBuffer> => 
 		let maxY = -Infinity;
 		let maxZ = -Infinity;
 		for (let i = first; i < end; i++) {
-			const at = i * ROW_WORDS;
-			minX = Math.min(minX, f32[at + 12]);
-			minY = Math.min(minY, f32[at + 13]);
-			minZ = Math.min(minZ, f32[at + 14]);
-			maxX = Math.max(maxX, f32[at + 12]);
-			maxY = Math.max(maxY, f32[at + 13]);
-			maxZ = Math.max(maxZ, f32[at + 14]);
+			const sw = swept?.get(i);
+			const x = sw !== undefined ? sw[0] : f32[i * ROW_WORDS + 12];
+			const y = sw !== undefined ? sw[1] : f32[i * ROW_WORDS + 13];
+			const z = sw !== undefined ? sw[2] : f32[i * ROW_WORDS + 14];
+			const sr = sw !== undefined ? sw[3] : 0;
+			if (x - sr < minX) {
+				minX = x - sr;
+			}
+			if (y - sr < minY) {
+				minY = y - sr;
+			}
+			if (z - sr < minZ) {
+				minZ = z - sr;
+			}
+			if (x + sr > maxX) {
+				maxX = x + sr;
+			}
+			if (y + sr > maxY) {
+				maxY = y + sr;
+			}
+			if (z + sr > maxZ) {
+				maxZ = z + sr;
+			}
 		}
-		const cx = (minX + maxX) / 2;
-		const cy = (minY + maxY) / 2;
-		const cz = (minZ + maxZ) / 2;
+		const cx = (minX + maxX) * 0.5;
+		const cy = (minY + maxY) * 0.5;
+		const cz = (minZ + maxZ) * 0.5;
 		let centers = 0;
 		let radius = 0;
 		let rowRadius = 0;
 		for (let i = first; i < end; i++) {
-			const at = i * ROW_WORDS;
-			const d = Math.hypot(f32[at + 12] - cx, f32[at + 13] - cy, f32[at + 14] - cz);
+			const sw = swept?.get(i);
+			const dx = (sw !== undefined ? sw[0] : f32[i * ROW_WORDS + 12]) - cx;
+			const dy = (sw !== undefined ? sw[1] : f32[i * ROW_WORDS + 13]) - cy;
+			const dz = (sw !== undefined ? sw[2] : f32[i * ROW_WORDS + 14]) - cz;
+			const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + (sw !== undefined ? sw[3] : 0);
 			const r = cull[i * CULL_FLOATS];
-			centers = Math.max(centers, d);
-			radius = Math.max(radius, d + r);
-			rowRadius = Math.max(rowRadius, r);
-		}
-		// a moving row can be anywhere its turning or its path takes it
-		if (moving !== null) {
-			while (next < moving.length && moving[next] < first) {
-				next++;
+			if (d > centers) {
+				centers = d;
 			}
-			if (next < moving.length && moving[next] < end) {
-				centers = Infinity;
-				radius = Infinity;
+			if (d + r > radius) {
+				radius = d + r;
+			}
+			if (r > rowRadius) {
+				rowRadius = r;
 			}
 		}
 		const out = g * GROUP_FLOATS;

@@ -19,7 +19,7 @@ import {
 
 import { MeshoptDecoder } from 'meshoptimizer/decoder';
 
-import { buildInstanceRows, movingRows } from '../content/instance-rows.ts';
+import { buildInstanceRows } from '../content/instance-rows.ts';
 import { buildRowBounds } from '../streaming/row-groups.ts';
 
 import type {
@@ -413,7 +413,8 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 				rowsF32: new Float32Array(built.rows.buffer),
 				cull: built.cull,
 				runs: built.runs,
-				moving: movingRows(built.spins, built.rides),
+				spins: built.spins,
+				rides: built.rides,
 			});
 			const transfer: Transferable[] = [
 				bounds.groups.buffer,

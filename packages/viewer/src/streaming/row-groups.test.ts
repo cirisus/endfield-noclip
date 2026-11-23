@@ -10,7 +10,6 @@ import {
 	SEGMENT_FLOATS,
 	SegmentFloat,
 	buildRowBounds,
-	buildRowGroups,
 	chainReach,
 	groupSegmentsOf,
 	mirroredRows,
@@ -34,7 +33,7 @@ it('bounds each group of rows and its farthest LOD', () => {
 	const { rowsF32, cull } = rowsAt(centers, 1, 2);
 	// chain 0 covers the first group, chain 1 (never culled by size) the two rows of the second
 	const runs = new Uint32Array([0, 0, GROUP_ROWS, 1, GROUP_ROWS, 2]);
-	const bounds = buildRowBounds({ rowsF32, cull, runs, moving: null });
+	const bounds = buildRowBounds({ rowsF32, cull, runs, spins: null, rides: null });
 	const groups = bounds.groups;
 	// until the chains' slots are known, no group is out of reach
 	assert.equal(groups[GroupFloat.reach], Infinity);
@@ -52,18 +51,39 @@ it('bounds each group of rows and its farthest LOD', () => {
 	assert.equal(groups[GROUP_FLOATS + GroupFloat.reach], Infinity);
 });
 
-it('never rejects a group holding a moving row', () => {
+it('sweeps spinning and riding rows into finite group and segment bounds', () => {
 	const { rowsF32, cull } = rowsAt(
 		[
 			[0, 0, 0],
-			[1, 0, 0],
+			[4, 0, 0],
 		],
 		1,
 		1,
 	);
-	const groups = buildRowGroups({ rowsF32, cull, runs: new Uint32Array([0, 0, 2]), moving: [1] });
-	assert.equal(groups[GroupFloat.radius], Infinity);
-	assert.equal(groups[GroupFloat.centersRadius], Infinity);
+	// row 0 spins about (0, 0, 0) with base centre (3, 0, 0) → sweep radius 3 around (0, 0, 0)
+	const spinBase = new Float32Array(15);
+	spinBase.set([3, 0, 0], 12);
+	const spins = {
+		rows: new Uint32Array([0]),
+		values: new Float32Array([0, 0, 0, 0, 1, 0, 1]),
+		base: spinBase,
+		runs: new Uint32Array([0, 1]),
+	};
+	// row 1 rides along x ∈ [0, 6] from base centre (4, 0, 0) → sweep radius 3 around (7, 0, 0)
+	const rides = {
+		rows: new Uint32Array([1]),
+		pathOf: new Uint32Array([0]),
+		base: new Float32Array([4, 0, 0, 4, 0, 0]),
+		runs: new Uint32Array([1, 2]),
+		paths: [{ frameRate: 30, offsets: new Float32Array([0, 0, 0, 6, 0, 0]) }],
+	};
+	const bounds = buildRowBounds({ rowsF32, cull, runs: new Uint32Array([0, 0, 2]), spins, rides });
+	const groups = bounds.groups;
+	// swept x ranges: [-3, 3] and [4, 10] → group midpoint 3.5, centres radius 3.5 + 3 = 6.5, radius 7.5
+	assert.ok(Number.isFinite(groups[GroupFloat.radius]));
+	assert.ok(Math.abs(groups[GroupFloat.center] - 3.5) < 1e-4);
+	assert.ok(Math.abs(groups[GroupFloat.centersRadius] - 6.5) < 0.02);
+	assert.ok(Math.abs(groups[GroupFloat.radius] - 7.5) < 0.02);
 });
 
 it('gives chains without drawn slots no reach, and distance-measured chains every reach', () => {
