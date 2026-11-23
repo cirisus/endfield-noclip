@@ -39,7 +39,30 @@ export interface StatesInfo {
 	 * data
 	 */
 	mainStory: number[];
+	/**
+	 * optional unified state bindings mapping controls to non-visibility targets (environment volume weights,
+	 * water levels, fire-seed reveal radii, shader parameters, and assembly states)
+	 */
+	bindings?: StateBinding[];
 }
+
+/**
+ * expanded value domain for a {@link SceneControl}, allowing integer and continuous range controls beyond
+ * 32-bit enum masks
+ */
+export type ControlDomain =
+	| { kind: 'enum'; values: SceneControlValue[] }
+	| { kind: 'int'; min: number; max: number; step?: number }
+	| { kind: 'range'; min: number; max: number; unit?: string };
+
+/** a unified binding from a {@link SceneControl} to a viewer target, replacing ad-hoc per-table control fields */
+export type StateBinding =
+	| { kind: 'visibility'; control: number; group: number }
+	| { kind: 'envWeight'; control: number; volume: number }
+	| { kind: 'waterLevel'; control: number; volume: number }
+	| { kind: 'fireSeed'; control: number; radii: [inner: number, outer: number][] }
+	| { kind: 'shaderParam'; control: number; material: number; param: string; values: number[] }
+	| { kind: 'assemblyState'; control: number; assembly: number };
 
 /** a mission, labelled from the game's text */
 export interface MissionInfo {
@@ -165,6 +188,8 @@ export interface SceneControl {
 	category: number;
 	/** the selectable values, ascending; each below 32 */
 	values: SceneControlValue[];
+	/** optional expanded value domain (`enum`, `int`, or `range`) for controls beyond 32-bit enum masks */
+	domain?: ControlDomain;
 	/** the value shown unless the user picks one; for a derived control, its value under the other defaults */
 	default: number;
 	/** what the default assumes, e.g. "story finished" */

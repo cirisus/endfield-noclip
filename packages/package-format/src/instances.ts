@@ -171,7 +171,7 @@ export interface InstanceBlock {
 	/** optional sparse `.anim` motion clip bindings (`MOTN` section: 2 u32 words per row) */
 	motions?: RowSection<Uint32Array>;
 	/** optional sparse static `LODGroup` reference spheres (`LODG` section: 4 f32 per row) */
-	lodGroups?: RowSection<Float32Array>;
+	lodGroups?: RowSection;
 	/** optional sparse assembly node bindings (`ASMB` section: 1 u32 node id per row) */
 	assemblyNodes?: RowSection<Uint32Array>;
 }
