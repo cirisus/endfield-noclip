@@ -154,7 +154,9 @@ builds, or material derivations.
 see [quality settings](../game-data/quality-settings.md) for what the game toggles.
 
 - **GPU LOD selection.** moving slot picking and bucket allocation to GPU (count, prefix sum, write)
-  would reduce CPU work from per-segment to per-row-group.
+  at 64-row group granularity over-requests geometry (~2×) and expands empty indirect draws (~2.6×)
+  because loose group spheres widen LOD bands and cross-group chain unions widen shadow layers; a
+  viable GPU-LOD path would need tighter per-LOD bounds or GPU-driven draw compaction.
 - **eviction policy.** sizing the stream budget to the device or adding mip hysteresis without
   triggering saturation.
 - **16-bit local-light shadow atlas.** currently `depth32float` (64 MiB); `depth16unorm` needs a
@@ -163,8 +165,9 @@ see [quality settings](../game-data/quality-settings.md) for what the game toggl
 - **settle-frame selection reuse for moving rows.** spinning/riding rows have exact finite swept
   bounds (so their 64-row groups stay GPU-cullable), and reusing their selection across settle
   frames would let still views skip re-traversal too.
-- **shadow caching.** cache cascades across selections when fit and casters match; tile the far
-  shadow layer (game caches 200 m tiles and redraws ≤ 8/frame instead of the whole layer).
+- **shadow caching.** cache cascades across selections when fit and casters match; tiling the far
+  shadow layer (200 m / 256² tiles, ≤ 8/frame) only pays off with per-tile CPU draw culling, since
+  the full far layer is already amortized to ~0.04 ms/frame GPU via `FAR_LAYER_INTERVAL = 8`.
 - **pack ambient + sky reflection.** combine both `rgba16float` targets (16 B/px, reflection alpha
   unused) into one `rg32uint` (shared-exponent or 11-11-10) to save ~32 MiB at 2560×1600 and
   matching reads (`celestial` would need its own target).
