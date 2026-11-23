@@ -220,7 +220,7 @@ fn append(bucket: u32, region: u32, row: u32) {
 // tests a row and appends it to each of its slots' buckets: to the rows in view, and to the casters of every
 // layer from its first on that the slot casts into (the sharp cascades take realtime casters, the far layer
 // static ones)
-@compute @workgroup_size(32)
+@compute @workgroup_size(64)
 fn cs_write(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index) lane: u32) {
 	let item = item_of(group);
 	if (item >= view.item_count) {

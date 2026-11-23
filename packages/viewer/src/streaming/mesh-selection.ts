@@ -17,6 +17,7 @@ import type { Plane } from '../scene/camera.ts';
 
 import {
 	type GpuCullWork,
+	ITEM_WORDS,
 	ItemFlags,
 	MAX_LIGHT_CASTERS,
 	NO_BUCKET,
@@ -602,6 +603,12 @@ export class MeshSelector {
 					: (2 * segments[at + SegmentFloat.maxSize] * pixelFactor) / (nearest * viewportHeight);
 			const smallest = (2 * segments[at + SegmentFloat.minSize] * pixelFactor) / (far * viewportHeight);
 			const high = largest * largest * BAND_SLACK;
+			if (
+				castOnly &&
+				high <= (segmentLayer === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3])
+			) {
+				continue;
+			}
 			const low = (smallest * smallest) / BAND_SLACK;
 			const scale = castOnly ? CASTER_PRIORITY : 1;
 			const priority = largest * viewportHeight * scale;
@@ -652,33 +659,37 @@ export class MeshSelector {
 				for (let c = 0; c < count; c++) {
 					this.#addSlot(candidates[c], candidates[c]);
 				}
-				continue;
-			}
-			for (let c = 0; c < count; c++) {
-				const lod = candidates[c].lod;
-				if (this.#seenLod(count, c)) {
-					continue;
-				}
-				let lodReady = true;
-				for (let d = c; d < count; d++) {
-					if (candidates[d].lod === lod && this.#ready[candidates[d].geometry] === 0) {
-						lodReady = false;
+			} else {
+				for (let c = 0; c < count; c++) {
+					const lod = candidates[c].lod;
+					if (this.#seenLod(count, c)) {
+						continue;
 					}
-				}
-				if (lodReady) {
+					let lodReady = true;
 					for (let d = c; d < count; d++) {
-						if (candidates[d].lod === lod) {
-							this.#addSlot(candidates[d], candidates[d]);
+						if (candidates[d].lod === lod && this.#ready[candidates[d].geometry] === 0) {
+							lodReady = false;
 						}
 					}
-					continue;
+					if (lodReady) {
+						for (let d = c; d < count; d++) {
+							if (candidates[d].lod === lod) {
+								this.#addSlot(candidates[d], candidates[d]);
+							}
+						}
+						continue;
+					}
+					// the stand-in's slots draw in the band of the LOD they stand in for
+					const standIns = this.#residentLod(chain, slots, lod, { castOnly });
+					const band = candidates[c];
+					for (let p = 0; p < standIns; p++) {
+						this.#addSlot(band, this.#pending[p]);
+					}
 				}
-				// the stand-in's slots draw in the band of the LOD they stand in for
-				const standIns = this.#residentLod(chain, slots, lod, { castOnly });
-				const band = candidates[c];
-				for (let p = 0; p < standIns; p++) {
-					this.#addSlot(band, this.#pending[p]);
-				}
+			}
+			// drop the item if every slot was culled (e.g. out-of-view segment below shadow size thresholds)
+			if (work.items[(work.itemCount - 1) * ITEM_WORDS + 3] === 0) {
+				work.itemCount--;
 			}
 		}
 	}

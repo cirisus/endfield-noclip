@@ -10,7 +10,7 @@
 import { CULL_FLOATS, ROW_WORDS } from '../content/instance-rows.ts';
 
 /** rows per group; groups don't follow chain runs, so a group can hold rows of several chains */
-export const GROUP_ROWS = 32;
+export const GROUP_ROWS = 64;
 
 /** f32 per group, laid out as {@link GroupFloat} names them */
 export const GROUP_FLOATS = 8;
