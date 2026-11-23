@@ -142,6 +142,122 @@ const burstKey = (burst: number, cycle: number): number => burst * 2 ** 20 + cyc
 const innerRadius = (shape: ParticleShapeRadius): number =>
 	1 - Math.min(Math.max(shape.radiusThickness, 0), 1);
 
+/** @returns whether a MinMaxCurve is always zero */
+const isZeroCurve = (curve: MinMaxCurveInfo): boolean =>
+	curve.mode === CurveMode.Constant && curve.scalar === 0;
+
+/**
+ * a particle's immutable birth attributes and over-lifetime random draws, computed once when the particle is
+ * first seen and reused across frames until it dies
+ */
+interface BirthState {
+	born: number;
+	u: number;
+	life: number;
+	drawsMesh: boolean;
+	placed: boolean;
+	emittedFrom: boolean;
+	startX: number;
+	startY: number;
+	startZ: number;
+	dirX: number;
+	dirY: number;
+	dirZ: number;
+	sizeX: number;
+	sizeY: number;
+	sizeZ: number;
+	speed: number;
+	gravity: number;
+	modifier: number;
+	modifierR: number;
+	rotX: number;
+	rotY: number;
+	rotZ: number;
+	qx: number;
+	qy: number;
+	qz: number;
+	qw: number;
+	colorR: number;
+	colorG: number;
+	colorB: number;
+	colorA: number;
+	growth: number;
+	colorOverR: number;
+	dragR: number;
+	splineR: number;
+	linearR0: number;
+	linearR1: number;
+	linearR2: number;
+	radialR: number;
+	outwardX: number;
+	outwardY: number;
+	outwardZ: number;
+	orbitalR0: number;
+	orbitalR1: number;
+	orbitalR2: number;
+	spinR0: number;
+	spinR1: number;
+	spinR2: number;
+	customR0: number;
+	customR1: number;
+	customR2: number;
+	customR3: number;
+}
+
+const emptyBirth = (): BirthState => ({
+	born: 0,
+	u: 0,
+	life: 0,
+	drawsMesh: true,
+	placed: false,
+	emittedFrom: false,
+	startX: 0,
+	startY: 0,
+	startZ: 0,
+	dirX: 0,
+	dirY: 0,
+	dirZ: 1,
+	sizeX: 1,
+	sizeY: 1,
+	sizeZ: 1,
+	speed: 0,
+	gravity: 0,
+	modifier: 1,
+	modifierR: 0,
+	rotX: 0,
+	rotY: 0,
+	rotZ: 0,
+	qx: 0,
+	qy: 0,
+	qz: 0,
+	qw: 1,
+	colorR: 1,
+	colorG: 1,
+	colorB: 1,
+	colorA: 1,
+	growth: 0,
+	colorOverR: 0,
+	dragR: 0,
+	splineR: 0,
+	linearR0: 0,
+	linearR1: 0,
+	linearR2: 0,
+	radialR: 0,
+	outwardX: 0,
+	outwardY: 0,
+	outwardZ: 1,
+	orbitalR0: 0,
+	orbitalR1: 0,
+	orbitalR2: 0,
+	spinR0: 0,
+	spinR1: 0,
+	spinR2: 0,
+	customR0: 0,
+	customR1: 0,
+	customR2: 0,
+	customR3: 0,
+});
+
 /** a live particle being placed */
 interface Placing {
 	id: number;
@@ -322,6 +438,20 @@ export class ParticleSimulation {
 	#stepped = new Map<number, SteppedState>();
 	/** the stepped particles placed during the current {@link evaluate} */
 	#steppedNow = new Map<number, SteppedState>();
+	/** live particles' cached birth attributes from the last {@link evaluate}, keyed by particle id */
+	#births = new Map<number, BirthState>();
+	/** birth attributes still live during the current {@link evaluate} */
+	#birthsNow = new Map<number, BirthState>();
+	/** recycled {@link BirthState} records from dead particles */
+	readonly #birthPool: BirthState[] = [];
+	/** precomputed flags for skipping constant-zero modules on every particle */
+	readonly #hasLinear: boolean;
+	readonly #hasRadial: boolean;
+	readonly #hasOrbital: boolean;
+	readonly #hasSpin: boolean;
+	readonly #spinAxis: readonly [boolean, boolean, boolean];
+	readonly #hasCustom: boolean;
+	readonly #modifierConstant: boolean;
 	/** world down in the emitter's frame, for the current {@link evaluate} */
 	#down: Readonly<Vec3> = ZERO;
 	/** turns a world direction into the emitter's frame, for the current {@link evaluate} */
@@ -397,6 +527,32 @@ export class ParticleSimulation {
 			(rotation[1] * Math.PI) / 180,
 			(rotation[2] * Math.PI) / 180,
 		);
+		const velocity = info.motion.kind === 'free' ? info.motion.velocity : null;
+		this.#hasLinear =
+			velocity !== null &&
+			(!isZeroCurve(velocity.linear[0]) ||
+				!isZeroCurve(velocity.linear[1]) ||
+				!isZeroCurve(velocity.linear[2]));
+		this.#hasRadial = velocity !== null && !isZeroCurve(velocity.radial);
+		this.#hasOrbital =
+			velocity !== null &&
+			(!isZeroCurve(velocity.orbital[0]) ||
+				!isZeroCurve(velocity.orbital[1]) ||
+				!isZeroCurve(velocity.orbital[2]));
+		const spin = info.rotationOverLifetime;
+		this.#spinAxis =
+			spin === null
+				? [false, false, false]
+				: [!isZeroCurve(spin[0]), !isZeroCurve(spin[1]), !isZeroCurve(spin[2])];
+		this.#hasSpin = this.#spinAxis[0] || this.#spinAxis[1] || this.#spinAxis[2];
+		const custom = info.customData;
+		this.#hasCustom =
+			custom !== null &&
+			(custom[0] !== null || custom[1] !== null || custom[2] !== null || custom[3] !== null);
+		this.#modifierConstant =
+			velocity === null ||
+			velocity.speedModifier.mode === CurveMode.Constant ||
+			velocity.speedModifier.mode === CurveMode.TwoConstants;
 	}
 
 	/** seconds a looping system needs to look as if it had always played */
@@ -442,6 +598,7 @@ export class ParticleSimulation {
 		this.#emittedFrom = emittedFrom ?? null;
 		const emissions = this.#capped ? this.#admit(time) : this.#emitted(time - this.#lookback, time);
 		this.#steppedNow.clear();
+		this.#birthsNow.clear();
 		const capacity = Math.floor(out.length / PARTICLE_FLOATS);
 		if (this.info.trail !== null && this.#written.length < capacity * WRITTEN_FLOATS) {
 			this.#written = new Float64Array(capacity * WRITTEN_FLOATS);
@@ -454,9 +611,11 @@ export class ParticleSimulation {
 			if (ringBuffer === null && alive >= maxParticles) {
 				break;
 			}
-			const { time: born, id } = emissions[i];
+			const emission = emissions[i];
+			const { time: born, id } = emission;
 			let age = time - born;
-			const life = this.#lifetime(emissions[i]);
+			const birth = this.#birthOf(emission);
+			const life = birth.life;
 			if (age < 0 || (ringBuffer === null && age >= life)) {
 				continue;
 			}
@@ -487,17 +646,17 @@ export class ParticleSimulation {
 				}
 			}
 			// a particle that runs off its path's end is gone
-			if (this.#splineAt(id, age, life) === null) {
+			if (this.#splineAt(birth.splineR, age, life) === null) {
 				continue;
 			}
 			alive++;
-			if (this.#drawsMesh(id)) {
+			if (birth.drawsMesh) {
 				placing.id = id;
 				placing.born = born;
 				placing.life = life;
 				placing.age = age;
 				placing.moved = moved;
-				this.#place(placing, out, count * PARTICLE_FLOATS);
+				this.#place(placing, birth, out, count * PARTICLE_FLOATS);
 				if (this.info.trail !== null) {
 					const w = count * WRITTEN_FLOATS;
 					this.#written[w] = id;
@@ -509,21 +668,53 @@ export class ParticleSimulation {
 				count++;
 			}
 		}
-		// keep only the particles still drawn
+		// keep only the particles still drawn, recycling dead birth records
 		[this.#stepped, this.#steppedNow] = [this.#steppedNow, this.#stepped];
+		for (const dead of this.#births.values()) {
+			this.#birthPool.push(dead);
+		}
+		this.#births.clear();
+		[this.#births, this.#birthsNow] = [this.#birthsNow, this.#births];
 		return count;
+	}
+
+	/**
+	 * looks up or creates a live particle's {@link BirthState}, moving it into {@link #birthsNow} so it stays
+	 * cached while alive
+	 */
+	#birthOf(emission: Emission): BirthState {
+		const { id, time: born } = emission;
+		const hasEmittedFrom = this.#emittedFrom !== null;
+		let birth = this.#births.get(id);
+		if (birth !== undefined && birth.born === born && birth.emittedFrom === hasEmittedFrom) {
+			this.#births.delete(id);
+			this.#birthsNow.set(id, birth);
+			return birth;
+		}
+		birth = this.#birthPool.pop() ?? emptyBirth();
+		const u = this.#loopFraction(born);
+		birth.born = born;
+		birth.u = u;
+		birth.life = evaluateMinMax(this.info.startLifetime, u, random(this.#seed, id, Channel.Lifetime));
+		birth.drawsMesh = this.#drawsMesh(id);
+		birth.placed = false;
+		birth.emittedFrom = hasEmittedFrom;
+		if (this.info.motion.kind === 'spline') {
+			birth.splineR = random(this.#seed, id, Channel.SplineSpeed);
+		}
+		this.#birthsNow.set(id, birth);
+		return birth;
 	}
 
 	/**
 	 * @returns where a particle is along the system's path and how it moves there, in the path's frame:
 	 *   `undefined` without a path, `null` once it has run off the end
 	 */
-	#splineAt(id: number, age: number, life: number): { position: Vec3; moving: Vec3 } | null | undefined {
+	#splineAt(r: number, age: number, life: number): { position: Vec3; moving: Vec3 } | null | undefined {
 		const spline = this.info.motion;
 		if (spline.kind !== 'spline') {
 			return undefined;
 		}
-		const r = random(this.#seed, id, Channel.SplineSpeed);
 		const point = splinePoint(spline, travelled(spline.speed, age, life, r));
 		if (point === null) {
 			return null;
@@ -898,12 +1089,12 @@ export class ParticleSimulation {
 		drag: ParticleDragInfo | null,
 		velocity: ParticleVelocityInfo | null,
 		motion: PathStart,
+		birth: BirthState,
 		position: Vec3,
 		moving: Vec3,
 	): void {
-		const seed = this.#seed;
 		const down = this.#down;
-		const { id, start, direction, speed, modifier, modifierAt, gravity, startSize, age, life } = motion;
+		const { start, direction, speed, modifier, modifierAt, gravity, startSize, age, life } = motion;
 		const scale = modifierAt === null ? undefined : motion.modifierCurve;
 		// a ring buffer's paused particle moves on past its lifetime with its curves at their end
 		const lived = livedAt(age, life);
@@ -924,51 +1115,66 @@ export class ParticleSimulation {
 		} else {
 			// drag slows the velocity itself and the constant modifier (curves don't come with drag) scales the move
 			const size = Math.max(startSize[0], startSize[1], startSize[2]);
-			const r = random(seed, id, Channel.Drag);
-			[launch, launchSpeed] = dragged(drag, speed, size, age, r);
-			[fall, fallSpeed] = draggedFall(drag, gravity, size, age, r);
+			[launch, launchSpeed] = dragged(drag, speed, size, age, birth.dragR);
+			[fall, fallSpeed] = draggedFall(drag, gravity, size, age, birth.dragR);
 			launch *= modifier;
 			launchSpeed *= modifier;
 			fall *= modifier;
 			fallSpeed *= modifier;
 		}
-		for (let axis = 0; axis < 3; axis++) {
-			position[axis] = start[axis] + direction[axis] * launch + down[axis] * fall;
-			moving[axis] = direction[axis] * launchSpeed + down[axis] * fallSpeed;
-		}
+		position[0] = start[0] + direction[0] * launch + down[0] * fall;
+		position[1] = start[1] + direction[1] * launch + down[1] * fall;
+		position[2] = start[2] + direction[2] * launch + down[2] * fall;
+		moving[0] = direction[0] * launchSpeed + down[0] * fallSpeed;
+		moving[1] = direction[1] * launchSpeed + down[1] * fallSpeed;
+		moving[2] = direction[2] * launchSpeed + down[2] * fallSpeed;
 		if (velocity === null) {
 			return;
 		}
-		const { linear, linearNow, outward, turn, around } = free;
-		for (let axis = 0; axis < 3; axis++) {
-			const r = random(seed, id, Channel.VelocityX + axis);
-			linear[axis] = travelled(velocity.linear[axis], age, life, r, scale);
-			linearNow[axis] = evaluateMinMax(velocity.linear[axis], lived, r) * scaleNow;
+		const { linear, linearNow, turn, around } = free;
+		if (this.#hasLinear) {
+			linear[0] = travelled(velocity.linear[0], age, life, birth.linearR0, scale);
+			linear[1] = travelled(velocity.linear[1], age, life, birth.linearR1, scale);
+			linear[2] = travelled(velocity.linear[2], age, life, birth.linearR2, scale);
+			linearNow[0] = evaluateMinMax(velocity.linear[0], lived, birth.linearR0) * scaleNow;
+			linearNow[1] = evaluateMinMax(velocity.linear[1], lived, birth.linearR1) * scaleNow;
+			linearNow[2] = evaluateMinMax(velocity.linear[2], lived, birth.linearR2) * scaleNow;
+			if (velocity.linearInWorld) {
+				copy(linear, this.#worldToLocal(linear));
+				copy(linearNow, this.#worldToLocal(linearNow));
+			}
+			position[0] += linear[0] * modifier;
+			position[1] += linear[1] * modifier;
+			position[2] += linear[2] * modifier;
+			moving[0] += linearNow[0] * modifier;
+			moving[1] += linearNow[1] * modifier;
+			moving[2] += linearNow[2] * modifier;
 		}
-		if (velocity.linearInWorld) {
-			copy(linear, this.#worldToLocal(linear));
-			copy(linearNow, this.#worldToLocal(linearNow));
+		if (this.#hasRadial) {
+			const radialSpeed = evaluateMinMax(velocity.radial, lived, birth.radialR) * modifier * scaleNow;
+			const radial = travelled(velocity.radial, age, life, birth.radialR, scale) * modifier;
+			position[0] += birth.outwardX * radial;
+			position[1] += birth.outwardY * radial;
+			position[2] += birth.outwardZ * radial;
+			moving[0] += birth.outwardX * radialSpeed;
+			moving[1] += birth.outwardY * radialSpeed;
+			moving[2] += birth.outwardZ * radialSpeed;
 		}
-		const offset = velocity.orbitalOffset;
-		const radialRandom = random(seed, id, Channel.Radial);
-		const radialSpeed = evaluateMinMax(velocity.radial, lived, radialRandom) * modifier * scaleNow;
-		const radial = travelled(velocity.radial, age, life, radialRandom, scale) * modifier;
-		normalizeOrZInto(outward, start[0] - offset[0], start[1] - offset[1], start[2] - offset[2]);
-		for (let axis = 0; axis < 3; axis++) {
-			position[axis] = position[axis] + linear[axis] * modifier + outward[axis] * radial;
-			moving[axis] = moving[axis] + linearNow[axis] * modifier + outward[axis] * radialSpeed;
-		}
-		// the orbit turns the particle about the offset by its rate's integral over the age; applied to the whole
-		// path, which is exact when the other motion runs along the orbit's axis (the crater rocks rise along
-		// theirs)
-		for (let axis = 0; axis < 3; axis++) {
-			const r = random(seed, id, Channel.OrbitalX + axis);
-			turn[axis] = travelled(velocity.orbital[axis], age, life, r, scale) * modifier;
-			around[axis] = position[axis] - offset[axis];
-		}
-		rotateByInto(around, turn, around);
-		for (let axis = 0; axis < 3; axis++) {
-			position[axis] = around[axis] + offset[axis];
+		if (this.#hasOrbital) {
+			// the orbit turns the particle about the offset by its rate's integral over the age; applied to the whole
+			// path, which is exact when the other motion runs along the orbit's axis (the crater rocks rise along
+			// theirs)
+			const offset = velocity.orbitalOffset;
+			turn[0] = travelled(velocity.orbital[0], age, life, birth.orbitalR0, scale) * modifier;
+			turn[1] = travelled(velocity.orbital[1], age, life, birth.orbitalR1, scale) * modifier;
+			turn[2] = travelled(velocity.orbital[2], age, life, birth.orbitalR2, scale) * modifier;
+			around[0] = position[0] - offset[0];
+			around[1] = position[1] - offset[1];
+			around[2] = position[2] - offset[2];
+			rotateByInto(around, turn, around);
+			position[0] = around[0] + offset[0];
+			position[1] = around[1] + offset[1];
+			position[2] = around[2] + offset[2];
 		}
 	}
 
@@ -1146,6 +1352,10 @@ export class ParticleSimulation {
 		const widthRandom = random(seed, id, Channel.TrailWidth);
 		const alongRandom = random(seed, id, Channel.TrailColorOverTrail);
 		const earlier = this.#earlier;
+		const birth = this.#births.get(id);
+		if (birth === undefined) {
+			return 0;
+		}
 		placing.id = id;
 		placing.born = w[at + 1];
 		placing.life = life;
@@ -1158,7 +1368,7 @@ export class ParticleSimulation {
 				// where the particle was then; only paths read at any age have trails (the packer checks)
 				placing.age = age - along * span;
 				placing.moved = w[at + 4] - along * span;
-				this.#place(placing, earlier, 0);
+				this.#place(placing, birth, earlier, 0);
 				from = earlier;
 				fromAt = 0;
 			}
@@ -1176,21 +1386,21 @@ export class ParticleSimulation {
 		return TRAIL_POINTS;
 	}
 
-	#place(particle: Readonly<Placing>, out: Float32Array, at: number): void {
+	/** computes a particle's immutable birth attributes and random draws once, into `birth` */
+	#populateBirth(id: number, birth: BirthState): void {
 		const info = this.info;
 		const seed = this.#seed;
-		const { id, born, life, age, moved } = particle;
-		const u = this.#loopFraction(born);
+		const u = birth.u;
 		const start = begin.position;
-		this.#start(id, start, begin.direction);
+		const direction = begin.direction;
+		this.#start(id, start, direction);
 		if (this.#emittedFrom !== null) {
 			// it leaves from the shape where the emitter was then, and moves on in the world from there
-			const m = this.#emittedFrom(born);
+			const m = this.#emittedFrom(birth.born);
 			const [x, y, z] = start;
 			start[0] = m[0] * x + m[1] * y + m[2] * z + m[3];
 			start[1] = m[4] * x + m[5] * y + m[6] * z + m[7];
 			start[2] = m[8] * x + m[9] * y + m[10] * z + m[11];
-			const direction = begin.direction;
 			const [dx, dy, dz] = direction;
 			normalizeOrZInto(
 				direction,
@@ -1199,73 +1409,76 @@ export class ParticleSimulation {
 				m[8] * dx + m[9] * dy + m[10] * dz,
 			);
 		}
-		const lived = life > 0 ? age / life : 0;
+		birth.startX = start[0];
+		birth.startY = start[1];
+		birth.startZ = start[2];
+		birth.dirX = direction[0];
+		birth.dirY = direction[1];
+		birth.dirZ = direction[2];
+
 		const sizeRandom = random(seed, id, Channel.Size);
-		const growth = random(seed, id, Channel.SizeOverLifetime);
-		const startSize = begin.size;
-		for (let axis = 0; axis < 3; axis++) {
-			startSize[axis] = evaluateMinMax(info.startSize[axis], u, sizeRandom);
-		}
-		const { position, moving } = placed;
+		birth.sizeX = evaluateMinMax(info.startSize[0], u, sizeRandom);
+		birth.sizeY = evaluateMinMax(info.startSize[1], u, sizeRandom);
+		birth.sizeZ = evaluateMinMax(info.startSize[2], u, sizeRandom);
+		birth.growth = info.sizeOverLifetime === null ? 0 : random(seed, id, Channel.SizeOverLifetime);
+
 		const motion = info.motion;
-		if (motion.kind === 'spline') {
-			// a path's particles start at their place in the shape, offset from it
-			const along = this.#splineAt(id, age, life);
-			for (let axis = 0; axis < 3; axis++) {
-				position[axis] = start[axis] + (along?.position[axis] ?? 0);
-				moving[axis] = along?.moving[axis] ?? 0;
-			}
-		} else {
+		if (motion.kind === 'free') {
 			const { velocity, clamp } = motion;
-			let modifier = 1;
-			let modifierAt: ((age: number) => number) | null = null;
-			if (velocity !== null) {
-				const curve = velocity.speedModifier;
-				const r = random(seed, id, Channel.SpeedModifier);
-				if (curve.mode === CurveMode.Constant || curve.mode === CurveMode.TwoConstants) {
-					modifier = evaluateMinMax(curve, 0, r);
-				} else {
-					// the game reads it each step at the particle's age over its lifetime, as linear velocities
-					modifierAt = (a) => evaluateMinMax(curve, livedAt(a, life), r);
-					path.modifierCurve.curve = curve;
-					path.modifierCurve.r = r;
-				}
-			}
-			path.id = id;
-			path.speed = evaluateMinMax(motion.startSpeed, u, random(seed, id, Channel.Speed));
-			path.modifier = modifier;
-			path.modifierAt = modifierAt;
+			birth.speed = evaluateMinMax(motion.startSpeed, u, random(seed, id, Channel.Speed));
 			// gravity, which Unity always pulls down the world's y
-			path.gravity = GRAVITY * evaluateMinMax(motion.gravityModifier, u, random(seed, id, Channel.Gravity));
-			path.age = moved;
-			path.life = life;
-			path.growth = growth;
-			if (clamp?.kind === 'limit' || motion.forces !== null) {
-				this.#steppedPath(clamp, velocity, path, position, moving);
+			birth.gravity = GRAVITY * evaluateMinMax(motion.gravityModifier, u, random(seed, id, Channel.Gravity));
+			if (velocity !== null) {
+				const r = random(seed, id, Channel.SpeedModifier);
+				birth.modifierR = r;
+				birth.modifier = this.#modifierConstant ? evaluateMinMax(velocity.speedModifier, 0, r) : 1;
+				if (this.#hasLinear) {
+					birth.linearR0 = random(seed, id, Channel.VelocityX);
+					birth.linearR1 = random(seed, id, Channel.VelocityY);
+					birth.linearR2 = random(seed, id, Channel.VelocityZ);
+				}
+				if (this.#hasRadial) {
+					birth.radialR = random(seed, id, Channel.Radial);
+					const offset = velocity.orbitalOffset;
+					normalizeOrZInto(free.outward, start[0] - offset[0], start[1] - offset[1], start[2] - offset[2]);
+					birth.outwardX = free.outward[0];
+					birth.outwardY = free.outward[1];
+					birth.outwardZ = free.outward[2];
+				}
+				if (this.#hasOrbital) {
+					birth.orbitalR0 = random(seed, id, Channel.OrbitalX);
+					birth.orbitalR1 = random(seed, id, Channel.OrbitalY);
+					birth.orbitalR2 = random(seed, id, Channel.OrbitalZ);
+				}
 			} else {
-				this.#freePath(clamp, velocity, path, position, moving);
+				birth.modifier = 1;
 			}
-		}
-		const over = info.sizeOverLifetime;
-		for (let axis = 0; axis < 3; axis++) {
-			out[at + ParticleFloat.position + axis] = position[axis];
-			out[at + ParticleFloat.size + axis] =
-				startSize[axis] * (over === null ? 1 : evaluateMinMax(over[axis], livedAt(age, life), growth));
+			if (clamp !== null) {
+				birth.dragR = random(seed, id, Channel.Drag);
+			}
 		}
 
-		const angles = placed.angles;
-		const spin = info.rotationOverLifetime;
-		for (let axis = 0; axis < 3; axis++) {
-			angles[axis] = evaluateMinMax(info.startRotation[axis], u, random(seed, id, Channel.RotationX + axis));
-			if (spin !== null) {
-				// a paused particle keeps spinning at its last rate
-				angles[axis] += travelled(spin[axis], moved, life, random(seed, id, Channel.SpinX + axis));
+		birth.rotX = evaluateMinMax(info.startRotation[0], u, random(seed, id, Channel.RotationX));
+		birth.rotY = evaluateMinMax(info.startRotation[1], u, random(seed, id, Channel.RotationY));
+		birth.rotZ = evaluateMinMax(info.startRotation[2], u, random(seed, id, Channel.RotationZ));
+		if (this.#hasSpin) {
+			if (this.#spinAxis[0]) {
+				birth.spinR0 = random(seed, id, Channel.SpinX);
 			}
+			if (this.#spinAxis[1]) {
+				birth.spinR1 = random(seed, id, Channel.SpinY);
+			}
+			if (this.#spinAxis[2]) {
+				birth.spinR2 = random(seed, id, Channel.SpinZ);
+			}
+		} else {
+			const q = eulerQuaternionInto(placed.rotation, birth.rotX, birth.rotY, birth.rotZ);
+			birth.qx = q[0];
+			birth.qy = q[1];
+			birth.qz = q[2];
+			birth.qw = q[3];
 		}
-		const rotation = eulerQuaternionInto(placed.rotation, angles[0], angles[1], angles[2]);
-		for (let k = 0; k < 4; k++) {
-			out[at + ParticleFloat.rotation + k] = rotation[k];
-		}
+
 		const color = evaluateMinMaxGradientInto(
 			placed.color,
 			info.startColor,
@@ -1273,37 +1486,172 @@ export class ParticleSimulation {
 			random(seed, id, Channel.Color),
 		);
 		const shapeTint = begin.tint;
-		let red = color[0] * shapeTint[0];
-		let green = color[1] * shapeTint[1];
-		let blue = color[2] * shapeTint[2];
-		let alpha = color[3] * shapeTint[3];
-		if (info.colorOverLifetime !== null) {
+		const red = color[0] * shapeTint[0];
+		const green = color[1] * shapeTint[1];
+		const blue = color[2] * shapeTint[2];
+		const alpha = color[3] * shapeTint[3];
+		if (info.colorOverLifetime === null) {
+			birth.colorR = srgbToLinear(red);
+			birth.colorG = srgbToLinear(green);
+			birth.colorB = srgbToLinear(blue);
+			birth.colorA = alpha;
+		} else {
+			birth.colorR = red;
+			birth.colorG = green;
+			birth.colorB = blue;
+			birth.colorA = alpha;
+			birth.colorOverR = random(seed, id, Channel.ColorOverLifetime);
+		}
+
+		if (this.#hasCustom && info.customData !== null) {
+			if (info.customData[0] !== null) {
+				birth.customR0 = random(seed, id, Channel.CustomX);
+			}
+			if (info.customData[1] !== null) {
+				birth.customR1 = random(seed, id, Channel.CustomY);
+			}
+			if (info.customData[2] !== null) {
+				birth.customR2 = random(seed, id, Channel.CustomZ);
+			}
+			if (info.customData[3] !== null) {
+				birth.customR3 = random(seed, id, Channel.CustomW);
+			}
+		}
+		birth.placed = true;
+	}
+
+	#place(particle: Readonly<Placing>, birth: BirthState, out: Float32Array, at: number): void {
+		const info = this.info;
+		const { id, life, age, moved } = particle;
+		if (!birth.placed) {
+			this.#populateBirth(id, birth);
+		}
+		const start = begin.position;
+		start[0] = birth.startX;
+		start[1] = birth.startY;
+		start[2] = birth.startZ;
+		const direction = begin.direction;
+		direction[0] = birth.dirX;
+		direction[1] = birth.dirY;
+		direction[2] = birth.dirZ;
+		const startSize = begin.size;
+		startSize[0] = birth.sizeX;
+		startSize[1] = birth.sizeY;
+		startSize[2] = birth.sizeZ;
+
+		const lived = life > 0 ? age / life : 0;
+		const { position, moving } = placed;
+		const motion = info.motion;
+		if (motion.kind === 'spline') {
+			// a path's particles start at their place in the shape, offset from it
+			const along = this.#splineAt(birth.splineR, age, life);
+			position[0] = start[0] + (along?.position[0] ?? 0);
+			position[1] = start[1] + (along?.position[1] ?? 0);
+			position[2] = start[2] + (along?.position[2] ?? 0);
+			moving[0] = along?.moving[0] ?? 0;
+			moving[1] = along?.moving[1] ?? 0;
+			moving[2] = along?.moving[2] ?? 0;
+		} else {
+			const { velocity, clamp } = motion;
+			let modifierAt: ((age: number) => number) | null = null;
+			if (!this.#modifierConstant && velocity !== null) {
+				const curve = velocity.speedModifier;
+				const r = birth.modifierR;
+				// the game reads it each step at the particle's age over its lifetime, as linear velocities
+				modifierAt = (a) => evaluateMinMax(curve, livedAt(a, life), r);
+				path.modifierCurve.curve = curve;
+				path.modifierCurve.r = r;
+			}
+			path.id = id;
+			path.speed = birth.speed;
+			path.modifier = birth.modifier;
+			path.modifierAt = modifierAt;
+			path.gravity = birth.gravity;
+			path.age = moved;
+			path.life = life;
+			path.growth = birth.growth;
+			if (clamp?.kind === 'limit' || motion.forces !== null) {
+				this.#steppedPath(clamp, velocity, path, position, moving);
+			} else {
+				this.#freePath(clamp, velocity, path, birth, position, moving);
+			}
+		}
+
+		out[at + ParticleFloat.position] = position[0];
+		out[at + ParticleFloat.position + 1] = position[1];
+		out[at + ParticleFloat.position + 2] = position[2];
+		const over = info.sizeOverLifetime;
+		if (over === null) {
+			out[at + ParticleFloat.size] = birth.sizeX;
+			out[at + ParticleFloat.size + 1] = birth.sizeY;
+			out[at + ParticleFloat.size + 2] = birth.sizeZ;
+		} else {
+			const l = livedAt(age, life);
+			out[at + ParticleFloat.size] = birth.sizeX * evaluateMinMax(over[0], l, birth.growth);
+			out[at + ParticleFloat.size + 1] = birth.sizeY * evaluateMinMax(over[1], l, birth.growth);
+			out[at + ParticleFloat.size + 2] = birth.sizeZ * evaluateMinMax(over[2], l, birth.growth);
+		}
+
+		if (this.#hasSpin && info.rotationOverLifetime !== null) {
+			const spin = info.rotationOverLifetime;
+			const ax = this.#spinAxis[0] ? birth.rotX + travelled(spin[0], moved, life, birth.spinR0) : birth.rotX;
+			const ay = this.#spinAxis[1] ? birth.rotY + travelled(spin[1], moved, life, birth.spinR1) : birth.rotY;
+			const az = this.#spinAxis[2] ? birth.rotZ + travelled(spin[2], moved, life, birth.spinR2) : birth.rotZ;
+			const rotation = eulerQuaternionInto(placed.rotation, ax, ay, az);
+			out[at + ParticleFloat.rotation] = rotation[0];
+			out[at + ParticleFloat.rotation + 1] = rotation[1];
+			out[at + ParticleFloat.rotation + 2] = rotation[2];
+			out[at + ParticleFloat.rotation + 3] = rotation[3];
+		} else {
+			out[at + ParticleFloat.rotation] = birth.qx;
+			out[at + ParticleFloat.rotation + 1] = birth.qy;
+			out[at + ParticleFloat.rotation + 2] = birth.qz;
+			out[at + ParticleFloat.rotation + 3] = birth.qw;
+		}
+
+		if (info.colorOverLifetime === null) {
+			out[at + ParticleFloat.color] = birth.colorR;
+			out[at + ParticleFloat.color + 1] = birth.colorG;
+			out[at + ParticleFloat.color + 2] = birth.colorB;
+			out[at + ParticleFloat.color + 3] = birth.colorA;
+		} else {
 			const tint = evaluateMinMaxGradientInto(
 				placed.color,
 				info.colorOverLifetime,
 				Math.min(lived, 1),
-				random(seed, id, Channel.ColorOverLifetime),
+				birth.colorOverR,
 			);
-			red = red * tint[0];
-			green = green * tint[1];
-			blue = blue * tint[2];
-			alpha = alpha * tint[3];
+			out[at + ParticleFloat.color] = srgbToLinear(birth.colorR * tint[0]);
+			out[at + ParticleFloat.color + 1] = srgbToLinear(birth.colorG * tint[1]);
+			out[at + ParticleFloat.color + 2] = srgbToLinear(birth.colorB * tint[2]);
+			out[at + ParticleFloat.color + 3] = birth.colorA * tint[3];
 		}
+
 		out[at + ParticleFloat.tile] =
-			info.textureSheet === null ? 0 : sheetTile(info.textureSheet, lived, age, u, this.#randomOf, info.mesh);
-		out[at + ParticleFloat.color] = srgbToLinear(red);
-		out[at + ParticleFloat.color + 1] = srgbToLinear(green);
-		out[at + ParticleFloat.color + 2] = srgbToLinear(blue);
-		out[at + ParticleFloat.color + 3] = alpha;
-		for (let axis = 0; axis < 3; axis++) {
-			out[at + ParticleFloat.velocity + axis] = moving[axis];
-		}
+			info.textureSheet === null
+				? 0
+				: sheetTile(info.textureSheet, lived, age, birth.u, this.#randomOf, info.mesh);
+		out[at + ParticleFloat.velocity] = moving[0];
+		out[at + ParticleFloat.velocity + 1] = moving[1];
+		out[at + ParticleFloat.velocity + 2] = moving[2];
+
 		// read every frame at the age over the lifetime, each component's random fixed for the particle's life
-		const custom = info.customData;
-		for (let c = 0; c < 4; c++) {
-			const curve = custom?.[c] ?? null;
-			out[at + ParticleFloat.custom + c] =
-				curve === null ? 0 : evaluateMinMax(curve, Math.min(lived, 1), random(seed, id, Channel.CustomX + c));
+		if (this.#hasCustom && info.customData !== null) {
+			const custom = info.customData;
+			const clamped = Math.min(lived, 1);
+			out[at + ParticleFloat.custom] =
+				custom[0] === null ? 0 : evaluateMinMax(custom[0], clamped, birth.customR0);
+			out[at + ParticleFloat.custom + 1] =
+				custom[1] === null ? 0 : evaluateMinMax(custom[1], clamped, birth.customR1);
+			out[at + ParticleFloat.custom + 2] =
+				custom[2] === null ? 0 : evaluateMinMax(custom[2], clamped, birth.customR2);
+			out[at + ParticleFloat.custom + 3] =
+				custom[3] === null ? 0 : evaluateMinMax(custom[3], clamped, birth.customR3);
+		} else {
+			out[at + ParticleFloat.custom] = 0;
+			out[at + ParticleFloat.custom + 1] = 0;
+			out[at + ParticleFloat.custom + 2] = 0;
+			out[at + ParticleFloat.custom + 3] = 0;
 		}
 	}
 }
