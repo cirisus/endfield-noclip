@@ -5,6 +5,7 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 import { mapDefined } from '@mary-ext/array-fns';
 
 import type { Context } from '../../context.ts';
+import { recordBundleReads } from '../../game/assets/assets.ts';
 import { cabinDoors, type CabinRoom, loadCabins } from '../../game/dynamic/cabins.ts';
 import {
 	type DecorationAnimatorStart,
@@ -24,6 +25,7 @@ import {
 import {
 	activationCondition,
 	entityVisibilityTargets,
+	type LevelScripts,
 	loadLevelScripts,
 	loadScriptDrivers,
 } from '../../game/script-drivers.ts';
@@ -33,8 +35,18 @@ import {
 	type ScriptWaterLevel,
 	waterActionTarget,
 } from '../../game/water/water-volume-scripts.ts';
+import { VfsGroup } from '../../hg/vfs.ts';
+import type { BundleSource } from '../convert/convert-pool.ts';
+import { bundleSources, sourcesCurrent } from '../store/bundle-memo.ts';
+import type { PackCache } from '../store/pack-cache.ts';
 
 import type { PackContent } from './pack-content.ts';
+
+const SCRIPT_DRIVERS_ENTRY = new URL('../../game/script-drivers.ts', import.meta.url);
+const INTERACTIVE_FACILITIES_ENTRY = new URL(
+	'../../game/interactives/interactive-facilities.ts',
+	import.meta.url,
+);
 
 // what level scripts, interactive facilities and Dijiang's cabins add to the scene: their controls, wired to
 // what drives them, the prefabs they place, and stand-ins for the facilities whose model isn't found
@@ -81,6 +93,7 @@ export const collectInteractives = async (
 	context: Context,
 	content: PackContent,
 	dynamic: Pick<DynamicStructures, 'controls' | 'erosionCores' | 'slots'>,
+	cache: PackCache | null = null,
 ): Promise<SceneInteractives> => {
 	const { scene, controls } = content;
 	/** script-controlled entities' controls by global id */
@@ -89,7 +102,27 @@ export const collectInteractives = async (
 			control.kind === 'script' ? [scriptControlTarget(control), control] : undefined,
 		),
 	);
-	const levelScripts = await loadLevelScripts(context, scene.id, new Set(scripted.keys()));
+	let levelScripts: LevelScripts | undefined;
+	let scriptsMemoKey: string | null = null;
+	if (cache !== null) {
+		const [fp, jsonHash] = await Promise.all([
+			cache.fingerprint(SCRIPT_DRIVERS_ENTRY),
+			context.vfs.group(VfsGroup.JsonData).then((g) => g.catalogHash),
+		]);
+		scriptsMemoKey = cache.keyWith(fp, {
+			kind: 'levelScripts',
+			scene: scene.id,
+			entities: [...scripted.keys()].toSorted(),
+			jsonHash,
+		});
+		levelScripts = await cache.recallValue<LevelScripts>(scriptsMemoKey);
+	}
+	if (levelScripts === undefined) {
+		levelScripts = await loadLevelScripts(context, scene.id, new Set(scripted.keys()));
+		if (scriptsMemoKey !== null && cache !== null) {
+			await cache.rememberValue(scriptsMemoKey, levelScripts);
+		}
+	}
 	const scriptWater = scriptWaterLevels(levelScripts);
 	content.count('waterScriptActionsComputed', scriptWater.computed);
 	const fireSeedLevels = scriptFireSeedLevels(levelScripts);
@@ -98,13 +131,57 @@ export const collectInteractives = async (
 	content.count('decorationAnimatorGroups', decorationAnimators.starts.size);
 	content.count('decorationAnimatorGroupsUntraced', decorationAnimators.untraced);
 
-	const facilities = await loadInteractiveFacilities(context, {
-		scene: scene.id,
-		level: scene.level,
-		partition: scene.partition,
-		scripted: entityVisibilityTargets(levelScripts.scripts, levelScripts.ownLevels),
-		erosionCores: dynamic.erosionCores,
-	});
+	const scriptedInteractives = entityVisibilityTargets(levelScripts.scripts, levelScripts.ownLevels);
+	type FacilitiesResult = Awaited<ReturnType<typeof loadInteractiveFacilities>>;
+	let facilities: FacilitiesResult | undefined;
+	let facilitiesMemoKey: string | null = null;
+	if (cache !== null) {
+		const [fp, jsonHash, tableHash] = await Promise.all([
+			cache.fingerprint(INTERACTIVE_FACILITIES_ENTRY),
+			context.vfs.group(VfsGroup.JsonData).then((g) => g.catalogHash),
+			context.vfs.group(VfsGroup.Table).then((g) => g.catalogHash),
+		]);
+		facilitiesMemoKey = cache.keyWith(fp, {
+			kind: 'interactiveFacilities',
+			scene: scene.id,
+			level: scene.level,
+			scripted: [...scriptedInteractives].toSorted(),
+			erosionCores: [...dynamic.erosionCores.entries()].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+			jsonHash,
+			tableHash,
+		});
+		const recalled = await cache.recallValue<{ result: FacilitiesResult; sources: BundleSource[] }>(
+			facilitiesMemoKey,
+		);
+		if (
+			recalled !== undefined &&
+			(recalled.sources.length === 0 || (await sourcesCurrent(await context.resolver(), recalled.sources)))
+		) {
+			facilities = recalled.result;
+		}
+	}
+	if (facilities === undefined) {
+		const { result, bundles } = await recordBundleReads(() =>
+			loadInteractiveFacilities(context, {
+				scene: scene.id,
+				level: scene.level,
+				partition: scene.partition,
+				scripted: scriptedInteractives,
+				erosionCores: dynamic.erosionCores,
+			}),
+		);
+		facilities = result;
+		if (
+			facilitiesMemoKey !== null &&
+			cache !== null &&
+			result.models.every(
+				(model) => model.pose === null || model.pose.clips.every((clip) => clip.motion === undefined),
+			)
+		) {
+			const sources = bundles.length === 0 ? [] : await bundleSources(await context.resolver(), bundles);
+			await cache.rememberValue(facilitiesMemoKey, { result, sources });
+		}
+	}
 	content.count('interactiveFacilities', facilities.progressions.length);
 	for (const [id, control] of facilities.scriptControls) {
 		if (!scripted.has(id)) {

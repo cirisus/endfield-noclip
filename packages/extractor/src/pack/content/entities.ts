@@ -7,6 +7,7 @@ import { PrefabRoots } from '../../game/prefabs/prefab-root.ts';
 import type { DraftControl } from '../../game/state/scene-control.ts';
 import type { SceneWater } from '../../game/water/water-source.ts';
 import { readWaterVolumes } from '../../game/water/water-volumes.ts';
+import { VfsGroup } from '../../hg/vfs.ts';
 import { defaultValues } from '../states.ts';
 import type { PackCache } from '../store/pack-cache.ts';
 import type { CabinRoomGroup } from '../tables/irradiance.ts';
@@ -50,6 +51,8 @@ export interface SceneEntities extends Pick<
  * @param progressions one control per progression of the scene, at its default
  * @returns what the later phases need
  */
+const WATER_VOLUMES_ENTRY = new URL('../../game/water/water-volumes.ts', import.meta.url);
+
 export const collectEntities = async (
 	context: Context,
 	content: PackContent,
@@ -58,10 +61,26 @@ export const collectEntities = async (
 ): Promise<SceneEntities> => {
 	const { scene, controls } = content;
 	const { hlodNameMatches, chunkVolumes, sceneWater } = await collectStaticChunks(context.world, content);
-	const sources = await collectPlacementSources(context, content);
+	const sources = await collectPlacementSources(context, content, { cache });
 	const { scriptWater, waterDrivers, placements, fireSeed, unsupported, cabinRooms } = sources.interactives;
 
-	const waterVolumes = await readWaterVolumes(context, scene.id, scene.level, scene.partition);
+	type WaterVolumesResult = Awaited<ReturnType<typeof readWaterVolumes>>;
+	let waterVolumes: WaterVolumesResult | undefined;
+	let waterMemoKey: string | null = null;
+	if (cache !== null) {
+		const [fp, jsonHash] = await Promise.all([
+			cache.fingerprint(WATER_VOLUMES_ENTRY),
+			context.vfs.group(VfsGroup.JsonData).then((g) => g.catalogHash),
+		]);
+		waterMemoKey = cache.keyWith(fp, { kind: 'waterVolumes', scene: scene.id, level: scene.level, jsonHash });
+		waterVolumes = await cache.recallValue<WaterVolumesResult>(waterMemoKey);
+	}
+	if (waterVolumes === undefined) {
+		waterVolumes = await readWaterVolumes(context, scene.id, scene.level, scene.partition);
+		if (waterMemoKey !== null && cache !== null) {
+			await cache.rememberValue(waterMemoKey, waterVolumes);
+		}
+	}
 	content.count('waterVolumes', waterVolumes.volumes.length);
 	/** by floating interactive's level logic id, its volume's id */
 	const floaterVolume = new Map<string, string>();
@@ -122,9 +141,10 @@ export interface ScenePlacementSources {
 export const collectPlacementSources = async (
 	context: Context,
 	content: PackContent,
-	options?: { includeEcs?: boolean },
+	options?: { includeEcs?: boolean; cache?: PackCache | null },
 ): Promise<ScenePlacementSources> => {
 	const { scene, controls } = content;
+	const cache = options?.cache ?? null;
 	const dynamic = await loadDynamicStructures(context, scene.id, scene.partition, scene.game, options);
 	for (const [key, count] of Object.entries(dynamic.counts)) {
 		content.count(`dynamic_${key}`, count);
@@ -133,7 +153,7 @@ export const collectPlacementSources = async (
 	controls.add(...dynamic.controls);
 	controls.require(dynamic);
 	placeDynamicEntities(content, dynamic);
-	const interactives = await collectInteractives(context, content, dynamic);
+	const interactives = await collectInteractives(context, content, dynamic, cache);
 	const roots = new PrefabRoots(await context.resolver());
 	// level scripts are read with the interactives, after the dynamic structures, so the Animator values they
 	// set as they start pose the structures' prefabs here

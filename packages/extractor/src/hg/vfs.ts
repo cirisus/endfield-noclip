@@ -120,6 +120,8 @@ export class VfsFile implements ByteSource {
 /** a group catalog plus where its chunks live on disk */
 export interface MountedGroup {
 	catalog: VfsCatalog;
+	/** first 128 bits of the SHA-256 of the group's raw `.blc` catalog bytes, hex */
+	catalogHash: string;
 	/** layers to search for chunks, highest priority first */
 	dirs: string[];
 	/** wraps a catalog entry from this group in a readable {@link VfsFile} */
@@ -256,10 +258,12 @@ export class Vfs {
 		}
 
 		const catalog = parseVfsCatalog(blc, this.#key, VFS_CIPHER_OPTIONS);
+		const catalogHash = createHash('sha256').update(blc).digest('hex').slice(0, 32);
 		const readRange = (group: MountedGroup, entry: VfsFileEntry, start: number, end: number) =>
 			this.#readRange(group, entry, start, end);
 		const group: MountedGroup = {
 			catalog,
+			catalogHash,
 			dirs,
 			file: (entry) => new VfsFile(group, entry, readRange),
 		};

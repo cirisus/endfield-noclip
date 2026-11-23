@@ -30,6 +30,7 @@ import { mapDefined } from '@mary-ext/array-fns';
 
 import type { Context } from '../../context.ts';
 import { type Vfs, VfsGroup } from '../../hg/vfs.ts';
+import type { PackCache } from '../../pack/store/pack-cache.ts';
 import { mapPool } from '../../pool.ts';
 import {
 	readViewStates,
@@ -142,17 +143,21 @@ export interface DynamicStructures {
  * @returns ECS renderers and prefab placements, deduplicated by their stored resource references
  * @throws {FormatError} if a selected resource has no grid, chunk or group
  */
+const DYNAMIC_STRUCTURES_ENTRY = new URL(import.meta.url);
+const VIEW_STATE_POSES_ENTRY = new URL('../interactives/view-state-poses.ts', import.meta.url);
+
 export const loadDynamicStructures = async (
 	context: Pick<Context, 'vfs' | 'memoryPack' | 'world' | 'resolver'>,
 	scene: string,
 	partition: LevelPartition | undefined,
 	game: GameState,
-	options?: { includeEcs?: boolean },
+	options?: { includeEcs?: boolean; cache?: PackCache | null },
 ): Promise<DynamicStructures> => {
+	const cache = options?.cache ?? null;
 	const files = new DynamicFiles(context.vfs, scene);
 	const { grids, owners } = await files.readOwners();
 	const blights = claimBlights(owners, game);
-	const driven = await drivenViewStates(context, owners, blights);
+	const driven = await drivenViewStates(context, owners, blights, cache);
 	noteOwnerConditions(game, owners, blights, driven);
 
 	const pass = new OwnerPass(context, { game, partition, grids, owners: owners.length, blights, driven });
@@ -163,7 +168,7 @@ export const loadDynamicStructures = async (
 	const decoded =
 		options?.includeEcs === false
 			? { entities: new Map<number, DynamicEntity>(), lights: new Map() }
-			: await files.readEcsGroups(pass.ecsGroups, pass.result.counts);
+			: await files.readEcsGroups(pass.ecsGroups, pass.result.counts, cache);
 	return pass.finish(decoded);
 };
 
@@ -306,6 +311,7 @@ const drivenViewStates = async (
 	context: Pick<Context, 'vfs' | 'memoryPack'>,
 	owners: readonly DynamicSceneEntity[],
 	blights: ReadonlyMap<DynamicSceneEntity, unknown>,
+	cache: PackCache | null,
 ): Promise<Map<DynamicSceneEntity, DrivenViewStates>> => {
 	const candidates: { entity: DynamicSceneEntity; model: string; variable: DynamicVariable }[] = [];
 	const uniqueModels = new Set<string>();
@@ -319,14 +325,35 @@ const drivenViewStates = async (
 		uniqueModels.add(model);
 	}
 	const modelList = [...uniqueModels];
-	const loaded = await mapPool(modelList, READ_CONCURRENCY, (model) =>
-		readViewStates(context, { model, source: model }).catch((error: unknown) => {
+	const [fp, jsonHash] =
+		cache === null || modelList.length === 0
+			? [null, null]
+			: await Promise.all([
+					cache.fingerprint(VIEW_STATE_POSES_ENTRY),
+					context.vfs.group(VfsGroup.JsonData).then((g) => g.catalogHash),
+				]);
+	const loaded = await mapPool(modelList, READ_CONCURRENCY, async (model) => {
+		const memoKey =
+			cache === null || fp === null || jsonHash === null
+				? null
+				: cache.keyWith(fp, { kind: 'viewStates', model, jsonHash });
+		if (memoKey !== null) {
+			const recalled = await cache!.recallValue<{ states: ViewStates | null }>(memoKey);
+			if (recalled !== undefined) {
+				return recalled.states;
+			}
+		}
+		const states = await readViewStates(context, { model, source: model }).catch((error: unknown) => {
 			if (!(error instanceof FormatError)) {
 				throw error;
 			}
 			return null;
-		}),
-	);
+		});
+		if (memoKey !== null) {
+			await cache!.rememberValue(memoKey, { states });
+		}
+		return states;
+	});
 	const files = new Map(modelList.map((model, i) => [model, loaded[i]]));
 	const driven = new Map<DynamicSceneEntity, DrivenViewStates>();
 	for (const { entity, model, variable } of candidates) {
@@ -457,50 +484,79 @@ class DynamicFiles {
 	async readEcsGroups(
 		groups: EcsGroups,
 		counts: Record<string, number>,
+		cache: PackCache | null = null,
 	): Promise<{
 		entities: Map<number, DynamicEntity>;
 		lights: Map<number, { light: ChunkLight; visibility: Visibility }>;
 	}> {
+		const fp = cache === null ? null : await cache.fingerprint(DYNAMIC_STRUCTURES_ENTRY);
+		const dynGroup = cache === null ? null : await this.#vfs.group(VfsGroup.DynamicStreaming);
+		type DecodedGroup = {
+			entities: { entity: ChunkEntity; decalMaterial: bigint | null }[];
+			lights: ChunkLight[];
+		};
 		const perChunk = await mapPool([...groups], READ_CONCURRENCY, async ([key, indices]) => {
-			const [init, streaming] = await Promise.all([
-				this.#readPayload(`fb_init_${key}.bytes`),
-				this.#readPayload(`fb_streaming_${key}.bytes`),
-			]);
-			const initPayload = unpackHgPayload(init);
-			const streamingPayload = unpackHgPayload(streaming);
-			const chunk = parseDynamicChunk(initPayload, streamingPayload);
-			const chunkLights = new Map(readChunkLights(chunk).map((light) => [light.id, light]));
-			// the streaming payload binds rect decals' materials as StreamingChunkData does
-			let streamingChunk: ReturnType<typeof parseStreamingChunk> | null = null;
-			const decalMaterial = (id: number): bigint | null => {
-				streamingChunk ??= parseStreamingChunk(streamingPayload);
-				return streamingChunk.assetProperty(id, DECAL_MATERIAL_KEY) ?? null;
-			};
-			const selected: { group: (typeof chunk.groups)[number]; visibility: Visibility; grid: number }[] = [];
-			for (const [index, { visibility, grid }] of indices) {
-				const group = chunk.groups[index];
-				if (!group) {
-					throw new FormatError(`missing ECS group ${key}/${index}`);
+			const entries = [...indices];
+			const groupIds = entries.map(([index]) => index);
+			let memoKey: string | null = null;
+			if (cache !== null && fp !== null && dynGroup !== null) {
+				const initEntry = dynGroup.catalog.get(`${this.#prefix}fb_init_${key}.bytes`);
+				const streamEntry = dynGroup.catalog.get(`${this.#prefix}fb_streaming_${key}.bytes`);
+				if (initEntry !== undefined && streamEntry !== undefined) {
+					memoKey = cache.keyWith(fp, {
+						kind: 'dynamicEcsChunk',
+						initMd5: initEntry.dataMd5,
+						streamMd5: streamEntry.dataMd5,
+						groupIds,
+					});
 				}
-				selected.push({ group, visibility, grid });
 			}
-			const entitiesByGroup = readChunkEntitiesByGroup(
-				chunk,
-				selected.map((entry) => entry.group),
-			);
-			return selected.map(({ group, visibility, grid }, i) => {
-				const groupEntities = entitiesByGroup[i].map((entity) => ({
-					entity,
-					decalMaterial: entity.decal === null ? null : decalMaterial(entity.id),
-				}));
-				const groupLights: ChunkLight[] = [];
-				for (const id of group.ids) {
-					const light = chunkLights.get(id);
-					if (light !== undefined) {
-						groupLights.push(light);
+			let decoded: DecodedGroup[] | undefined =
+				memoKey === null ? undefined : await cache!.recallValue<DecodedGroup[]>(memoKey);
+			if (decoded === undefined) {
+				const [init, streaming] = await Promise.all([
+					this.#readPayload(`fb_init_${key}.bytes`),
+					this.#readPayload(`fb_streaming_${key}.bytes`),
+				]);
+				const initPayload = unpackHgPayload(init);
+				const streamingPayload = unpackHgPayload(streaming);
+				const chunk = parseDynamicChunk(initPayload, streamingPayload);
+				const chunkLights = new Map(readChunkLights(chunk).map((light) => [light.id, light]));
+				// the streaming payload binds rect decals' materials as StreamingChunkData does
+				let streamingChunk: ReturnType<typeof parseStreamingChunk> | null = null;
+				const decalMaterial = (id: number): bigint | null => {
+					streamingChunk ??= parseStreamingChunk(streamingPayload);
+					return streamingChunk.assetProperty(id, DECAL_MATERIAL_KEY) ?? null;
+				};
+				const selected = groupIds.map((index) => {
+					const group = chunk.groups[index];
+					if (!group) {
+						throw new FormatError(`missing ECS group ${key}/${index}`);
 					}
+					return group;
+				});
+				const entitiesByGroup = readChunkEntitiesByGroup(chunk, selected);
+				decoded = selected.map((group, i) => {
+					const groupEntities = entitiesByGroup[i].map((entity) => ({
+						entity,
+						decalMaterial: entity.decal === null ? null : decalMaterial(entity.id),
+					}));
+					const groupLights: ChunkLight[] = [];
+					for (const id of group.ids) {
+						const light = chunkLights.get(id);
+						if (light !== undefined) {
+							groupLights.push(light);
+						}
+					}
+					return { entities: groupEntities, lights: groupLights };
+				});
+				if (memoKey !== null) {
+					await cache!.rememberValue(memoKey, decoded);
 				}
-				return { entities: groupEntities, lights: groupLights, visibility, grid };
+			}
+			return decoded.map((group, i) => {
+				const [, { visibility, grid }] = entries[i];
+				return { entities: group.entities, lights: group.lights, visibility, grid };
 			});
 		});
 
