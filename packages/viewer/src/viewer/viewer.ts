@@ -214,6 +214,7 @@ export class Viewer {
 			this.#unsettledPose = settled ? null : pose;
 		}
 		this.#dirty = true;
+		renderer.frame.shadowLayers.invalidate();
 		this.#emitState();
 		onProgress('streaming');
 	}
@@ -574,6 +575,7 @@ export class Viewer {
 	/** re-evaluates the scene state for the camera, and redraws */
 	#updateVisibility(): void {
 		this.#sceneState.evaluate(this.camera.position);
+		this.#renderer.frame.shadowLayers.invalidate();
 		this.#dirty = true;
 	}
 
@@ -596,6 +598,7 @@ export class Viewer {
 		if (this.scene !== null) {
 			this.scene.stream.options.budgetBytes = this.options.budgetMiB * 2 ** 20;
 		}
+		this.#renderer.frame.shadowLayers.invalidate();
 		this.#dirty = true;
 		this.#emitState();
 	}
@@ -665,7 +668,8 @@ export class Viewer {
 		const moved = this.controls.update(dt) || this.#settleFirstPose();
 		const watered = this.#waterLevels.update(dt, this.options.waterLevelRate);
 		this.#waterLevels.applyFloaters(this.#writeFloater);
-		if (this.#sceneState.follow(this.camera.position)) {
+		if (watered || this.#sceneState.follow(this.camera.position)) {
+			renderer.frame.shadowLayers.invalidate();
 			this.#dirty = true;
 		}
 		const resized = renderer.targets.update();

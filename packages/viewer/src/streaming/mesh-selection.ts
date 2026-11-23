@@ -59,6 +59,8 @@ export interface MeshSelection {
 	boxes: number[];
 	/** whether it draws emitters' particles, which move with the clock while the view holds still */
 	particles: boolean;
+	/** whether any drawn particle system casts shadows */
+	shadowParticles: boolean;
 	/** the rows left for the GPU to cull, whose buckets are among {@link buckets} too */
 	gpu: GpuCullWork;
 }
@@ -203,7 +205,13 @@ interface CulledGroup {
 
 /** selects LODs and buckets instances */
 export class MeshSelector {
-	readonly selection: MeshSelection = { buckets: [], boxes: [], particles: false, gpu: gpuCullWork() };
+	readonly selection: MeshSelection = {
+		buckets: [],
+		boxes: [],
+		particles: false,
+		shadowParticles: false,
+		gpu: gpuCullWork(),
+	};
 	#chains: readonly Chain[];
 	#geometries: GeometryTable;
 	#stream: StreamManager;
@@ -291,6 +299,7 @@ export class MeshSelector {
 		selection.buckets.length = 0;
 		selection.boxes.length = 0;
 		selection.particles = false;
+		selection.shadowParticles = false;
 		const work = selection.gpu;
 		work.itemCount = 0;
 		work.slotCount = 0;
@@ -919,6 +928,9 @@ export class MeshSelector {
 					} else {
 						const particles = this.#particles.rows(instances, i, slot.particles, frame, view.particles);
 						this.selection.particles = true;
+						if (slot.castsShadows) {
+							this.selection.shadowParticles = true;
+						}
 						for (const particle of particles) {
 							groupRows.push(particle);
 						}

@@ -56,6 +56,10 @@ export class Traversal {
 	readonly #planes: Plane[] = [];
 	/** the clock each resident block's spinning and riding rows were last moved to */
 	readonly #movedTimes = new WeakMap<ResidentInstances, number>();
+	/** last camera pose and stream state prepared for shadow casters */
+	#shadowPose = new Float64Array(6).fill(Number.NaN);
+	#shadowVersion = -1;
+	#shadowTime = Number.NaN;
 	readonly #renderer: Renderer;
 
 	/** @param renderer the renderers the selection is written for */
@@ -169,7 +173,31 @@ export class Traversal {
 			const spans = instances.prepareList(options.boxes ? meshSelection.boxes : [], meshSelection.buckets);
 			meshes.prepare(meshSelection.buckets, spans, scene.textures, meshSelection.gpu);
 		}
-		renderer.frame.shadowLayers.invalidate();
+		// skip invalidating cached shadow layers when only non-shadow-casting particles animated on a still view
+		const pose = this.#shadowPose;
+		const poseChanged =
+			pose[0] !== eye[0] ||
+			pose[1] !== eye[1] ||
+			pose[2] !== eye[2] ||
+			pose[3] !== camera.yaw ||
+			pose[4] !== camera.pitch ||
+			pose[5] !== camera.fovY;
+		if (
+			poseChanged ||
+			stream.version !== this.#shadowVersion ||
+			(this.movingShown && input.time !== this.#shadowTime) ||
+			(meshSelection?.shadowParticles ?? false)
+		) {
+			pose[0] = eye[0];
+			pose[1] = eye[1];
+			pose[2] = eye[2];
+			pose[3] = camera.yaw;
+			pose[4] = camera.pitch;
+			pose[5] = camera.fovY;
+			this.#shadowVersion = stream.version;
+			this.#shadowTime = input.time;
+			renderer.frame.shadowLayers.invalidate();
+		}
 		times.span('prepare');
 	}
 

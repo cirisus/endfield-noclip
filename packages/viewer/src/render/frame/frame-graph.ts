@@ -184,24 +184,28 @@ export class ShadowLayerCache {
 			return draw;
 		}
 		const far = SHADOW_LAYERS - 1;
-		let sharp = this.#stale;
+		const baseSharp = this.#stale || frame.skinned;
 		const renders = this.#renders;
 		for (let i = 0; i < far; i++) {
 			const render = layers[i].render;
-			if (render.some((value, k) => value !== renders[i * 16 + k])) {
-				renders.set(render, i * 16);
-				sharp = true;
+			const base = i * 16;
+			let moved = false;
+			for (let k = 0; k < 16; k++) {
+				if (render[k] !== renders[base + k]) {
+					renders[base + k] = render[k];
+					moved = true;
+				}
 			}
+			draw[i] = baseSharp || moved;
 		}
 		const fit = layers[far].fit;
 		let farDraw = this.#farStale && this.#farAge + 1 >= FAR_LAYER_INTERVAL;
-		if (fit.some((value, k) => value !== this.#farFit[k])) {
-			this.#farFit.set(fit);
-			farDraw = true;
+		for (let k = 0; k < 4; k++) {
+			if (fit[k] !== this.#farFit[k]) {
+				this.#farFit[k] = fit[k];
+				farDraw = true;
+			}
 		}
-		// an animated caster moves whenever the clock does; the far layer, like the game's far map, holds still ones
-		sharp ||= frame.skinned;
-		draw.fill(sharp, 0, far);
 		draw[far] = farDraw;
 		// pipelines still compiling would leave casters out
 		this.#stale = frame.compiling;
