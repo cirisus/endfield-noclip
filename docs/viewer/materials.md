@@ -19,6 +19,7 @@ the mesh shader has 7 texture slots (`SLOTS` in
 | feature                                 | shared slot / rows                                                           | conflict / skipped when                                      |
 | --------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | `_TRI_CHANNEL_MASK`                     | MRO slot, or emissive slot on MRO-layout materials (base sampler)            | emissive map or mask layer's mask map occupies emissive slot |
+| `_PARALLAX_MAP_WORLDSPACE`              | MRO / mask slot (`_ParallaxMaskMap`); tail rows (`ParallaxWorldRow`)         | MRO map or tri-channel mask holds the mask slot              |
 | `_EMISSIVE_ANIM` pulse                  | parallax rows                                                                | parallax glow or layer present                               |
 | `_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`  | parallax slots & rows; mask map in emissive slot                             | mask layer on emissive-mapped material                       |
 | `FlowGlow` (glowing foliage)            | parallax noise slot; parallax rows unused by emission pulse (`FlowGlowRow`)  | parallax slots hold anything else                            |
@@ -51,7 +52,8 @@ in lockstep with `skinFrame` (e.g. Qingbo's waterwheels). moves only while frame
 
 ## lit layers
 
-`HGRP/LitEffect` draws as Lit (without dissolve or disturb).
+`HGRP/LitEffect` draws as Lit (without dissolve or disturb), and `Hidden/HGRP/LitEffectBlend` draws
+as Lit (without `_ObjectBlend*` soft depth blending).
 
 - **`_TRI_CHANNEL_MASK`**: uses the MRO slot, or the emissive slot on MRO-layout materials (e.g.
   Sword Vault Dale's UV1 banners) with the base-colour sampler; skipped if an emissive map or mask
@@ -59,8 +61,11 @@ in lockstep with `skinFrame` (e.g. Qingbo's waterwheels). moves only while frame
   `_UseMaskRUVSetAndTilingScale` is unread.
 - **`_PARALLAX_MAP`**: [pulse](../game-data/materials.md#lit-layers) runs while frames render
   ([performance](performance.md); `continuous` keeps it running); player brightening uses the camera
-  as the player. without a noise map, only the pattern binds and the march reads height 0. omitted:
-  `_UseParallaxMask` (no slot) and native `_VFXParams2` global highlight.
+  as the player. without a noise map, only the pattern binds and the march reads height 0.
+  `_PARALLAX_MAP_WORLDSPACE` binds `_ParallaxMaskMap` in the mask slot and stores its parameters in
+  the tail rows (`ParallaxWorldRow` in `lit-look.ts`, omitting `_ParallaxSignControl`, unused on
+  map02). omitted: non-world-space `_UseParallaxMask` (no slot) and native `_VFXParams2` global
+  highlight.
 - **`_MATCAP`**: omitted (no free slot; campfire crystals lack sheen).
 - **`_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`**: maps use parallax slots/rows; mask map uses emissive
   slot (skipped on emissive-mapped materials). UV set 2 falls back to UV0; missing UV1 falls back to
@@ -221,8 +226,8 @@ exposure-invariant, no shadows) via two off-by-default toggles:
 what becomes unsupported: effect shaders without a look ([effects](effects.md)); effect materials
 with unhandled keywords, blend modes, stencil ops, texture combos, or UV sets (>1, or >0 for
 VFXWater/VFXRefract); unhandled lit decals or ones lacking placement/base map; non-effect additive
-materials; shaders without a family (`HGRP/CharacterNPR`, `Hidden/HGRP/LitEffectBlend`,
-`HGRP/ErosionDynamic`, etc.); failed conversions.
+materials; shaders without a family (`HGRP/CharacterNPR`, `HGRP/ErosionDynamic`, etc.); failed
+conversions.
 
 the extractor classifies these when [describing surfaces](../package-format.md#materials) and writes
 `unsupported`, `keywordsNotDrawn` (from

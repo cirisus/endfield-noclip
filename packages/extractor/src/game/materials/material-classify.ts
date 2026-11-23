@@ -13,6 +13,7 @@ const FAMILIES: [RegExp, ShaderFamily][] = [
 	[/^HGRP\/Lit$/i, 'lit'],
 	[/^HGRP\/LitTransparent$/i, 'litTransparent'],
 	[/^HGRP\/LitEffect$/i, 'litEffect'],
+	[/^Hidden\/HGRP\/LitEffectBlend$/i, 'litEffect'],
 	[/^HGRP\/LitForward$/i, 'litForward'],
 	[/^HGRP\/Foliage\/Leaf$/i, 'leaf'],
 	[/^HGRP\/Foliage\/Trunk$/i, 'trunk'],

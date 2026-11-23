@@ -28,6 +28,7 @@ import { swayOf, vertexOffsetOf } from './lit-sway.ts';
 /** shaders whose G-buffer pass writes the material's `_StencilRef` into the stencil */
 const STENCIL_REF_SHADERS = new Set([
 	'HGRP/Lit',
+	'Hidden/HGRP/LitEffectBlend',
 	'HGRP/Foliage/Leaf',
 	'HGRP/Foliage/Grass',
 	'HGRP/Foliage/Trunk',
@@ -103,10 +104,13 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 	const emissiveMap = bound('_EmissiveMap', has('_EMISSIVE_MAP'));
 	const triMask = bound('_MaskMap', lit && has('_TRI_CHANNEL_MASK'));
 	const detailMap = bound('_DetailMap', lit && has('_DETAIL_MAP'));
-	// a separate parallax mask texture (`_UseParallaxMask`) has no slot; such materials stay dark
-	const parallax = lit && has('_PARALLAX_MAP') && float('_UseParallaxMask', 0) === 0;
+	// a separate parallax mask texture (`_UseParallaxMask`) without `_PARALLAX_MAP_WORLDSPACE` has no slot;
+	// such materials stay dark
+	const worldParallax = lit && has('_PARALLAX_MAP') && has('_PARALLAX_MAP_WORLDSPACE');
+	const parallax = worldParallax || (lit && has('_PARALLAX_MAP') && float('_UseParallaxMask', 0) === 0);
 	const pattern = bound('_ParallaxMap', parallax);
 	const noise = bound('_ParallaxNoiseMap', parallax);
+	const parallaxMask = worldParallax ? (reader.slot('_ParallaxMaskMap') ?? null) : null;
 	for (const [name, slot] of used) {
 		if (slot.uv > 1) {
 			return unsupported(`${name} on UV set ${slot.uv}`);
@@ -227,7 +231,7 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 	// (docs/game-data/materials.md#lit-layers). an empty pattern would glow in the dark colour alone; none is
 	// seen
 	if (pattern !== null) {
-		overlay = parallaxGlowOf(reader, pattern, noise);
+		overlay = parallaxGlowOf(reader, pattern, noise, worldParallax, parallaxMask);
 	} else if (lit && !parallax) {
 		overlay = layerOf(reader);
 	}

@@ -264,6 +264,7 @@ test('pulsing emission takes the free parallax rows; a surface with a glow keeps
 		maskChannel: 2,
 		ignorePostExposure: 1,
 		near: { outer: 25, inner: 3, strength: 20 },
+		worldMask: null,
 	};
 	const textures = { base: slot(1), normal: null, mro: null, emissive: slot(2) };
 	const [pulsing, glowing, flat] = materialLooks({
@@ -293,6 +294,39 @@ test('pulsing emission takes the free parallax rows; a surface with a glow keeps
 	assert.equal(glowing.params[LookRow.parallax2 + 3], Math.fround(0.6));
 	assert.deepEqual(row(LookRow.parallaxColor), [2.8, 0.7, 0, 2].map(Math.fround));
 	assert.deepEqual(row(LookRow.parallaxBright).slice(0, 3), [25, 3, 20]);
+
+	// world-space parallax places `_ParallaxMaskMap` in the free mask slot and its rows in the tail
+	const [world] = materialLooks({
+		entries: [
+			described(
+				litSurface({
+					textures,
+					overlay: {
+						...glow,
+						worldMask: {
+							mask: slot(8),
+							center: [-327, -482],
+							scale: 62,
+							rotation: [1, 0],
+							patternColor: [20, 40, 20],
+							patternColorDark: [0, 60, 40],
+							lerpSchedule: 30,
+							intensity: 1,
+							worldYCut: 270,
+							additionalColor: [1, 1.5, 2],
+							objectYCut: 1.8,
+							additionalMaskChannel: 0,
+						},
+					},
+				}),
+			),
+		],
+	});
+	assert.equal(world.textures[2], 8);
+	assert.notEqual(world.flags & LookFlags.MaskMap, 0);
+	assert.deepEqual(row(148).length, 4);
+	assert.deepEqual(Array.from(world.params.subarray(148, 152)), [-327, -482, 1 / 62, 30].map(Math.fround));
+	assert.deepEqual(Array.from(world.params.subarray(164, 168)), [1, 1.5, 2, 1].map(Math.fround));
 });
 
 test("the emissive map's G, B and A colours take the rows effect looks keep for themselves", () => {

@@ -178,7 +178,7 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 	let parallaxRowsFree = true;
 	switch (overlay?.kind) {
 		case 'parallax': {
-			parallaxParams(look, overlay);
+			parallaxParams(look, overlay, textures.mro === null && triChannel === null);
 			parallaxRowsFree = false;
 			break;
 		}
@@ -421,8 +421,26 @@ const grassParams = (look: MaterialLook, grass: GrassInputs): void => {
 
 // #region parallax glow and layers
 
+/**
+ * where `_PARALLAX_MAP_WORLDSPACE`'s world-space mask keeps its inputs: five rows in the tail mesh looks
+ * leave free (`effect_only[1..5]` in mesh.wgsl), after `GAPS_FLOAT`. mesh.wgsl enters the world-space branch
+ * when the last float of {@link additionalColor} is set, reading `_ParallaxMaskMap` from {@link Slot.Mask}
+ */
+export const ParallaxWorldRow = {
+	/** centre X and Z (`_MaskWorldPosParams.xz`), `1 / scale`, `_ParallaxLerpSchedule` */
+	worldParams: 148,
+	/** rotation cosine and sine, `_ParallaxIntensity`, `_ParallaxSignLerpFactor1.w` */
+	rotation: 152,
+	/** `_ParallaxPatternColor` × strength, `_ParallaxSignLerpFactor1.y` */
+	patternColor: 156,
+	/** `_ParallaxPatternColorDark` × strength, `_WorldParallaxAdditionalLightMaskChannel` */
+	patternDark: 160,
+	/** `_WorldParallaxAdditionalColor`, 1 when world-space parallax is active */
+	additionalColor: 164,
+} as const;
+
 /** `_PARALLAX_MAP`'s glow (`docs/game-data/materials.md#lit-layers`), in the parallax slots and rows */
-const parallaxParams = (look: MaterialLook, glow: ParallaxGlow): void => {
+const parallaxParams = (look: MaterialLook, glow: ParallaxGlow, maskSlotFree: boolean): void => {
 	const params = look.params;
 	// without a noise map the noise flag stays clear, and the march reads height 0
 	setTexture(look, Slot.Parallax, glow.pattern);
@@ -440,6 +458,31 @@ const parallaxParams = (look: MaterialLook, glow: ParallaxGlow): void => {
 	params.set(glow.dark, LookRow.parallaxDark);
 	// the brightening near the player, whom the viewer places at the camera
 	params.set([glow.near.outer, glow.near.inner, glow.near.strength], LookRow.parallaxBright);
+
+	const { worldMask } = glow;
+	if (worldMask !== null) {
+		if (worldMask.mask !== null && !maskSlotFree) {
+			look.gaps.push('world-space parallax mask: no free slot');
+			return;
+		}
+		if (worldMask.mask !== null) {
+			setTexture(look, Slot.Mask, worldMask.mask);
+		}
+		params.set(
+			[worldMask.center[0], worldMask.center[1], 1 / worldMask.scale, worldMask.lerpSchedule],
+			ParallaxWorldRow.worldParams,
+		);
+		params.set(
+			[worldMask.rotation[0], worldMask.rotation[1], worldMask.intensity, worldMask.worldYCut],
+			ParallaxWorldRow.rotation,
+		);
+		params.set([...worldMask.patternColor, worldMask.objectYCut], ParallaxWorldRow.patternColor);
+		params.set(
+			[...worldMask.patternColorDark, worldMask.additionalMaskChannel],
+			ParallaxWorldRow.patternDark,
+		);
+		params.set([...worldMask.additionalColor, 1], ParallaxWorldRow.additionalColor);
+	}
 };
 
 /**

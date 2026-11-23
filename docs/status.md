@@ -169,12 +169,15 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     (`rendererHalfSize`, per-instance params, and column 7 unread).
   - glowing foliage: flow clock assumed seconds; Deep Dale Street mushrooms unverified in game.
 - **Lit layers** ([viewer](viewer/materials.md#lit-layers)):
-  - `HGRP/LitEffect` (~100 map02 materials) draws as Lit without dissolve/disturb.
+  - `HGRP/LitEffect` (~100 map02 materials) draws as Lit without dissolve/disturb;
+    `Hidden/HGRP/LitEffectBlend` draws as Lit without `_ObjectBlend*` soft depth blend.
+  - `_PARALLAX_MAP_WORLDSPACE` (Hongshan great tree and plinths, unverified in game) omits
+    `_ParallaxSignControl` (unused on map02).
   - missing: tri-channel mask on MRO materials with emissive/mask-layer maps (drawn banner emblem
-    unverified in game), switch-texture G/B, `_UseMaskRUVSetAndTilingScale`, parallax glow separate
-    mask (`_UseParallaxMask`), global highlight, world-space/PBR/deform variants, matcaps (campfire
-    crystals lack sheen), mask layers on emissive-mapped materials or with noise/parallax, top-layer
-    `_BaseHeightMap` (read as grey), and `_TERRAIN_BLEND` fade.
+    unverified in game), switch-texture G/B, `_UseMaskRUVSetAndTilingScale`, non-world-space
+    parallax separate mask (`_UseParallaxMask`), global highlight, PBR/deform parallax variants,
+    matcaps (campfire crystals lack sheen), mask layers on emissive-mapped materials or with
+    noise/parallax, top-layer `_BaseHeightMap` (read as grey), and `_TERRAIN_BLEND` fade.
 - **ignored surface keywords** (listed in `debug/assets.json` and striped by the
   [gaps view](viewer/materials.md#gaps), which excludes effects, terrain, water, and per-entity
   gaps): on map02, `_MACRO_NORMAL_MAP` (~90 materials), `_SUBSURFACE*`, `_FAKE*` (glints, cracks,
@@ -196,8 +199,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   Jingyu's cherry-tree islet ribbons flapping.
 - **unimplemented shaders** ([unsupported](viewer/materials.md#unsupported-materials), counted by
   `pack`): on map02, `Hidden/HGRP/Effect/VFXInkWashPaint`, `HGRP/Effect/VFXRadialBlur`,
-  `HGRP/CharacterNPR`, `Hidden/HGRP/LitEffectBlend`, `HGRP/Effect/VFXTransparentDepthOnly`, and
-  factory placement/outline shaders.
+  `HGRP/CharacterNPR`, `HGRP/Effect/VFXTransparentDepthOnly`, and factory placement/outline shaders.
 - **forward Lit** ([viewer](viewer/materials.md#forward-lit)): golden treasure chest reflects the
   scene instead of `_CUSTOM_IBL`; other variants undecoded.
 - **matte paintings** ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` unread

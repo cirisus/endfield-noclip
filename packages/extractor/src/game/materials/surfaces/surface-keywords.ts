@@ -18,6 +18,7 @@ const LIT_KEYWORDS = [
 	'_TRI_CHANNEL_MASK',
 	'_DETAIL_MAP',
 	'_PARALLAX_MAP',
+	'_PARALLAX_MAP_WORLDSPACE',
 	'_LAYERBLEND_TOP',
 	'_LAYERBLEND_MASK',
 	'_LAYERBLEND_MOSS',
@@ -50,6 +51,7 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 			'_COMMONVAT_BONE_4',
 		],
 		'HGRP/LitEffect': LIT_KEYWORDS,
+		'Hidden/HGRP/LitEffectBlend': LIT_KEYWORDS,
 		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
 		// its own cubemap reflection (`_CUSTOM_IBL`) isn't drawn: the viewer lights Lit surfaces deferred
 		'HGRP/LitForward': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
@@ -96,7 +98,7 @@ const PROPERTY_GAPS: readonly { property: string; keyword: string; off: number }
 ];
 
 /** the shaders whose describer reads {@link PROPERTY_GAPS}' keywords */
-const PROPERTY_GAP_SHADERS = new Set(['HGRP/Lit', 'HGRP/LitEffect']);
+const PROPERTY_GAP_SHADERS = new Set(['HGRP/Lit', 'HGRP/LitEffect', 'Hidden/HGRP/LitEffectBlend']);
 
 /**
  * what the game draws of a material that its surface leaves out, for the viewer's gaps view: the keywords
@@ -112,6 +114,9 @@ export const surfaceGaps = (reader: MaterialReader): string[] => {
 	const gaps = keywordsNotDrawn(shader, reader.material.keywords);
 	if (PROPERTY_GAP_SHADERS.has(shader)) {
 		for (const { property, keyword, off } of PROPERTY_GAPS) {
+			if (property === '_UseParallaxMask' && reader.has('_PARALLAX_MAP_WORLDSPACE')) {
+				continue;
+			}
 			if (reader.has(keyword) && reader.float(property, off) !== off) {
 				gaps.push(property);
 			}

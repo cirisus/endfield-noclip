@@ -1006,17 +1006,36 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 
 	// the glow needs its pattern; without a noise map it marches a flat height field
 	if ((flags & (PARALLAX_MAP | LAYER_BLEND | VERTEX_OFFSET)) == PARALLAX_MAP && in.tangent.w != 0.0) {
+		let world_parallax = look.effect_only[5].w > 0.5;
 		// the glow's mask uses the same channel numbering as the emission mask, one lower
 		let glow_mask = map_channel(flags, mro, look.parallax_color.w + 1.0, base_a, packed, mask);
-		if (glow_mask > 0.01) {
+		if (world_parallax || glow_mask > 0.01) {
 			let v = normalize(-in.rel);
 			let has_noise = (flags & PARALLAX_NOISE_MAP) != 0u;
 			let p_uv1 = (flags & (1u << (UV1_SHIFT + PARALLAX_SLOT))) != 0u;
 			let parallax_uv = select(in.uv.xy, in.uv.zw, p_uv1);
 			let parallax_dx = select(uv0_dx, uv1_dx, p_uv1);
 			let parallax_dy = select(uv0_dy, uv1_dy, p_uv1);
-			s.emission += parallax_glow(look, in, v, n, has_noise, parallax_uv, uv0_dx, uv0_dy, parallax_dx, parallax_dy) *
-				(glow_mask * glow_mask);
+			if (world_parallax) {
+				s.emission += parallax_world_glow(
+					look,
+					in,
+					flags,
+					v,
+					n,
+					has_noise,
+					parallax_uv,
+					uv0_dx,
+					uv0_dy,
+					parallax_dx,
+					parallax_dy,
+					base_a,
+					packed,
+				);
+			} else {
+				s.emission += parallax_glow(look, in, v, n, has_noise, parallax_uv, uv0_dx, uv0_dy, parallax_dx, parallax_dy) *
+					(glow_mask * glow_mask);
+			}
 		}
 	}
 
@@ -1139,10 +1158,12 @@ fn map_channel(flags: u32, mro: bool, channel: f32, base_a: f32, packed: vec4f, 
 	return mix(base_a, select(0.0, mask.a, mro), saturate(channel - 2.0));
 }
 
-// whether the mask slot holds a bound MRO map rather than the tri-channel mask, which under an MRO map sits in
-// the emissive slot
+// whether the mask slot holds a bound MRO map rather than the tri-channel mask (which under an MRO map sits
+// in the emissive slot) or `_PARALLAX_MAP_WORLDSPACE`'s mask map
 fn has_mro(flags: u32, look: Look) -> bool {
-	return (flags & MASK_MAP) != 0u && ((flags & TRI_CHANNEL_MASK) == 0u || look.mask_offset.w > 0.5);
+	return (flags & MASK_MAP) != 0u
+		&& look.effect_only[5].w < 0.5
+		&& ((flags & TRI_CHANNEL_MASK) == 0u || look.mask_offset.w > 0.5);
 }
 
 // `_DISTORTION_FLOW`'s flowing glow (`FlowGlowRow` in lit-look.ts, docs/game-data/materials.md#glowing-foliage):
@@ -1170,22 +1191,19 @@ fn emissive_pulse(look: Look) -> f32 {
 	return (2.0 * abs(x2 * x) - 3.0 * x2 + 0.5 + 0.5 * (1.0 + low) / (1.0 - low)) * (1.0 - low);
 }
 
-// `_PARALLAX_MAP` (`parallaxParams` in lit-look.ts, docs/game-data/materials.md#lit-layers): march the view
-// ray down through the noise map as a height field, refine the hit between the last two steps, and colour it
-// from the pattern's G; then the Fresnel power and the pulse, plus the brightening near the player. the result
-// is HDR emission before the mask
-fn parallax_glow(
+// march the view ray down through the parallax noise map as a height field, refine the hit between the last
+// two steps, and return the pattern map's RG at the hit
+fn parallax_march(
 	look: Look,
 	in: VertexOut,
 	v: vec3f,
-	n: vec3f,
 	has_noise: bool,
 	uv: vec2f,
 	uv0_dx: vec2f,
 	uv0_dy: vec2f,
 	dx: vec2f,
 	dy: vec2f,
-) -> vec3f {
+) -> vec2f {
 	// the view direction in the geometric tangent frame
 	let bitangent = cross(in.normal, in.tangent.xyz) * in.tangent.w;
 	let vt = normalize(vec3f(dot(v, in.tangent.xyz), dot(v, bitangent), dot(v, in.normal)));
@@ -1220,14 +1238,17 @@ fn parallax_glow(
 	let denominator = (previous_sample - hit) + height - previous_height;
 	let t = (previous_sample - previous_height) / select(denominator, 1e-6, denominator == 0.0);
 	let tiling = look.slot_uv[PARALLAX_SLOT].xy;
-	let pattern = textureSampleGrad(
+	return textureSampleGrad(
 		parallax_map,
 		parallax_sampler,
 		(uv + previous_offset + delta * t) * tiling,
 		dx * tiling,
 		dy * tiling,
-	).y;
+	).xy;
+}
 
+// Fresnel, pulse, near-player brightening and exposure scaling shared by both `_PARALLAX_MAP` paths
+fn parallax_radiance(look: Look, in: VertexOut, v: vec3f, n: vec3f, base_color: vec3f) -> vec3f {
 	let fresnel = pow(max(saturate(dot(v, n)), 0.001), look.parallax.z);
 	let pulse = cos(frame.eye.w * look.parallax2.x + look.parallax2.y * in.phase) * look.parallax.w + look.parallax2.w;
 	// the player stands at the camera. a smoothstep from the outer radius down to the inner one, written out
@@ -1235,8 +1256,83 @@ fn parallax_glow(
 	let bright = look.parallax_bright;
 	let near_t = saturate((length(in.rel) - bright.x) / (bright.y - bright.x));
 	let near = near_t * near_t * (3.0 - 2.0 * near_t) * bright.z;
-	let color = mix(look.parallax_dark.rgb, look.parallax_color.rgb, pattern) * fresnel * (pulse + near);
+	let color = base_color * fresnel * (pulse + near);
 	return clamp(color, vec3f(0.0), vec3f(1000.0)) * mix(1.0, frame.ambient.y, look.parallax2.z);
+}
+
+// `_PARALLAX_MAP` (`parallaxParams` in lit-look.ts, docs/game-data/materials.md#lit-layers): march the view
+// ray down through the noise map as a height field, refine the hit between the last two steps, and colour it
+// from the pattern's G; then the Fresnel power and the pulse, plus the brightening near the player. the result
+// is HDR emission before the mask
+fn parallax_glow(
+	look: Look,
+	in: VertexOut,
+	v: vec3f,
+	n: vec3f,
+	has_noise: bool,
+	uv: vec2f,
+	uv0_dx: vec2f,
+	uv0_dy: vec2f,
+	dx: vec2f,
+	dy: vec2f,
+) -> vec3f {
+	let pattern = parallax_march(look, in, v, has_noise, uv, uv0_dx, uv0_dy, dx, dy);
+	let base_color = mix(look.parallax_dark.rgb, look.parallax_color.rgb, pattern.y);
+	return parallax_radiance(look, in, v, n, base_color);
+}
+
+// `_PARALLAX_MAP_WORLDSPACE` (`ParallaxWorldRow` in lit-look.ts, docs/game-data/materials.md#lit-layers):
+// projects `_ParallaxMaskMap` (in `mask_map`) over world XZ around `center`, blends between two pattern
+// colours past `lerp_schedule`, and adds the optional object-height highlight
+fn parallax_world_glow(
+	look: Look,
+	in: VertexOut,
+	flags: u32,
+	v: vec3f,
+	n: vec3f,
+	has_noise: bool,
+	uv: vec2f,
+	uv0_dx: vec2f,
+	uv0_dy: vec2f,
+	dx: vec2f,
+	dy: vec2f,
+	base_a: f32,
+	packed: vec4f,
+) -> vec3f {
+	let pattern = parallax_march(look, in, v, has_noise, uv, uv0_dx, uv0_dy, dx, dy);
+	let base_color = mix(look.parallax_dark.rgb, look.parallax_color.rgb, pattern.y);
+	let base_glow = parallax_radiance(look, in, v, n, base_color);
+
+	let world = in.rel + frame.eye.xyz;
+	let wp = look.effect_only[1];
+	let rot = look.effect_only[2];
+	let pat_bright = look.effect_only[3];
+	let pat_dark = look.effect_only[4];
+	let add_col = look.effect_only[5];
+
+	let delta_xz = world.xz - wp.xy;
+	let scaled = delta_xz * wp.z;
+	let rotated = vec2f(rot.x * scaled.x + rot.y * scaled.y, -rot.y * scaled.x + rot.x * scaled.y);
+	let min_brightness = look.parallax2.w - look.parallax.w;
+	let mask_uv = rotated + vec2f(0.5) + pattern * min_brightness;
+	let geom_ny = select(0.0, saturate(abs(normalize(in.normal).y)), dot(in.normal, in.normal) > 1e-6);
+	let mask_sample = select(
+		vec3f(0.0),
+		textureSampleLevel(mask_map, detail_sampler, mask_uv, mix(3.0, 0.0, geom_ny)).rgb,
+		(flags & MASK_MAP) != 0u,
+	);
+	let tinted = base_glow * base_color * mask_sample;
+	let lerp_t = saturate((length(delta_xz) + pattern.x * 20.0) - wp.w);
+	let glow = mix(tinted * pat_bright.rgb, tinted * pat_dark.rgb, lerp_t);
+
+	let has_normal = (flags & NORMAL_MAP) != 0u;
+	let norm_b = select(0.0, packed.b, has_normal);
+	let norm_a = select(0.0, packed.a, has_normal);
+	let add_ch = pat_dark.w;
+	let add_mask = mix(mix(base_a, norm_b, saturate(add_ch)), norm_a, saturate(add_ch - 1.0));
+	let additional = (vec3f(0.3) + glow) * add_col.rgb * saturate(in.object_y - pat_bright.w) * add_mask;
+	let height_mask = mix(base_a, saturate(rot.w - world.y), saturate(rot.w));
+	return additional + glow * height_mask * rot.z;
 }
 
 // `HGRP/Erosion` (`erosionLook` in special-looks.ts, parameters by `ErosionRow`): base and metal colours mixed by the

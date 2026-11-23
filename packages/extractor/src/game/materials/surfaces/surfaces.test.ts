@@ -748,6 +748,7 @@ describe('the Lit model', () => {
 			maskChannel: 2,
 			ignorePostExposure: 1,
 			near: { outer: 25, inner: 3, strength: 20 },
+			worldMask: null,
 		});
 		// switch-texture variants take G and B from textures without a slot: they don't blend
 		const switched = crystal([...keywords, '_TRI_CHANNEL_MASK_SWITCH_TEXTURE']).triChannel?.channels;
@@ -778,6 +779,72 @@ describe('the Lit model', () => {
 			[glow.pattern, glow.noise, glow.steps, glow.bright],
 			[slot(3), null, 3, [95.87, 36.64, 3.51]],
 		);
+	});
+
+	it('describes Hidden/HGRP/LitEffectBlend with _PARALLAX_MAP_WORLDSPACE', () => {
+		const shader = shaderEntry({
+			name: 'Hidden/HGRP/LitEffectBlend',
+			family: 'litEffect',
+			floats: { _BaseTextureMapCount: 2, _ParallaxIntensity: 1, _UseParallaxMask: 0 },
+		});
+		const surface = lit(
+			describeMaterial(
+				values({
+					keywords: ['_EMISSIVE_MAP', '_PARALLAX_MAP', '_PARALLAX_MAP_WORLDSPACE', '_TWO_BASEMAP'],
+					baseTextureMapCount: 2,
+					slots: {
+						_BaseColorMap: slot(1),
+						_NormalMap: slot(2),
+						_EmissiveMap: slot(3),
+						_ParallaxMap: slot(4),
+						_ParallaxNoiseMap: slot(4),
+						_ParallaxMaskMap: slot(5),
+					},
+					floats: {
+						_ParallaxMarchNum: 5,
+						_ParallaxTilling: 4.5,
+						_ParallaxNoiseMapTilling: 4.5,
+						_ParallaxStrength: 0.01,
+						_ParallaxMaskMapColorStrength: 20,
+						_ParallaxLerpSchedule: 30,
+						_ParallaxIntensity: 2,
+						_UseParallaxMask: 1,
+						_StencilRef: 32,
+					},
+					colors: {
+						_ParallaxColor: [1.5, 2, 1, 1],
+						_ParallaxColorDark: [0.3, 0.6, 0.6, 1],
+						_ParallaxPatternColor: [1, 2, 1, 1],
+						_ParallaxPatternColorDark: [0, 3, 2, 1],
+						_WorldParallaxAdditionalColor: [1, 1.5, 2, 1],
+					},
+					vectors: {
+						_MaskWorldPosParams: [-327, 90, -482, 62],
+						_ParallaxSignLerpFactor1: [0, 1.8, 0, 270],
+					},
+				}),
+				shader,
+			),
+		);
+		assert.equal(surface.keepsLitDecalsOff, true);
+		const glow = surface.overlay;
+		assert.ok(glow?.kind === 'parallax');
+		// world-space parallax keeps bright/dark unscaled by intensity and applies intensity last
+		assert.deepEqual(glow.bright, [1.5, 2, 1]);
+		assert.deepEqual(glow.dark, [0.3, 0.6, 0.6]);
+		assert.ok(glow.worldMask !== null);
+		assert.deepEqual(glow.worldMask.mask, slot(5));
+		assert.deepEqual(glow.worldMask.center, [-327, -482]);
+		assert.equal(glow.worldMask.scale, 62);
+		assert.ok(Math.abs(glow.worldMask.rotation[0]) < 1e-6);
+		assert.ok(Math.abs(glow.worldMask.rotation[1] - 1) < 1e-6);
+		assert.deepEqual(glow.worldMask.patternColor, [20, 40, 20]);
+		assert.deepEqual(glow.worldMask.patternColorDark, [0, 60, 40]);
+		assert.equal(glow.worldMask.lerpSchedule, 30);
+		assert.equal(glow.worldMask.intensity, 2);
+		assert.equal(glow.worldMask.worldYCut, 270);
+		assert.deepEqual(glow.worldMask.additionalColor, [1, 1.5, 2]);
+		assert.equal(glow.worldMask.objectYCut, 1.8);
 	});
 
 	it('describes a moss rock top layer with its own tiling and offset, without moss unless keyworded', () => {

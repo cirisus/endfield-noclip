@@ -7,10 +7,12 @@ for lighting, and [effects.md](effects.md) for `HGRP/Effect/*` shaders.
 
 ## texture layouts
 
-`HGRP/Lit`, `HGRP/LitTransparent`, `HGRP/LitEffect`, and `HGRP/Foliage/Trunk` support two texture
-layouts selected by `_BaseTextureMapCount` (when absent, `_TWO_BASEMAP` selects 2 and its absence
-selects 0). `LitEffect` declares a subset of Lit's properties plus dissolve and disturb; `Trunk`
-adds no properties over Lit.
+`HGRP/Lit`, `HGRP/LitTransparent`, `HGRP/LitEffect`, `Hidden/HGRP/LitEffectBlend`, and
+`HGRP/Foliage/Trunk` support two texture layouts selected by `_BaseTextureMapCount` (when absent,
+`_TWO_BASEMAP` selects 2 and its absence selects 0). `LitEffect` declares a subset of Lit's
+properties plus dissolve and disturb; `LitEffectBlend` is `LitEffect` with a depth-soft GBuffer
+blend (`_ObjectBlendFactor`, `_ObjectBlendFallOff`, as in [erosion](#erosion)); `Trunk` adds no
+properties over Lit.
 
 | `_BaseTextureMapCount` | layout      | normal map                     | metallic / roughness / occlusion                |
 | ---------------------- | ----------- | ------------------------------ | ----------------------------------------------- |
@@ -168,6 +170,19 @@ UV1; originium crystals' base and detail maps tiled ×5 on UV1).
   - both maps default to black. crystals without a noise map (campfire
     `M_interactive_campfire+1_003_02`, display `M_iprop_map01_zmdmachine+1_009_02`, Dijiang far
     `M_building_dijianghao+1_001_11`) see height 0 everywhere and read the pattern at full depth.
+  - **`_PARALLAX_MAP_WORLDSPACE`** (Hongshan great tree `M_tree_hsbigtree+1_004_02`, `_002_02` and
+    surrounding plinths `M_imod_map02_tianshitan+1_001_01a`/`_01b`; no-op without `_PARALLAX_MAP`):
+    projects `_ParallaxMaskMap` over world XZ around `_MaskWorldPosParams.xz` (rotated by `.y`
+    degrees, divided by `max(.w, 0.1)`, shifted by `0.5 + pattern.xy · _ParallaxMinBrightness`, mip
+    `mix(3, 0, |geomN.y|)`). multiplies the exposed parallax radiance by the pattern colour blend
+    again and `mask.rgb · _ParallaxMaskMapColorStrength`, then blends between HDR
+    `_ParallaxPatternColor` and `_ParallaxPatternColorDark` by
+    `saturate(length(deltaXZ) + pattern.r · 20 − _ParallaxLerpSchedule)` (plus optional
+    `_ParallaxSignControl` alpha bands × vertex red). emits that times
+    `mix(base.a, saturate(_ParallaxSignLerpFactor1.w − world.y), saturate(_ParallaxSignLerpFactor1.w)) · _ParallaxIntensity`,
+    plus
+    `(0.3 + glow) · _WorldParallaxAdditionalColor · saturate(objectY − _ParallaxSignLerpFactor1.y)`
+    masked by `_WorldParallaxAdditionalLightMaskChannel` (0 base A, 1 normal B, 2 normal A).
 - **`_MATCAP`** (campfire crystal, a few Dijiang props): adds `_MatcapMap` sampled at
   `viewNormal.xy · 0.5 + 0.5`, × `_MatcapMapStrength`, to emission (not albedo-tinted).
   `_MatCapIgnorePostExposure` divides out post exposure.

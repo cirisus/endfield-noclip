@@ -337,7 +337,7 @@ export interface ParallaxGlow {
 	pulseRate: number;
 	pulsePhasePerMetre: number;
 	pulseMinimum: number;
-	/** HDR colours times the intensity */
+	/** HDR colours times the intensity (unscaled when {@link worldMask} is set, which applies intensity last) */
 	bright: Rgb;
 	dark: Rgb;
 	/** `_ParallaxMaskChannel`, numbered like {@link LitEmission.maskChannel} minus one */
@@ -346,6 +346,41 @@ export interface ParallaxGlow {
 	ignorePostExposure: Weight;
 	/** the brightening near the player: radii and strength (0 for none) */
 	near: { outer: number; inner: number; strength: number };
+	/** `_PARALLAX_MAP_WORLDSPACE`'s world-space mask and colour blend, `null` for standard `_PARALLAX_MAP` */
+	worldMask: ParallaxWorldMask | null;
+}
+
+/**
+ * `_PARALLAX_MAP_WORLDSPACE`'s world-space mask and colour blend (`docs/game-data/materials.md#lit-layers`):
+ * `_ParallaxMaskMap` projected over world XZ around {@link center}, tinting and blending the parallax glow
+ * between {@link patternColor} and {@link patternColorDark} by distance past {@link lerpSchedule}
+ */
+export interface ParallaxWorldMask {
+	/** `_ParallaxMaskMap`, sampled in world XZ space (ignores its UV set and `_ST`); `null` when unbound */
+	mask: TextureSlot | null;
+	/** `_MaskWorldPosParams.xz`: world XZ centre of the projection */
+	center: [x: number, z: number];
+	/** `_MaskWorldPosParams.w` (floored at 0.1): world metres per unit UV */
+	scale: number;
+	/** cosine and sine of `_MaskWorldPosParams.y` degrees */
+	rotation: [cos: number, sin: number];
+	/** `_ParallaxPatternColor` (HDR) times `_ParallaxMaskMapColorStrength` */
+	patternColor: Rgb;
+	/** `_ParallaxPatternColorDark` (HDR) times `_ParallaxMaskMapColorStrength` */
+	patternColorDark: Rgb;
+	/** `_ParallaxLerpSchedule`: distance from {@link center} (plus `pattern.r · 20`) where dark takes over */
+	lerpSchedule: number;
+	/** `_ParallaxIntensity`: scales the parallax glow's emission */
+	intensity: number;
+	/** `_ParallaxSignLerpFactor1.w`: when positive, replaces base alpha with `saturate(worldYCut − world.y)` */
+	worldYCut: number;
+	/**
+	 * `_WorldParallaxAdditionalColor` (HDR): added as `(0.3 + glow) · color · saturate(objectY − objectYCut) ·
+	 * maskChannel` (`_ParallaxSignLerpFactor1.y`, `_WorldParallaxAdditionalLightMaskChannel`)
+	 */
+	additionalColor: Rgb;
+	objectYCut: number;
+	additionalMaskChannel: number;
 }
 
 /**

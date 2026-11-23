@@ -4,7 +4,12 @@
  */
 
 import type { TextureSlot } from '@endfield-noclip/package-format/materials';
-import type { LayerCoverage, LitLayer, ParallaxGlow } from '@endfield-noclip/package-format/surfaces';
+import type {
+	LayerCoverage,
+	LitLayer,
+	ParallaxGlow,
+	ParallaxWorldMask,
+} from '@endfield-noclip/package-format/surfaces';
 
 import { tiledSlot } from '../describe-steps.ts';
 import { linearRgb, type MaterialReader, scaleRgb } from '../material-values.ts';
@@ -14,11 +19,37 @@ export const parallaxGlowOf = (
 	reader: MaterialReader,
 	pattern: TextureSlot,
 	noise: TextureSlot | null,
+	worldSpace: boolean,
+	worldMaskSlot: TextureSlot | null,
 ): ParallaxGlow => {
-	const { float, color } = reader;
+	const { float, color, vector } = reader;
 	// the step count is an integer uniform: the float property truncates
 	const steps = Math.min(Math.max(Math.trunc(float('_ParallaxMarchNum', 3)), 1), 20);
 	const intensity = float('_ParallaxIntensity', 1);
+	let worldMask: ParallaxWorldMask | null = null;
+	if (worldSpace) {
+		const params = vector('_MaskWorldPosParams') ?? [0, 0, 0, 1];
+		const angle = (params[1] * Math.PI) / 180;
+		const colorStrength = float('_ParallaxMaskMapColorStrength', 1);
+		const factor1 = vector('_ParallaxSignLerpFactor1') ?? [0, 0, 0, 0];
+		const additional = color('_WorldParallaxAdditionalColor') ?? [0, 0, 0, 1];
+		worldMask = {
+			mask: worldMaskSlot,
+			center: [params[0], params[2]],
+			scale: Math.max(params[3], 0.1),
+			rotation: [Math.cos(angle), Math.sin(angle)],
+			patternColor: scaleRgb(color('_ParallaxPatternColor') ?? [0, 0, 0, 1], colorStrength),
+			patternColorDark: scaleRgb(color('_ParallaxPatternColorDark') ?? [0, 0, 0, 1], colorStrength),
+			lerpSchedule: float('_ParallaxLerpSchedule', 0),
+			intensity,
+			worldYCut: factor1[3],
+			additionalColor: [additional[0], additional[1], additional[2]],
+			objectYCut: factor1[1],
+			additionalMaskChannel: float('_WorldParallaxAdditionalLightMaskChannel', 0),
+		};
+	}
+	// world-space parallax squares the pattern colour blend and applies `_ParallaxIntensity` at the end
+	const colorScale = worldSpace ? 1 : intensity;
 	return {
 		kind: 'parallax',
 		pattern: tiledSlot(pattern, float('_ParallaxTilling', 1), pattern.uv),
@@ -32,8 +63,8 @@ export const parallaxGlowOf = (
 		pulsePhasePerMetre: float('_ParallaxAnimRandom', 0),
 		pulseMinimum: float('_ParallaxMinBrightness', 0),
 		// HDR colours, as stored
-		bright: scaleRgb(color('_ParallaxColor') ?? [0, 0, 0, 1], intensity),
-		dark: scaleRgb(color('_ParallaxColorDark') ?? [0, 0, 0, 1], intensity),
+		bright: scaleRgb(color('_ParallaxColor') ?? [0, 0, 0, 1], colorScale),
+		dark: scaleRgb(color('_ParallaxColorDark') ?? [0, 0, 0, 1], colorScale),
 		maskChannel: float('_ParallaxMaskChannel', 0),
 		ignorePostExposure: float('_ParallaxIgnorePostExposure', 1),
 		near: {
@@ -41,6 +72,7 @@ export const parallaxGlowOf = (
 			inner: float('_ParallaxBrightInnerRadius', 10),
 			strength: float('_ParallaxCharPos', 0) !== 0 ? float('_ParallaxBrightStrength', 1) : 0,
 		},
+		worldMask,
 	};
 };
 
