@@ -1,7 +1,7 @@
 Endfield's game levels in the browser: an offline extractor turns a local game install into a
 package, and a WebGPU viewer streams that package one level at a time.
 
-Last verified: 2026-11-22
+Last verified: 2026-11-23
 
 ## layout
 
@@ -11,12 +11,24 @@ Last verified: 2026-11-22
   `out/<map>/`
 - `packages/package-format`: the package contract shared by the packer and the viewer
 - `packages/viewer`: the WebGPU viewer (React, Vite)
-- `docs/`: how the game data and our code work. read the page for the area you're changing before
-  changing it, and update it in the same commit when behavior changes, because these pages are the
-  only durable record of the findings. start at [docs/architecture.md](docs/architecture.md); known
-  gaps are in [docs/status.md](docs/status.md). `docs/game-data/` is only what we know about the
-  game; how our code implements it goes in `docs/viewer/`, `docs/extraction.md`, `docs/extraction/`,
-  or `docs/package-format.md`
+- `docs/`: game-data findings, implementation docs, and tooling guides
+
+## docs
+
+read the tooling guides first when working with the viewer or game data:
+
+- [docs/driving-the-viewer.md](docs/driving-the-viewer.md): opening, posing, inspecting, and
+  profiling the viewer in a browser
+- [docs/extraction.md](docs/extraction.md): running `pnpm extract` to pack scenes, query game data,
+  and audit packages
+
+read the reference docs as needed for the area you're touching, and update them in the same commit
+when behavior or findings change (they are the only durable record):
+
+- [docs/architecture.md](docs/architecture.md): package map, data flow, and full doc index
+- [docs/status.md](docs/status.md): known gaps and open unknowns
+- `docs/game-data/`: only what we know about the game itself
+- `docs/extraction/`, `docs/package-format.md`, `docs/viewer/`: how our code implements it
 
 ## development notes
 
