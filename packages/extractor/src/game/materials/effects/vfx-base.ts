@@ -429,7 +429,7 @@ export const describeVfxBase = (
 					bias: float('_FresnelBias', 0),
 					flip: float('_FresnelFlip', 0),
 					opacity: float('_FresnelAffectOpacity', 0),
-					color: color('_FresnelColor') ?? [1, 1, 1, 0],
+					color: reader.hdrColor('_FresnelColor') ?? [1, 1, 1, 0],
 					facing: false,
 				}
 			: null,
@@ -447,7 +447,7 @@ export const describeVfxBase = (
 			: null,
 		edge: has('_USE_EDGECOLOR')
 			? {
-					color: color('_EdgeColor') ?? [1, 1, 1, 1],
+					color: reader.hdrColor('_EdgeColor') ?? [1, 1, 1, 1],
 					alpha: float('_TintColorAlpha', 1),
 					mode: float('_EdgeColorMode', 0),
 					distance: float('_EdgeDistance', 0),

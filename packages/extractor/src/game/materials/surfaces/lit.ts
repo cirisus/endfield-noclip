@@ -128,7 +128,7 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 
 	let emission: LitEmission | null = null;
 	{
-		const emissive = color('_EmissiveColor');
+		const emissive = reader.hdrColor('_EmissiveColor');
 		const channel = float('_EmissiveMaskChannel', 0);
 		let source: LitEmission['source'] | null = null;
 		if (has('_EMISSIVE_MAP')) {
@@ -146,8 +146,8 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 			let channels: LitEmission['channels'] = null;
 			const type = float('_EmissiveType', 0);
 			if (source === 'map' && type !== 0) {
-				// HDR like `_EmissiveColor`: as stored
-				const scaled = (name: string): Rgb => resting(color(name) ?? [0, 0, 0, 1], type);
+				// HDR like `_EmissiveColor` (`HGRP/LitEffect` also flags them `[Gamma]`)
+				const scaled = (name: string): Rgb => resting(reader.hdrColor(name) ?? [0, 0, 0, 1], type);
 				const added: [Rgb, Rgb, Rgb] = [
 					scaled('_EmissiveColorG'),
 					scaled('_EmissiveColorB'),
@@ -161,7 +161,6 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 			const albedo = color(PER_DRAW_EMISSIVE_ALBEDO);
 			const weight = (albedo?.[3] ?? 0) * (source === 'map' ? float('_EnableEmissiveAlbedo', 0) : 1);
 			emission = {
-				// HDR, authored linear: as stored
 				color: resting(emissive, 1),
 				source,
 				maskChannel: channel,

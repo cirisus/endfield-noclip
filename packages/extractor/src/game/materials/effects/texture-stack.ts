@@ -26,7 +26,7 @@ import {
 
 /** the rows the texture stack's effects share: blend layer, distortion, dissolve, near fade and post exposure */
 export const stackSharedOf = (reader: MaterialReader, intensity: number) => ({
-	blendTint: reader.colorOrVector('_BlendTint') ?? [1, 1, 1, 0],
+	blendTint: reader.hdrColor('_BlendTint') ?? [1, 1, 1, 0],
 	disturb: [...disturbIntensityOf(reader, 1), ...disturbIntensityOf(reader, 2)] satisfies [
 		number,
 		number,
@@ -98,7 +98,7 @@ export const appearOf = (reader: MaterialReader): EffectAppear | UnsupportedSurf
 	if ((color('_BrightCenter')?.[3] ?? 0) !== 0) {
 		return unsupported('a brightening about a fixed point');
 	}
-	const brightColor = color('_BrightColor') ?? [0, 0, 0, 0];
+	const brightColor = reader.hdrColor('_BrightColor') ?? [0, 0, 0, 0];
 	return {
 		global,
 		inner: float('_InnerRadius', 0),
@@ -107,8 +107,7 @@ export const appearOf = (reader: MaterialReader): EffectAppear | UnsupportedSurf
 		edge: float('_DistortOnEdge', 0),
 		noiseScale: float('_DistortScale', 1),
 		noiseSpeed: float('_DistortSpeed', 0),
-		// added to the tint, so linearized as the tint is
-		brightColor: [...linearRgb(brightColor), brightColor[3]],
+		brightColor: [brightColor[0], brightColor[1], brightColor[2], brightColor[3]],
 		brightVertexAlpha: float('_BrightUseVertColor', 0) !== 0,
 		characterHeight: float('_CharacterHeight', 0),
 	};

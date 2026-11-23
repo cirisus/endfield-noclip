@@ -615,6 +615,9 @@ const materialJson = async (
 		hdrColors: mapDefined(material.shader.properties, (p) =>
 			p.type === ShaderPropertyType.Color && (p.flags & ShaderPropertyFlags.Hdr) !== 0 ? p.name : undefined,
 		),
+		gammaColors: mapDefined(material.shader.properties, (p) =>
+			p.type === ShaderPropertyType.Color && (p.flags & ShaderPropertyFlags.Gamma) !== 0 ? p.name : undefined,
+		),
 	};
 };
 

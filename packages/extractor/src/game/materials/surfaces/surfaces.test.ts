@@ -18,6 +18,7 @@ const shaderEntry = (
 	vectors: {},
 	textures: {},
 	normalMaps: [],
+	gammaColors: [],
 	...overrides,
 });
 
@@ -307,6 +308,33 @@ describe('dithered effects', () => {
 				mask: null,
 			},
 		);
+	});
+	it('linearizes [HDR][Gamma] emissive colours on HGRP/LitEffect while keeping plain [HDR] as stored', () => {
+		const lit = shaderEntry({ name: 'HGRP/Lit', family: 'lit' });
+		const litEffect = shaderEntry({
+			name: 'HGRP/LitEffect',
+			family: 'litEffect',
+			gammaColors: ['_EmissiveColor', '_EmissiveColorG', '_EmissiveColorB', '_EmissiveColorA'],
+		});
+		const mat = values({
+			keywords: ['_EMISSIVE_MAP'],
+			slots: { _EmissiveMap: { texture: 1, uv: 0, scale: [1, 1], offset: [0, 0] } },
+			floats: { _EmissiveType: 1 },
+			colors: { _EmissiveColor: [2, 1, 0.5, 1], _EmissiveColorG: [3, 0, 0, 1] },
+		});
+		const plain = describeMaterial(mat, lit);
+		const gamma = describeMaterial(mat, litEffect);
+		assert.equal(plain.kind, 'lit');
+		assert.equal(gamma.kind, 'lit');
+		if (plain.kind !== 'lit' || gamma.kind !== 'lit') {
+			return;
+		}
+		assert.deepEqual(plain.emission?.color, [2, 1, 0.5]);
+		assert.deepEqual(plain.emission?.channels?.[0], [3, 0, 0]);
+		assert.ok(Math.abs((gamma.emission?.color[0] ?? 0) - 2 ** 2.2) < 1e-6);
+		assert.equal(gamma.emission?.color[1], 1);
+		assert.ok(Math.abs((gamma.emission?.color[2] ?? 0) - ((0.5 + 0.055) / 1.055) ** 2.4) < 1e-6);
+		assert.ok(Math.abs((gamma.emission?.channels?.[0][0] ?? 0) - 3 ** 2.2) < 1e-6);
 	});
 });
 

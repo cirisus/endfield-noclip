@@ -108,11 +108,10 @@ export const describeRefract = (reader: MaterialReader): RefractSurface | Unsupp
 		if (isUnsupported(blended)) {
 			return blended;
 		}
-		const tint = color('_BlendColor') ?? [1, 1, 1, 1];
+		const tint = reader.hdrColor('_BlendColor') ?? [1, 1, 1, 1];
 		blend = {
 			texture: blended,
 			redAlpha: float('_UseBlendTexAsAlpha', 0) !== 0,
-			// [HDR]: used as stored
 			color: [tint[0], tint[1], tint[2], tint[3]],
 			usesRefraction: float('_BlendTexUseRefract', 0),
 		};

@@ -99,7 +99,7 @@ export const dissolveSweepOf = ({
 
 /** a dissolve with its glowing edge, whose colour scales by `intensity` */
 export const dissolveOf = (reader: MaterialReader, intensity: number): EffectDissolve => {
-	const edge = reader.colorOrVector('_DissolveEmissiveColor') ?? [0, 0, 0, 0];
+	const edge = reader.hdrColor('_DissolveEmissiveColor') ?? [0, 0, 0, 0];
 	return {
 		...dissolveSweepOf(reader),
 		edgeWidth: reader.float('_DissolveEmissiveEdge', 0),

@@ -17,6 +17,7 @@ const shader = (name: string, family: ShaderFamily, overrides: Partial<ShaderEnt
 	vectors: {},
 	textures: {},
 	normalMaps: [],
+	gammaColors: [],
 	...overrides,
 });
 
@@ -563,6 +564,38 @@ describe('VFXBaseV2', () => {
 	const base = shader('HGRP/Effect/VFXBaseV2', 'vfxBase');
 	const stackOf = (overrides: Partial<MaterialValues>, entry = base) =>
 		describeMaterial(material({ slots: { _MainTex: slot(1) }, ...overrides }), entry);
+
+	it('linearizes HDR colours that the shader also flags [Gamma], keeping alpha as stored', () => {
+		const gammaBase = shader('HGRP/Effect/VFXBaseV2', 'vfxBase', {
+			gammaColors: ['_BlendTint', '_FresnelColor', '_EdgeColor', '_DissolveEmissiveColor'],
+		});
+		const stack = ofKind(
+			stackOf(
+				{
+					keywords: ['_USE_FRESNEL', '_USE_EDGECOLOR'],
+					floats: { _UseDissolve: 1 },
+					colors: {
+						_BlendTint: [0.5, 2, 4, 0.7],
+						_FresnelColor: [0, 0.5, 1, 0.5],
+						_EdgeColor: [0, 1, 2, 0.8],
+						_DissolveEmissiveColor: [0, 2, 3, 1],
+					},
+				},
+				gammaBase,
+			),
+			'effectStack',
+		);
+		// below 1: sRGB curve; above 1: c^2.2 (Unity's `GammaToLinearSpace`)
+		assert.ok(Math.abs(stack.blendTint[0] - ((0.5 + 0.055) / 1.055) ** 2.4) < 1e-6);
+		assert.ok(Math.abs(stack.blendTint[1] - 2 ** 2.2) < 1e-6);
+		assert.ok(Math.abs(stack.blendTint[2] - 4 ** 2.2) < 1e-6);
+		assert.equal(stack.blendTint[3], 0.7);
+		assert.ok(Math.abs((stack.fresnel?.color[1] ?? 0) - ((0.5 + 0.055) / 1.055) ** 2.4) < 1e-6);
+		assert.equal(stack.fresnel?.color[3], 0.5);
+		assert.ok(Math.abs((stack.edge?.color[2] ?? 0) - 2 ** 2.2) < 1e-6);
+		assert.equal(stack.edge?.color[3], 0.8);
+		assert.ok(Math.abs((stack.dissolve?.edgeColor[2] ?? 0) - 3 ** 2.2) < 1e-6);
+	});
 
 	it('keeps each texture’s custom data shift, and lets the custom data’s w scale the distortion', () => {
 		// the anchors' black smoke (`M_fx_angel_anchorlight_834`) shifts its main texture by (1, 1) per unit of x

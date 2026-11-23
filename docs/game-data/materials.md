@@ -63,7 +63,11 @@ the source:
 
 HGRP Lit emits through `_EMISSIVE_*` keywords. `_EmissiveColor` is an HDR colour authored in linear
 space (`base × 2^intensity`) and used as stored. emission adds to lit colour without pre-exposure
-(the Hub's white ceiling panels store ~24).
+(the Hub's white ceiling panels store ~24). in Unity's `SerializedProperties::MakePropertySheet`,
+any property flagged `[Gamma]` (`ShaderPropertyFlags` bit 5, `0x20`) is still converted through
+`GammaToLinearSpace` (sRGB below 1, `c^2.2` past 1, alpha unchanged) even when also flagged `[HDR]`
+(bit 4, `0x10`): `HGRP/LitEffect` flags `_EmissiveColor{,G,B,A}` as `0x30` (`[HDR][Gamma]`), whereas
+`HGRP/Lit` flags them `0x10` (`[HDR]` only).
 
 | keyword           | emission                                                         |
 | ----------------- | ---------------------------------------------------------------- |
@@ -72,9 +76,10 @@ space (`base × 2^intensity`) and used as stored. emission adds to lit colour wi
 | `_EMISSIVE_NOMAP` | ships only with `_EMISSIVE_ANIM_SWEEP`                           |
 
 - **multi-channel `_EMISSIVE_MAP`**: Lit and LitEffect add `_EmissiveMap` G, B, A × HDR
-  `_EmissiveColorG`, `_EmissiveColorB`, `_EmissiveColorA` (as stored), scaled by `_EmissiveType`
-  (0 = R only). Dijiang's cargo shaft stripe rings (`M_fx_base01_lv001_ship_line_1123`, `_1125`,
-  `HGRP/LitEffect`) set `_EmissiveType` 1 with R, G, B colours.
+  `_EmissiveColorG`, `_EmissiveColorB`, `_EmissiveColorA` (linearized on LitEffect via `[Gamma]`),
+  scaled by `_EmissiveType` (0 = R only). Dijiang's cargo shaft stripe rings
+  (`M_fx_base01_lv001_ship_line_1123`, `_1125`, `HGRP/LitEffect`) set `_EmissiveType` 1 with R, G, B
+  colours.
 - **UV scroll**: `_EmissiveSpeed` scrolls emissive UVs (`xy` per tick of an untraced shader clock;
   stripe rings use `(0, 0.1)`).
 - **`_EMISSIVE_ANIM`**: pulses smoothly from `_EmissiveMinBrightness` to 1 and back over

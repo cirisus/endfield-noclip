@@ -294,10 +294,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     show checker, surface height ignored); VFXDecal `_USE_IN_PARTICLE`, lighting, 3D textures,
     parallax + blend layer, stencil masks outside 0/32; local lights on lit effects (irradiance
     sampled per-pixel, not per-renderer). VFXBaseV2 breathing pulses in sync across placements;
-    Dijiang clue board and aisle-guide edge colour unchecked. some additive VFXBaseV2 effects read
-    dimmer than in game despite matching the compiled SPIR-V math (Dijiang planter curtains, Origin
-    Lodespring crater stripes, Yinglung Pass glowing pool `P_fxmap_map02_lv007_watersurface_01`;
-    cause untraced).
+    Dijiang clue board and aisle-guide edge colour unchecked.
   - **VFXDitherAlpha**:
     - effect variants blend without dithering/depth and support only distortion, mask, and vertex
       offset (unsupported: lit, other dither modes, object-relative screen UVs, lone vertex offset,

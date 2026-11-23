@@ -17,6 +17,7 @@ const shaderEntry = (
 	vectors: {},
 	textures: {},
 	normalMaps: [],
+	gammaColors: [],
 	...overrides,
 });
 

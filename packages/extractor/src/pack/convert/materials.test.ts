@@ -30,6 +30,12 @@ const shader: ShaderSummary = {
 		property('_Metallic', ShaderPropertyType.Range, [0]),
 		property('_Steps', ShaderPropertyType.Int, [3]),
 		property('_BaseColor', ShaderPropertyType.Color, [1, 1, 1, 1]),
+		property(
+			'_BlendTint',
+			ShaderPropertyType.Color,
+			[1, 1, 1, 1],
+			ShaderPropertyFlags.Hdr | ShaderPropertyFlags.Gamma,
+		),
 		property('_WindDir', ShaderPropertyType.Vector, [0, 0, 1, 0]),
 		property('_BaseColorMap', ShaderPropertyType.Texture, 'white'),
 		property('_NormalMap', ShaderPropertyType.Texture, 'bump', ShaderPropertyFlags.Normal),
@@ -68,10 +74,11 @@ describe('ShaderTable', () => {
 			name: 'HGRP/Lit',
 			family: 'lit',
 			floats: { _CullMode: 2, _Metallic: 0, _Steps: 3 },
-			colors: { _BaseColor: [1, 1, 1, 1] },
+			colors: { _BaseColor: [1, 1, 1, 1], _BlendTint: [1, 1, 1, 1] },
 			vectors: { _WindDir: [0, 0, 1, 0] },
 			textures: { _BaseColorMap: 'white', _NormalMap: 'bump', _MROMap: 'white' },
 			normalMaps: ['_NormalMap'],
+			gammaColors: ['_BlendTint'],
 		});
 	});
 });

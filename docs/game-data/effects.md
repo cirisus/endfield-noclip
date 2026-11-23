@@ -26,8 +26,12 @@ by role:
   neighbouring puffs do not bleed in.
 - each texture scrolls by `*UVSpeed` per second, rotates about `(0.5, 0.5)`, then applies `_ST`.
   `*AsAlpha` uses R as alpha.
-- HDR colour properties are used as stored; LDR colours are linearized. `_IgnorePostExposure`
-  divides out post exposure.
+- LDR colour properties are linearized, and `[HDR]` colour properties are used as stored unless the
+  shader also flags them `[Gamma]` (`0x30`; see [materials](materials.md#emission)), which Unity
+  converts via `GammaToLinearSpace` (sRGB below 1, `c^2.2` past 1). VFXBaseV2, VFXAdvance, VFXDecal,
+  VFXDitherAlpha, VFXRefract, and VFXSmoke_SixWay flag their HDR tint/emissive/Fresnel/edge colours
+  `[HDR][Gamma]`, while VFXWater's `_TintColor` and FogSimple's colours are plain `[HDR]`.
+  `_IgnorePostExposure` divides out post exposure.
 - `_UseNearCameraFade` fades in over `_NearCameraFadeDistanceStart`–`…End` m of view depth and out
   over `…Start2`–`…End2` m.
 

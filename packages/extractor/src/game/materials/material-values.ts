@@ -65,8 +65,8 @@ export interface ShaderEntry {
 	floats: Record<string, number>;
 	/**
 	 * Color properties, as authored: LDR colours are gamma-encoded and, as in Unity's linear-space projects,
-	 * converted to linear before shading; `[HDR]` colours are authored linear and used as stored (see
-	 * `docs/game-data/materials.md#emission`)
+	 * converted to linear before shading; `[HDR]` colours are authored linear unless the shader also flags them
+	 * `[Gamma]` ({@link gammaColors}; see `docs/game-data/materials.md#emission`)
 	 */
 	colors: Record<string, Vec4>;
 	/** Vector properties, used as they are */
@@ -75,6 +75,8 @@ export interface ShaderEntry {
 	textures: Record<string, string>;
 	/** texture properties flagged `[Normal]` (tangent-space normal maps) */
 	normalMaps: string[];
+	/** Color properties flagged `[Gamma]`, which Unity converts via `GammaToLinearSpace` even when `[HDR]` */
+	gammaColors: string[];
 }
 
 /** a converted material's values: its overrides of its shader's defaults, slots and render state */
@@ -127,6 +129,11 @@ export interface MaterialReader {
 	vector: (name: string) => Vec4 | undefined;
 	/** a Color property, else a Vector of the same name: the effect shaders declare some of each */
 	colorOrVector: (name: string) => Vec4 | undefined;
+	/**
+	 * an `[HDR]` Color property (or Vector of the same name), linearized via {@link linearRgb} when the shader
+	 * also flags it `[Gamma]` ({@link ShaderEntry.gammaColors})
+	 */
+	hdrColor: (name: string) => Vec4 | undefined;
 	/** a bound texture, absent when the slot is empty */
 	slot: (name: string) => TextureSlot | undefined;
 }
@@ -139,6 +146,15 @@ export interface MaterialReader {
 export const readerOf = (material: MaterialValues, shader: ShaderEntry): MaterialReader => {
 	const color = (name: string): Vec4 | undefined => material.colors[name] ?? shader.colors[name];
 	const vector = (name: string): Vec4 | undefined => material.vectors[name] ?? shader.vectors[name];
+	const colorOrVector = (name: string): Vec4 | undefined => color(name) ?? vector(name);
+	const gamma = new Set(shader.gammaColors);
+	const hdrColor = (name: string): Vec4 | undefined => {
+		const value = colorOrVector(name);
+		if (value === undefined || !gamma.has(name)) {
+			return value;
+		}
+		return [...linearRgb(value), value[3]];
+	};
 	return {
 		material,
 		shader,
@@ -146,7 +162,8 @@ export const readerOf = (material: MaterialValues, shader: ShaderEntry): Materia
 		float: (name, fallback) => material.floats[name] ?? shader.floats[name] ?? fallback,
 		color,
 		vector,
-		colorOrVector: (name) => color(name) ?? vector(name),
+		colorOrVector,
+		hdrColor,
 		slot: (name) => material.slots[name],
 	};
 };

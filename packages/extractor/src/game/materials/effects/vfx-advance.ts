@@ -101,7 +101,7 @@ const emissionOf = (
 	reader: MaterialReader,
 	offset: boolean,
 ): EffectStackSurface['emission'] | UnsupportedSurface => {
-	const { colorOrVector: color, has } = reader;
+	const { has } = reader;
 	if (!has('_EMISSION')) {
 		return null;
 	}
@@ -112,7 +112,7 @@ const emissionOf = (
 	if (bound === undefined) {
 		return unsupported('_EMISSION without a texture');
 	}
-	const emissionColor = color('_EmissionColor') ?? [1, 1, 1, 1];
+	const emissionColor = reader.hdrColor('_EmissionColor') ?? [1, 1, 1, 1];
 	return {
 		slot: EMISSION_SLOT,
 		// UV0 through its `_ST` alone, whatever the slot's UV set
@@ -284,7 +284,7 @@ const describeFixedSlots = (
 					bias: float('_FresnelBias', 0),
 					flip: float('_FresnelFlip', 0),
 					opacity: float('_FresnelAffectOpacity', 0),
-					color: color('_FresnelColor') ?? [1, 1, 1, 0],
+					color: reader.hdrColor('_FresnelColor') ?? [1, 1, 1, 0],
 					facing: true,
 				}
 			: null,

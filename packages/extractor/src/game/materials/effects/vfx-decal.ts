@@ -120,7 +120,7 @@ const parallaxOf = (
 	layers: readonly (StackLayer | null)[],
 	sources: ReadonlyMap<number, EffectUvSource>,
 ): DecalParallax | UnsupportedSurface | null => {
-	const { float, colorOrVector: color, has } = reader;
+	const { float, has } = reader;
 	if (!has('_USE_PARALLAX')) {
 		return null;
 	}
@@ -148,8 +148,8 @@ const parallaxOf = (
 	// the noise scrolls after its `_ST`, so its scroll is divided by the scale the viewer applies after it
 	const speed = speedOf(reader, '_CrackNoiseSpeed');
 	const scroll = [0, 1].map((k) => (noiseSlot.scale[k] === 0 ? 0 : speed[k] / noiseSlot.scale[k]));
-	const crackColor = color('_CrackColor') ?? [0, 0, 0, 0];
-	const noiseColor = color('_CrackNoiseColor') ?? [0, 0, 0, 0];
+	const crackColor = reader.hdrColor('_CrackColor') ?? [0, 0, 0, 0];
+	const noiseColor = reader.hdrColor('_CrackNoiseColor') ?? [0, 0, 0, 0];
 	const intensity = float('_CrackNoiseIntensity', 1);
 	return {
 		scale: float('_ParallaxScale', 0),
@@ -174,7 +174,7 @@ const parallaxOf = (
  * @returns its surface, or `unsupported`
  */
 export const describeVfxDecal = (reader: MaterialReader): EffectStackSurface | UnsupportedSurface => {
-	const { float, colorOrVector: color, has } = reader;
+	const { float, has } = reader;
 	const undrawn =
 		undrawnBlend(reader, ['premultiplied', 'additive']) ?? undrawnKeywords(reader, DECAL_KEYWORDS);
 	if (undrawn !== null) {
@@ -195,7 +195,7 @@ export const describeVfxDecal = (reader: MaterialReader): EffectStackSurface | U
 	if (readMask !== 0) {
 		covers = (float('_StencilRef', 0) & readMask) !== 0 ? 'marked' : 'unmarked';
 	}
-	const base = color('_DecalBaseColor') ?? [1, 1, 1, 1];
+	const base = reader.hdrColor('_DecalBaseColor') ?? [1, 1, 1, 1];
 	// a texture's UV switch picks polar or screen UVs only where they're computed; the box's otherwise
 	const sources = new Map<number, EffectUvSource>();
 	if (has('_USE_SCREENUV') && float('_UseScreenUV', 0) !== 0) {

@@ -46,6 +46,7 @@ export class ShaderTable {
 			vectors: {},
 			textures: {},
 			normalMaps: [],
+			gammaColors: [],
 		};
 		for (const property of summary.properties) {
 			switch (property.type) {
@@ -57,6 +58,9 @@ export class ShaderTable {
 				}
 				case ShaderPropertyType.Color: {
 					entry.colors[property.name] = property.default;
+					if ((property.flags & ShaderPropertyFlags.Gamma) !== 0) {
+						entry.gammaColors.push(property.name);
+					}
 					break;
 				}
 				case ShaderPropertyType.Vector: {
