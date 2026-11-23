@@ -35,6 +35,8 @@ export interface LoadedScene {
 	selector: Selector;
 	/** per-instance LOD selection, when the package has converted geometry */
 	meshes: MeshSelector | null;
+	/** off-thread particle evaluator, destroyed on unload */
+	particles: ParticleField;
 	textures: TextureStore;
 	/** the package's converted geometries, and how many of them converted */
 	geometries: { ready: number; total: number };
@@ -169,6 +171,7 @@ export const openScene = (pkg: ViewerPackage, deps: SceneDeps): LoadedScene => {
 						particles,
 					})
 				: null,
+		particles,
 		textures,
 		geometries: { ready: geometriesReady, total: geometries.count },
 		levels: manifest.levels.map((level) => ({

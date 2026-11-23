@@ -82,11 +82,13 @@ measurement instructions are in [driving the viewer](../driving-the-viewer.md#pr
   [decode workers](loading.md#decode-workers-and-zstd)) cut map02 teleport settle from 2.5 s to ~1 s
   and page load from 5 s to ~2 s; [multi-range requests](streaming.md#residency-and-budgets) halved
   flight request counts.
-- **tabulated and cached particles.** immutable per-particle birth attributes and over-lifetime
-  random draws are cached in a pooled frame-stamped map while particles live; velocity/spin curve
-  integrals are pre-resolved per system, single-curve `sizeOverLifetime`/`colorOverLifetime` and
-  sRGB conversion use lookup tables, and constant-zero motion/spin/custom modules are skipped
-  ([motion](particles.md#motion)).
+- **tabulated, cached, and off-thread particles.** immutable per-particle birth attributes and
+  over-lifetime random draws are cached in a pooled frame-stamped map while particles live;
+  velocity/spin curve integrals are pre-resolved per system, single-curve `sizeOverLifetime`/
+  `colorOverLifetime` and sRGB conversion use lookup tables, and constant-zero motion/spin/custom
+  modules are skipped ([motion](particles.md#motion)). after an emitter's first synchronous frame,
+  per-frame simulation and row packing run on a dedicated Web Worker with ping-pong transferred
+  buffers, cutting dense map02 `mesh select` by 47–63%.
 - **zero per-frame hot-path allocation.** selections, buckets, sort scratch, and plane arrays reuse
   storage across frames; per-bucket texture requests allocate nothing and read flat cached tables in
   `TextureStore` (which batches shrink copies per commit). the stream manager evicts from a ready
@@ -151,14 +153,14 @@ see [quality settings](../game-data/quality-settings.md) for what the game toggl
 
 - **GPU LOD selection.** moving slot picking and bucket allocation to GPU (count, prefix sum, write)
   would reduce CPU work from per-segment to per-row-group.
-- **particle offload.** moving remaining per-frame particle placement to a worker or compute shader.
 - **eviction policy.** sizing the stream budget to the device or adding mip hysteresis without
   triggering saturation.
 - **16-bit local-light shadow atlas.** currently `depth32float` (64 MiB); `depth16unorm` needs a
   larger near plane for short-range perspective depth.
 - **empty GPU-culled draws.** segment-range picking leaves empty buckets the CPU still encodes.
-- **settle-frame selection reuse for moving rows.** swept bounds for spinning/riding rows would let
-  their settle frames skip re-traversal too.
+- **settle-frame selection reuse for moving rows.** spinning/riding rows have exact finite swept
+  bounds (so their 64-row groups stay GPU-cullable), and reusing their selection across settle
+  frames would let still views skip re-traversal too.
 - **shadow caching.** cache cascades across selections when fit and casters match; tile the far
   shadow layer (game caches 200 m tiles and redraws ≤ 8/frame instead of the whole layer).
 - **pack ambient + sky reflection.** combine both `rgba16float` targets (16 B/px, reflection alpha

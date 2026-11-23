@@ -223,6 +223,7 @@ export class Viewer {
 	unload(): void {
 		const renderer = this.#renderer;
 		this.scene?.stream.destroy();
+		this.scene?.particles.destroy();
 		this.scene?.textures.destroy();
 		renderer.meshes.releaseMaterials();
 		// the destroyed store's sky textures

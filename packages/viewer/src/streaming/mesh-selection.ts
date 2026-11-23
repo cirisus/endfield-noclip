@@ -5,7 +5,8 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 import { CULL_FLOATS, ROW_WORDS } from '../content/instance-rows.ts';
 import { alphaTextureOf, LookFlags, type MaterialLook, UV1_SHIFT } from '../looks/look.ts';
 import type { LazyMaterialLooks } from '../looks/material-looks.ts';
-import type { ParticleField, ParticleView } from '../particles/particle-rows.ts';
+import type { ParticleField } from '../particles/particle-rows.ts';
+import type { ParticleView } from '../particles/row-writer.ts';
 import {
 	SHADOW_LAYER_MIN_SQUARED,
 	SHADOW_LAYERS,
@@ -331,6 +332,7 @@ export class MeshSelector {
 	 */
 	run(ranges: readonly InstanceRange[], view: MeshView): MeshSelection {
 		const frame = ++this.#frame;
+		this.#particles.beginFrame();
 		const selection = this.selection;
 		selection.buckets.length = 0;
 		selection.boxes.length = 0;
@@ -460,6 +462,7 @@ export class MeshSelector {
 			}
 		}
 
+		this.#particles.endFrame(view.particles);
 		this.#wantAsked();
 		const texturePixels = 2 ** -view.textureBias;
 		for (const bucket of selection.buckets) {

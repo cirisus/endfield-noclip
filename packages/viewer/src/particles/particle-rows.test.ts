@@ -11,14 +11,10 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { ROW_WORDS, RowBillboard, RowWord, rowSheet } from '../content/instance-rows.ts';
 
-import {
-	type EmitterBlock,
-	ParticleField,
-	type ParticleRowStore,
-	type ParticleView,
-	screenLimited,
-	turnedByBillboard,
-} from './particle-rows.ts';
+import type { ParticleWorkerResponse } from './particle-protocol.ts';
+import { type EmitterBlock, ParticleField, type ParticleRowStore } from './particle-rows.ts';
+import { createParticleWorkerHandler } from './particle-worker.ts';
+import { type ParticleView, screenLimited, turnedByBillboard } from './row-writer.ts';
 import { between, constant, line, system, trailed } from './test-systems.ts';
 
 describe('ParticleField', () => {
@@ -365,5 +361,71 @@ describe('screenLimited', () => {
 		// behind the camera the game drops it only with a minimum; without one it keeps its whole size
 		assert.deepEqual(screenLimited([3, 1, 1], { min: 0.1, max: 0.5 }, view, [0, 0, -4]), [0, 0, 1]);
 		assert.deepEqual(screenLimited([3, 1, 1], { min: 0, max: 0.5 }, view, [0, 0, -4]), [3, 1, 1]);
+	});
+});
+
+describe('createParticleWorkerHandler', () => {
+	it('evaluates emitters off-thread, packs rows, recycles buffers, and removes released emitters', () => {
+		const responses: ParticleWorkerResponse[] = [];
+		const handle = createParticleWorkerHandler((response) => {
+			responses.push(response);
+		});
+		const info = system({
+			looping: true,
+			duration: 2,
+			rate: constant(10),
+			startLifetime: constant(1),
+		});
+		const view: ParticleView = {
+			time: 0.5,
+			eye: [0, 0, -10],
+			widthPerDepth: 2,
+			right: [1, 0, 0],
+			up: [0, 1, 0],
+			forward: [0, 0, 1],
+		};
+		handle({ kind: 'system', system: 0, info });
+		handle({
+			kind: 'add',
+			id: 1,
+			system: 0,
+			seed: 42,
+			start: 0,
+			offset: 1,
+			capacity: 32,
+			origin: [0, 0, 0],
+			blockSlot: 7,
+		});
+		const transforms = new Float32Array([1, 0, 0, 2, 0, 1, 0, 3, 0, 0, 1, 4]);
+		handle({
+			kind: 'step',
+			seq: 1,
+			view,
+			ids: new Uint32Array([1]),
+			transforms,
+			buffer: null,
+		});
+		assert.equal(responses.length, 1);
+		const first = responses[0];
+		assert.equal(first.seq, 1);
+		assert.ok(first.counts[0] > 0);
+		assert.equal(first.rows.length, first.counts[0] * ROW_WORDS);
+		assert.equal(first.rows[RowWord.block], 7);
+
+		// buffer recycling and removal
+		const recycled = first.rows.buffer;
+		handle({ kind: 'remove', ids: [1] });
+		handle({
+			kind: 'step',
+			seq: 2,
+			view,
+			ids: new Uint32Array([1]),
+			transforms: new Float32Array(transforms),
+			buffer: recycled,
+		});
+		assert.equal(responses.length, 2);
+		assert.equal(responses[1].counts[0], 0);
+		assert.equal(responses[1].rows.length, 0);
+		assert.equal(responses[1].rows.buffer, recycled);
 	});
 });
