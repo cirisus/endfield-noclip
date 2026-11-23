@@ -1,3 +1,4 @@
+import { BlobKind } from '@endfield-noclip/package-format/blobs';
 import { CORE_ARCHIVE_INDEX } from '@endfield-noclip/package-format/manifest';
 
 import { type DecodePool, SharedBytes } from '../package/decode-pool.ts';
@@ -72,6 +73,12 @@ const UPLOAD_MS = 2;
 const REQUEST_RANGES = 32;
 /** bytes one request reads at most (but always a whole range), so what's most wanted isn't held up behind it */
 const REQUEST_BYTES = 2 * 1024 * 1024;
+
+/**
+ * extra LRU frames granted to non-texture blobs (geometry, instances, terrain) before they evict ahead of
+ * textures: textures take ~5× the bytes and reload smoothly, whereas evicting geometry causes visible pop-in
+ */
+const NON_TEXTURE_EVICT_BIAS = 600;
 
 /** one request: ranges of one archive, each covering the blobs of a coalesced read */
 interface RangeRequest {
@@ -799,9 +806,11 @@ export class StreamManager {
 			}
 		}
 		const created = this.#created;
+		const evictAge = (item: ContentItem): number =>
+			item.usedFrame + (item.kind === BlobKind.Texture ? 0 : NON_TEXTURE_EVICT_BIAS);
 		// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh array
 		candidates.sort(
-			(a, b) => a.usedFrame - b.usedFrame || a.priority - b.priority || created[a.blob] - created[b.blob],
+			(a, b) => evictAge(a) - evictAge(b) || a.priority - b.priority || created[a.blob] - created[b.blob],
 		);
 		for (const item of candidates) {
 			if (this.stats.residentBytes <= budget) {
