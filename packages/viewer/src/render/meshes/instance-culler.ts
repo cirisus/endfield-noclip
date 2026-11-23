@@ -15,7 +15,7 @@ import {
 	ViewWord,
 } from '../../streaming/gpu-cull-work.ts';
 import { wgslConst } from '../shaders/wgsl-const.ts';
-import { SHADOW_LAYERS } from '../shadows/shadow-map.ts';
+import { SHADOW_LAYER_MIN_SQUARED, SHADOW_LAYERS } from '../shadows/shadow-map.ts';
 
 import cullWgsl from './instance-cull.wgsl?raw';
 
@@ -167,6 +167,7 @@ export class InstanceCuller {
 			wgslConst('INDIRECT_WORDS', 'u32', INDIRECT_WORDS),
 			wgslConst('STATS_WORDS', 'u32', STATS_WORDS),
 			wgslConst('SHADOW_LAYERS', 'u32', SHADOW_LAYERS),
+			`const SHADOW_MIN_SQUARED = array<f32, ${SHADOW_LAYERS}>(${SHADOW_LAYER_MIN_SQUARED.join(', ')});`,
 			wgslConst('BLOCK_SLOT_BITS', 'u32', BLOCK_SLOT_BITS),
 			wgslConst('NO_BUCKET', 'u32', NO_BUCKET),
 			wgslConst('ITEM_INSIDE', 'u32', ItemFlags.Inside),

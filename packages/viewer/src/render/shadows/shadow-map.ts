@@ -9,6 +9,16 @@ const SHADOW_SIZE = 2048;
 export const SHADOW_FORMAT: GPUTextureFormat = 'depth32float';
 /** depth layers: the sharp cascades, then the far layer */
 export const SHADOW_LAYERS = 4;
+/**
+ * minimum camera-view squared relative screen size a caster must exceed to draw into each shadow layer,
+ * matching PC high (`CSMScreenSizeMin0..2` = 0.005, 0.01, 0.02; `ASMScreenSizeMin` = 0.01)
+ */
+export const SHADOW_LAYER_MIN_SQUARED: readonly number[] = [
+	0.005 * 0.005,
+	0.01 * 0.01,
+	0.02 * 0.02,
+	0.01 * 0.01,
+];
 /** far distance of each layer, m; the first three are the game's cascades (ratios 0.15 and 0.375 of 80 m) */
 const SPLITS = [12, 30, 80, 800];
 /** the sharp cascades fade into the far layer between these distances, m */

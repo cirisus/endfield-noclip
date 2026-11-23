@@ -6,7 +6,11 @@ import { CULL_FLOATS, ROW_WORDS } from '../content/instance-rows.ts';
 import { alphaTextureOf, LookFlags, type MaterialLook, UV1_SHIFT } from '../looks/look.ts';
 import type { LazyMaterialLooks } from '../looks/material-looks.ts';
 import type { ParticleField, ParticleView } from '../particles/particle-rows.ts';
-import { SHADOW_LAYERS, type ShadowLayerVolumes } from '../render/shadows/shadow-map.ts';
+import {
+	SHADOW_LAYER_MIN_SQUARED,
+	SHADOW_LAYERS,
+	type ShadowLayerVolumes,
+} from '../render/shadows/shadow-map.ts';
 import type { MipSteps } from '../render/textures/mip-feedback.ts';
 import type { TextureStore } from '../render/textures/texture-store.ts';
 import type { Plane } from '../scene/camera.ts';
@@ -152,14 +156,29 @@ const slotFilterKey = (view: MeshView): number =>
 /**
  * a caster reaches every layer from the first its bounds reach on (each takes in the volumes of those
  * before); of those, the sharp cascades take realtime casters and the far layer static ones, as the game's
- * maps do
+ * maps do. layers whose screen-size minimum exceeds `maxSquared` are masked out, matching the game's
+ * `CSMScreenSizeMin` / `ASMScreenSizeMin` cull
  *
  * @param slot the slot that draws the rows
  * @param first the first shadow layer the rows' bounds reach, {@link SHADOW_LAYERS} for none
+ * @param maxSquared upper bound on the rows' camera-view squared relative screen size
  * @returns a bit per shadow layer the slot's rows can cast into
  */
-const casterLayerBits = (slot: ChainSlot, first: number): number =>
-	first >= SHADOW_LAYERS ? 0 : slot.casterBits & (~0 << first);
+const casterLayerBits = (slot: ChainSlot, first: number, maxSquared: number): number => {
+	if (first >= SHADOW_LAYERS) {
+		return 0;
+	}
+	let bits = slot.casterBits & (~0 << first);
+	if (bits === 0) {
+		return 0;
+	}
+	for (let layer = first; layer < SHADOW_LAYERS; layer++) {
+		if (maxSquared <= SHADOW_LAYER_MIN_SQUARED[layer]) {
+			bits &= ~(1 << layer);
+		}
+	}
+	return bits;
+};
 
 /** what a resident block's selection reuses from frame to frame */
 interface SelectedBlock {
@@ -267,7 +286,7 @@ export class MeshSelector {
 	 * the segment {@link #addSlot} adds to: its rows, handedness bits, priority, nearest row centre and the
 	 * first shadow layer its bounds reach
 	 */
-	readonly #segment = { rows: 0, handedness: 0, priority: 0, nearest: 0, layer: 0 };
+	readonly #segment = { rows: 0, handedness: 0, priority: 0, nearest: 0, layer: 0, high: 0 };
 	/** a slot entry's buckets, reused */
 	readonly #pair: [unmirrored: number, mirrored: number] = [0, 0];
 	/** the geometries asked about this frame, wanted at their highest priority once the selection is done */
@@ -628,6 +647,7 @@ export class MeshSelector {
 			segment.priority = priority;
 			segment.nearest = nearest;
 			segment.layer = segmentLayer;
+			segment.high = high;
 			if (ready) {
 				for (let c = 0; c < count; c++) {
 					this.#addSlot(candidates[c], candidates[c]);
@@ -726,7 +746,7 @@ export class MeshSelector {
 		const group = this.#group;
 		const room = this.#room;
 		room.inView = group.inView && !target.shadowOnly ? rows : 0;
-		room.layers = casterLayerBits(target, this.#segment.layer);
+		room.layers = casterLayerBits(target, this.#segment.layer, Math.min(this.#segment.high, band.maxSquared));
 		room.rows = rows;
 		// rows drawn in a coarse LOD's band are small on screen, whatever the segment's largest row is
 		const view = this.#view;

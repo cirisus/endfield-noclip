@@ -257,7 +257,7 @@ fn cs_write(@builtin(workgroup_id) group: vec3u, @builtin(local_invocation_index
 		if (casts) {
 			for (var layer = tested.layer; layer < SHADOW_LAYERS; layer++) {
 				let takes = select(SLOT_REALTIME, SLOT_STATIC, layer == SHADOW_LAYERS - 1u);
-				if ((flags & takes) != 0u) {
+				if ((flags & takes) != 0u && tested.squared > SHADOW_MIN_SQUARED[layer]) {
 					append(bucket, 1u + layer, row);
 				}
 			}
