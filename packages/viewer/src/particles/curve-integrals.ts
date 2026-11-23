@@ -236,6 +236,40 @@ export const prepareIntegral = (
  * @param life particle lifetime, s
  * @returns the integral from birth to `age`
  */
+const singleFactor = (curve: MinMaxCurveInfo, r: number): number =>
+	curve.mode === CurveMode.TwoConstants ? curve.min + (curve.scalar - curve.min) * r : curve.scalar;
+
+const fillTerms = (out: Terms, curve: MinMaxCurveInfo, r: number): Terms => {
+	switch (curve.mode) {
+		case CurveMode.Constant: {
+			out.count = 1;
+			out.curves[0] = null;
+			out.factors[0] = curve.scalar;
+			return out;
+		}
+		case CurveMode.TwoConstants: {
+			out.count = 1;
+			out.curves[0] = null;
+			out.factors[0] = curve.min + (curve.scalar - curve.min) * r;
+			return out;
+		}
+		case CurveMode.Curve: {
+			out.count = 1;
+			out.curves[0] = curve.curve;
+			out.factors[0] = curve.scalar;
+			return out;
+		}
+		case CurveMode.TwoCurves: {
+			out.count = 2;
+			out.curves[0] = curve.minCurve;
+			out.factors[0] = curve.scalar * (1 - r);
+			out.curves[1] = curve.curve;
+			out.factors[1] = curve.scalar * r;
+			return out;
+		}
+	}
+};
+
 export const evalPreparedIntegral = (
 	prepared: PreparedIntegral,
 	r: number,
@@ -244,21 +278,16 @@ export const evalPreparedIntegral = (
 	life: number,
 ): number => {
 	const { curve, scale, power, terms: preparedTerms } = prepared;
-	if (scale === null) {
-		if (curve.mode === CurveMode.Constant) {
-			return curve.scalar * (power === 1 ? 0.5 * age * age : age);
-		}
-		if (curve.mode === CurveMode.TwoConstants) {
-			return (curve.min + (curve.scalar - curve.min) * r) * (power === 1 ? 0.5 * age * age : age);
-		}
-	}
-	// common fast path: single unscaled curve
-	if (scale === null && preparedTerms.length === 1) {
-		const factor = curve.scalar;
+	if (preparedTerms.length === 1) {
+		const term = preparedTerms[0];
+		const factor =
+			scale === null ? singleFactor(curve, r) : singleFactor(curve, r) * singleFactor(scale, scaleR);
 		if (factor === 0) {
 			return 0;
 		}
-		const term = preparedTerms[0];
+		if (term.table === null) {
+			return factor * (power === 1 ? 0.5 * age * age : age);
+		}
 		const within = life > 0 ? Math.min(age, life) : 0;
 		const beyond = power === 1 ? 0.5 * (age * age - within * within) : age - within;
 		let integral = 0;
@@ -271,8 +300,8 @@ export const evalPreparedIntegral = (
 		}
 		return factor * integral;
 	}
-	const a = termsInto(ofCurve, { curve, r });
-	const b = scale === null ? UNSCALED : termsInto(ofScale, { curve: scale, r: scaleR });
+	const a = fillTerms(ofCurve, curve, r);
+	const b = scale === null ? UNSCALED : fillTerms(ofScale, scale, scaleR);
 	const within = life > 0 ? Math.min(age, life) : 0;
 	const u = life > 0 ? within / life : 0;
 	const lifeScale = power === 1 ? life * life : life;

@@ -153,6 +153,8 @@ export class Selector {
 	#frame = 0;
 	/** by node index: the last frame its instances refined */
 	#refinedFrame: Int32Array;
+	/** coarsest nodes that hold a terrain page, collected once from the tree */
+	readonly #terrainRoots: TileNode[] = [];
 
 	/**
 	 * @param tree the linked tree
@@ -171,6 +173,20 @@ export class Selector {
 		this.#global = global;
 		this.#rootSize = rootSize;
 		this.#refinedFrame = new Int32Array(tree.nodes.length).fill(-2);
+		const collect = (node: TileNode): void => {
+			if (node.terrain !== null) {
+				this.#terrainRoots.push(node);
+				return;
+			}
+			for (const child of node.quadrants) {
+				if (child !== null) {
+					collect(child);
+				}
+			}
+		};
+		for (const root of tree.roots) {
+			collect(root);
+		}
 	}
 
 	/**
@@ -199,11 +215,13 @@ export class Selector {
 				}
 			}
 		}
-		for (const root of this.#tree.roots) {
-			if (options.terrain) {
-				this.#terrainRoot(root, view, options);
+		if (options.terrain) {
+			for (let i = 0; i < this.#terrainRoots.length; i++) {
+				this.#terrain(this.#terrainRoots[i], view, options, null);
 			}
-			if (options.instances) {
+		}
+		if (options.instances) {
+			for (const root of this.#tree.roots) {
 				this.#instances(root, view, options);
 				if (options.detail) {
 					this.#conditional(root, view, options);
@@ -472,18 +490,6 @@ export class Selector {
 	// #endregion
 
 	// #region terrain
-
-	#terrainRoot(node: TileNode, view: SelectionView, options: SelectionOptions): void {
-		if (node.terrain !== null) {
-			this.#terrain(node, view, options, null);
-			return;
-		}
-		for (const child of node.quadrants) {
-			if (child !== null) {
-				this.#terrainRoot(child, view, options);
-			}
-		}
-	}
 
 	/** distance up to which `level`'s pages are fine enough */
 	#range(level: number, view: SelectionView, options: SelectionOptions): number {

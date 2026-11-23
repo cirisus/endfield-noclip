@@ -134,6 +134,8 @@ export class StreamManager {
 	#handlers: ResidencyHandlers;
 	/** by blob index */
 	#items: (ContentItem | undefined)[];
+	/** 1 per blob currently in `'ready'` state, for cache-friendly {@link isReady} checks */
+	#readyFlags: Uint8Array;
 	/** by blob index: the order its item was made in, which breaks eviction ties */
 	#created: Int32Array;
 	#createdCount = 0;
@@ -188,6 +190,7 @@ export class StreamManager {
 		this.#handlers = handlers;
 		this.options = options;
 		this.#items = Array.from({ length: pkg.blobs.length });
+		this.#readyFlags = new Uint8Array(pkg.blobs.length);
 		this.#created = new Int32Array(pkg.blobs.length);
 		this.#ranges = Array.from({ length: pkg.blobs.length });
 		this.#coalescer = new BlobCoalescer(pkg.blobs.length, (blob) =>
@@ -269,7 +272,7 @@ export class StreamManager {
 	 * @returns whether the blob is resident (without marking it used)
 	 */
 	isReady(blob: number): boolean {
-		return this.#items[blob]?.state === 'ready';
+		return this.#readyFlags[blob] === 1;
 	}
 
 	/**
@@ -748,6 +751,7 @@ export class StreamManager {
 			item.decoded = null;
 			item.resident = resident;
 			item.state = 'ready';
+			this.#readyFlags[item.blob] = 1;
 			// fresh content counts as used, so the budget pass can't evict it before its first draw
 			item.usedFrame = this.#frame;
 			if (!item.pinned) {
@@ -833,6 +837,7 @@ export class StreamManager {
 		this.#evictable.delete(item);
 		item.resident = null;
 		item.state = 'idle';
+		this.#readyFlags[item.blob] = 0;
 		this.stats.evictions++;
 		this.version++;
 	}

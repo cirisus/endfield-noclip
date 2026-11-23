@@ -746,25 +746,26 @@ export class MeshRenderer {
 		const params = this.#paramData;
 		const words = this.#paramWords;
 		const at = d * DRAW_FLOATS;
-		// element by element: `set` from a small plain array costs more than the copy
-		const [ox, oy, oz] = resident.positionOffset;
-		const [sx, sy, sz] = resident.positionScale;
-		params[at] = ox;
-		params[at + 1] = oy;
-		params[at + 2] = oz;
+		const po = resident.positionOffset;
+		const ps = resident.positionScale;
+		params[at] = po[0];
+		params[at + 1] = po[1];
+		params[at + 2] = po[2];
 		words[at + 3] = state.flags | resident.streamFlags;
-		params[at + 4] = sx;
-		params[at + 5] = sy;
-		params[at + 6] = sz;
+		params[at + 4] = ps[0];
+		params[at + 5] = ps[1];
+		params[at + 6] = ps[2];
 		words[at + 7] = lookSlot;
-		for (let set = 0; set < 2; set++) {
-			const transform = resident.uvTransforms[set];
-			const to = at + 8 + set * 4;
-			params[to] = transform[0];
-			params[to + 1] = transform[1];
-			params[to + 2] = transform[2];
-			params[to + 3] = transform[3];
-		}
+		const uv0 = resident.uvTransforms[0];
+		params[at + 8] = uv0[0];
+		params[at + 9] = uv0[1];
+		params[at + 10] = uv0[2];
+		params[at + 11] = uv0[3];
+		const uv1 = resident.uvTransforms[1];
+		params[at + 12] = uv1[0];
+		params[at + 13] = uv1[1];
+		params[at + 14] = uv1[2];
+		params[at + 15] = uv1[3];
 		const gpu = bucket.gpu;
 		const culled = this.#culled;
 		if (gpu === null) {
