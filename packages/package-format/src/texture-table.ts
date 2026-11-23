@@ -1,11 +1,13 @@
 /**
- * `tables/textures.bin.zst`, the texture table: one zstd frame of the layout below. its own module, outside
- * the asset modules the pack cache fingerprints, so a layout change leaves cached conversions valid
+ * `tables/textures.bin.zst`, the texture table: one zstd frame around an `EFTX` v2 TLV container. its own
+ * module, outside the asset modules the pack cache fingerprints, so a layout change leaves cached conversions
+ * valid
  *
  * @module
  */
 
-import { checkHeader, checkLength, viewOf, writeHeader, type HeaderShape } from './binary.ts';
+import { viewOf } from './binary.ts';
+import { checkStride, decodeContainer, encodeContainer, fourcc, requireSection } from './container.ts';
 import { EntryStatus, entryStatusCode, entryStatusName } from './entry-status.ts';
 import { PackageFormatError } from './errors.ts';
 import type { ReadyTexture, TextureEntry, TexturePiece, TextureSampler } from './textures.ts';
@@ -83,36 +85,27 @@ export const TEXTURE_FORMAT_CODES: readonly string[] = [
 ];
 
 const ADDRESS_MODES: readonly TextureSampler['addressModeU'][] = ['repeat', 'clamp-to-edge', 'mirror-repeat'];
-
 const FILTERS: readonly TextureSampler['magFilter'][] = ['nearest', 'linear'];
 
-/** 'EFTX' */
-const TEXTURES_HEADER: HeaderShape = {
-	magic: 0x58_54_46_45,
-	version: 1,
-	size: 20,
-	label: 'texture table',
-};
+const MAGIC = fourcc('EFTX');
+const MAJOR_VERSION = 2;
+const TAG_SAMP = fourcc('SAMP');
+const TAG_TEXS = fourcc('TEXS');
+const TAG_PCES = fourcc('PCES');
+const KNOWN_TAGS = new Set([TAG_SAMP, TAG_TEXS, TAG_PCES]);
 
 const SAMPLER_SIZE = 12;
-
-const TEXTURE_RECORD_SIZE = 16;
-
+const TEXTURE_RECORD_SIZE = 20;
 const PIECE_SIZE = 8;
 
-/** @returns each value's index in `values` */
 const codes = <T>(values: readonly T[]): ReadonlyMap<T, number> =>
 	new Map(values.map((value, code) => [value, code]));
 
 const kindCodes = codes(TEXTURE_KIND_CODES);
-
 const formatCodes = codes(TEXTURE_FORMAT_CODES);
-
 const addressCodes = codes(ADDRESS_MODES);
-
 const filterCodes = codes(FILTERS);
 
-/** @throws {RangeError} unless `value` has a code */
 const codeOf = <T>(map: ReadonlyMap<T, number>, value: T, label: string): number => {
 	const code = map.get(value);
 	if (code === undefined) {
@@ -121,7 +114,6 @@ const codeOf = <T>(map: ReadonlyMap<T, number>, value: T, label: string): number
 	return code;
 };
 
-/** @throws {PackageFormatError} unless `code` names a value */
 const valueOf = <T>(values: readonly T[], code: number, label: string): T => {
 	const value = values[code];
 	if (value === undefined) {
@@ -131,9 +123,7 @@ const valueOf = <T>(values: readonly T[], code: number, label: string): T => {
 };
 
 /**
- * encodes the texture table (layout in docs/package-format.md): samplers, then fixed-size texture records,
- * then the piece list. a texture's pieces are `[firstPiece, next texture's firstPiece)` of the list (its end
- * for the last), coarse to fine; an unconverted entry has none and its other fields are 0
+ * encodes the texture table as an `EFTX` v2 TLV container (`SAMP`, `TEXS`, `PCES`)
  *
  * @param samplers the sampler palette
  * @param entries entries in id order
@@ -148,40 +138,39 @@ export const encodeTextureTable = (
 		(sum, entry) => sum + (entry.status === 'ready' ? entry.pieces.length : 0),
 		0,
 	);
-	const texturesAt = TEXTURES_HEADER.size + samplers.length * SAMPLER_SIZE;
-	const piecesAt = texturesAt + entries.length * TEXTURE_RECORD_SIZE;
-	const out = new Uint8Array(piecesAt + pieceCount * PIECE_SIZE);
-	const view = viewOf(out);
-	writeHeader(view, TEXTURES_HEADER);
-	view.setUint32(8, entries.length, true);
-	view.setUint32(12, pieceCount, true);
-	view.setUint32(16, samplers.length, true);
-
+	const sampBuf = new Uint8Array(samplers.length * SAMPLER_SIZE);
+	const sampView = viewOf(sampBuf);
 	for (const [index, sampler] of samplers.entries()) {
-		const at = TEXTURES_HEADER.size + index * SAMPLER_SIZE;
-		view.setUint8(at, codeOf(addressCodes, sampler.addressModeU, 'address mode'));
-		view.setUint8(at + 1, codeOf(addressCodes, sampler.addressModeV, 'address mode'));
-		view.setUint8(at + 2, codeOf(addressCodes, sampler.addressModeW, 'address mode'));
-		view.setUint8(at + 3, codeOf(filterCodes, sampler.magFilter, 'filter'));
-		view.setUint8(at + 4, codeOf(filterCodes, sampler.minFilter, 'filter'));
-		view.setUint8(at + 5, codeOf(filterCodes, sampler.mipmapFilter, 'filter'));
+		const at = index * SAMPLER_SIZE;
+		sampView.setUint8(at, codeOf(addressCodes, sampler.addressModeU, 'address mode'));
+		sampView.setUint8(at + 1, codeOf(addressCodes, sampler.addressModeV, 'address mode'));
+		sampView.setUint8(at + 2, codeOf(addressCodes, sampler.addressModeW, 'address mode'));
+		sampView.setUint8(at + 3, codeOf(filterCodes, sampler.magFilter, 'filter'));
+		sampView.setUint8(at + 4, codeOf(filterCodes, sampler.minFilter, 'filter'));
+		sampView.setUint8(at + 5, codeOf(filterCodes, sampler.mipmapFilter, 'filter'));
 		if (sampler.maxAnisotropy > 0xff_ff) {
 			throw new RangeError(`sampler ${index}'s anisotropy ${sampler.maxAnisotropy} doesn't fit 16 bits`);
 		}
-		view.setUint16(at + 6, sampler.maxAnisotropy, true);
-		view.setFloat32(at + 8, sampler.mipBias, true);
+		sampView.setUint16(at + 6, sampler.maxAnisotropy, true);
+		sampView.setFloat32(at + 8, sampler.mipBias, true);
 	}
 
+	const texBuf = new Uint8Array(entries.length * TEXTURE_RECORD_SIZE);
+	const texView = viewOf(texBuf);
+	const pieceBuf = new Uint8Array(pieceCount * PIECE_SIZE);
+	const pieceView = viewOf(pieceBuf);
 	let piece = 0;
 	for (const [id, entry] of entries.entries()) {
-		const at = texturesAt + id * TEXTURE_RECORD_SIZE;
-		view.setUint8(at, entryStatusCode(entry.status));
-		view.setUint32(at + 12, piece, true);
+		const at = id * TEXTURE_RECORD_SIZE;
+		texView.setUint8(at, entryStatusCode(entry.status));
+		texView.setUint32(at + 12, piece, true);
 		if (entry.status !== 'ready') {
 			continue;
 		}
+		const droppedMips = entry.droppedMips ?? 0;
 		if (
 			entry.mipCount > 0xff ||
+			droppedMips > 0xff ||
 			entry.width > 0xff_ff ||
 			entry.height > 0xff_ff ||
 			entry.depthOrArrayLayers > 0xff_ff ||
@@ -189,22 +178,32 @@ export const encodeTextureTable = (
 		) {
 			throw new RangeError(`texture ${id} has a field out of its record's range`);
 		}
-		view.setUint8(at + 1, codeOf(kindCodes, entry.kind, 'texture kind'));
-		view.setUint8(at + 2, codeOf(formatCodes, entry.format, 'texture format'));
-		view.setUint8(at + 3, entry.mipCount);
-		view.setUint16(at + 4, entry.width, true);
-		view.setUint16(at + 6, entry.height, true);
-		view.setUint16(at + 8, entry.depthOrArrayLayers, true);
-		view.setUint16(at + 10, entry.sampler, true);
+		texView.setUint8(at + 1, codeOf(kindCodes, entry.kind, 'texture kind'));
+		texView.setUint8(at + 2, codeOf(formatCodes, entry.format, 'texture format'));
+		texView.setUint8(at + 3, entry.mipCount);
+		texView.setUint16(at + 4, entry.width, true);
+		texView.setUint16(at + 6, entry.height, true);
+		texView.setUint16(at + 8, entry.depthOrArrayLayers, true);
+		texView.setUint16(at + 10, entry.sampler, true);
+		texView.setUint8(at + 16, droppedMips);
 		for (const { blob, firstLevel, levelCount } of entry.pieces) {
-			const pieceAt = piecesAt + piece * PIECE_SIZE;
-			view.setUint32(pieceAt, blob, true);
-			view.setUint8(pieceAt + 4, firstLevel);
-			view.setUint8(pieceAt + 5, levelCount);
+			const pieceAt = piece * PIECE_SIZE;
+			pieceView.setUint32(pieceAt, blob, true);
+			pieceView.setUint8(pieceAt + 4, firstLevel);
+			pieceView.setUint8(pieceAt + 5, levelCount);
 			piece++;
 		}
 	}
-	return out;
+
+	return encodeContainer({
+		magic: MAGIC,
+		majorVersion: MAJOR_VERSION,
+		sections: [
+			{ tag: TAG_SAMP, required: true, data: sampBuf, count: samplers.length, stride: SAMPLER_SIZE },
+			{ tag: TAG_TEXS, required: true, data: texBuf, count: entries.length, stride: TEXTURE_RECORD_SIZE },
+			{ tag: TAG_PCES, required: true, data: pieceBuf, count: pieceCount, stride: PIECE_SIZE },
+		],
+	});
 };
 
 /**
@@ -216,43 +215,49 @@ export const encodeTextureTable = (
  *   or piece ranges that don't follow each other
  */
 export const decodeTextureTable = (data: Uint8Array): TextureTable => {
-	const view = viewOf(data);
-	checkHeader(view, TEXTURES_HEADER);
-	const count = view.getUint32(8, true);
-	const pieceTotal = view.getUint32(12, true);
-	const samplerCount = view.getUint32(16, true);
-	const texturesAt = TEXTURES_HEADER.size + samplerCount * SAMPLER_SIZE;
-	const piecesAt = texturesAt + count * TEXTURE_RECORD_SIZE;
-	checkLength(data, piecesAt + pieceTotal * PIECE_SIZE, 'texture table');
+	const container = decodeContainer(data, {
+		magic: MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: KNOWN_TAGS,
+		label: 'texture table',
+	});
+	const sampSec = requireSection(container, TAG_SAMP, 'texture table');
+	const texSec = requireSection(container, TAG_TEXS, 'texture table');
+	const pieceSec = requireSection(container, TAG_PCES, 'texture table');
+	checkStride(sampSec, SAMPLER_SIZE, 'SAMP');
+	checkStride(texSec, TEXTURE_RECORD_SIZE, 'TEXS');
+	checkStride(pieceSec, PIECE_SIZE, 'PCES');
 
+	const sampView = viewOf(sampSec.data);
 	const samplers: TextureSampler[] = [];
-	for (let index = 0; index < samplerCount; index++) {
-		const at = TEXTURES_HEADER.size + index * SAMPLER_SIZE;
+	for (let index = 0; index < sampSec.count; index++) {
+		const at = index * sampSec.stride;
 		samplers.push({
-			addressModeU: valueOf(ADDRESS_MODES, view.getUint8(at), 'address mode'),
-			addressModeV: valueOf(ADDRESS_MODES, view.getUint8(at + 1), 'address mode'),
-			addressModeW: valueOf(ADDRESS_MODES, view.getUint8(at + 2), 'address mode'),
-			magFilter: valueOf(FILTERS, view.getUint8(at + 3), 'filter'),
-			minFilter: valueOf(FILTERS, view.getUint8(at + 4), 'filter'),
-			mipmapFilter: valueOf(FILTERS, view.getUint8(at + 5), 'filter'),
-			maxAnisotropy: view.getUint16(at + 6, true),
-			mipBias: view.getFloat32(at + 8, true),
+			addressModeU: valueOf(ADDRESS_MODES, sampView.getUint8(at), 'address mode'),
+			addressModeV: valueOf(ADDRESS_MODES, sampView.getUint8(at + 1), 'address mode'),
+			addressModeW: valueOf(ADDRESS_MODES, sampView.getUint8(at + 2), 'address mode'),
+			magFilter: valueOf(FILTERS, sampView.getUint8(at + 3), 'filter'),
+			minFilter: valueOf(FILTERS, sampView.getUint8(at + 4), 'filter'),
+			mipmapFilter: valueOf(FILTERS, sampView.getUint8(at + 5), 'filter'),
+			maxAnisotropy: sampView.getUint16(at + 6, true),
+			mipBias: sampView.getFloat32(at + 8, true),
 		});
 	}
 
-	// piece ranges as offsets, the last one closing the list
+	const count = texSec.count;
+	const texView = viewOf(texSec.data);
+	const pieceView = viewOf(pieceSec.data);
 	const firstPieces = new Uint32Array(count + 1);
-	firstPieces[count] = pieceTotal;
+	firstPieces[count] = pieceSec.count;
 	for (let id = 0; id < count; id++) {
-		const at = texturesAt + id * TEXTURE_RECORD_SIZE;
-		firstPieces[id] = view.getUint32(at + 12, true);
+		firstPieces[id] = texView.getUint32(id * texSec.stride + 12, true);
 	}
-	if (firstPieces[0] !== 0) {
+	if (count > 0 && firstPieces[0] !== 0) {
 		throw new PackageFormatError('texture table pieces start past the list');
 	}
 	for (let id = 0; id < count; id++) {
-		const at = texturesAt + id * TEXTURE_RECORD_SIZE;
-		const status = view.getUint8(at);
+		const at = id * texSec.stride;
+		const status = texView.getUint8(at);
 		if (status > EntryStatus.Failed) {
 			throw new PackageFormatError(`texture ${id} has unknown status ${status}`);
 		}
@@ -261,13 +266,14 @@ export const decodeTextureTable = (data: Uint8Array): TextureTable => {
 			throw new PackageFormatError(`texture ${id}'s pieces don't follow the previous texture's`);
 		}
 		if (status === EntryStatus.Ready) {
-			valueOf(TEXTURE_KIND_CODES, view.getUint8(at + 1), 'texture kind');
-			valueOf(TEXTURE_FORMAT_CODES, view.getUint8(at + 2), 'texture format');
-			if (view.getUint16(at + 10, true) >= samplerCount) {
+			valueOf(TEXTURE_KIND_CODES, texView.getUint8(at + 1), 'texture kind');
+			valueOf(TEXTURE_FORMAT_CODES, texView.getUint8(at + 2), 'texture format');
+			if (texView.getUint16(at + 10, true) >= samplers.length) {
 				throw new PackageFormatError(`texture ${id}'s sampler is past the palette`);
 			}
 		}
 	}
+
 	const pieceCount = (id: number): number => {
 		const first = firstPieces[id];
 		const end = firstPieces[id + 1];
@@ -276,29 +282,31 @@ export const decodeTextureTable = (data: Uint8Array): TextureTable => {
 
 	const decoded: (TextureEntry | undefined)[] = [];
 	const decode = (id: number): TextureEntry => {
-		const at = texturesAt + id * TEXTURE_RECORD_SIZE;
-		const status = entryStatusName(view.getUint8(at), `texture ${id}`);
+		const at = id * texSec.stride;
+		const status = entryStatusName(texView.getUint8(at), `texture ${id}`);
 		if (status !== 'ready') {
 			return { status };
 		}
 		const pieces: TexturePiece[] = [];
 		for (let piece = firstPieces[id]; piece < firstPieces[id + 1]; piece++) {
-			const pieceAt = piecesAt + piece * PIECE_SIZE;
+			const pieceAt = piece * pieceSec.stride;
 			pieces.push({
-				blob: view.getUint32(pieceAt, true),
-				firstLevel: view.getUint8(pieceAt + 4),
-				levelCount: view.getUint8(pieceAt + 5),
+				blob: pieceView.getUint32(pieceAt, true),
+				firstLevel: pieceView.getUint8(pieceAt + 4),
+				levelCount: pieceView.getUint8(pieceAt + 5),
 			});
 		}
+		const droppedMips = texView.getUint8(at + 16);
 		return {
 			status,
-			kind: valueOf(TEXTURE_KIND_CODES, view.getUint8(at + 1), 'texture kind'),
-			format: valueOf(TEXTURE_FORMAT_CODES, view.getUint8(at + 2), 'texture format'),
-			width: view.getUint16(at + 4, true),
-			height: view.getUint16(at + 6, true),
-			depthOrArrayLayers: view.getUint16(at + 8, true),
-			mipCount: view.getUint8(at + 3),
-			sampler: view.getUint16(at + 10, true),
+			kind: valueOf(TEXTURE_KIND_CODES, texView.getUint8(at + 1), 'texture kind'),
+			format: valueOf(TEXTURE_FORMAT_CODES, texView.getUint8(at + 2), 'texture format'),
+			width: texView.getUint16(at + 4, true),
+			height: texView.getUint16(at + 6, true),
+			depthOrArrayLayers: texView.getUint16(at + 8, true),
+			mipCount: texView.getUint8(at + 3),
+			...(droppedMips > 0 ? { droppedMips } : {}),
+			sampler: texView.getUint16(at + 10, true),
 			pieces,
 		};
 	};
@@ -319,7 +327,7 @@ export const decodeTextureTable = (data: Uint8Array): TextureTable => {
 		},
 		pieceCount,
 		pieceBlob(id, index) {
-			return view.getUint32(piecesAt + (firstPieces[id] + index) * PIECE_SIZE, true);
+			return pieceView.getUint32((firstPieces[id] + index) * pieceSec.stride, true);
 		},
 	};
 };

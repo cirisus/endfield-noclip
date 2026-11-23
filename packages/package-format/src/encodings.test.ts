@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { decodeBlobTable, encodeBlobTable } from './blob-table.ts';
 import { BlobCodec, BlobKind, blobPath } from './blobs.ts';
+import { CONTAINER_HEADER_SIZE, fourcc, SECTION_ENTRY_SIZE } from './container.ts';
 import { PackageFormatError } from './errors.ts';
 import { decodeGeometryTable, encodeGeometryTable } from './geometry-table.ts';
 import {
@@ -40,6 +41,20 @@ import { decodeTextureTable, encodeTextureTable, TEXTURE_FORMAT_CODES } from './
 import { TEXTURE_FORMATS, type TextureEntry, textureLevelLayout, type TextureSampler } from './textures.ts';
 import { tileAncestor, tileAt } from './tiles.ts';
 import { decodeTree, encodeTree, ContentKind, type Tree } from './tree.ts';
+
+/** @returns byte offset of a TLV section in an encoded container */
+const sectionOffset = (data: Uint8Array, tagName: string): number => {
+	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+	const count = view.getUint32(8, true);
+	const want = fourcc(tagName);
+	for (let i = 0; i < count; i++) {
+		const at = CONTAINER_HEADER_SIZE + i * SECTION_ENTRY_SIZE;
+		if (view.getUint32(at, true) === want) {
+			return view.getUint32(at + 8, true);
+		}
+	}
+	throw new Error(`section ${tagName} not found`);
+};
 
 describe('tree', () => {
 	it('round-trips nodes and refs', () => {
@@ -198,11 +213,12 @@ describe('blob table', () => {
 				rawLength: 0,
 			},
 		]);
+		const at = sectionOffset(table, 'BLBS');
 		const badCodec = table.slice();
-		badCodec[16 + 1] = 0xee;
+		badCodec[at + 1] = 0xee;
 		assert.throws(() => decodeBlobTable(badCodec), /unknown blob codec 238/);
 		const badKind = table.slice();
-		badKind[16] = 0xee;
+		badKind[at] = 0xee;
 		assert.throws(() => decodeBlobTable(badKind), /unknown blob kind 238/);
 	});
 });
@@ -244,7 +260,7 @@ describe('geometry table', () => {
 		assert.throws(() => encodeGeometryTable([{ ...ready, submeshCount: 2 ** 16 }]), RangeError);
 		assert.throws(() => encodeGeometryTable([{ ...ready, animationFrames: 0 }]), RangeError);
 		const table = encodeGeometryTable([ready]);
-		table[16] = 7;
+		table[sectionOffset(table, 'GEOM')] = 7;
 		assert.throws(() => decodeGeometryTable(table), /geometry 0 has unknown status 7/);
 	});
 });
@@ -317,12 +333,12 @@ describe('texture table', () => {
 		);
 		assert.throws(() => encodeTextureTable([sampler], [ready]), RangeError);
 		const table = encodeTextureTable([sampler, sampler], [ready]);
-		// the texture record follows the 20-byte header and two 12-byte samplers
+		const at = sectionOffset(table, 'TEXS');
 		const badFormat = table.slice();
-		badFormat[20 + 24 + 2] = 0xee;
+		badFormat[at + 2] = 0xee;
 		assert.throws(() => decodeTextureTable(badFormat), /unknown texture format 238/);
 		const badSampler = table.slice();
-		badSampler[20 + 24 + 10] = 2;
+		badSampler[at + 10] = 2;
 		assert.throws(() => decodeTextureTable(badSampler), /sampler is past the palette/);
 	});
 });
@@ -355,7 +371,7 @@ describe('irradiance table', () => {
 			blobs: Uint32Array.of(0),
 			groups: Uint32Array.of(0),
 		});
-		assert.throws(() => decodeIrradianceTable(encoded.subarray(0, encoded.length - 4)), PackageFormatError);
+		assert.throws(() => decodeIrradianceTable(encoded.subarray(0, encoded.length - 16)), PackageFormatError);
 	});
 });
 

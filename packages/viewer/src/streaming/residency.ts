@@ -28,6 +28,8 @@ export const RESIDENT_KINDS: Readonly<Record<BlobKind, ResidentKind | null>> = {
 	[BlobKind.TerrainSurface]: 'surface',
 	[BlobKind.TerrainSplat]: 'splat',
 	[BlobKind.TerrainLayer]: 'layer',
+	[BlobKind.Animation]: null,
+	[BlobKind.Foliage]: null,
 };
 
 /** what the stream knows about a blob it uploads */

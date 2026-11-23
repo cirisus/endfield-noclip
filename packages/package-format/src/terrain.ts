@@ -1,4 +1,5 @@
-import { viewOf, checkHeader, checkLength, writeHeader, type HeaderShape } from './binary.ts';
+import { viewOf } from './binary.ts';
+import { decodeContainer, encodeContainer, fourcc, requireSection } from './container.ts';
 import { PackageFormatError } from './errors.ts';
 
 // #region layout
@@ -106,35 +107,27 @@ export const terrainHeight = (
 	return terrain.baseHeight + ((sample & (TERRAIN_HOLE_BIT - 1)) * terrain.heightScale) / TERRAIN_HOLE_BIT;
 };
 
-const HEIGHTS_HEADER_SIZE = 8;
-const SURFACE_HEADER_SIZE = 8;
-const SPLAT_HEADER_SIZE = 12;
+const MAJOR_VERSION = 2;
 
-/** 'EFHT' */
-const HEIGHTS_HEADER: HeaderShape = {
-	magic: 0x54_48_46_45,
-	version: 1,
-	size: HEIGHTS_HEADER_SIZE,
-	label: 'height page',
-};
-/** 'EFTS' */
-const SURFACE_HEADER: HeaderShape = {
-	magic: 0x53_54_46_45,
-	version: 1,
-	size: SURFACE_HEADER_SIZE,
-	label: 'surface page',
-};
-/** 'EFSL' */
-const SPLAT_HEADER: HeaderShape = {
-	magic: 0x4c_53_46_45,
-	version: 1,
-	size: SPLAT_HEADER_SIZE,
-	label: 'splat page',
-};
+const HEIGHTS_MAGIC = fourcc('EFHT');
+const SURFACE_MAGIC = fourcc('EFTS');
+const SPLAT_MAGIC = fourcc('EFSL');
+
+const TAG_HEAD = fourcc('HEAD');
+const TAG_HGTS = fourcc('HGTS');
+const TAG_ALBD = fourcc('ALBD');
+const TAG_NORM = fourcc('NORM');
+const TAG_CTRL = fourcc('CTRL');
+const TAG_TINT = fourcc('TINT');
+const TAG_INDX = fourcc('INDX');
+
+const HEIGHTS_TAGS = new Set([TAG_HEAD, TAG_HGTS]);
+const SURFACE_TAGS = new Set([TAG_HEAD, TAG_ALBD, TAG_NORM]);
+const SPLAT_TAGS = new Set([TAG_HEAD, TAG_CTRL, TAG_TINT, TAG_INDX]);
 
 /**
- * encodes a height page (`.hgt`; layout in docs/package-format.md): zigzag deltas from a gradient prediction,
- * as two byte planes. arithmetic wraps at 16 bits, so the hole bit survives
+ * encodes a height page (`.hgt`, `EFHT` v2 TLV): zigzag deltas from a gradient prediction, as two byte
+ * planes. arithmetic wraps at 16 bits, so the hole bit survives
  *
  * @param samples `side²` raw samples, rows along +Z
  * @param side samples per edge
@@ -146,19 +139,25 @@ export const encodeHeightPage = (samples: Uint16Array, side: number): Uint8Array
 	if (samples.length !== count) {
 		throw new RangeError(`height page needs ${count} samples, got ${samples.length}`);
 	}
-	const out = new Uint8Array(HEIGHTS_HEADER_SIZE + count * 2);
-	const view = viewOf(out);
-	writeHeader(view, HEIGHTS_HEADER);
-	view.setUint16(6, side, true);
+	const head = new Uint8Array(4);
+	viewOf(head).setUint16(0, side, true);
+	const body = new Uint8Array(count * 2);
 	for (let i = 0; i < count; i++) {
 		const delta = (samples[i] - predictHeight(samples, i, side)) & 0xff_ff;
 		// zigzag over the 16-bit two's complement delta
 		const signed = delta >= 0x80_00 ? delta - 0x1_00_00 : delta;
 		const zigzag = signed >= 0 ? signed * 2 : -signed * 2 - 1;
-		out[HEIGHTS_HEADER_SIZE + i] = zigzag & 0xff;
-		out[HEIGHTS_HEADER_SIZE + count + i] = zigzag >> 8;
+		body[i] = zigzag & 0xff;
+		body[count + i] = zigzag >> 8;
 	}
-	return out;
+	return encodeContainer({
+		magic: HEIGHTS_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		sections: [
+			{ tag: TAG_HEAD, required: true, data: head },
+			{ tag: TAG_HGTS, required: true, data: body, count },
+		],
+	});
 };
 
 const predictHeight = (samples: Uint16Array, i: number, side: number): number => {
@@ -178,14 +177,25 @@ const predictHeight = (samples: Uint16Array, i: number, side: number): number =>
  * @throws {PackageFormatError} on a bad header or length
  */
 export const decodeHeightPage = (data: Uint8Array): { side: number; samples: Uint16Array } => {
-	const view = viewOf(data);
-	checkHeader(view, HEIGHTS_HEADER);
-	const side = view.getUint16(6, true);
+	const container = decodeContainer(data, {
+		magic: HEIGHTS_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: HEIGHTS_TAGS,
+		label: 'height page',
+	});
+	const head = requireSection(container, TAG_HEAD, 'height page');
+	if (head.byteLength < 2) {
+		throw new PackageFormatError('height page HEAD is too short');
+	}
+	const side = viewOf(head.data).getUint16(0, true);
 	const count = side * side;
-	checkLength(data, HEIGHTS_HEADER_SIZE + count * 2, 'height page');
+	const hgts = requireSection(container, TAG_HGTS, 'height page');
+	if (hgts.byteLength !== count * 2) {
+		throw new PackageFormatError(`height page HGTS is ${hgts.byteLength} bytes, expected ${count * 2}`);
+	}
 	const samples = new Uint16Array(count);
 	for (let i = 0; i < count; i++) {
-		const zigzag = data[HEIGHTS_HEADER_SIZE + i] | (data[HEIGHTS_HEADER_SIZE + count + i] << 8);
+		const zigzag = hgts.data[i] | (hgts.data[count + i] << 8);
 		const signed = zigzag & 1 ? -((zigzag + 1) >> 1) : zigzag >> 1;
 		samples[i] = (predictHeight(samples, i, side) + signed) & 0xff_ff;
 	}
@@ -205,8 +215,8 @@ export interface SurfacePage {
 }
 
 /**
- * encodes a surface page (`.tsp`; layout in docs/package-format.md), its images in row-major block order as
- * `writeTexture` takes them
+ * encodes a surface page (`.tsp`, `EFTS` v2 TLV), its images in row-major block order as `writeTexture` takes
+ * them
  *
  * @param page the images
  * @returns the encoded page
@@ -218,13 +228,17 @@ export const encodeSurfacePage = (page: SurfacePage): Uint8Array => {
 	if (side % 4 !== 0 || page.albedo.length !== bytes || page.normal.length !== bytes) {
 		throw new RangeError(`surface page images must be ${bytes}-byte BC3 images of ${side}² texels`);
 	}
-	const out = new Uint8Array(SURFACE_HEADER_SIZE + bytes * 2);
-	const view = viewOf(out);
-	writeHeader(view, SURFACE_HEADER);
-	view.setUint16(6, side, true);
-	out.set(page.albedo, SURFACE_HEADER_SIZE);
-	out.set(page.normal, SURFACE_HEADER_SIZE + bytes);
-	return out;
+	const head = new Uint8Array(4);
+	viewOf(head).setUint16(0, side, true);
+	return encodeContainer({
+		magic: SURFACE_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		sections: [
+			{ tag: TAG_HEAD, required: true, data: head },
+			{ tag: TAG_ALBD, required: true, data: page.albedo },
+			{ tag: TAG_NORM, required: true, data: page.normal },
+		],
+	});
 };
 
 /**
@@ -233,19 +247,27 @@ export const encodeSurfacePage = (page: SurfacePage): Uint8Array => {
  * @throws {PackageFormatError} on a bad header or length
  */
 export const decodeSurfacePage = (data: Uint8Array): SurfacePage => {
-	const view = viewOf(data);
-	checkHeader(view, SURFACE_HEADER);
-	const side = view.getUint16(6, true);
+	const container = decodeContainer(data, {
+		magic: SURFACE_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: SURFACE_TAGS,
+		label: 'surface page',
+	});
+	const head = requireSection(container, TAG_HEAD, 'surface page');
+	if (head.byteLength < 2) {
+		throw new PackageFormatError('surface page HEAD is too short');
+	}
+	const side = viewOf(head.data).getUint16(0, true);
 	if (side % 4 !== 0) {
 		throw new PackageFormatError(`surface page side ${side} isn't a multiple of 4`);
 	}
 	const bytes = bc3ImageBytes(side);
-	checkLength(data, SURFACE_HEADER_SIZE + bytes * 2, 'surface page');
-	return {
-		side,
-		albedo: data.subarray(SURFACE_HEADER_SIZE, SURFACE_HEADER_SIZE + bytes),
-		normal: data.subarray(SURFACE_HEADER_SIZE + bytes, SURFACE_HEADER_SIZE + bytes * 2),
-	};
+	const albedo = requireSection(container, TAG_ALBD, 'surface page').data;
+	const normal = requireSection(container, TAG_NORM, 'surface page').data;
+	if (albedo.byteLength !== bytes || normal.byteLength !== bytes) {
+		throw new PackageFormatError('surface page image length mismatch');
+	}
+	return { side, albedo, normal };
 };
 
 /** a leaf terrain tile's close-up blend inputs; images have `side`² texels with rows along +Z */
@@ -262,7 +284,7 @@ export interface SplatPage {
 }
 
 /**
- * encodes a splat page (`.tsl`; layout in docs/package-format.md)
+ * encodes a splat page (`.tsl`, `EFSL` v2 TLV)
  *
  * @param page the inputs
  * @returns the encoded page
@@ -279,15 +301,20 @@ export const encodeSplatPage = (page: SplatPage): Uint8Array => {
 	) {
 		throw new RangeError(`splat page sections don't fit a ${side}² page with ${cells}² cells`);
 	}
-	const out = new Uint8Array(SPLAT_HEADER_SIZE + page.control.length + tintBytes + page.index.length);
-	const view = viewOf(out);
-	writeHeader(view, SPLAT_HEADER);
-	view.setUint16(6, side, true);
-	view.setUint16(8, cells, true);
-	out.set(page.control, SPLAT_HEADER_SIZE);
-	out.set(page.tint, SPLAT_HEADER_SIZE + page.control.length);
-	out.set(page.index, SPLAT_HEADER_SIZE + page.control.length + tintBytes);
-	return out;
+	const head = new Uint8Array(8);
+	const hv = viewOf(head);
+	hv.setUint16(0, side, true);
+	hv.setUint16(2, cells, true);
+	return encodeContainer({
+		magic: SPLAT_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		sections: [
+			{ tag: TAG_HEAD, required: true, data: head },
+			{ tag: TAG_CTRL, required: true, data: page.control },
+			{ tag: TAG_TINT, required: true, data: page.tint },
+			{ tag: TAG_INDX, required: true, data: page.index },
+		],
+	});
 };
 
 /**
@@ -296,23 +323,31 @@ export const encodeSplatPage = (page: SplatPage): Uint8Array => {
  * @throws {PackageFormatError} on a bad header or length
  */
 export const decodeSplatPage = (data: Uint8Array): SplatPage => {
-	const view = viewOf(data);
-	checkHeader(view, SPLAT_HEADER);
-	const side = view.getUint16(6, true);
-	const cells = view.getUint16(8, true);
+	const container = decodeContainer(data, {
+		magic: SPLAT_MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: SPLAT_TAGS,
+		label: 'splat page',
+	});
+	const head = requireSection(container, TAG_HEAD, 'splat page');
+	if (head.byteLength < 4) {
+		throw new PackageFormatError('splat page HEAD is too short');
+	}
+	const hv = viewOf(head.data);
+	const side = hv.getUint16(0, true);
+	const cells = hv.getUint16(2, true);
 	if (side % 4 !== 0) {
 		throw new PackageFormatError(`splat page side ${side} isn't a multiple of 4`);
 	}
-	const controlBytes = side * side * 4;
-	const tintBytes = bc3ImageBytes(side);
-	const indexBytes = cells * cells * 4;
-	checkLength(data, SPLAT_HEADER_SIZE + controlBytes + tintBytes + indexBytes, 'splat page');
-	const tintAt = SPLAT_HEADER_SIZE + controlBytes;
-	return {
-		side,
-		cells,
-		control: data.subarray(SPLAT_HEADER_SIZE, tintAt),
-		tint: data.subarray(tintAt, tintAt + tintBytes),
-		index: data.subarray(tintAt + tintBytes, tintAt + tintBytes + indexBytes),
-	};
+	const control = requireSection(container, TAG_CTRL, 'splat page').data;
+	const tint = requireSection(container, TAG_TINT, 'splat page').data;
+	const index = requireSection(container, TAG_INDX, 'splat page').data;
+	if (
+		control.byteLength !== side * side * 4 ||
+		tint.byteLength !== bc3ImageBytes(side) ||
+		index.byteLength !== cells * cells * 4
+	) {
+		throw new PackageFormatError('splat page section length mismatch');
+	}
+	return { side, cells, control, tint, index };
 };

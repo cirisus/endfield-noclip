@@ -28,6 +28,8 @@ export interface ReadyTexture {
 	/** WebGPU's: array layers × faces (6 per cube), or depth for `3d`, else 1 */
 	depthOrArrayLayers: number;
 	mipCount: number;
+	/** top mip levels dropped for lite packages (`--max-texture-size`), 0 when full resolution */
+	droppedMips?: number;
 	/** index into the texture table's sampler palette */
 	sampler: number;
 	/**

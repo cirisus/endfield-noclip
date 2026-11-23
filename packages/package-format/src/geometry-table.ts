@@ -1,18 +1,13 @@
 /**
- * `tables/geometries.bin.zst`, the geometry table: one zstd frame around the encoded table. its own module,
- * outside the asset modules the pack cache fingerprints, so a layout change leaves cached conversions valid
+ * `tables/geometries.bin.zst`, the geometry table: one zstd frame around an `EFGE` v2 TLV container. its own
+ * module, outside the asset modules the pack cache fingerprints, so a layout change leaves cached conversions
+ * valid
  *
  * @module
  */
 
-import {
-	checkHeader,
-	checkLength,
-	TABLE_HEADER_SIZE,
-	viewOf,
-	writeHeader,
-	type HeaderShape,
-} from './binary.ts';
+import { viewOf } from './binary.ts';
+import { checkStride, decodeContainer, encodeContainer, fourcc, requireSection } from './container.ts';
 import { EntryStatus, entryStatusCode, entryStatusName } from './entry-status.ts';
 import { PackageFormatError } from './errors.ts';
 import type { GeometryEntry } from './geometry.ts';
@@ -35,35 +30,28 @@ export interface GeometryTable {
 	entry(id: number): GeometryEntry;
 }
 
-/** 'EFGE' */
-const GEOMETRIES_HEADER: HeaderShape = {
-	magic: 0x45_47_46_45,
-	version: 1,
-	size: TABLE_HEADER_SIZE,
-	label: 'geometry table',
-};
+const MAGIC = fourcc('EFGE');
+const MAJOR_VERSION = 2;
+const TAG_GEOM = fourcc('GEOM');
+const KNOWN_TAGS = new Set([TAG_GEOM]);
 
 const GEOMETRY_RECORD_SIZE = 44;
-
 const NO_TANGENT_UV = 0xff;
-
 const NO_BLOB = 0xff_ff_ff_ff;
 
 /**
- * the geometry table, before its zstd frame; the layout is in docs/package-format.md (binary encodings, asset
- * tables). an unconverted entry's fields past its status are 0.
+ * encodes the geometry table as an `EFGE` v2 TLV container (before its zstd frame). an unconverted entry's
+ * fields past its status are 0
  *
  * @param entries entries in id order
  * @returns the encoded table
  * @throws {RangeError} if a field doesn't fit its record, or an animation has no frames
  */
 export const encodeGeometryTable = (entries: readonly GeometryEntry[]): Uint8Array => {
-	const out = new Uint8Array(TABLE_HEADER_SIZE + entries.length * GEOMETRY_RECORD_SIZE);
-	const view = viewOf(out);
-	writeHeader(view, GEOMETRIES_HEADER);
-	view.setUint32(8, entries.length, true);
+	const buf = new Uint8Array(entries.length * GEOMETRY_RECORD_SIZE);
+	const view = viewOf(buf);
 	for (const [id, entry] of entries.entries()) {
-		const at = TABLE_HEADER_SIZE + id * GEOMETRY_RECORD_SIZE;
+		const at = id * GEOMETRY_RECORD_SIZE;
 		view.setUint8(at, entryStatusCode(entry.status));
 		if (entry.status !== 'ready') {
 			continue;
@@ -89,7 +77,13 @@ export const encodeGeometryTable = (entries: readonly GeometryEntry[]): Uint8Arr
 			view.setFloat32(at + 32 + i * 4, entry.bounds.max[i], true);
 		}
 	}
-	return out;
+	return encodeContainer({
+		magic: MAGIC,
+		majorVersion: MAJOR_VERSION,
+		sections: [
+			{ tag: TAG_GEOM, required: true, data: buf, count: entries.length, stride: GEOMETRY_RECORD_SIZE },
+		],
+	});
 };
 
 /**
@@ -100,13 +94,19 @@ export const encodeGeometryTable = (entries: readonly GeometryEntry[]): Uint8Arr
  * @throws {PackageFormatError} on a bad header, length or status
  */
 export const decodeGeometryTable = (data: Uint8Array): GeometryTable => {
-	const view = viewOf(data);
-	checkHeader(view, GEOMETRIES_HEADER);
-	const count = view.getUint32(8, true);
-	checkLength(data, TABLE_HEADER_SIZE + count * GEOMETRY_RECORD_SIZE, 'geometry table');
+	const container = decodeContainer(data, {
+		magic: MAGIC,
+		majorVersion: MAJOR_VERSION,
+		knownTags: KNOWN_TAGS,
+		label: 'geometry table',
+	});
+	const sec = requireSection(container, TAG_GEOM, 'geometry table');
+	checkStride(sec, GEOMETRY_RECORD_SIZE, 'GEOM');
+	const { count, stride } = sec;
+	const view = viewOf(sec.data);
 	const blobs = new Uint32Array(count);
 	for (let id = 0; id < count; id++) {
-		const at = TABLE_HEADER_SIZE + id * GEOMETRY_RECORD_SIZE;
+		const at = id * stride;
 		const status = view.getUint8(at);
 		if (status > EntryStatus.Failed) {
 			throw new PackageFormatError(`geometry ${id} has unknown status ${status}`);
@@ -123,7 +123,7 @@ export const decodeGeometryTable = (data: Uint8Array): GeometryTable => {
 			if (!(id >= 0 && id < count)) {
 				throw new RangeError(`geometry ${id} isn't in the table`);
 			}
-			const at = TABLE_HEADER_SIZE + id * GEOMETRY_RECORD_SIZE;
+			const at = id * stride;
 			const status = entryStatusName(view.getUint8(at), `geometry ${id}`);
 			if (status !== 'ready') {
 				return { status };

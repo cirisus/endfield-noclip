@@ -26,6 +26,10 @@ export const BlobKind = {
 	 * package): a spatial hash over 4³-probe blocks, then 16-byte L1 probes
 	 */
 	Irradiance: 7,
+	/** unified binary animation / motion clip (`.anim`, `EFAN`) */
+	Animation: 8,
+	/** compact foliage cluster block (`.fol`, `EFFL`) */
+	Foliage: 9,
 } as const;
 
 export type BlobKind = (typeof BlobKind)[keyof typeof BlobKind];
@@ -40,6 +44,8 @@ const BLOB_EXTENSIONS: Record<BlobKind, string> = {
 	[BlobKind.Geometry]: 'mesh',
 	[BlobKind.Texture]: 'tex',
 	[BlobKind.Irradiance]: 'iv',
+	[BlobKind.Animation]: 'anim',
+	[BlobKind.Foliage]: 'fol',
 };
 
 /** human-readable blob kind names, for stats and debug output */
@@ -52,6 +58,8 @@ export const BLOB_KIND_NAMES: Record<BlobKind, string> = {
 	[BlobKind.Geometry]: 'geometry',
 	[BlobKind.Texture]: 'texture',
 	[BlobKind.Irradiance]: 'irradiance',
+	[BlobKind.Animation]: 'animation',
+	[BlobKind.Foliage]: 'foliage',
 };
 
 /** the outer compression of a stored blob */
