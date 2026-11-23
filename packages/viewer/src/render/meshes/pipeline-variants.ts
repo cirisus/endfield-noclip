@@ -5,6 +5,8 @@
  * @module
  */
 
+import { product } from '@mary-ext/array-fns';
+
 import type { LookStencil } from '../../looks/look.ts';
 import type { MeshBucket } from '../../streaming/mesh-buckets.ts';
 
@@ -27,9 +29,10 @@ export const pipelineKey = (phase: string, cull: FaceCull, uvFormat: UvFormat): 
 	`${phase}/${cull}/${uvFormat}`;
 
 /** every face culling and UV format a phase has a pipeline for, by {@link variantOf} */
-export const VARIANTS: readonly { cull: FaceCull; uvFormat: UvFormat }[] = FACE_CULLS.flatMap((cull) =>
-	UV_FORMATS.map((uvFormat) => ({ cull, uvFormat })),
-);
+export const VARIANTS: readonly { cull: FaceCull; uvFormat: UvFormat }[] = product(
+	FACE_CULLS,
+	UV_FORMATS,
+).map(([cull, uvFormat]) => ({ cull, uvFormat }));
 
 /** @returns the index of a face culling and UV format in {@link VARIANTS} */
 export const variantOf = (cull: FaceCull, uvFormat: UvFormat): number =>

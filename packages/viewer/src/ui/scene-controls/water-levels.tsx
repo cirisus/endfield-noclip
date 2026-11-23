@@ -1,3 +1,5 @@
+import { mapDefined, partition } from '@mary-ext/array-fns';
+
 import { controlListedFor, groupByLevel, listedControls } from '../../scene-states/listing.ts';
 import { surfaceView, volumeSurface, waterHeight } from '../../scene-states/water-levels.ts';
 import type { Viewer } from '../../viewer/viewer.ts';
@@ -38,22 +40,17 @@ export const WaterLevels = ({ viewer, matches }: { viewer: Viewer; matches: (tex
 	const surfaces = viewer.waterSurfaces;
 	const controls = listedControls(manifest.states);
 	// a volume is listed with its `waterLevel` control, for the levels that control is listed for
-	const all = viewer.waterVolumes.flatMap((state, index) => {
+	const all = mapDefined(viewer.waterVolumes, (state, index) => {
 		const surface = volumeSurface(surfaces, index);
 		const listed = state.entry.control === null ? undefined : controls[state.entry.control];
 		if (surface === undefined || listed === undefined) {
-			return [];
+			return undefined;
 		}
 		const { control } = listed;
-		return matches(`${control.name} ${control.id}`) ? [{ state, surface, listed }] : [];
+		return matches(`${control.name} ${control.id}`) ? { state, surface, listed } : undefined;
 	});
-	const here = all.filter(({ listed }) => controlListedFor(listed.control, level));
-	const others = groupByLevel(
-		all.filter(({ listed }) => !controlListedFor(listed.control, level)),
-		manifest.levels,
-		level,
-		({ listed }) => listed.control.levels,
-	);
+	const [here, rest] = partition(all, ({ listed }) => controlListedFor(listed.control, level));
+	const others = groupByLevel(rest, manifest.levels, level, ({ listed }) => listed.control.levels);
 	const rows = (entries: readonly (typeof all)[number][]) =>
 		entries.map(({ state, surface, listed }) => {
 			const { control } = listed;

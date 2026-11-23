@@ -1,3 +1,5 @@
+import { mapDefined } from '@mary-ext/array-fns';
+
 import { FormatError } from '../binary/binary-reader.ts';
 import type { AttributeReader, TypeDefinition } from '../il2cpp/metadata.ts';
 import type { Il2CppRuntime, Il2CppTypeRef } from '../il2cpp/registration.ts';
@@ -1119,14 +1121,15 @@ export class MemoryPackReader {
 		}
 		const struct: RawStruct = {
 			name: definition.name,
-			fields: runtime
-				.fields(definition)
-				.filter((field) => !field.static)
-				.map((field) => ({
-					name: field.name.replace(/^<(\w+)>k__BackingField$/, '$1'),
-					type: field.type,
-					offset: field.offset,
-				})),
+			fields: mapDefined(runtime.fields(definition), (field) =>
+				field.static
+					? undefined
+					: {
+							name: field.name.replace(/^<(\w+)>k__BackingField$/, '$1'),
+							type: field.type,
+							offset: field.offset,
+						},
+			),
 		};
 		this.#rawStructs.set(definition.index, struct);
 		const result: { [key: string]: MemoryPackValue } = { $type: struct.name };

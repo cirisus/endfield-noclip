@@ -312,7 +312,10 @@ export class BlobStore {
 	 * @returns the archives by name
 	 */
 	async writeArchives(outDir: string, previous: string | null): Promise<Map<string, WrittenArchive>> {
-		const archives = [...this.#layout().archives.values()].filter(({ name }) => name !== this.#core);
+		const archives = this.#layout()
+			.archives.values()
+			.filter(({ name }) => name !== this.#core)
+			.toArray();
 		const written = await mapPool(archives, ARCHIVE_WRITES, async ({ name, stem, plan, members }) => {
 			const target = join(outDir, name);
 			await mkdir(dirname(target), { recursive: true });

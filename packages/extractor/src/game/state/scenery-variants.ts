@@ -145,7 +145,7 @@ export const loadProgressions = async (world: WorldIndex, scene: string): Promis
 		world.levelConfigs(),
 		world.dynamicEntities(scene),
 	]);
-	const byIdNum = new Map([...levelConfigs.values()].map((config) => [config.idNum, config.id]));
+	const byIdNum = new Map(levelConfigs.values().map((config) => [config.idNum, config.id]));
 	return summarizeProgressions(dynamicEntities).map((summary) => {
 		const levelId = summary.levelNum === null ? null : (byIdNum.get(summary.levelNum) ?? null);
 		return labelProgression(summary, levelId, (levelId && names.get(levelId)) ?? null);

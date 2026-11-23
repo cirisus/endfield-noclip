@@ -67,7 +67,7 @@ export const playedFloats = (played: readonly PlayedMaterials[]): PlayedFloats |
 
 /** @returns property names by the hash clip bindings name them with: the low 28 bits of their CRC32 */
 const byHash = (names: Iterable<string>): Map<number, string> =>
-	new Map([...names].map((name) => [crc32(name) & 0x0fff_ffff, name]));
+	new Map(Iterator.from(names).map((name) => [crc32(name) & 0x0fff_ffff, name]));
 
 /**
  * resolves the material values a pose sets on a renderer against one of its materials. clips name properties

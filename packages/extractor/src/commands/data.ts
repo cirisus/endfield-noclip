@@ -6,6 +6,8 @@ import {
 } from '@endfield-noclip/formats/endfield/level-interactives';
 import { parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 
+import { definite } from '@mary-ext/array-fns';
+
 import {
 	hashText,
 	jsonReplacer,
@@ -204,10 +206,11 @@ const tableShortName = (name: string): string =>
 
 const listTables = async (context: Context, filter: RegExp | undefined): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.Table);
-	const names = [...group.catalog]
+	const names = Iterator.from(group.catalog)
 		.filter((file) => file.name.endsWith(TABLE_SUFFIX))
 		.map((file) => ({ name: tableShortName(file.name), length: file.length }))
-		.filter((entry) => filter === undefined || filter.test(entry.name));
+		.filter((entry) => filter === undefined || filter.test(entry.name))
+		.toArray();
 	names.sort((a, b) => compareStrings(a.name, b.name));
 	for (const entry of names) {
 		console.log(`${String(entry.length).padStart(10)}  ${entry.name}`);
@@ -286,9 +289,11 @@ const readScripts = async (
 ): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.JsonData);
 	const prefix = `Data/Json/LevelScriptData/${level}/`;
-	const files = [...group.catalog.names()]
+	const files = group.catalog
+		.names()
 		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
-		.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`);
+		.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`)
+		.toArray();
 	files.sort(compareNatural);
 	if (files.length === 0) {
 		throw new Error(
@@ -348,9 +353,10 @@ const readInteractives = async (
 ): Promise<void> => {
 	const group = await context.vfs.group(VfsGroup.JsonData);
 	const prefix = `Data/Json/LevelData/${level}/`;
-	const files = [...group.catalog.names()].filter(
-		(name) => name.startsWith(prefix) && name.endsWith('.json'),
-	);
+	const files = group.catalog
+		.names()
+		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
+		.toArray();
 	files.sort();
 	if (files.length === 0) {
 		throw new Error(`no LevelData files found for ${level}`);
@@ -403,9 +409,10 @@ const readInteractives = async (
 			matched.push(plain);
 			if (!options.json && options.id === undefined) {
 				const pos = row.position.map((v) => v.toFixed(1)).join(',');
-				const flags = [row.createState !== 0 ? `create=${row.createState}` : '', row.isLocked ? 'locked' : '']
-					.filter(Boolean)
-					.join(' ');
+				const flags = definite([
+					row.createState !== 0 ? `create=${row.createState}` : '',
+					row.isLocked ? 'locked' : '',
+				]).join(' ');
 				console.log(
 					`${idText.padStart(12)}  ${pos.padEnd(24)} ${row.template.padEnd(36)} ${flags}  @ ${name.split('/').pop()}`,
 				);

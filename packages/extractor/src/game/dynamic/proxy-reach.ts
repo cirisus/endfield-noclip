@@ -8,6 +8,8 @@
 
 import type { Rect } from '@endfield-noclip/package-format/values';
 
+import { mapDefined } from '@mary-ext/array-fns';
+
 import { gridIdReach } from './dynamic-grids.ts';
 
 /**
@@ -36,14 +38,15 @@ export const proxyLevelReaches = (
 const isEmpty = (rect: Rect): boolean => rect.minX >= rect.maxX || rect.minZ >= rect.maxZ;
 
 const intersect = (rects: readonly Rect[], by: Rect): Rect[] =>
-	rects
-		.map((rect) => ({
+	mapDefined(rects, (rect) => {
+		const clipped: Rect = {
 			minX: Math.max(rect.minX, by.minX),
 			minZ: Math.max(rect.minZ, by.minZ),
 			maxX: Math.min(rect.maxX, by.maxX),
 			maxZ: Math.min(rect.maxZ, by.maxZ),
-		}))
-		.filter((rect) => !isEmpty(rect));
+		};
+		return isEmpty(clipped) ? undefined : clipped;
+	});
 
 /** cuts `by` out of each rectangle: full-width strips below and above it, then the sides between them */
 const subtract = (rects: readonly Rect[], by: Rect): Rect[] =>

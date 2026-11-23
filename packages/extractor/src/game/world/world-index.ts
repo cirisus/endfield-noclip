@@ -260,7 +260,10 @@ export class WorldIndex {
 			const group = await this.vfs.group(VfsGroup.JsonData);
 			const pool = await this.stringPool();
 
-			const names = [...group.catalog.names()].filter((name) => name.startsWith('Data/Json/LevelConfig/'));
+			const names = group.catalog
+				.names()
+				.filter((name) => name.startsWith('Data/Json/LevelConfig/'))
+				.toArray();
 			const configs = await mapPool(names, READ_CONCURRENCY, async (name) =>
 				parseLevelConfig(await this.#read(VfsGroup.JsonData, name), (id) => pool.get(id)),
 			);
@@ -591,7 +594,7 @@ export class WorldIndex {
 		const chunk = parseInitChunk(await this.readInitPayload(file));
 		const entities = indexEntities(chunk, file, partition);
 		const decalMaterials = new Map<number, bigint>();
-		const decalIds = entities.filter((entity) => entity.decal !== null).map((entity) => entity.id);
+		const decalIds = mapDefined(entities, (entity) => (entity.decal === null ? undefined : entity.id));
 		if (decalIds.length > 0) {
 			const data = await this.readStreamingPayload(file);
 			if (data === null) {
@@ -735,9 +738,10 @@ export class WorldIndex {
 	dynamicEntities(scene: string): Promise<DynamicEntity[]> {
 		return this.#dynamicEntities.getOrInsertComputed(scene, async () => {
 			const prefix = `${DYNAMIC_SCENE_ROOT}${scene}/fb_main_`;
-			const names = [...(await this.vfs.group(VfsGroup.DynamicStreaming)).catalog.names()].filter((name) =>
-				name.startsWith(prefix),
-			);
+			const names = (await this.vfs.group(VfsGroup.DynamicStreaming)).catalog
+				.names()
+				.filter((name) => name.startsWith(prefix))
+				.toArray();
 			names.sort();
 			const perFile = await mapPool(
 				names,

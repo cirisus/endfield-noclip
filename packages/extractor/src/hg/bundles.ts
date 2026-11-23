@@ -34,6 +34,8 @@ import {
 	type PPtr,
 } from '@endfield-noclip/formats/unity/values';
 
+import { mapDefined } from '@mary-ext/array-fns';
+
 import { DEFAULT_OUT } from '../cli-args.ts';
 import type { Keys } from '../config.ts';
 import { ignoreMissing } from '../errors.ts';
@@ -87,9 +89,11 @@ const writeManifestCache = async (cacheDir: string, fileName: string, bytes: Uin
 		await rename(tmp, target);
 		const entries = await ignoreMissing(readdir(cacheDir), []);
 		await Promise.all(
-			entries
-				.filter((name) => name.startsWith('manifest-') && name.endsWith('.bin') && name !== fileName)
-				.map((name) => rm(join(cacheDir, name), { force: true })),
+			mapDefined(entries, (name) =>
+				name.startsWith('manifest-') && name.endsWith('.bin') && name !== fileName
+					? rm(join(cacheDir, name), { force: true })
+					: undefined,
+			),
 		);
 	} catch {
 		await rm(tmp, { force: true }).catch(() => {});

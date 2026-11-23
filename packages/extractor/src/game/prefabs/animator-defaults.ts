@@ -314,6 +314,10 @@ export const animatorPose = async (
 	const key =
 		parameters.size === 0
 			? 'animator-defaults'
-			: `animator:${[...parameters].map(([id, value]) => `${id}=${Number(value)}`).join(',')}`;
+			: `animator:${parameters
+					.entries()
+					.map(([id, value]) => `${id}=${Number(value)}`)
+					.toArray()
+					.join(',')}`;
 	return { key, clips, active: new Map() };
 };

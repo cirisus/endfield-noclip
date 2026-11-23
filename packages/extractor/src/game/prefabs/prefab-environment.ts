@@ -24,6 +24,8 @@ import {
 } from '@endfield-noclip/formats/unity/values';
 import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 
+import { unique } from '@mary-ext/array-fns';
+
 import { formatErrorOnly } from '../../errors.ts';
 import type { BundleSource } from '../../pack/convert/convert-pool.ts';
 import {
@@ -222,7 +224,7 @@ export const loadPlacedVolumes = async (
 ): Promise<{ volumes: SceneEnvironmentVolume[]; unsupported: { path: string; reason: string }[] }> => {
 	const { resolver } = roots;
 	const fp = cache === null ? null : await cache.fingerprint(PREFAB_ENV_ENTRY);
-	const uniqueHashes = [...new Set(placements.map(({ model }) => model.pathHash))];
+	const uniqueHashes = unique(placements.map(({ model }) => model.pathHash));
 	const loadedList = await mapPool(uniqueHashes, PREFAB_CONCURRENCY, async (hash) => {
 		const memoKey =
 			cache === null || fp === null ? null : cache.keyWith(fp, { kind: 'prefabEnvVolumes', hash });

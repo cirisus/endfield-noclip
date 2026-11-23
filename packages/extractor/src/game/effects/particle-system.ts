@@ -52,6 +52,8 @@ import {
 	SheetUvChannels,
 } from '@endfield-noclip/package-format/particles';
 
+import { definite } from '@mary-ext/array-fns';
+
 /** the renderer's meshes and their weights */
 const MESH_FIELDS = ['m_Mesh', 'm_Mesh1', 'm_Mesh2', 'm_Mesh3'] as const;
 const MESH_WEIGHT_FIELDS = [
@@ -711,10 +713,10 @@ const readTrail = (
  *   instead, which the viewer doesn't evaluate
  */
 const undrawnReason = (system: TypeTreeObject): string => {
-	const drives = [
+	const drives = definite([
 		enabled(system, 'LightsModule') ? 'lights' : null,
 		enabled(system, 'SubModule') ? 'sub-emitters' : null,
-	].filter((part) => part !== null);
+	]);
 	return drives.length === 0 ? 'no render mode or trails' : `no render mode: ${drives.join(' and ')} only`;
 };
 

@@ -217,8 +217,12 @@ export const poseDecorationModels = async (
 ): Promise<{ models: StructureModel[]; controls: DraftControl[]; posed: number }> => {
 	const poses = new Map<string, Promise<PrefabPose | null>>();
 	const poseOf = (model: StructureModel, values: DecorationAnimatorValues): Promise<PrefabPose | null> => {
-		const parameters = new Map([...values].map(([name, value]) => [animatorParameterId(name), value]));
-		const key = `${model.model.pathHash}:${[...values].map(([name, value]) => `${name}=${value}`).join(',')}`;
+		const parameters = new Map(values.entries().map(([name, value]) => [animatorParameterId(name), value]));
+		const key = `${model.model.pathHash}:${values
+			.entries()
+			.map(([name, value]) => `${name}=${value}`)
+			.toArray()
+			.join(',')}`;
 		return poses.getOrInsertComputed(key, async () => {
 			const { root } = await roots.root(model.model.pathHash);
 			if (root instanceof FormatError) {

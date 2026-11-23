@@ -10,6 +10,8 @@ import type {
 } from '@endfield-noclip/package-format/states';
 import { type Bounds, unionBounds, type Vec3 } from '@endfield-noclip/package-format/values';
 
+import { mapDefined } from '@mary-ext/array-fns';
+
 import { compareNumbers, compareStrings } from '../compare.ts';
 import { sourceVisibility } from '../game/state/chunk-sources.ts';
 import { sceneStateControl } from '../game/state/scene-conditions.ts';
@@ -311,10 +313,10 @@ export class ControlRegistry {
 			};
 		});
 		const conditionalSets = this.conditions.map((condition): ConditionalSetInfo => ({
-			alternatives: condition.alternatives.flatMap((requirements) =>
+			alternatives: mapDefined(condition.alternatives, (requirements) =>
 				requirements.every(({ control }) => controlIndex.has(control))
-					? [requirements.map(({ control, mask }) => ({ control: controlIndex.get(control)!, mask }))]
-					: [],
+					? requirements.map(({ control, mask }) => ({ control: controlIndex.get(control)!, mask }))
+					: undefined,
 			),
 		}));
 		const groups = this.groups.map(({ levelTag, condition }): VisibilityGroup => ({

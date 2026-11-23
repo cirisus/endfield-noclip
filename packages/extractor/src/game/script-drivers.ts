@@ -804,7 +804,7 @@ export const loadLevelScripts = async (
 		mapDefined([...configs.values()], (config) => (config.mapId === scene ? config.id : undefined)),
 	);
 	const read = (name: string): Promise<Uint8Array> => vfs.read(VfsGroup.JsonData, name);
-	const wanted = new Set([...entities].map((id) => BigInt(id)));
+	const wanted = new Set(Iterator.from(entities).map((id) => BigInt(id)));
 	const scripts = new Map<string, Script>();
 	let undecoded = 0;
 	for (const name of (await vfs.group(VfsGroup.JsonData)).catalog.names()) {

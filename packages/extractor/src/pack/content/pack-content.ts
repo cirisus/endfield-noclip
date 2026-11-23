@@ -11,6 +11,8 @@ import { type ChainDraw, DrawRole } from '@endfield-noclip/package-format/instan
 import { tileAt } from '@endfield-noclip/package-format/tiles';
 import type { Rect } from '@endfield-noclip/package-format/values';
 
+import { uniqueBy } from '@mary-ext/array-fns';
+
 import { isNeutralWaterDecal } from '../../game/materials/effects/water-foam.ts';
 import type { Visibility } from '../../game/state/scene-control.ts';
 import type { WorldIndex } from '../../game/world/world-index.ts';
@@ -306,7 +308,7 @@ export class PackContent {
 
 	/** @returns the stand-ins once each: placements repeat their prefab's */
 	standInReports(): StandInReport[] {
-		return [...new Map(this.standIns.map((report) => [JSON.stringify(report), report])).values()];
+		return uniqueBy(this.standIns, (report) => JSON.stringify(report));
 	}
 
 	// #endregion

@@ -31,7 +31,11 @@ export const importKeys = async (dirs: string[]): Promise<KeyConfig> => {
 				const text = await readFile(vfsPy, 'utf8');
 				const match = /DEFAULT_VFS_KEY_HEX\s*=\s*\(([^)]*)\)/.exec(text);
 				if (match) {
-					vfsKey = [...match[1].matchAll(/"([0-9a-fA-F]+)"/g)].map((m) => m[1]).join('');
+					vfsKey = match[1]
+						.matchAll(/"([0-9a-fA-F]+)"/g)
+						.map((m) => m[1])
+						.toArray()
+						.join('');
 				}
 			}
 
@@ -42,7 +46,14 @@ export const importKeys = async (dirs: string[]): Promise<KeyConfig> => {
 				const [helper, utils] = await Promise.all([readFile(helperCs, 'utf8'), readFile(utilsCs, 'utf8')]);
 				const array = (name: string): string | undefined => {
 					const body = new RegExp(`\\b${name}\\s*=\\s*new byte\\[\\]\\s*\\{([^}]*)\\}`).exec(helper)?.[1];
-					return body && [...body.matchAll(/0x([0-9A-Fa-f]{2})/g)].map((m) => m[1]).join('');
+					return (
+						body &&
+						body
+							.matchAll(/0x([0-9A-Fa-f]{2})/g)
+							.map((m) => m[1])
+							.toArray()
+							.join('')
+					);
 				};
 				const chainXor = /InitKeys\(CryptoHelper\.VFSAESSBox,[^)]*?0x([0-9A-Fa-f]+)UL/.exec(utils)?.[1];
 				const sbox = array('VFSAESSBox');

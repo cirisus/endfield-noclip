@@ -178,7 +178,9 @@ const ORACLE_BUNDLE_COUNT = 4;
  */
 const loadOracleBundles = async (vfs: Vfs, log: (message: string) => void): Promise<OracleBundle[]> => {
 	const group = await vfs.group(VfsGroup.Bundle);
-	const candidates = [...group.catalog].filter((entry) => entry.length > 1500 && entry.length < 60_000);
+	const candidates = Iterator.from(group.catalog)
+		.filter((entry) => entry.length > 1500 && entry.length < 60_000)
+		.toArray();
 	candidates.sort((a, b) => a.length - b.length);
 	const oracles: OracleBundle[] = [];
 	for (const entry of candidates) {

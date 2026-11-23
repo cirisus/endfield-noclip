@@ -2,6 +2,8 @@ import type { LevelInteractive } from '@endfield-noclip/formats/endfield/level-i
 import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
 import { unityEulerQuaternion } from '@endfield-noclip/formats/unity/transform';
 
+import { mapDefined, unique } from '@mary-ext/array-fns';
+
 import type { PrefabPose } from '../prefabs/prefab.ts';
 import { type DraftControl, sceneControl, switchValues } from '../state/scene-control.ts';
 
@@ -88,9 +90,9 @@ const PLAYER_KEYS = [
  * @returns the player-set keys its components drive
  */
 export const playerKeys = (template: MemoryPackValue): PlayerKey[] =>
-	PLAYER_KEYS.flatMap(({ key, component, property }) => {
+	mapDefined(PLAYER_KEYS, ({ key, component, property }) => {
 		const radius = componentFloat(template, component, property);
-		return radius === null || !(radius > 0) ? [] : [{ key, radius }];
+		return radius === null || !(radius > 0) ? undefined : { key, radius };
 	});
 
 /** what a model's view states are settled with */
@@ -328,7 +330,7 @@ export class RestLooks implements InteractiveKind {
 		}
 		const nearness = `proximity:${row.id}`;
 		if (looks.near !== null && radius !== null) {
-			const states = (side: SettledLook[]) => [...new Set(side.flatMap((look) => look.states))].join(', ');
+			const states = (side: SettledLook[]) => unique(side.flatMap((look) => look.states)).join(', ');
 			this.proximityControls.push(
 				sceneControl({
 					kind: 'proximity',

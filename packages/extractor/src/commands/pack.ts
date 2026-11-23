@@ -5,6 +5,8 @@ import { parseArgs } from 'node:util';
 
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 
+import { definite, mapDefined } from '@mary-ext/array-fns';
+
 import { DEFAULT_OUT, parseBounds, parseInteger, parseZstdLevel } from '../cli-args.ts';
 import { compareNumbers } from '../compare.ts';
 import { withContext } from '../context.ts';
@@ -208,12 +210,12 @@ const formatReport = (report: PackReport): string => {
 	}
 	if (report.terrain !== null) {
 		const { tiles, withoutSurface, leavesWithoutSplat, orphanPages, layerProblem } = report.terrain;
-		const missing = [
+		const missing = definite([
 			withoutSurface > 0 ? `${withoutSurface} without a surface page` : null,
 			leavesWithoutSplat > 0 ? `${leavesWithoutSplat} leaves without a splat page` : null,
 			orphanPages > 0 ? `${orphanPages} pages of tiles without heights` : null,
 			layerProblem === null ? null : `no close-up blend: the scene ${layerProblem}`,
-		].filter((part) => part !== null);
+		]);
 		lines.push(
 			`terrain: ${tiles} tiles` + (missing.length > 0 ? `; ${missing.join(', ')} (debug/terrain.json)` : ''),
 		);
@@ -234,8 +236,8 @@ const formatReport = (report: PackReport): string => {
 	lines.push(`peak RSS ${(report.peakRss / 1e9).toFixed(2)} GB`);
 	{
 		const { grid } = hlod;
-		const misaligned = grid.aligned.flatMap((aligned, tier) =>
-			aligned || hlod.tierCounts[tier] === 0 ? [] : [tier],
+		const misaligned = mapDefined(grid.aligned, (aligned, tier) =>
+			aligned || hlod.tierCounts[tier] === 0 ? undefined : tier,
 		);
 		lines.push(
 			`hlod: ${hlod.clusters} clusters (tiers ${hlod.tierCounts.join('/')}), ` +

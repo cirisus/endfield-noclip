@@ -512,7 +512,10 @@ export const settledPose = async (
 	}
 	if (emissiveHashes.size > 0) {
 		const emissive = await emissiveConfigs(context, states, emissiveHashes);
-		const keyed = [...emissiveHashes].map(([node, hash]) => [node, String(hash)]);
+		const keyed = emissiveHashes
+			.entries()
+			.map(([node, hash]) => [node, String(hash)])
+			.toArray();
 		pose = { ...pose, key: `${pose.key} emissive ${JSON.stringify(keyed)}`, emissive };
 	}
 	return {

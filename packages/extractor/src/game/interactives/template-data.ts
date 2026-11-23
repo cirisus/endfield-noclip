@@ -5,6 +5,8 @@ import {
 	type MemoryPackValue,
 } from '@endfield-noclip/formats/endfield/memory-pack';
 
+import { mapDefined } from '@mary-ext/array-fns';
+
 // readers for decoded interactive templates (`InteractiveTemplateData`) and for the properties a placement
 // overrides them with
 
@@ -188,13 +190,17 @@ const templateAtoms = (properties: MemoryPackValue | undefined, key: string): Pr
 			continue;
 		}
 		const atoms = Array.isArray(property.value.valueArray) ? property.value.valueArray : [];
-		return atoms.filter(isMemoryPackObject).map((atom) => ({
-			bits:
-				typeof atom.valueBit64 === 'string' || typeof atom.valueBit64 === 'number'
-					? BigInt(atom.valueBit64)
-					: 0n,
-			text: typeof atom.valueString === 'string' ? atom.valueString : null,
-		}));
+		return mapDefined(atoms, (atom) =>
+			isMemoryPackObject(atom)
+				? {
+						bits:
+							typeof atom.valueBit64 === 'string' || typeof atom.valueBit64 === 'number'
+								? BigInt(atom.valueBit64)
+								: 0n,
+						text: typeof atom.valueString === 'string' ? atom.valueString : null,
+					}
+				: undefined,
+		);
 	}
 	return null;
 };

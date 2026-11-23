@@ -210,17 +210,20 @@ export class DoodadGrades {
 
 	/** @returns one progression per upgrade source the scene's graded rows follow, defaulting to its top level */
 	progressions(): DraftControl[] {
-		return [...this.#controls].map(([id, { name, levels }]) => {
-			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-			const sorted = [...levels].sort(compareNumbers);
-			return progressionControl(
-				'doodadGrade',
-				id,
-				name,
-				sorted,
-				sorted.at(-1)!,
-				'the save holds the level; the highest level any graded doodad needs',
-			);
-		});
+		return this.#controls
+			.entries()
+			.map(([id, { name, levels }]) => {
+				// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+				const sorted = [...levels].sort(compareNumbers);
+				return progressionControl(
+					'doodadGrade',
+					id,
+					name,
+					sorted,
+					sorted.at(-1)!,
+					'the save holds the level; the highest level any graded doodad needs',
+				);
+			})
+			.toArray();
 	}
 }

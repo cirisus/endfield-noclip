@@ -39,7 +39,7 @@ import { type TileKey, tileFootprint } from '@endfield-noclip/package-format/til
 import type { TreeInfo } from '@endfield-noclip/package-format/tree';
 import type { Bounds } from '@endfield-noclip/package-format/values';
 
-import { unique } from '@mary-ext/array-fns';
+import { mapDefined, unique } from '@mary-ext/array-fns';
 
 import type { Context } from '../../context.ts';
 import {
@@ -169,7 +169,10 @@ export const packTerrain = async (
 ): Promise<PackedTerrain> => {
 	checkTerrainLayout();
 	const { terrainScene, surface } = input;
-	const tiles = [...terrainScene.tiles.values()].filter(({ key }) => input.includesTile(key));
+	const tiles = terrainScene.tiles
+		.values()
+		.filter(({ key }) => input.includesTile(key))
+		.toArray();
 	tiles.sort((a, b) => a.key.level - b.key.level || a.key.z - b.key.z || a.key.x - b.key.x);
 	const splatIndex = await findTerrainSplatIndex(context, input.scene);
 	const layerFiles = layerTextureFiles(terrainScene, surface);
@@ -226,10 +229,10 @@ export const packTerrain = async (
 	const leafLevel = terrainLeafLevel(surface.terrainSize);
 	const debug: TerrainDebug = {
 		tiles: memo.value.tiles.length,
-		withoutSurface: memo.value.tiles.filter((tile) => !tile.surface).map((tile) => tileId(tile.key)),
-		leavesWithoutSplat: memo.value.tiles
-			.filter((tile) => tile.key.level === leafLevel && !tile.splat)
-			.map((tile) => tileId(tile.key)),
+		withoutSurface: mapDefined(memo.value.tiles, (tile) => (tile.surface ? undefined : tileId(tile.key))),
+		leavesWithoutSplat: mapDefined(memo.value.tiles, (tile) =>
+			tile.key.level === leafLevel && !tile.splat ? tileId(tile.key) : undefined,
+		),
 		orphanPages: terrainScene.orphanPages,
 		layerProblem: memo.value.layerProblem,
 	};

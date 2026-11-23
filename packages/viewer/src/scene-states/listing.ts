@@ -11,6 +11,8 @@ import type { LevelInfo } from '@endfield-noclip/package-format/manifest';
 import type { ControlPlace, SceneControl, StatesInfo } from '@endfield-noclip/package-format/states';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import { mapDefined } from '@mary-ext/array-fns';
+
 import { type EnvironmentScene, volumeLevel } from '../environment/blend.ts';
 
 /** entries listed under one of the other levels */
@@ -35,12 +37,12 @@ export const groupByLevel = <T>(
 	here: number | null,
 	levelsOf: (entry: T) => readonly number[],
 ): LevelGroup<T>[] =>
-	levels.flatMap((level, index) => {
+	mapDefined(levels, (level, index) => {
 		if (index === here) {
-			return [];
+			return undefined;
 		}
 		const listed = entries.filter((entry) => levelsOf(entry).includes(index));
-		return listed.length === 0 ? [] : [{ level, index, entries: listed }];
+		return listed.length === 0 ? undefined : { level, index, entries: listed };
 	});
 
 /** a scene control with its index into the package's controls, which scene values are keyed by */
@@ -116,10 +118,10 @@ export const placeDistance = (place: ControlPlace, eye: Readonly<Vec3>): number 
  * @returns the entries with a place within {@link NEARBY_RADIUS} of the eye, nearest first
  */
 export const controlsNear = (entries: readonly ListedControl[], eye: Readonly<Vec3>): ListedControl[] => {
-	const near = entries.flatMap((entry) => {
+	const near = mapDefined(entries, (entry) => {
 		const { place } = entry.control;
 		const distance = place === null ? Infinity : placeDistance(place, eye);
-		return distance <= NEARBY_RADIUS ? [{ entry, distance }] : [];
+		return distance <= NEARBY_RADIUS ? { entry, distance } : undefined;
 	});
 	near.sort((a, b) => a.distance - b.distance);
 	return near.map(({ entry }) => entry);
@@ -144,9 +146,9 @@ export interface ListedVolume {
  */
 export const volumesForLevel = (scene: EnvironmentScene, level: number | null): ListedVolume[] => {
 	const rect = level === null ? null : (scene.manifest.levels[level]?.rect ?? null);
-	return scene.environment.volumes.flatMap((volume, id) => {
+	return mapDefined(scene.environment.volumes, (volume, id) => {
 		const owner = volumeLevel(scene.manifest, volume);
 		const listed = owner === null || owner === level || (rect !== null && volumeReaches(volume.shape, rect));
-		return listed ? [{ id, volume, owner }] : [];
+		return listed ? { id, volume, owner } : undefined;
 	});
 };

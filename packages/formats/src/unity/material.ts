@@ -3,6 +3,8 @@
  * what they mean for drawing is the extractor's `game/materials/material-classify.ts`.
  */
 
+import { definite } from '@mary-ext/array-fns';
+
 import { FormatError } from '../binary/binary-reader.ts';
 
 import type { TypeTreeObject } from './type-tree.ts';
@@ -68,7 +70,7 @@ export const parseMaterial = (material: TypeTreeObject): MaterialRecord => {
 			? arrayField(material, 'm_InvalidKeywords').map(String)
 			: [];
 	} else if (typeof material.m_ShaderKeywords === 'string') {
-		keywords = material.m_ShaderKeywords.split(' ').filter((keyword) => keyword !== '');
+		keywords = definite(material.m_ShaderKeywords.split(' '));
 	}
 
 	const textures: Record<string, MaterialTextureSlot> = {};

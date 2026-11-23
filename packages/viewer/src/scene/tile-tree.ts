@@ -148,9 +148,12 @@ export const buildTileTree = (manifest: PackageManifest, tree: Tree): TileTree =
 		}
 		parent.quadrants[tileQuadrant(node)] = node;
 	}
-	const reached = [...pending].map(([reach, refs]): ReachedRefs => ({
-		reach: tree.reaches[reach],
-		refs: refs.map(({ index, ref }) => ({ node: nodes[index], ref })),
-	}));
+	const reached = pending
+		.entries()
+		.map(([reach, refs]): ReachedRefs => ({
+			reach: tree.reaches[reach],
+			refs: refs.map(({ index, ref }) => ({ node: nodes[index], ref })),
+		}))
+		.toArray();
 	return { nodes, roots, byId, terrainLeafLevel, terrainRootLevel, reached };
 };

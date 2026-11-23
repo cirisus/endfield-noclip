@@ -237,7 +237,7 @@ export const readCraneLook = async (
 	};
 	const hook = worldMatrix(attach);
 	const transforms = new Map(
-		[...posed].map(([tKey, values]) => {
+		posed.entries().map(([tKey, values]) => {
 			const node = nodes.get(tKey)!;
 			const list = [];
 			if (values.position) {

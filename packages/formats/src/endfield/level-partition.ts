@@ -104,9 +104,9 @@ export const levelTagOf = (entityId: number): number => entityId >>> 27;
 export const buildLevelPartition = (map: MapConfig, configs: Iterable<LevelConfig>): LevelPartition => {
 	// a level belongs to the partition when it owns cells of this map's grid
 	const gridIds = new Set(map.levelIds);
-	const own = [...configs].filter(
-		(config) => config.mapId === map.mapId && config.idNum !== 0 && gridIds.has(config.idNum),
-	);
+	const own = Iterator.from(configs)
+		.filter((config) => config.mapId === map.mapId && config.idNum !== 0 && gridIds.has(config.idNum))
+		.toArray();
 	own.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
 	const issues: PartitionIssue[] = [];

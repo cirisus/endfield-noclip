@@ -180,7 +180,10 @@ export class PrefabHashes {
 	 */
 	async find(paths: Iterable<string>): Promise<void> {
 		const manifest = this.#manifest;
-		const missing = [...new Set(paths)].filter((path) => !this.#hashes.has(path));
+		const missing = new Set(paths)
+			.values()
+			.filter((path) => !this.#hashes.has(path))
+			.toArray();
 		// the path table matches case-insensitively, so each candidate is confirmed against the manifest's
 		// own path, which is exact
 		const found = await Promise.all(

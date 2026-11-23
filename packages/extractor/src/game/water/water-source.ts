@@ -15,6 +15,8 @@ import {
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { pptrField } from '@endfield-noclip/formats/unity/values';
 
+import { definite } from '@mary-ext/array-fns';
+
 import { mapPool } from '../../pool.ts';
 import type { AssetRef, AssetResolver, ObjectRef } from '../assets/assets.ts';
 import type { ChunkFile, ChunkSource, WorldIndex } from '../world/world-index.ts';
@@ -122,7 +124,7 @@ export const readSceneWater = async (
 			globals: hasGlobal ? readWaterGlobalBindings(init, streaming) : [],
 		};
 	});
-	return collectSceneWater(perFile.filter((entry) => entry !== null));
+	return collectSceneWater(definite(perFile));
 };
 
 // #endregion

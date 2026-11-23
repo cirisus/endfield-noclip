@@ -26,7 +26,7 @@ import {
 import { unpackHgPayload } from '@endfield-noclip/formats/hg/payload';
 import type { RowPath } from '@endfield-noclip/package-format/instances';
 
-import { mapDefined } from '@mary-ext/array-fns';
+import { mapDefined, partition as partitionArray, range } from '@mary-ext/array-fns';
 
 import type { Context } from '../../context.ts';
 import { type Vfs, VfsGroup } from '../../hg/vfs.ts';
@@ -388,12 +388,11 @@ const levelCondition = (
 	) {
 		return null;
 	}
-	const bits = [...Array.from({ length: 32 }).keys()].filter((bit) => ((mask >>> bit) & 1) !== 0);
+	const [bits, others] = partitionArray(range(0, 32), (bit) => ((mask >>> bit) & 1) !== 0);
 	// a mask of most levels reads as "none of the others", keeping the variable's values few
 	if (bits.length <= 16) {
 		return { kind: 'any', reverse: false, conditions: bits.map((bit) => variableIs(variable, bit)) };
 	}
-	const others = [...Array.from({ length: 32 }).keys()].filter((bit) => !bits.includes(bit));
 	return { kind: 'any', reverse: true, conditions: others.map((bit) => variableIs(variable, bit)) };
 };
 
@@ -407,11 +406,14 @@ const noteOwnerConditions = (
 	game.note(
 		owners.flatMap((entity) => {
 			const blight = blights.get(entity)?.link.gate;
-			return entity.gates.filter((gate) => gate !== blight).map(gateCondition);
+			return mapDefined(entity.gates, (gate) => (gate === blight ? undefined : gateCondition(gate)));
 		}),
 	);
 	game.note(
-		[...driven.values()].flatMap(({ variable, values }) => values.map((v) => variableIs(variable, v))),
+		driven
+			.values()
+			.flatMap(({ variable, values }) => values.map((v) => variableIs(variable, v)))
+			.toArray(),
 	);
 	game.note(
 		owners.flatMap((entity) =>
@@ -452,9 +454,11 @@ class DynamicFiles {
 	 * @throws {FormatError} on a grid id two files share
 	 */
 	async readOwners(): Promise<{ grids: Map<number, DynamicGrid>; owners: DynamicSceneEntity[] }> {
-		const names = [...(await this.#vfs.group(VfsGroup.DynamicStreaming)).catalog.names()]
+		const names = (await this.#vfs.group(VfsGroup.DynamicStreaming)).catalog
+			.names()
 			.filter((name) => name.startsWith(`${this.#prefix}fb_main_`))
-			.map((name) => name.slice(this.#prefix.length));
+			.map((name) => name.slice(this.#prefix.length))
+			.toArray();
 		names.sort();
 		const perFile = await mapPool(names, READ_CONCURRENCY, async (name) =>
 			readDynamicScene(await this.#read(name)),

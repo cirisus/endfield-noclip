@@ -4,6 +4,7 @@ import { join, resolve, sep } from 'node:path';
 
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 
+import { definite, mapDefined } from '@mary-ext/array-fns';
 import sirv from 'sirv';
 import type { Connect, Plugin } from 'vite';
 
@@ -133,15 +134,18 @@ const sendRanges = async (root: string, url: string, ranges: Range[], res: Serve
 const listPackages = async (root: string, res: ServerResponse): Promise<void> => {
 	const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
 	const found = await Promise.all(
-		entries
-			// hidden directories are the packer's staging and replaced packages
-			.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-			.map(async (entry): Promise<DevPackage | null> => {
-				const core = await stat(join(root, entry.name, CORE_ARCHIVE)).catch(() => null);
-				return core?.isFile() ? { name: entry.name, coreSize: core.size } : null;
-			}),
+		// hidden directories are the packer's staging and replaced packages
+		mapDefined(entries, (entry) =>
+			entry.isDirectory() && !entry.name.startsWith('.')
+				? stat(join(root, entry.name, CORE_ARCHIVE))
+						.catch(() => null)
+						.then((core): DevPackage | null =>
+							core?.isFile() ? { name: entry.name, coreSize: core.size } : null,
+						)
+				: undefined,
+		),
 	);
-	const packages = found.filter((entry) => entry !== null);
+	const packages = definite(found);
 	packages.sort((a, b) => compareStrings(a.name, b.name));
 	res.setHeader('content-type', 'application/json');
 	res.setHeader('cache-control', 'no-cache');

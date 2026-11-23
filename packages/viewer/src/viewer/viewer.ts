@@ -364,11 +364,14 @@ export class Viewer {
 				row.nearest = Math.min(row.nearest, bucket.nearest);
 			}
 		}
-		const list = [...rows.values()].map(({ gap, materials, nearest }) => ({
-			gap,
-			materials: materials.size,
-			nearest,
-		}));
+		const list = rows
+			.values()
+			.map(({ gap, materials, nearest }) => ({
+				gap,
+				materials: materials.size,
+				nearest,
+			}))
+			.toArray();
 		list.sort((a, b) => a.nearest - b.nearest);
 		return list;
 	}
@@ -391,7 +394,10 @@ export class Viewer {
 				indices.add(volume.phase);
 			}
 		}
-		const phases = [...indices].map((index) => ({ index, name: pkg.environment.phases[index].name }));
+		const phases = indices
+			.values()
+			.map((index) => ({ index, name: pkg.environment.phases[index].name }))
+			.toArray();
 		phases.sort((a, b) => compareStrings(a.name, b.name));
 		return phases;
 	}

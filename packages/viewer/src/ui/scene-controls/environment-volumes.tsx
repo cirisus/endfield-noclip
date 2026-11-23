@@ -45,10 +45,10 @@ export const EnvironmentVolumes = ({
 	const volumes = volumesForLevel(scene, level).filter(({ volume }) => matches(volume.name));
 	const listedHere = new Set(volumes.map(({ id }) => id));
 	const others = groupByLevel(
-		scene.environment.volumes.flatMap((volume, id) =>
+		mapDefined(scene.environment.volumes, (volume, id) =>
 			listedHere.has(id) || !matches(volume.name)
-				? []
-				: [{ id, volume, owner: volumeLevel(manifest, volume) }],
+				? undefined
+				: { id, volume, owner: volumeLevel(manifest, volume) },
 		),
 		manifest.levels,
 		level,

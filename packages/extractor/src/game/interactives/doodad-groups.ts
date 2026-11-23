@@ -134,18 +134,21 @@ export class DoodadGroups {
 
 	/** @returns one progression per level with doodad groups, defaulting to the fully grown form */
 	progressions(): DraftControl[] {
-		return [...this.#levels].map(([id, set]) => {
-			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
-			const levels = [...set].sort(compareNumbers);
-			// which slots a shell leaves active says nothing about its level, hence the default
-			return progressionControl(
-				'doodadGroups',
-				id,
-				'Resource nodes',
-				levels,
-				levels.at(-1)!,
-				'the fully grown form',
-			);
-		});
+		return this.#levels
+			.entries()
+			.map(([id, set]) => {
+				// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
+				const levels = [...set].sort(compareNumbers);
+				// which slots a shell leaves active says nothing about its level, hence the default
+				return progressionControl(
+					'doodadGroups',
+					id,
+					'Resource nodes',
+					levels,
+					levels.at(-1)!,
+					'the fully grown form',
+				);
+			})
+			.toArray();
 	}
 }

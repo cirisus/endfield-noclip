@@ -181,7 +181,11 @@ export class AnimatorStarts implements InteractiveKind {
 		if (start.saved !== null && saved !== null) {
 			parameters.set(animatorParameterId(start.saved.parameter), saved);
 		}
-		const key = `${prefab}:${[...parameters].map(([id, value]) => `${id}=${Number(value)}`).join(',')}`;
+		const key = `${prefab}:${parameters
+			.entries()
+			.map(([id, value]) => `${id}=${Number(value)}`)
+			.toArray()
+			.join(',')}`;
 		return this.#poses.getOrInsertComputed(key, () =>
 			this.#sources.attempt(
 				prefab,

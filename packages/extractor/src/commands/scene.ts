@@ -20,7 +20,7 @@ import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import { ruleText } from '@endfield-noclip/package-format/conditions';
 import { compareVolumes, distanceInsideVolume } from '@endfield-noclip/package-format/environment-volumes';
 
-import { mapDefined } from '@mary-ext/array-fns';
+import { definite, mapDefined } from '@mary-ext/array-fns';
 
 import {
 	DEFAULT_OUT,
@@ -254,18 +254,20 @@ const listDungeons = async (
 		const value = key === null ? undefined : text(key);
 		return value === undefined ? null : stripMarkup(value);
 	};
-	const rows = uses
-		.filter(({ dungeon }) => options.category === undefined || options.category.test(dungeon.category ?? ''))
-		.map(({ dungeon, scene, charId, missions }) => ({
-			id: dungeon.id,
-			name: dungeon.name ?? (dungeon.levelId === null ? null : levelNames.get(dungeon.levelId)) ?? null,
-			category: dungeon.category,
-			level: dungeon.levelId,
-			scene,
-			charId,
-			operator: charId === null ? null : (operators.get(charId) ?? null),
-			missions: missions.map((mission) => ({ id: mission.id, name: missionName(mission.nameKey) })),
-		}));
+	const rows = mapDefined(uses, ({ dungeon, scene, charId, missions }) =>
+		options.category === undefined || options.category.test(dungeon.category ?? '')
+			? {
+					id: dungeon.id,
+					name: dungeon.name ?? (dungeon.levelId === null ? null : levelNames.get(dungeon.levelId)) ?? null,
+					category: dungeon.category,
+					level: dungeon.levelId,
+					scene,
+					charId,
+					operator: charId === null ? null : (operators.get(charId) ?? null),
+					missions: missions.map((mission) => ({ id: mission.id, name: missionName(mission.nameKey) })),
+				}
+			: undefined,
+	);
 	rows.sort((a, b) => compareNatural(a.level ?? '', b.level ?? '') || compareStrings(a.id, b.id));
 	if (options.json) {
 		console.log(JSON.stringify(rows, null, '\t'));
@@ -581,9 +583,9 @@ const findPlacements = async (context: Context, scene: string, options: FindOpti
 			console.log(foundLine(row));
 		}
 	}
-	const counts = PLACEMENT_KINDS.flatMap((kind) => {
+	const counts = mapDefined(PLACEMENT_KINDS, (kind) => {
 		const n = shown.filter((row) => row.kind === kind).length;
-		return n === 0 ? [] : [`${n} ${kind}`];
+		return n === 0 ? undefined : `${n} ${kind}`;
 	});
 	console.error(
 		`${shown.length} matches${counts.length === 0 ? '' : ` (${counts.join(', ')})`}${rows.length >= limit ? '; limit reached, raise --limit for more' : ''}${lookups.standIns.found ? '' : `; no out/${scene}/debug/stand-ins.json, so stand-ins aren't marked`}`,
@@ -851,13 +853,11 @@ const lightCandidates = async (
 			row: (distance) => {
 				const visibility = describeAlternatives(sourceVisibility([file])?.alternatives ?? [[]]);
 				const color = light.color.map((c) => +c.toFixed(1)).join(',');
-				const flags = [
+				const flags = definite([
 					light.shadows !== null ? 'shadows' : '',
 					light.shadowOnly ? 'shadow-only' : '',
 					light.characterOnly ? 'char-only' : '',
-				]
-					.filter(Boolean)
-					.join(' ');
+				]).join(' ');
 				return {
 					kind: 'light',
 					name: light.name,
@@ -1068,8 +1068,8 @@ const loadStandIns = async (scene: string): Promise<StandInIndex> => {
 		atEntity: (name, position) =>
 			position === null
 				? []
-				: (byName.get(name) ?? []).flatMap((report) =>
-						Math.hypot(...report.position.map((v, i) => v - position[i])) <= 2 ? [report.reason] : [],
+				: mapDefined(byName.get(name) ?? [], (report) =>
+						Math.hypot(...report.position.map((v, i) => v - position[i])) <= 2 ? report.reason : undefined,
 					),
 	};
 };

@@ -262,8 +262,10 @@ export const collectInteractives = async (
 		content.count('scriptEventTypesUnmapped', found.unmapped.size);
 		if (found.unmapped.size > 0) {
 			content.log(
-				`script events without a driver mapping: ${[...found.unmapped]
+				`script events without a driver mapping: ${found.unmapped
+					.entries()
 					.map(([type, paths]) => `${type} ×${paths}`)
+					.toArray()
 					.join(', ')}`,
 			);
 		}

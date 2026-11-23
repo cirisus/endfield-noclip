@@ -1,3 +1,5 @@
+import { definite } from '@mary-ext/array-fns';
+
 /** optional features, detected on the adapter and requested when present */
 export interface GfxFeatures {
 	/** BC1–BC7 texture formats, which the package's textures are stored in */
@@ -106,7 +108,7 @@ export const createGfxDevice = async (onLost: (reason: string) => void): Promise
 	return {
 		device,
 		features,
-		adapterName: [info.vendor, info.architecture, info.description].filter((part) => part !== '').join(' '),
+		adapterName: definite([info.vendor, info.architecture, info.description]).join(' '),
 		presentationFormat: navigator.gpu.getPreferredCanvasFormat(),
 	};
 };

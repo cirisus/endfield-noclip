@@ -27,7 +27,7 @@ import type { EnvironmentBlend, EnvironmentVolumeShape } from '@endfield-noclip/
 import { compareVolumes, volumeFootprintContains } from '@endfield-noclip/package-format/environment-volumes';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
-import { mapDefined } from '@mary-ext/array-fns';
+import { definite, mapDefined } from '@mary-ext/array-fns';
 
 import { compareNumbers } from '../compare.ts';
 import { mapPool } from '../pool.ts';
@@ -124,7 +124,10 @@ export const collectSceneVolumes = (
 	for (const entry of [...volumes.environment, ...volumes.post]) {
 		const states = fileStates.get(entry.volume.id)!;
 		if (!states.has(0)) {
-			const sorted = [...states].map((id) => id - 1);
+			const sorted = states
+				.values()
+				.map((id) => id - 1)
+				.toArray();
 			sorted.sort(compareNumbers);
 			entry.sceneStates.push(...sorted);
 		}
@@ -567,7 +570,7 @@ export const loadVolumeProfile = async (
 	);
 	return {
 		name: stringField(profile, 'm_Name'),
-		components: new Map(entries.filter((entry) => entry !== null)),
+		components: new Map(definite(entries)),
 	};
 };
 

@@ -138,8 +138,11 @@ const info = async (files: BundleAssetFile[]): Promise<void> => {
 			`blocks-info ${header.compressedBlocksInfoSize}→${header.uncompressedBlocksInfoSize}`,
 	);
 	console.log(
-		`blocks: ${blocks.length} (${[...kinds].map(([kind, count]) => `type ${kind}×${count}`).join(', ')}), ` +
-			`${stored} → ${unpacked} bytes`,
+		`blocks: ${blocks.length} (${kinds
+			.entries()
+			.map(([kind, count]) => `type ${kind}×${count}`)
+			.toArray()
+			.join(', ')}), ${stored} → ${unpacked} bytes`,
 	);
 	console.log('nodes:');
 	for (const node of nodes) {
@@ -283,7 +286,10 @@ const find = async (
 			? [VfsGroup.Bundle, VfsGroup.InitialBundle]
 			: [options.group === 'initial' ? VfsGroup.InitialBundle : VfsGroup.Bundle];
 	const catalogs = await Promise.all(groups.map((group) => context.vfs.group(group)));
-	const allNames = catalogs.flatMap((group) => Array.from(group.catalog.names()));
+	const allNames = catalogs
+		.values()
+		.flatMap((group) => group.catalog.names())
+		.toArray();
 	const maxScan = Math.min(allNames.length, options.scan);
 	let scanned = 0;
 	let found = 0;

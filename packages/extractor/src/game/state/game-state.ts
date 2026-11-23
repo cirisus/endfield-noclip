@@ -7,6 +7,8 @@ import type {
 import { conditionVisible } from '@endfield-noclip/package-format/conditions';
 import type { SceneControlValue } from '@endfield-noclip/package-format/states';
 
+import { mapDefined, uniqueBy } from '@mary-ext/array-fns';
+
 import { compareNumbers, compareStrings } from '../../compare.ts';
 
 import { sceneControl, type DraftControl, type DraftRuleText, type Requirement } from './scene-control.ts';
@@ -161,8 +163,13 @@ export const allOf = (a: Alternatives, b: Alternatives): Alternatives => {
 			for (const { control, mask } of right) {
 				merged.set(control, (merged.get(control) ?? -1) & mask);
 			}
-			if ([...merged.values()].every((mask) => mask !== 0)) {
-				result.push([...merged].map(([control, mask]) => ({ control, mask: mask >>> 0 })));
+			if (merged.values().every((mask) => mask !== 0)) {
+				result.push(
+					merged
+						.entries()
+						.map(([control, mask]) => ({ control, mask: mask >>> 0 }))
+						.toArray(),
+				);
 			}
 			if (result.length > MAX_ALTERNATIVES) {
 				throw new RangeError(`condition expands past ${MAX_ALTERNATIVES} alternatives`);
@@ -387,8 +394,8 @@ export class GameState {
 	controls(): DraftControl[] {
 		const controls: DraftControl[] = [];
 		for (const [id, kind] of this.#quests) {
-			const values = STATE_NAMES.map((label, value) => ({ value, label })).filter(
-				({ value }) => kind === 'mission' || value !== 1,
+			const values = mapDefined(STATE_NAMES, (label, value) =>
+				kind === 'mission' || value !== 1 ? { value, label } : undefined,
 			);
 			controls.push(
 				sceneControl({
@@ -580,9 +587,7 @@ const dedupe = (alternatives: Alternatives): Alternatives => {
 	if (alternatives.some((requirements) => requirements.length === 0)) {
 		return [[]];
 	}
-	return [
-		...new Map(alternatives.map((requirements) => [JSON.stringify(requirements), requirements])).values(),
-	];
+	return uniqueBy(alternatives, (requirements) => JSON.stringify(requirements));
 };
 
 // #endregion

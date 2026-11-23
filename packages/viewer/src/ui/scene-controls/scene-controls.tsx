@@ -1,6 +1,7 @@
 import { ruleText } from '@endfield-noclip/package-format/conditions';
 import type { RuleText, SceneControl } from '@endfield-noclip/package-format/states';
 
+import { partition } from '@mary-ext/array-fns';
 import { useId, useState } from 'react';
 
 import {
@@ -88,14 +89,8 @@ export const SceneControls = ({ viewer }: { viewer: Viewer }) => {
 				return { here: controlsNear(inCategory, viewer.camera.position), others: [] };
 			}
 			case 'level': {
-				const here = inCategory.filter(({ control }) => controlListedFor(control, level));
-				const listedHere = new Set(here);
-				const others = groupByLevel(
-					inCategory.filter((entry) => !listedHere.has(entry)),
-					manifest.levels,
-					level,
-					({ control }) => control.levels,
-				);
+				const [here, rest] = partition(inCategory, ({ control }) => controlListedFor(control, level));
+				const others = groupByLevel(rest, manifest.levels, level, ({ control }) => control.levels);
 				return { here, others };
 			}
 			case 'all': {

@@ -1,7 +1,7 @@
 import type { MissionInfo, RuleText, StatesInfo } from '@endfield-noclip/package-format/states';
 import { storyPointPicks, storyPoints, type StoryPoint } from '@endfield-noclip/package-format/story';
 
-import { definite } from '@mary-ext/array-fns';
+import { definite, mapDefined } from '@mary-ext/array-fns';
 
 import { compareStrings } from '../../compare.ts';
 import type { ListedControl } from '../../scene-states/listing.ts';
@@ -147,8 +147,8 @@ export const StoryControls = ({
 				/>
 			)}
 			{CATEGORIES.map(({ category, title }) => {
-				const listed = states.missions.flatMap((mission, index) =>
-					mission.category === category && grouped.has(index) ? [{ mission, index }] : [],
+				const listed = mapDefined(states.missions, (mission, index) =>
+					mission.category === category && grouped.has(index) ? { mission, index } : undefined,
 				);
 				if (listed.length === 0) {
 					return null;

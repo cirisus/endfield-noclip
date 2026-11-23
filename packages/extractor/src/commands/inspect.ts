@@ -14,7 +14,7 @@ import { type DecodedTexture, toKtx2Texture } from '@endfield-noclip/formats/uni
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 import { asPPtr, type PPtr } from '@endfield-noclip/formats/unity/values';
 
-import { mapDefined } from '@mary-ext/array-fns';
+import { definite, mapDefined } from '@mary-ext/array-fns';
 
 import {
 	hashText,
@@ -592,7 +592,7 @@ const materialJson = async (
 			}
 		}),
 	);
-	const textures = Object.fromEntries(slots.filter((entry) => entry !== undefined));
+	const textures = Object.fromEntries(definite(slots));
 	const { converted, surface, slotOrder } = describeLoadedMaterial(material);
 	const { record } = material;
 	return {
@@ -612,9 +612,9 @@ const materialJson = async (
 		colors: converted.material.colors,
 		vectors: converted.material.vectors,
 		...(allProps ? { rawFloats: record.floats, rawColors: record.colors, rawInts: record.ints } : {}),
-		hdrColors: material.shader.properties
-			.filter((p) => p.type === ShaderPropertyType.Color && (p.flags & ShaderPropertyFlags.Hdr) !== 0)
-			.map((p) => p.name),
+		hdrColors: mapDefined(material.shader.properties, (p) =>
+			p.type === ShaderPropertyType.Color && (p.flags & ShaderPropertyFlags.Hdr) !== 0 ? p.name : undefined,
+		),
 	};
 };
 

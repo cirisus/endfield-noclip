@@ -69,9 +69,11 @@ export const defaultValues = (
 	const states = new Set([...controls.sceneStates, ...scene.sceneStates.map(({ index }) => index)]);
 	return controls.defaults([
 		...scene.game.controls(),
-		...[...states].map((index) =>
-			Object.assign(unnamedSceneStateControl(index), { default: Number(enabled.has(index)) }),
-		),
+		...states
+			.values()
+			.map((index) =>
+				Object.assign(unnamedSceneStateControl(index), { default: Number(enabled.has(index)) }),
+			),
 		...progressions,
 	]);
 };
@@ -90,7 +92,10 @@ export const addSceneStateControls = (
 ): void => {
 	const named = sceneStateControls(scene.sceneStates, scene.game, (formula) => controls.condition(formula));
 	const ids = new Set(named.map((control) => control.id));
-	const unnamedIds = [...controls.sceneStates].filter((index) => !ids.has(sceneStateControl(index)));
+	const unnamedIds = controls.sceneStates
+		.values()
+		.filter((index) => !ids.has(sceneStateControl(index)))
+		.toArray();
 	unnamedIds.sort(compareNumbers);
 	const unnamed = unnamedIds.map(unnamedSceneStateControl);
 	controls.add(...named, ...unnamed);
@@ -192,7 +197,10 @@ const streamAreasInfo = async (
 	}
 	return {
 		rootVisible: table.rootVisible,
-		shownInside: [...table.visibleWhileInside].map(([zone, shown]) => ({ zone, areas: shown })),
+		shownInside: table.visibleWhileInside
+			.entries()
+			.map(([zone, shown]) => ({ zone, areas: shown }))
+			.toArray(),
 		triggers: table.triggers.map(({ areaId, bounds, polygon }) => ({
 			zone: areaId,
 			min: [bounds.min.x, bounds.min.z],

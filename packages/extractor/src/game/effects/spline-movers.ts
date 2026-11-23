@@ -25,6 +25,8 @@ import {
 	type SplineSegmentInfo,
 } from '@endfield-noclip/package-format/particles';
 
+import { mapDefined } from '@mary-ext/array-fns';
+
 import type { AssetResolver, ObjectRef } from '../assets/assets.ts';
 
 import { emissionBound, isConstantCurve, readAnimationCurve, ZERO_CURVE } from './particle-system.ts';
@@ -234,9 +236,10 @@ export const readSplineMover = (data: TypeTreeObject): SplineMoverRead => {
 	if (total <= 0) {
 		return { reason: 'no spline' };
 	}
-	const groups = arrayField(desc, 'lodGroups')
-		.map((pointer) => asPPtr(pointer))
-		.filter((pointer) => pointer.pathId !== 0n);
+	const groups = mapDefined(arrayField(desc, 'lodGroups'), (pointer) => {
+		const pptr = asPPtr(pointer);
+		return pptr.pathId === 0n ? undefined : pptr;
+	});
 	if (groups.length === 0) {
 		return { reason: 'no LOD group' };
 	}

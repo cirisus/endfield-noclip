@@ -1,3 +1,5 @@
+import { mapDefined } from '@mary-ext/array-fns';
+
 import { FormatError } from '../binary/binary-reader.ts';
 import { isObject } from '../unity/values.ts';
 
@@ -101,8 +103,8 @@ export const parseMapConfig = (text: string): MapConfig => {
 			: [],
 		mapVarIds: numberValues(raw.mapVarName2NumId),
 		mapVarNames: Object.fromEntries(
-			Object.entries(isObject(raw.mapVarNumId2Name) ? raw.mapVarNumId2Name : {}).flatMap(([id, name]) =>
-				typeof name === 'string' && /^\d+$/.test(id) ? [[Number(id), name]] : [],
+			mapDefined(Object.entries(isObject(raw.mapVarNumId2Name) ? raw.mapVarNumId2Name : {}), ([id, name]) =>
+				typeof name === 'string' && /^\d+$/.test(id) ? [Number(id), name] : undefined,
 			),
 		),
 	};

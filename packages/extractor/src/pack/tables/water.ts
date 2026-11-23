@@ -15,7 +15,7 @@ import type {
 	WaterVolumeSurface,
 } from '@endfield-noclip/package-format/water';
 
-import { definite, unique } from '@mary-ext/array-fns';
+import { definite, mapDefined, unique } from '@mary-ext/array-fns';
 
 import type { Context } from '../../context.ts';
 import { errorText } from '../../errors.ts';
@@ -343,7 +343,7 @@ export const planWater = async (
 	const liquidConfigNames = new Map<string, string>();
 	const configHashes = unique([
 		...selected.map((surface) => surface.configHash),
-		...volumes.flatMap((volume) => (volume.configHash === null ? [] : [volume.configHash])),
+		...mapDefined(volumes, (volume) => volume.configHash ?? undefined),
 	]);
 	const loaded = await Promise.all(
 		configHashes.map(async (hash) => {
