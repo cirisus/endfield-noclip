@@ -282,6 +282,9 @@ class ConvertJobs {
 	async run<J extends ConvertJob>(job: J, affinity?: number): Promise<ConvertResultOf<J>> {
 		const { pool, cache } = this.#input;
 		const ofJob = (result: ConvertResult): ConvertResultOf<J> => {
+			if (result.kind === 'failed') {
+				throw new Error(result.error);
+			}
 			if (!resultMatches(job, result)) {
 				throw new Error(`a ${job.kind} job returned a ${result.kind}`);
 			}
@@ -290,8 +293,10 @@ class ConvertJobs {
 		if (cache === null) {
 			return ofJob(await pool.run(job, affinity));
 		}
-		const key = cache.key(job);
-		const recalled = await cache.recall(key, (sources) => this.#sourcesCurrent(sources));
+		const key = cache.key(job.kind, job);
+		const recalled = await cache.recall(key, (sources, manifestHash) =>
+			this.#sourcesCurrent(sources, manifestHash),
+		);
 		if (recalled !== undefined) {
 			return ofJob(recalled);
 		}
@@ -400,7 +405,10 @@ class ConvertJobs {
 	}
 
 	/** @returns whether every bundle still has the md5 it had when the conversion read it */
-	#sourcesCurrent(sources: readonly BundleSource[]): Promise<boolean> {
+	async #sourcesCurrent(sources: readonly BundleSource[], manifestHash?: string): Promise<boolean> {
+		if (manifestHash !== undefined && manifestHash !== this.#input.resolver.manifest.contentHash) {
+			return false;
+		}
 		return sourcesCurrent(this.#input.resolver, sources);
 	}
 }

@@ -584,7 +584,9 @@ implemented in [pack/store/pack-cache.ts](../packages/extractor/src/pack/store/p
 | `lock`   | holds packer PID; serializes cache access (stale locks from dead processes are taken over)                                                                                                                                                                                                                                    |
 
 **not cached**: turning loaded materials into table entries (fast), script driver linking, and
-failed conversions/material loads (always retried, so warm packs may still spawn workers).
+failed material loads. failed geometry and texture conversions are cached by their touched bundles
+(or bundle manifest hash when no bundle was read), and geometry and texture converters are
+fingerprinted separately (`convert-geometry.ts` vs `convert-texture.ts`).
 
 ### report and debug outputs
 

@@ -7,7 +7,7 @@ import { deserialize, serialize } from 'node:v8';
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 
 import { errorCode, ignoreMissing } from '../../errors.ts';
-import type { BundleSource, ConvertResult } from '../convert/convert-pool.ts';
+import type { BundleSource, ConvertJob, ConvertResult } from '../convert/convert-pool.ts';
 
 import { BlobDir, type BlobMeta, shortHash } from './blob-file.ts';
 
@@ -15,8 +15,11 @@ import { BlobDir, type BlobMeta, shortHash } from './blob-file.ts';
 // each live package roots its blobs and memos; unreferenced entries are swept after packing.
 // layout, invalidation and locking: docs/extraction.md#pack-cache.
 
-/** the conversion worker; the fingerprint covers it and every workspace module it imports, transitively */
-const CONVERTER_ENTRY = new URL('../convert/convert-worker.ts', import.meta.url);
+/** converter entry modules, fingerprinted separately so geometry edits don't invalidate cached textures */
+const CONVERTER_ENTRIES: Record<ConvertJob['kind'], URL> = {
+	geometry: new URL('../convert/convert-geometry.ts', import.meta.url),
+	texture: new URL('../convert/convert-texture.ts', import.meta.url),
+};
 
 /** where workspace packages live, relative to this module; each maps `./*` to `./src/*.ts` */
 const WORKSPACE_PACKAGES = new URL('../../../../', import.meta.url);
@@ -57,15 +60,15 @@ export class PackCache {
 	readonly hits = { geometries: 0, materials: 0, textures: 0 };
 	/** conversion results, step outputs, values and stored forms, by key */
 	readonly #memos: BlobDir;
-	readonly #fingerprint: string;
+	readonly #fingerprints: Record<ConvertJob['kind'], string>;
 	readonly #stepFingerprints = new Map<string, Promise<string>>();
 	readonly #used = new Set<string>();
 
-	private constructor(root: string, fingerprint: string) {
+	private constructor(root: string, fingerprints: Record<ConvertJob['kind'], string>) {
 		this.root = root;
 		this.blobs = new BlobDir(join(root, 'blobs'));
 		this.#memos = new BlobDir(join(root, 'memo'));
-		this.#fingerprint = fingerprint;
+		this.#fingerprints = fingerprints;
 	}
 
 	/**
@@ -78,26 +81,31 @@ export class PackCache {
 	static async open(root: string): Promise<PackCache> {
 		await mkdir(root, { recursive: true });
 		await lock(join(root, 'lock'));
-		return new PackCache(root, await moduleFingerprint(CONVERTER_ENTRY));
+		const [geometry, texture] = await Promise.all([
+			moduleFingerprint(CONVERTER_ENTRIES.geometry),
+			moduleFingerprint(CONVERTER_ENTRIES.texture),
+		]);
+		return new PackCache(root, { geometry, texture });
 	}
 
 	/**
+	 * @param kind converter kind (`geometry` or `texture`)
 	 * @param parts what the conversion depends on besides the converter's code; bigints and typed arrays are
 	 *   allowed
 	 * @returns the conversion's key
 	 */
-	key(parts: object): string {
-		return shortHash(JSON.stringify([this.#fingerprint, parts], keyReplacer));
+	key(kind: ConvertJob['kind'], parts: object): string {
+		return shortHash(JSON.stringify([this.#fingerprints[kind], parts], keyReplacer));
 	}
 
 	/**
 	 * @param key a conversion's key
-	 * @param current whether the bundles the conversion read are unchanged
+	 * @param current whether the bundles (or manifest, when no bundle was read) are unchanged
 	 * @returns its remembered result, or `undefined` if there's none, its sources changed or a blob is gone
 	 */
 	async recall(
 		key: string,
-		current: (sources: readonly BundleSource[]) => Promise<boolean>,
+		current: (sources: readonly BundleSource[], manifestHash?: string) => Promise<boolean>,
 	): Promise<ConvertResult | undefined> {
 		const text = await ignoreMissing(readFile(this.#memos.path(key), 'utf8'), undefined);
 		if (text === undefined) {
@@ -105,7 +113,8 @@ export class PackCache {
 		}
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- written by remember() under the same fingerprint
 		const result = JSON.parse(text) as ConvertResult;
-		if (!(await current(result.sources))) {
+		const manifestHash = result.kind === 'failed' ? result.manifestHash : undefined;
+		if (!(await current(result.sources, manifestHash))) {
 			return undefined;
 		}
 		const present = await Promise.all(resultBlobs(result).map((hash) => this.blobs.has(hash)));
@@ -113,7 +122,8 @@ export class PackCache {
 			return undefined;
 		}
 		this.#used.add(key);
-		this.hits[result.kind === 'geometry' ? 'geometries' : 'textures']++;
+		const hitKind = result.kind === 'failed' ? result.jobKind : result.kind;
+		this.hits[hitKind === 'geometry' ? 'geometries' : 'textures']++;
 		return result;
 	}
 
@@ -314,7 +324,17 @@ const keyReplacer = (_key: string, value: unknown): unknown => {
 
 /** @returns the hashes of a result's blobs */
 const resultBlobs = (result: ConvertResult): string[] => {
-	return result.kind === 'geometry' ? [result.blob.hash] : result.pieces.map((piece) => piece.blob.hash);
+	switch (result.kind) {
+		case 'geometry': {
+			return [result.blob.hash];
+		}
+		case 'texture': {
+			return result.pieces.map((piece) => piece.blob.hash);
+		}
+		case 'failed': {
+			return [];
+		}
+	}
 };
 
 /** acquires the cache lock with the current pid, reclaiming locks left by dead processes */

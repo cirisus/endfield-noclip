@@ -7,18 +7,13 @@ import { parentPort, workerData } from 'node:worker_threads';
  * @module
  */
 
-import type { DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
-import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
-import { bakeSkinPose } from '@endfield-noclip/formats/unity/skin-pose';
-
 import { errorText } from '../../errors.ts';
-import { loadMesh, loadTexture } from '../../game/assets/asset-decode.ts';
-import { AssetResolver, type ObjectLocator, objectKey, recordBundleReads } from '../../game/assets/assets.ts';
+import { AssetResolver, recordBundleReads } from '../../game/assets/assets.ts';
 import { sharedBundleManifest } from '../../hg/bundles.ts';
 import { Vfs } from '../../hg/vfs.ts';
-import { zstdSync } from '../../zstd.ts';
-import { BlobDir, type BlobMeta, storedBlob } from '../store/blob-file.ts';
+import { BlobDir } from '../store/blob-file.ts';
 
+import { convertGeometryJob } from './convert-geometry.ts';
 import type {
 	ConvertJob,
 	ConvertOutput,
@@ -27,10 +22,7 @@ import type {
 	WorkerReply,
 	WorkerRequest,
 } from './convert-pool.ts';
-import { convertMesh, geometryReady, rigidSkin } from './geometry.ts';
-import { syntheticMesh, syntheticMeshKey } from './synthetic-mesh.ts';
-import { convertTexture } from './textures.ts';
-import { boneVatSkin, type VatBake, vatSkin, type VatTexels, vatTexels } from './vat-skin.ts';
+import { convertTextureJob } from './convert-texture.ts';
 
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- set by ConvertPool
 const data = workerData as ConvertWorkerData;
@@ -39,115 +31,39 @@ const vfs = new Vfs(data.gameData, data.keys.vfsKey);
 const blobs = new BlobDir(data.blobDir);
 const resolver = new AssetResolver({ vfs, keys: data.keys }, sharedBundleManifest(data.manifest));
 
-const store = async (raw: Uint8Array, zstdLevel: number): Promise<BlobMeta> => {
-	const { meta, stored } = storedBlob(raw, zstdSync(raw, zstdLevel));
-	await blobs.write(meta.hash, stored);
-	return meta;
-};
-
 const convert = async (job: ConvertJob): Promise<ConvertResult> => {
-	const { result, bundles } = await recordBundleReads(() => convertWith(job));
+	const { result, bundles } = await recordBundleReads(
+		async (): Promise<ConvertOutput | { kind: 'failed'; error: string }> => {
+			try {
+				switch (job.kind) {
+					case 'geometry': {
+						return await convertGeometryJob(resolver, blobs, job);
+					}
+					case 'texture': {
+						return await convertTextureJob(resolver, blobs, job);
+					}
+				}
+			} catch (error) {
+				return { kind: 'failed', error: errorText(error) };
+			}
+		},
+	);
 	const sources = await Promise.all(
 		bundles.map(async (index) => ({
 			bundle: resolver.manifest.bundleName(index),
 			md5: await resolver.bundleMd5(index),
 		})),
 	);
+	if (result.kind === 'failed') {
+		return {
+			kind: 'failed',
+			jobKind: job.kind,
+			error: result.error,
+			sources,
+			...(sources.length === 0 ? { manifestHash: resolver.manifest.contentHash } : {}),
+		};
+	}
 	return { ...result, sources };
-};
-
-/** @returns a VAT texture's texels */
-const loadVatTexels = async ({ bundleIndex, file, pathId }: ObjectLocator): Promise<VatTexels> =>
-	vatTexels(await loadTexture(resolver, await resolver.objectIn(bundleIndex, file, pathId)));
-
-/** bakes a mesh's vertex animation from its textures */
-const bakeVat = async (mesh: DecodedMesh, bake: VatBake): Promise<ReturnType<typeof vatSkin>> => {
-	// an animation that can't be read leaves the mesh still rather than failing it
-	try {
-		if (bake.body === 'bone') {
-			return boneVatSkin(mesh, bake, await loadVatTexels(bake.map));
-		}
-		return vatSkin(mesh, bake, await loadVatTexels(bake.position), await loadVatTexels(bake.rotation));
-	} catch (error) {
-		return { reason: `a vertex animation whose textures can't be read: ${errorText(error)}` };
-	}
-};
-
-const convertWith = async (job: ConvertJob): Promise<ConvertOutput> => {
-	switch (job.kind) {
-		case 'geometry': {
-			await geometryReady;
-			if (job.asset.synthetic !== undefined) {
-				const converted = convertMesh(syntheticMesh(job.asset.synthetic), job.tangentUv, {
-					sway: job.sway ?? undefined,
-					offset: job.offset ?? undefined,
-				});
-				return {
-					kind: 'geometry',
-					object: syntheticMeshKey(job.asset.synthetic),
-					name: syntheticMeshKey(job.asset.synthetic),
-					entry: converted.entry,
-					gpuBytes: converted.gpuBytes,
-					blob: await store(converted.blob, job.zstdLevel),
-				};
-			}
-			const ref = await resolver.findUnique(job.asset, UnityClass.Mesh);
-			const mesh = await loadMesh(resolver, ref);
-			// an animated mesh stays in its bind space; a posed one is baked into its pose
-			const { pose, motion } = job.asset;
-			let source = pose ? bakeSkinPose(mesh, pose) : mesh;
-			let skin = motion?.skin;
-			let unanimated: string | undefined;
-			if (motion?.kind === 'rigid') {
-				source = rigidSkin(source);
-			}
-			if (job.vat !== null) {
-				// a renderer's own animation or pose and a VAT's would compound; the renderer's is kept
-				const baked =
-					pose !== undefined || motion !== undefined
-						? { reason: 'a vertex animation on a posed or animated renderer' }
-						: await bakeVat(source, job.vat);
-				if ('reason' in baked) {
-					unanimated = baked.reason;
-				} else {
-					source = baked.mesh;
-					skin = baked.motion;
-				}
-			}
-			const converted = convertMesh(source, job.tangentUv, {
-				sway: job.sway ?? undefined,
-				offset: job.offset ?? undefined,
-				motion: skin,
-			});
-			return {
-				kind: 'geometry',
-				object: objectKey(ref),
-				name: mesh.name,
-				entry: converted.entry,
-				gpuBytes: converted.gpuBytes,
-				blob: await store(converted.blob, job.zstdLevel),
-				...(unanimated === undefined ? {} : { unanimated }),
-			};
-		}
-		case 'texture': {
-			const { bundleIndex, file, pathId } = job.locator;
-			const texture = await loadTexture(resolver, await resolver.objectIn(bundleIndex, file, pathId));
-			const converted = convertTexture(texture);
-			const metas = await Promise.all(converted.pieces.map((piece) => store(piece.data, job.zstdLevel)));
-			return {
-				kind: 'texture',
-				name: texture.name,
-				entry: converted.entry,
-				contentKey: converted.contentKey,
-				approximations: converted.approximations,
-				pieces: converted.pieces.map(({ firstLevel, levelCount }, i) => ({
-					firstLevel,
-					levelCount,
-					blob: metas[i],
-				})),
-			};
-		}
-	}
 };
 
 port.on('message', (request: WorkerRequest) => {

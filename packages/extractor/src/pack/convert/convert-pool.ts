@@ -76,10 +76,20 @@ export interface BundleSource {
 	md5: string;
 }
 
-/** a conversion's output and what it read: it holds for as long as those bundles' md5s do */
-export type ConvertResult = ConvertOutput & { sources: BundleSource[] };
+/** a failed conversion and what it read before failing: holds while those bundles (or the manifest) do */
+export interface FailedConvertResult {
+	kind: 'failed';
+	jobKind: ConvertJob['kind'];
+	error: string;
+	sources: BundleSource[];
+	/** bundle manifest content hash, stored when `sources` is empty (e.g. missing path hash) */
+	manifestHash?: string;
+}
 
-/** a job's result type */
+/** a conversion's output and what it read: it holds for as long as those bundles' md5s do */
+export type ConvertResult = (ConvertOutput & { sources: BundleSource[] }) | FailedConvertResult;
+
+/** a job's successful result type */
 export type ConvertResultOf<J extends ConvertJob> = Extract<ConvertResult, { kind: J['kind'] }>;
 
 /**

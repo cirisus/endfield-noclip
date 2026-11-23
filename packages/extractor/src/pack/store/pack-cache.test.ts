@@ -48,8 +48,9 @@ describe('PackCache', () => {
 			await fakePackage(b);
 
 			let cache = await PackCache.open(root);
-			const keyA = cache.key({ asset: 1n });
-			assert.notEqual(keyA, cache.key({ asset: 2n }));
+			const keyA = cache.key('geometry', { asset: 1n });
+			assert.notEqual(keyA, cache.key('geometry', { asset: 2n }));
+			assert.notEqual(keyA, cache.key('texture', { asset: 1n }));
 			await cache.blobs.write('aa'.repeat(16), new Uint8Array([1]));
 			// written but not held by the package, like a blob of a failed pack
 			await cache.blobs.write('cc'.repeat(16), new Uint8Array([3]));
@@ -63,7 +64,7 @@ describe('PackCache', () => {
 			assert.equal(await cache.recall(keyA, async () => false), undefined);
 			assert.deepEqual(await cache.recall(keyA, current), geometry('aa'.repeat(16)));
 			assert.equal(cache.hits.geometries, 1);
-			const keyB = cache.key({ asset: 2n });
+			const keyB = cache.key('geometry', { asset: 2n });
 			await cache.blobs.write('bb'.repeat(16), new Uint8Array([2]));
 			await cache.remember(keyB, geometry('bb'.repeat(16)));
 			// a's root still holds aa; b holds bb
@@ -108,6 +109,28 @@ describe('PackCache', () => {
 			// a memo whose blob is gone is a miss
 			await rm(cache.blobs.path(first.meta.hash));
 			assert.equal(await cache.recallStored(key), undefined);
+			await cache.close();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('remembers failed conversions with their sources or manifest hash', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'pack-cache-test-'));
+		try {
+			const cache = await PackCache.open(join(dir, 'cache'));
+			const key = cache.key('geometry', { asset: 99n });
+			const failed: ConvertResult = {
+				kind: 'failed',
+				jobKind: 'geometry',
+				error: 'missing mesh',
+				sources: [],
+				manifestHash: 'hash-1',
+			};
+			await cache.remember(key, failed);
+			assert.equal(await cache.recall(key, async (_sources, hash) => hash === 'hash-2'), undefined);
+			assert.deepEqual(await cache.recall(key, async (_sources, hash) => hash === 'hash-1'), failed);
+			assert.equal(cache.hits.geometries, 1);
 			await cache.close();
 		} finally {
 			await rm(dir, { recursive: true, force: true });
