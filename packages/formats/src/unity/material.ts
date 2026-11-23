@@ -166,14 +166,20 @@ export const ShaderPropertyType = {
 	Int: 5,
 } as const;
 
-/** Unity `SerializedPropertyFlags` bits used here */
+/** Unity `SerializedPropertyFlags` bits */
 export const ShaderPropertyFlags = {
+	HideInInspector: 1 << 0,
+	PerRendererData: 1 << 1,
+	NoScaleOffset: 1 << 2,
 	/** `[Normal]`: the texture is a tangent-space normal map */
 	Normal: 1 << 3,
 	/** `[HDR]` */
 	Hdr: 1 << 4,
-	/** `[Gamma]`: a float or vector Unity converts from gamma to linear in linear-space projects */
+	/** `[Gamma]`: a colour, float or vector Unity converts from gamma to linear in linear-space projects */
 	Gamma: 1 << 5,
+	NonModifiableTextureData: 1 << 6,
+	MainTexture: 1 << 7,
+	MainColor: 1 << 8,
 } as const;
 
 /** a declared shader property */
