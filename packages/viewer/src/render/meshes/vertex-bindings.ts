@@ -1,11 +1,17 @@
 import type { VertexStreams } from './draw-ranges.ts';
 import type { GeometryVertices, StreamBinding } from './geometry-pools.ts';
+import type { PositionFormat } from './pipeline-variants.ts';
 
-/** a geometry's quantized positions, at location 0 */
-export const POSITION_STREAM: GPUVertexBufferLayout = {
-	arrayStride: 8,
-	attributes: [{ shaderLocation: 0, offset: 0, format: 'unorm16x4' }],
-};
+/**
+ * a geometry's positions, at location 0
+ *
+ * @param format the position vertex format
+ * @returns the vertex buffer layout
+ */
+export const positionStream = (format: PositionFormat): GPUVertexBufferLayout => ({
+	arrayStride: format === 'unorm16x4' ? 8 : 16,
+	attributes: [{ shaderLocation: 0, offset: 0, format }],
+});
 
 /** a geometry's octahedral normals, at location 1 */
 export const NORMAL_STREAM: GPUVertexBufferLayout = {

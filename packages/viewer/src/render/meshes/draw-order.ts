@@ -11,7 +11,14 @@ import type { ListedSpan } from '../instances/instance-renderer.ts';
 
 import type { DrawRange, RangeOrder } from './draw-ranges.ts';
 import type { MaterialState } from './material-bindings.ts';
-import { faceCullIndex, faceCullOf, uvFormatIndex, uvFormatOf } from './pipeline-variants.ts';
+import {
+	faceCullIndex,
+	faceCullOf,
+	positionFormatIndex,
+	positionFormatOf,
+	uvFormatIndex,
+	uvFormatOf,
+} from './pipeline-variants.ts';
 
 /** look flags that bail out of the lean `opaqueLit` shader into the full `opaque` uber-shader */
 const COMPLEX_OPAQUE_FLAGS =
@@ -108,12 +115,14 @@ export const drawRangeOf = (
 };
 
 /**
- * @returns the upper part of {@link sortKeyOf}: shadow role, face culling, UV format, and vertex buffer
- *   order, as a small integer
+ * @returns the upper part of {@link sortKeyOf}: shadow role, face culling, position format, UV format, and
+ *   vertex buffer order, as a small integer
  */
 export const pipelineKeyOf = (bucket: MeshBucket): number =>
-	((((bucket.castOnly ? 0 : 1) * 2 + (bucket.look.castsShadows ? 0 : 1)) * 4 +
+	(((((bucket.castOnly ? 0 : 1) * 2 + (bucket.look.castsShadows ? 0 : 1)) * 4 +
 		faceCullIndex(faceCullOf(bucket))) *
+		2 +
+		positionFormatIndex(positionFormatOf(bucket))) *
 		2 +
 		uvFormatIndex(uvFormatOf(bucket))) *
 		4 +

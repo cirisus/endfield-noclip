@@ -20,19 +20,31 @@ export type FaceCull = (typeof FACE_CULLS)[number];
  */
 export const FRONT_FACE: GPUFrontFace = 'cw';
 
+/** the vertex formats of positions: dequantized 16-bit for small/animated meshes, else float32 */
+export const POSITION_FORMATS = ['unorm16x4', 'float32x4'] as const;
+export type PositionFormat = (typeof POSITION_FORMATS)[number];
+
 /** the vertex formats of UV sets 0 and 1: as the package stores 16-bit UVs, else dequantized floats */
 export const UV_FORMATS = ['unorm16x2', 'float32x2'] as const;
 export type UvFormat = (typeof UV_FORMATS)[number];
 
-/** @returns the cache key of a phase's pipeline for a face culling and UV format */
-export const pipelineKey = (phase: string, cull: FaceCull, uvFormat: UvFormat): string =>
-	`${phase}/${cull}/${uvFormat}`;
+/** @returns the cache key of a phase's pipeline for a face culling, position format and UV format */
+export const pipelineKey = (
+	phase: string,
+	cull: FaceCull,
+	positionFormat: PositionFormat,
+	uvFormat: UvFormat,
+): string => `${phase}/${cull}/${positionFormat}/${uvFormat}`;
 
-/** every face culling and UV format a phase has a pipeline for, by {@link variantOf} */
-export const VARIANTS: readonly { cull: FaceCull; uvFormat: UvFormat }[] = product(
-	FACE_CULLS,
-	UV_FORMATS,
-).map(([cull, uvFormat]) => ({ cull, uvFormat }));
+/** every face culling, position format and UV format a phase has a pipeline for, by {@link variantOf} */
+export const VARIANTS: readonly { cull: FaceCull; positionFormat: PositionFormat; uvFormat: UvFormat }[] =
+	FACE_CULLS.flatMap((cull) =>
+		product(POSITION_FORMATS, UV_FORMATS).map(([positionFormat, uvFormat]) => ({
+			cull,
+			positionFormat,
+			uvFormat,
+		})),
+	);
 
 /** @returns index of `cull` in {@link FACE_CULLS} */
 export const faceCullIndex = (cull: FaceCull): number => {
@@ -49,16 +61,21 @@ export const faceCullIndex = (cull: FaceCull): number => {
 	}
 };
 
+/** @returns index of `positionFormat` in {@link POSITION_FORMATS} */
+export const positionFormatIndex = (positionFormat: PositionFormat): number =>
+	positionFormat === 'unorm16x4' ? 0 : 1;
+
 /** @returns index of `uvFormat` in {@link UV_FORMATS} */
 export const uvFormatIndex = (uvFormat: UvFormat): number => (uvFormat === 'unorm16x2' ? 0 : 1);
 
-/** @returns the index of a face culling and UV format in {@link VARIANTS} */
-export const variantOf = (cull: FaceCull, uvFormat: UvFormat): number =>
-	faceCullIndex(cull) * UV_FORMATS.length + uvFormatIndex(uvFormat);
+/** @returns the index of a face culling, position format and UV format in {@link VARIANTS} */
+export const variantOf = (cull: FaceCull, positionFormat: PositionFormat, uvFormat: UvFormat): number =>
+	(faceCullIndex(cull) * POSITION_FORMATS.length + positionFormatIndex(positionFormat)) * UV_FORMATS.length +
+	uvFormatIndex(uvFormat);
 
 /** @returns the cache keys of a phase's pipelines, by {@link variantOf} */
 export const variantKeys = (phase: string): string[] =>
-	VARIANTS.map(({ cull, uvFormat }) => pipelineKey(phase, cull, uvFormat));
+	VARIANTS.map(({ cull, positionFormat, uvFormat }) => pipelineKey(phase, cull, positionFormat, uvFormat));
 
 /** @returns the faces a bucket's draws cull: the material's, swapped for mirrored instances */
 export const faceCullOf = (bucket: MeshBucket): FaceCull => {
@@ -73,6 +90,12 @@ export const faceCullOf = (bucket: MeshBucket): FaceCull => {
 			return bucket.mirrored ? 'back' : 'front';
 		}
 	}
+};
+
+/** @returns the position format of a bucket's geometry */
+export const positionFormatOf = (bucket: MeshBucket): PositionFormat => {
+	const resident = bucket.geometry.resident;
+	return resident?.kind === 'geometry' ? resident.positionFormat : 'unorm16x4';
 };
 
 /** @returns the UV format of a bucket's geometry */

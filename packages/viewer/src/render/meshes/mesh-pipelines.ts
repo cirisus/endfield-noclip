@@ -20,8 +20,15 @@ import { fogSource } from '../sky/fog-source.ts';
 import { type DrawPhase, PHASES, type VertexStreams } from './draw-ranges.ts';
 import effectWgsl from './effect.wgsl?raw';
 import meshWgsl from './mesh.wgsl?raw';
-import { type FaceCull, FRONT_FACE, type UvFormat, VARIANTS, pipelineKey } from './pipeline-variants.ts';
-import { NORMAL_STREAM, POSITION_STREAM } from './vertex-bindings.ts';
+import {
+	type FaceCull,
+	FRONT_FACE,
+	type PositionFormat,
+	type UvFormat,
+	VARIANTS,
+	pipelineKey,
+} from './pipeline-variants.ts';
+import { NORMAL_STREAM, positionStream } from './vertex-bindings.ts';
 
 /**
  * the fog transparent draws apply to themselves (fog.wgsl), with its inputs in the draw group (group 2): the
@@ -33,8 +40,12 @@ const FOG_WGSL = [
 	fogSource({ group: 2, binding: 3 }),
 ].join('\n');
 
-/** a phase's pipeline descriptor for a face culling and UV format */
-export type PhaseDescriber = (cull: FaceCull, uvFormat: UvFormat) => GPURenderPipelineDescriptor;
+/** a phase's pipeline descriptor for a face culling, position format and UV format */
+export type PhaseDescriber = (
+	cull: FaceCull,
+	positionFormat: PositionFormat,
+	uvFormat: UvFormat,
+) => GPURenderPipelineDescriptor;
 
 /** what {@link prepareMeshPipelines} sets up */
 interface MeshPipelines {
@@ -112,10 +123,15 @@ const createEffectLayout = (device: GPUDevice): GPUBindGroupLayout => {
 	});
 };
 
-/** @returns the vertex state of a mesh pipeline reading `streams` with UVs in `uvFormat` */
-const meshVertex = (module: GPUShaderModule, uvFormat: UvFormat, streams: VertexStreams): GPUVertexState => {
+/** @returns the vertex state of a mesh pipeline reading `streams` with `positionFormat` and `uvFormat` */
+const meshVertex = (
+	module: GPUShaderModule,
+	positionFormat: PositionFormat,
+	uvFormat: UvFormat,
+	streams: VertexStreams,
+): GPUVertexState => {
 	const uvStride = uvFormat === 'unorm16x2' ? 4 : 8;
-	const position = POSITION_STREAM;
+	const position = positionStream(positionFormat);
 	const uvs: GPUVertexBufferLayout[] = [
 		{ arrayStride: uvStride, attributes: [{ shaderLocation: 2, offset: 0, format: uvFormat }] },
 		{ arrayStride: uvStride, attributes: [{ shaderLocation: 4, offset: 0, format: uvFormat }] },
@@ -161,11 +177,13 @@ export const prepareMeshPipelines = (
 	shadow: { format: GPUTextureFormat; unclippedDepth: boolean },
 ): MeshPipelines => {
 	const describers = new Map<string, PhaseDescriber>();
-	/** registers a phase's descriptor and compiles its pipeline for every face culling and UV format */
+	/** registers a phase's descriptor and compiles its pipeline for every face culling, position and UV format */
 	const describe = ({ key }: DrawPhase, describer: PhaseDescriber): void => {
 		describers.set(key, describer);
-		for (const { cull, uvFormat } of VARIANTS) {
-			void pipelines.prepare(pipelineKey(key, cull, uvFormat), () => describer(cull, uvFormat));
+		for (const { cull, positionFormat, uvFormat } of VARIANTS) {
+			void pipelines.prepare(pipelineKey(key, cull, positionFormat, uvFormat), () =>
+				describer(cull, positionFormat, uvFormat),
+			);
 		}
 	};
 
@@ -182,9 +200,9 @@ export const prepareMeshPipelines = (
 		stages: Pick<GPURenderPipelineDescriptor, 'fragment' | 'depthStencil'>,
 		unclippedDepth = false,
 	): void => {
-		describe(phase, (cullMode, uvFormat) => ({
+		describe(phase, (cullMode, positionFormat, uvFormat) => ({
 			layout: meshPipelineLayout,
-			vertex: meshVertex(module, uvFormat, phase.streams),
+			vertex: meshVertex(module, positionFormat, uvFormat, phase.streams),
 			primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode, unclippedDepth },
 			...stages,
 		}));
@@ -214,9 +232,9 @@ export const prepareMeshPipelines = (
 	const shadeLit: GPUFragmentState = { module, entryPoint: 'fs_opaque_lit', targets: format.targets };
 	const depthOnly: GPUFragmentState = { module, entryPoint: 'fs_depth', targets: noColor };
 	describeMesh(PHASES.prepass, { fragment: depthOnly, depthStencil: depthWrite });
-	describe({ ...PHASES.prepass, key: 'mesh/prepass-fade' }, (cullMode, uvFormat) => ({
+	describe({ ...PHASES.prepass, key: 'mesh/prepass-fade' }, (cullMode, positionFormat, uvFormat) => ({
 		layout: meshPipelineLayout,
-		vertex: { ...meshVertex(module, uvFormat, 'position'), entryPoint: 'vs_depth_fade' },
+		vertex: { ...meshVertex(module, positionFormat, uvFormat, 'position'), entryPoint: 'vs_depth_fade' },
 		primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
 		fragment: { module, entryPoint: 'fs_depth_fade', targets: noColor },
 		depthStencil: depthWrite,
@@ -277,10 +295,14 @@ export const prepareMeshPipelines = (
 			depthFormat = format.depth,
 		}: { writesDepth?: boolean; depthFormat?: GPUTextureFormat } = {},
 	): void => {
-		describe(phase, (cullMode, uvFormat) => {
+		describe(phase, (cullMode, positionFormat, uvFormat) => {
 			const descriptor: GPURenderPipelineDescriptor = {
 				layout: effectPipelineLayout,
-				vertex: { ...meshVertex(module, uvFormat, 'all'), module: effectModule, entryPoint: 'vs_effect' },
+				vertex: {
+					...meshVertex(module, positionFormat, uvFormat, 'all'),
+					module: effectModule,
+					entryPoint: 'vs_effect',
+				},
 				primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
 				fragment: { module: effectModule, entryPoint, targets },
 			};

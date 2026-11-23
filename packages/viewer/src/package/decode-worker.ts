@@ -261,7 +261,15 @@ const decodeGeometry = (
 ): { response: DecodedGeometry; transfer: Transferable[] } => {
 	const blob = decodeGeometryBlob(raw);
 	const position = findStream(blob, VertexAttribute.Position);
-	const positions = decodeAttribute(blob, VertexAttribute.Position, GeometryVertexFormat.Unorm16x4);
+	let positionFormat: DecodedGeometry['positionFormat'];
+	let positions: ArrayBuffer | null = null;
+	if (position?.format === GeometryVertexFormat.Float32x4) {
+		positionFormat = 'float32x4';
+		positions = decodeAttribute(blob, VertexAttribute.Position, GeometryVertexFormat.Float32x4);
+	} else {
+		positionFormat = 'unorm16x4';
+		positions = decodeAttribute(blob, VertexAttribute.Position, GeometryVertexFormat.Unorm16x4);
+	}
 	if (position === undefined || positions === null) {
 		throw new Error('geometry has no positions');
 	}
@@ -293,6 +301,7 @@ const decodeGeometry = (
 			// an animation's output is quantized to the box its frames lie in
 			positionOffset: blob.animation?.offset ?? position.offset,
 			positionScale: blob.animation?.scale ?? position.scale,
+			positionFormat,
 			positions,
 			normals,
 			uvs,

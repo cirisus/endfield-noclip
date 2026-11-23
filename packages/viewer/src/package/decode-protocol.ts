@@ -93,10 +93,12 @@ export interface DecodedGeometry {
 	/** 2 or 4 */
 	indexSize: number;
 	indices: ArrayBuffer;
-	/** dequantized positions are `offset + value · scale` */
+	/** dequantized positions are `offset + value · scale` (identity for `float32x4`) */
 	positionOffset: [x: number, y: number, z: number];
 	positionScale: [x: number, y: number, z: number];
-	/** `unorm16x4` positions */
+	/** the position stream's vertex format */
+	positionFormat: 'unorm16x4' | 'float32x4';
+	/** positions as {@link positionFormat} */
 	positions: ArrayBuffer;
 	/** `snorm16x2` octahedral normals, or `null` if the mesh has none */
 	normals: ArrayBuffer | null;

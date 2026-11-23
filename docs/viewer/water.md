@@ -17,9 +17,10 @@ visibility group and a ready geometry entry.
 
 ## surface meshes
 
-- vertices read dequantized `unorm16x4` positions and, when present on placed surfaces, octahedral
-  normals ([how surfaces are drawn](../game-data/water.md#how-surfaces-are-drawn)); volume surfaces
-  face straight up.
+- vertices read `unorm16x4` (dequantized) or `float32x4` positions and, when present on placed
+  surfaces, octahedral normals
+  ([how surfaces are drawn](../game-data/water.md#how-surfaces-are-drawn)); volume surfaces face
+  straight up.
 - both depth and shading passes cull back faces by transformed winding (hiding downward-wound twin
   triangles from above and all surfaces from below). transforms are made eye-relative on the CPU.
 

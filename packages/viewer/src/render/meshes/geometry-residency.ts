@@ -42,6 +42,7 @@ export const uploadGeometry = (
 			(decoded.normals === null ? 0 : GeometryFlags.HasNormals) |
 			(decoded.tangents === null ? 0 : GeometryFlags.HasTangents) |
 			(decoded.colors === null ? 0 : GeometryFlags.HasColors),
+		positionFormat: decoded.positionFormat,
 		uvFormat: decoded.uvFormat,
 		uvTransforms: decoded.uvTransforms,
 		positionOffset: decoded.positionOffset,
@@ -51,6 +52,7 @@ export const uploadGeometry = (
 	if (decoded.skin === null) {
 		const placed = pools.place({
 			vertexCount: decoded.vertexCount,
+			positionFormat: decoded.positionFormat,
 			uvFormat: decoded.uvFormat,
 			streams: data,
 			indices: decoded.indices,

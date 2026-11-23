@@ -88,6 +88,13 @@ export interface MeshConversionOptions {
 const UV_UNORM16_SPAN = 16;
 
 /**
+ * the largest position span (metres) stored as dequantized unorm16, keeping the step ≤ 0.061 mm so closely
+ * offset coplanar trim (e.g. 0.12 mm floor markings in merged building meshes) does not collapse onto the
+ * surface beneath
+ */
+const POSITION_UNORM16_SPAN = 4;
+
+/**
  * @param mesh the decoded mesh
  * @param tangentUv UV set to generate MikkTSpace tangents from (because a normal-mapped material draws the
  *   mesh), or `null`. ignored when the mesh has its own tangents, or lacks normals or that UV set
@@ -186,40 +193,57 @@ export const convertMesh = (
 	let swayReach = 0;
 	let swingReach = 0;
 	{
-		const out = new Uint16Array(vertexCount * 4);
 		const weighted = sway !== undefined || offset?.weighted === true;
 		const colors = weighted ? mesh.colors : null;
-		for (const [i, v] of order.entries()) {
-			const source = vertexOf(v) * 3;
-			for (let k = 0; k < 3; k++) {
-				out[i * 4 + k] =
-					scale[k] === 0 ? 0 : Math.round(((positions[source + k] - min[k]) / scale[k]) * 65535);
+		const useFloat32 = motion === undefined && Math.max(scale[0], scale[1], scale[2]) > POSITION_UNORM16_SPAN;
+		const weightOf = (v: number, source: number): number => {
+			if (!weighted) {
+				return 0;
 			}
-			// W: the sway and offset weight, the colour's alpha (white, so 1, without colours)
-			if (weighted) {
-				let weight = 1;
-				if (colors !== null && colors.dimension >= 4) {
-					weight = Math.min(Math.max(colors.data[vertexOf(v) * colors.dimension + 3], 0), 1);
-				}
-				out[i * 4 + 3] = Math.round(weight * 65535);
-				if (sway !== undefined) {
-					const y = Math.abs(positions[source + 1]);
-					swayReach = Math.max(swayReach, weight * (sway.flat + sway.perHeight * y));
-					const distance = Math.hypot(positions[source], positions[source + 1], positions[source + 2]);
-					swingReach = Math.max(swingReach, weight * sway.perDistance * distance);
-				}
+			let weight = 1;
+			if (colors !== null && colors.dimension >= 4) {
+				weight = Math.min(Math.max(colors.data[vertexOf(v) * colors.dimension + 3], 0), 1);
 			}
+			if (sway !== undefined) {
+				const y = Math.abs(positions[source + 1]);
+				swayReach = Math.max(swayReach, weight * (sway.flat + sway.perHeight * y));
+				const distance = Math.hypot(positions[source], positions[source + 1], positions[source + 2]);
+				swingReach = Math.max(swingReach, weight * sway.perDistance * distance);
+			}
+			return weight;
+		};
+		if (useFloat32) {
+			const out = new Float32Array(vertexCount * 4);
+			for (const [i, v] of order.entries()) {
+				const source = vertexOf(v) * 3;
+				out[i * 4] = positions[source];
+				out[i * 4 + 1] = positions[source + 1];
+				out[i * 4 + 2] = positions[source + 2];
+				out[i * 4 + 3] = weightOf(v, source);
+			}
+			add(plain(VertexAttribute.Position, GeometryVertexFormat.Float32x4), bytesOf(out));
+		} else {
+			const out = new Uint16Array(vertexCount * 4);
+			for (const [i, v] of order.entries()) {
+				const source = vertexOf(v) * 3;
+				for (let k = 0; k < 3; k++) {
+					out[i * 4 + k] =
+						scale[k] === 0 ? 0 : Math.round(((positions[source + k] - min[k]) / scale[k]) * 65535);
+				}
+				// W: the sway and offset weight, the colour's alpha (white, so 1, without colours)
+				out[i * 4 + 3] = Math.round(weightOf(v, source) * 65535);
+			}
+			add(
+				{
+					attribute: VertexAttribute.Position,
+					format: GeometryVertexFormat.Unorm16x4,
+					flags: GeometryStreamFlags.Dequantize,
+					offset: [min[0], min[1], min[2]],
+					scale: [scale[0], scale[1], scale[2]],
+				},
+				bytesOf(out),
+			);
 		}
-		add(
-			{
-				attribute: VertexAttribute.Position,
-				format: GeometryVertexFormat.Unorm16x4,
-				flags: GeometryStreamFlags.Dequantize,
-				offset: [min[0], min[1], min[2]],
-				scale: [scale[0], scale[1], scale[2]],
-			},
-			bytesOf(out),
-		);
 	}
 
 	if (mesh.normals !== null) {

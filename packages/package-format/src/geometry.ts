@@ -17,8 +17,10 @@ import type { Bounds } from './values.ts';
  */
 export const VertexAttribute = {
 	/**
-	 * `unorm16x4`, always dequantized: `position = offset + value.xyz · scale`. `w` is the vertex's sway weight
-	 * when a swaying material draws the mesh, else 0. the mesh's own frame (Unity, left-handed)
+	 * `unorm16x4` dequantized (`position = offset + value.xyz · scale`) when animated or when the span is at
+	 * most 4 m (keeping quantization step ≤ 0.06 mm so coplanar trim stays separated), else `float32x4` with
+	 * identity transform. `w` is the vertex's sway weight when a swaying material draws the mesh, else 0. the
+	 * mesh's own frame (Unity, left-handed)
 	 */
 	Position: 0,
 	/**

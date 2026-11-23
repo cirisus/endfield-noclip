@@ -8,7 +8,7 @@
 import { type RangeAllocation, RangeAllocator } from '../../gfx/range-allocator.ts';
 import { writeBufferStaged } from '../../gfx/staged-write.ts';
 
-import { UV_FORMATS, type UvFormat } from './pipeline-variants.ts';
+import { POSITION_FORMATS, type PositionFormat, UV_FORMATS, type UvFormat } from './pipeline-variants.ts';
 
 /** a geometry's vertex streams, in the order the widest mesh layout binds them */
 export const STREAMS = ['position', 'normal', 'uv0', 'uv1', 'tangent', 'color'] as const;
@@ -40,11 +40,11 @@ export interface GeometryIndices {
 	format: GPUIndexFormat;
 }
 
-/** bytes per vertex of each stream: UV sets take their format's */
-const strideOf = (stream: Stream, uvFormat: UvFormat): number => {
+/** bytes per vertex of each stream: positions and UV sets take their format's */
+const strideOf = (stream: Stream, positionFormat: PositionFormat, uvFormat: UvFormat): number => {
 	switch (stream) {
 		case 'position': {
-			return 8;
+			return positionFormat === 'unorm16x4' ? 8 : 16;
 		}
 		case 'uv0':
 		case 'uv1': {
@@ -175,7 +175,12 @@ class VertexPool {
 
 	constructor(
 		device: GPUDevice,
-		{ uvFormat, compact, order }: { uvFormat: UvFormat; compact: boolean; order: number },
+		{
+			positionFormat,
+			uvFormat,
+			compact,
+			order,
+		}: { positionFormat: PositionFormat; uvFormat: UvFormat; compact: boolean; order: number },
 	) {
 		// a compact geometry has neither UV set 1 nor colours: its set 1 binds set 0, which the game reads in its
 		// place, and its colours bind its normals, which the shaders ignore without `HasColors`
@@ -183,10 +188,10 @@ class VertexPool {
 		const sourceOf: Partial<Record<Stream, Stream>> = compact ? { uv1: 'uv0', color: 'normal' } : {};
 		this.stored = stored;
 		this.#source = STREAMS.map((stream) => stored.indexOf(sourceOf[stream] ?? stream));
-		const unitBytes = stored.map((stream) => strideOf(stream, uvFormat));
+		const unitBytes = stored.map((stream) => strideOf(stream, positionFormat, uvFormat));
 		this.stride = unitBytes.reduce((sum, bytes) => sum + bytes, 0);
 		this.#buffers = new PoolBuffers(device, {
-			label: `geometry pool ${uvFormat}${compact ? ' compact' : ''}`,
+			label: `geometry pool ${positionFormat} ${uvFormat}${compact ? ' compact' : ''}`,
 			usage: GPUBufferUsage.VERTEX,
 			unitBytes,
 			initialUnits: INITIAL_VERTICES,
@@ -289,6 +294,7 @@ export interface PlacedGeometry {
 /** what {@link GeometryPools.place} uploads: a decoded geometry's streams and indices */
 export interface PoolableGeometry {
 	vertexCount: number;
+	positionFormat: PositionFormat;
 	uvFormat: UvFormat;
 	streams: Record<Stream, ArrayBuffer | null>;
 	/** a multiple of 4 bytes */
@@ -297,14 +303,17 @@ export interface PoolableGeometry {
 }
 
 /**
- * the vertex pools, one per UV format and stream set (compact: without UV set 1 and colours, as most geometry
- * is; full: every stream), and an index pool per index format. pools grow by copying into larger buffers and
- * never shrink; the streaming budget bounds them
+ * the vertex pools, one per position format, UV format and stream set (compact: without UV set 1 and colours,
+ * as most geometry is; full: every stream), and an index pool per index format. pools grow by copying into
+ * larger buffers and never shrink; the streaming budget bounds them
  */
 export class GeometryPools {
 	readonly #device: GPUDevice;
-	/** by UV format, then compact and full; created on first use */
-	readonly #vertexPools: (VertexPool | null)[] = [null, null, null, null];
+	/** by position format, UV format, then compact and full; created on first use */
+	readonly #vertexPools: (VertexPool | null)[] = Array.from(
+		{ length: POSITION_FORMATS.length * UV_FORMATS.length * 2 },
+		() => null,
+	);
 	readonly #indexPools = new Map<GPUIndexFormat, IndexPool>();
 	/** zeros written over streams a geometry lacks, grown as needed */
 	#zeros = new Uint8Array(0);
@@ -333,8 +342,13 @@ export class GeometryPools {
 	place(geometry: PoolableGeometry): PlacedGeometry | null {
 		const { streams } = geometry;
 		const compact = streams.uv1 === null && streams.color === null;
-		const p = UV_FORMATS.indexOf(geometry.uvFormat) * 2 + (compact ? 0 : 1);
+		const p =
+			(POSITION_FORMATS.indexOf(geometry.positionFormat) * UV_FORMATS.length +
+				UV_FORMATS.indexOf(geometry.uvFormat)) *
+				2 +
+			(compact ? 0 : 1);
 		const pool = (this.#vertexPools[p] ??= new VertexPool(this.#device, {
+			positionFormat: geometry.positionFormat,
 			uvFormat: geometry.uvFormat,
 			compact,
 			order: compact ? 0 : 1,
@@ -357,7 +371,7 @@ export class GeometryPools {
 		const device = this.#device;
 		for (const stream of pool.stored) {
 			const buffer = pool.buffer(stream);
-			const bytes = strideOf(stream, geometry.uvFormat);
+			const bytes = strideOf(stream, geometry.positionFormat, geometry.uvFormat);
 			const offset = vertices.start * bytes;
 			const data = streams[stream] ?? (stream === 'uv1' ? streams.uv0 : null);
 			writeBufferStaged(device, buffer, offset, data ?? this.#zeroes(geometry.vertexCount * bytes));

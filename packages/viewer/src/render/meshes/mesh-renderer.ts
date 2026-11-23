@@ -805,7 +805,7 @@ export class MeshRenderer {
 		// an effect's group also binds the main pass's outputs, so it's built when its pass encodes
 		const material = info.effect ? null : state.group;
 		const effect = info.effect ? state : null;
-		const variant = variantOf(faceCullOf(bucket), resident.uvFormat);
+		const variant = variantOf(faceCullOf(bucket), resident.positionFormat, resident.uvFormat);
 		const draw = this.#draws[d];
 		if (draw === undefined) {
 			this.#draws[d] = {
@@ -1158,8 +1158,8 @@ export class MeshRenderer {
 		if (describer === undefined) {
 			throw new Error(`phase ${phase.key} has no pipeline descriptor`);
 		}
-		const { cull, uvFormat } = VARIANTS[variant];
-		void this.#pipelines.prepare(key, () => withStencil(describer(cull, uvFormat), stencil));
+		const { cull, positionFormat, uvFormat } = VARIANTS[variant];
+		void this.#pipelines.prepare(key, () => withStencil(describer(cull, positionFormat, uvFormat), stencil));
 		return undefined;
 	}
 

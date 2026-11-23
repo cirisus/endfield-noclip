@@ -22,8 +22,8 @@ import {
 	WATER_DEPTH_FORMAT,
 	WATER_FOAM_FORMAT,
 } from '../frame/render-targets.ts';
-import { FRONT_FACE } from '../meshes/pipeline-variants.ts';
-import { NORMAL_STREAM, POSITION_STREAM } from '../meshes/vertex-bindings.ts';
+import { FRONT_FACE, POSITION_FORMATS, type PositionFormat } from '../meshes/pipeline-variants.ts';
+import { NORMAL_STREAM, positionStream } from '../meshes/vertex-bindings.ts';
 import { postCommonSource } from '../post/shader-source.ts';
 import screenSpaceWgsl from '../shaders/common/screen-space.wgsl?raw';
 import { SkyBinding } from '../sky/atmosphere-luts.ts';
@@ -204,31 +204,33 @@ export class WaterRenderer {
 			label: 'water',
 			bindGroupLayouts: [layouts.frame, layouts.sky, this.#layout, layouts.uniforms],
 		});
-		const vertex: GPUVertexState = {
-			module,
-			entryPoint: 'vs_water',
-			// meshes without normals bind their positions as them, which the shader ignores
-			buffers: [POSITION_STREAM, NORMAL_STREAM],
-		};
 		// the shader drops back faces, by the winding the transform leaves
 		const primitive: GPUPrimitiveState = {
 			topology: 'triangle-list',
 			frontFace: FRONT_FACE,
 			cullMode: 'none',
 		};
-		void pipelines.prepare(SHADE_KEY, () => ({
-			layout,
-			vertex,
-			fragment: { module, entryPoint: 'fs_water', targets: [{ format: HDR_FORMAT }] },
-			primitive,
-		}));
-		void pipelines.prepare(DEPTH_KEY, () => ({
-			layout,
-			vertex,
-			fragment: { module, entryPoint: 'fs_water_depth', targets: [] },
-			primitive,
-			depthStencil: { format: WATER_DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: DEPTH_COMPARE },
-		}));
+		for (const positionFormat of POSITION_FORMATS) {
+			const vertex: GPUVertexState = {
+				module,
+				entryPoint: 'vs_water',
+				// meshes without normals bind their positions as them, which the shader ignores
+				buffers: [positionStream(positionFormat), NORMAL_STREAM],
+			};
+			void pipelines.prepare(`${SHADE_KEY}/${positionFormat}`, () => ({
+				layout,
+				vertex,
+				fragment: { module, entryPoint: 'fs_water', targets: [{ format: HDR_FORMAT }] },
+				primitive,
+			}));
+			void pipelines.prepare(`${DEPTH_KEY}/${positionFormat}`, () => ({
+				layout,
+				vertex,
+				fragment: { module, entryPoint: 'fs_water_depth', targets: [] },
+				primitive,
+				depthStencil: { format: WATER_DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: DEPTH_COMPARE },
+			}));
+		}
 		this.#surfaces = device.createBuffer({
 			label: 'water surfaces',
 			size: this.#surfaceData.byteLength,
@@ -419,13 +421,16 @@ export class WaterRenderer {
 		});
 	}
 
-	/** @returns whether there's anything to draw this frame, with both pipelines compiled */
+	/** @returns whether there's anything to draw this frame, with all pipelines compiled */
 	get active(): boolean {
 		return (
 			this.#draws.length > 0 &&
 			this.#configs !== null &&
-			this.#pipelines.get(SHADE_KEY) !== undefined &&
-			this.#pipelines.get(DEPTH_KEY) !== undefined
+			POSITION_FORMATS.every(
+				(format) =>
+					this.#pipelines.get(`${SHADE_KEY}/${format}`) !== undefined &&
+					this.#pipelines.get(`${DEPTH_KEY}/${format}`) !== undefined,
+			)
 		);
 	}
 
@@ -439,10 +444,9 @@ export class WaterRenderer {
 	 */
 	encodeDepth(encoder: GPUCommandEncoder, context: WaterContext): void {
 		const pass = WaterRenderer.#beginDepthPass(encoder, context.scene.waterDepth);
-		const pipeline = this.#pipelines.get(DEPTH_KEY);
 		const group = this.active ? this.#bindGroup(context, this.#noWaterDepthView) : null;
-		if (pipeline !== undefined && group !== null) {
-			this.#drawSurfaces(pass, pipeline, group, context);
+		if (group !== null) {
+			this.#drawSurfaces(pass, DEPTH_KEY, group, context);
 		}
 		pass.end();
 	}
@@ -491,8 +495,7 @@ export class WaterRenderer {
 	 * @param context what the pass reads
 	 */
 	encode(encoder: GPUCommandEncoder, target: GPUTextureView, context: WaterContext): void {
-		const pipeline = this.#pipelines.get(SHADE_KEY);
-		if (pipeline === undefined || !this.active) {
+		if (!this.active) {
 			return;
 		}
 		this.#paramData[6] = context.foam ? 1 : 0;
@@ -506,7 +509,7 @@ export class WaterRenderer {
 			label: 'water',
 			colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
 		});
-		this.#drawSurfaces(pass, pipeline, group, context);
+		this.#drawSurfaces(pass, SHADE_KEY, group, context);
 		pass.end();
 	}
 
@@ -528,16 +531,24 @@ export class WaterRenderer {
 
 	#drawSurfaces(
 		pass: GPURenderPassEncoder,
-		pipeline: GPURenderPipeline,
+		pipelinePrefix: string,
 		group: GPUBindGroup,
 		context: WaterContext,
 	): void {
-		pass.setPipeline(pipeline);
 		pass.setBindGroup(0, context.frame.group, [context.frame.offset]);
 		pass.setBindGroup(1, context.sky);
 		pass.setBindGroup(2, group);
 		pass.setBindGroup(3, context.postUniforms);
+		let boundFormat: PositionFormat | null = null;
 		for (const { geometry, slot } of this.#draws) {
+			if (geometry.positionFormat !== boundFormat) {
+				const pipeline = this.#pipelines.get(`${pipelinePrefix}/${geometry.positionFormat}`);
+				if (pipeline === undefined) {
+					continue;
+				}
+				pass.setPipeline(pipeline);
+				boundFormat = geometry.positionFormat;
+			}
 			// positions and normals, as the meshes bind them; without normals in the mesh the shader ignores slot 1
 			const [position, normal] = geometry.vertices.streams;
 			pass.setVertexBuffer(0, position.buffer, position.offset, position.size);

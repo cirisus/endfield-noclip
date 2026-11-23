@@ -131,6 +131,10 @@ const readStream = (stream: GeometryStream, vertexCount: number): number[][] => 
 				values = [0, 1].map((k) => view.getFloat32(at + k * 4, true));
 				break;
 			}
+			case GeometryVertexFormat.Float32x4: {
+				values = [0, 1, 2, 3].map((k) => view.getFloat32(at + k * 4, true));
+				break;
+			}
 			default: {
 				throw new Error(`format ${stream.format} not handled by the test`);
 			}
@@ -490,6 +494,21 @@ describe('convertMesh', () => {
 			assert.ok(boneBytes.every((bone) => bone === 0));
 			assert.ok(read(VertexAttribute.BlendWeight).every((weights) => weights[0] === 1));
 		}
+	});
+
+	it('stores float32x4 positions for wide still meshes to preserve sub-millimetre offsets', () => {
+		const mesh = testMesh({
+			positions: new Float32Array([0, 0, 0, 20, 0.00012, 0, 20, 20, 0, 0, 20, 0, 20, 0, 20, 0, 0, 20]),
+		});
+		const converted = convertMesh(mesh, null);
+		const blob = decodeGeometryBlob(converted.blob);
+		const position = blob.streams.find((stream) => stream.attribute === VertexAttribute.Position)!;
+		assert.equal(position.format, GeometryVertexFormat.Float32x4);
+		assert.equal(position.flags, 0);
+		const decoded = readStream(position, blob.vertexCount);
+		const ys = decoded.map((v) => v[1]).toSorted(compareNumbers);
+		assert.equal(ys[0], 0);
+		assert.ok(ys.some((y) => Math.abs(y - 0.00012) < 1e-7));
 	});
 });
 

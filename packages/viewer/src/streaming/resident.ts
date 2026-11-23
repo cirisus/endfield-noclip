@@ -88,6 +88,8 @@ export interface ResidentGeometry {
 	indices: GeometryIndices;
 	/** `GeometryFlags` of the normals, tangents and colours it has, which shaders read only where present */
 	streamFlags: number;
+	/** the position stream's vertex format */
+	positionFormat: 'unorm16x4' | 'float32x4';
 	/** the UV streams' vertex format */
 	uvFormat: 'unorm16x2' | 'float32x2';
 	/** each UV set's dequantization */
