@@ -169,12 +169,22 @@ export const boxInFrustum = (
 	max: readonly number[],
 	eye: Vec3,
 ): boolean => {
-	for (const [nx, ny, nz, d] of planes) {
+	const minX = min[0] - eye[0];
+	const minY = min[1] - eye[1];
+	const minZ = min[2] - eye[2];
+	const maxX = max[0] - eye[0];
+	const maxY = max[1] - eye[1];
+	const maxZ = max[2] - eye[2];
+	for (let i = 0; i < planes.length; i++) {
+		const plane = planes[i];
+		const nx = plane[0];
+		const ny = plane[1];
+		const nz = plane[2];
 		// the box corner furthest along the plane normal
-		const px = (nx >= 0 ? max[0] : min[0]) - eye[0];
-		const py = (ny >= 0 ? max[1] : min[1]) - eye[1];
-		const pz = (nz >= 0 ? max[2] : min[2]) - eye[2];
-		if (nx * px + ny * py + nz * pz + d < 0) {
+		const px = nx >= 0 ? maxX : minX;
+		const py = ny >= 0 ? maxY : minY;
+		const pz = nz >= 0 ? maxZ : minZ;
+		if (nx * px + ny * py + nz * pz + plane[3] < 0) {
 			return false;
 		}
 	}
@@ -210,5 +220,5 @@ export const distanceToBox = (min: readonly number[], max: readonly number[], p:
 	const dx = Math.max(min[0] - p[0], 0, p[0] - max[0]);
 	const dy = Math.max(min[1] - p[1], 0, p[1] - max[1]);
 	const dz = Math.max(min[2] - p[2], 0, p[2] - max[2]);
-	return Math.hypot(dx, dy, dz);
+	return Math.sqrt(dx * dx + dy * dy + dz * dz);
 };

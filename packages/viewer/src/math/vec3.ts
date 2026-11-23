@@ -44,7 +44,7 @@ export const cross = (a: Vec3, b: Vec3): Vec3 => [
  * @returns `v` scaled to unit length; a zero vector stays zero
  */
 export const normalize = ([x, y, z]: Vec3): Vec3 => {
-	const length = Math.hypot(x, y, z) || 1;
+	const length = Math.sqrt(x * x + y * y + z * z) || 1;
 	return [x / length, y / length, z / length];
 };
 
@@ -56,11 +56,12 @@ export const normalizeOrZ = (v: Vec3): Vec3 => normalizeOrZInto([0, 0, 0], v[0],
 
 /** writes {@link normalizeOrZ} of `(x, y, z)` into `out` @returns `out` */
 export const normalizeOrZInto = (out: Vec3, x: number, y: number, z: number): Vec3 => {
-	const length = Math.hypot(x, y, z);
+	const length = Math.sqrt(x * x + y * y + z * z);
 	if (length > 1e-12) {
-		out[0] = x / length;
-		out[1] = y / length;
-		out[2] = z / length;
+		const inv = 1 / length;
+		out[0] = x * inv;
+		out[1] = y * inv;
+		out[2] = z * inv;
 	} else {
 		out[0] = 0;
 		out[1] = 0;
