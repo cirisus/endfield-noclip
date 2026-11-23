@@ -75,14 +75,15 @@ fn previous_uv(rel: vec3f) -> vec2f {
 	return vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
 }
 
-// the screen motion (this frame's uv minus last frame's) of the surface under a uv; none for the sky or without a
-// last frame
+// the unjittered screen motion (this frame's uv minus last frame's) of the surface under a uv; none for the sky
+// or without a last frame
 fn motion_at(uv: vec2f) -> vec2f {
 	let depth = ssr_device_depth(uv);
 	if (depth <= 0.0 || ssr.eye_delta.w > 0.5) {
 		return vec2f(0.0);
 	}
-	return uv - previous_uv(unproject(uv, depth));
+	let unjittered = uv + vec2f(-post.jitter.x, post.jitter.y) * 0.5;
+	return unjittered - previous_uv(unproject(uv, depth));
 }
 
 // Karis' tonemap-like weighting the game keeps the hit colours in until the resolve
@@ -205,9 +206,10 @@ fn fs_march(in: FullscreenOut) -> March {
 	}
 	out.color = vec4f(compress(textureSampleLevel(previous_scene, linear_sampler, source, 0.0).rgb), 0.0);
 
-	// the temporal filter keeps less where things move on screen, and almost nothing nearer than 50 m
-	let moved = length((motion_at(source) + hit_motion) * ssr.size.xy);
-	out.weight.x = exp(-moved) * clamp(log(0.02 * eye) + 0.01, 0.0, 1.0);
+	// the temporal filter keeps full history nearer than ~50 m (where log(0.02 · eye) + 0.01 <= 0) and decays it
+	// with screen motion past that
+	let moved = length((motion_at(source) + hit_motion) * post.viewport.xy);
+	out.weight.x = exp(-moved * clamp(log(0.02 * eye) + 0.01, 0.0, 1.0));
 	if (alpha2 > 1e-4) {
 		// the reflected cone (a Blinn-Phong lobe's angle) seen through the mirror at the hit's distance, in pixels
 		let theta = acos(pow(0.244, 1.0 / (2.0 / alpha2 - 1.0)));
@@ -229,14 +231,9 @@ fn fs_march(in: FullscreenOut) -> March {
 
 // #region temporal
 
-// the game's neighbourhood box: the plus and the full 3 × 3 extremes averaged, widened to mean ± 1.25 σ
-struct Box {
-	lo: vec4f,
-	hi: vec4f,
-}
-
 @fragment
 fn fs_temporal(in: FullscreenOut) -> @location(0) vec4f {
+	// the game's neighbourhood box: the plus and the full 3 × 3 extremes averaged, widened to mean ± 1.25 σ
 	let px = vec2i(in.position.xy);
 	let size = vec2i(ssr.size.xy);
 	var samples: array<vec4f, 9>;

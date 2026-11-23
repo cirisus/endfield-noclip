@@ -174,8 +174,8 @@ every PC tier; per-tier step counts and upsampling are in
   (skipped when roughness < 0.1).
 - **temporal filter**: blends 97% reprojected history (colour stored as `c / (1 + max(c))`, clipped
   to the 3×3 neighbourhood box averaging plus/full extremes widened to `mean ± 1.25 σ`) times
-  confidence `exp(−motionPx) · saturate(ln(0.02 · viewDepth) + 0.01)` (~0 under 50 m, leaving close
-  reflections to TAA).
+  confidence `exp(−motionPx · saturate(ln(0.02 · viewDepth) + 0.01))` (full 97% under ~50 m,
+  decaying with full-res screen motion beyond).
 - **blur & resolve**: up to 7-mip pyramid, each a 4×4 binomial `(1 3 3 1)²` weighted by
   `exp(−0.01 · |Δ viewDepth|)` against nearest depth. resolve selects mip `log2(coneFootprintPx)`
   from Blinn-Phong lobe half-angle `acos(0.244^(1 / (2/α² − 1)))` at hit distance, blending the two
