@@ -187,7 +187,7 @@ export const collectInteractives = async (
 			facilitiesMemoKey !== null &&
 			cache !== null &&
 			result.models.every(
-				(model) => model.pose === null || model.pose.clips.every((clip) => clip.motion === undefined),
+				(model) => model.pose === null || model.pose.clips.every((clip) => clip.motion === null),
 			)
 		) {
 			const sources = bundles.length === 0 ? [] : await bundleSources(await context.resolver(), bundles);

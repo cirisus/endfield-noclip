@@ -12,7 +12,7 @@ import {
 } from '@endfield-noclip/package-format/textures';
 
 import { compareNumbers } from '../../compare.ts';
-import { failureReason } from '../../errors.ts';
+import { errorText, failureReason } from '../../errors.ts';
 import {
 	type AssetRef,
 	type AssetResolver,
@@ -317,21 +317,44 @@ class ConvertJobs {
 		const fp = await (this.#materialFp ??= cache.fingerprint(MATERIAL_LOAD_ENTRY));
 		const key = cache.keyWith(fp, { asset });
 		const recalled = await cache.recallValue<MaterialMemo>(key);
-		const relocated =
-			recalled === undefined || !(await this.#sourcesCurrent(recalled.sources))
-				? undefined
-				: this.#relocated(recalled);
-		if (relocated !== undefined) {
-			const shader = await this.#shaders.getOrInsertComputed(relocated.shaderObject.key, async () =>
-				cache.recallValue<ShaderSummary>(await this.#shaderKey(cache, fp, relocated.shaderObject)),
-			);
-			if (shader !== undefined) {
-				cache.hits.materials++;
-				return { ...relocated, shader };
+		if (recalled !== undefined) {
+			const manifestHash = 'error' in recalled ? recalled.manifestHash : undefined;
+			if (await this.#sourcesCurrent(recalled.sources, manifestHash)) {
+				if ('error' in recalled) {
+					cache.hits.materials++;
+					throw new Error(recalled.error);
+				}
+				const relocated = this.#relocated(recalled);
+				if (relocated !== undefined) {
+					const shader = await this.#shaders.getOrInsertComputed(relocated.shaderObject.key, async () =>
+						cache.recallValue<ShaderSummary>(await this.#shaderKey(cache, fp, relocated.shaderObject)),
+					);
+					if (shader !== undefined) {
+						cache.hits.materials++;
+						return { ...relocated, shader };
+					}
+				}
 			}
 		}
-		const { result, bundles } = await recordBundleReads(() => locateMaterial(resolver, asset));
+		const { result: outcome, bundles } = await recordBundleReads(
+			async (): Promise<{ ok: true; value: LocatedMaterial } | { ok: false; error: Error }> => {
+				try {
+					return { ok: true, value: await locateMaterial(resolver, asset) };
+				} catch (error) {
+					return { ok: false, error: error instanceof Error ? error : new Error(errorText(error)) };
+				}
+			},
+		);
 		const sources = await bundleSources(resolver, bundles);
+		if (!outcome.ok) {
+			await cache.rememberValue(key, {
+				sources,
+				error: outcome.error.message,
+				...(sources.length === 0 ? { manifestHash: resolver.manifest.contentHash } : {}),
+			} satisfies MaterialMemo);
+			throw outcome.error;
+		}
+		const result = outcome.value;
 		// a shader's summary is most of a material's load and shared by thousands of them, so it's stored once
 		const { shader, ...material } = result;
 		// stored by the first fresh load of each shader, including one whose summary the cache didn't have
@@ -361,7 +384,7 @@ class ConvertJobs {
 	 * @returns a recalled material whose shader and textures are located in this install's manifest by their
 	 *   bundles' names, or `undefined` when one of those bundles is gone
 	 */
-	#relocated({ material, bundles }: MaterialMemo): Omit<LocatedMaterial, 'shader'> | undefined {
+	#relocated({ material, bundles }: ReadyMaterialMemo): Omit<LocatedMaterial, 'shader'> | undefined {
 		const { manifest } = this.#input.resolver;
 		const relocate = (
 			object: LocatedObject,
@@ -440,7 +463,7 @@ class TextureUses {
 const MATERIAL_LOAD_ENTRY = new URL('../../game/materials/material-load.ts', import.meta.url);
 
 /** a cached material load, its shader summary stored on its own, and the bundles it read */
-interface MaterialMemo {
+interface ReadyMaterialMemo {
 	sources: BundleSource[];
 	material: Omit<LocatedMaterial, 'shader'>;
 	/**
@@ -449,6 +472,14 @@ interface MaterialMemo {
 	 */
 	bundles?: { shader: string; textures: Record<string, string | null> };
 }
+
+type MaterialMemo =
+	| ReadyMaterialMemo
+	| {
+			sources: BundleSource[];
+			error: string;
+			manifestHash?: string;
+	  };
 
 /** the materials loaded and converted, by material id */
 interface LoadedMaterials {

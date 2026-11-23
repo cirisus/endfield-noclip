@@ -583,10 +583,10 @@ implemented in [pack/store/pack-cache.ts](../packages/extractor/src/pack/store/p
 | `roots/` | one file per package dir listing its blobs and memos; after each pack, roots missing `core.czar` are dropped and unreferenced entries swept. deleting a package dir frees its cache on next pack; deleting the whole cache is always safe                                                                                     |
 | `lock`   | holds packer PID; serializes cache access (stale locks from dead processes are taken over)                                                                                                                                                                                                                                    |
 
-**not cached**: turning loaded materials into table entries (fast), script driver linking, and
-failed material loads. failed geometry and texture conversions are cached by their touched bundles
-(or bundle manifest hash when no bundle was read), and geometry and texture converters are
-fingerprinted separately (`convert-geometry.ts` vs `convert-texture.ts`).
+**not cached**: turning loaded materials into table entries (fast) and script driver linking. failed
+geometry, texture, and material conversions/loads are cached by their touched bundles (or bundle
+manifest hash when no bundle was read), and geometry and texture converters are fingerprinted
+separately (`convert-geometry.ts` vs `convert-texture.ts`).
 
 ### report and debug outputs
 

@@ -10,7 +10,7 @@ import { ARCHIVE_ID_LENGTH, archiveName } from '@endfield-noclip/package-format/
 import type { TileKey } from '@endfield-noclip/package-format/tiles';
 
 import { mapDefined } from '@mary-ext/array-fns';
-import { type ArchivePlan, encodeArchive, planArchive } from '@mary-ext/czar';
+import { type ArchivePlan, planArchive } from '@mary-ext/czar';
 
 import { compareStrings } from '../../compare.ts';
 import { ignoreMissing } from '../../errors.ts';
@@ -363,12 +363,15 @@ export class BlobStore {
 			}),
 		);
 		const files = [...blobs, ...members];
-		const archive = encodeArchive(files);
-		await writeFile(join(outDir, this.#core), archive);
-		// the plan is the layout encodeArchive wrote; only its lengths are needed
 		const plan = planArchive(
-			files.map(({ path, data }) => ({ path, size: data.length, crc32: crc32(data) })),
+			files.map(({ path, data }) => ({ path, size: data.length, crc32: crc32(data), data })),
 		);
+		const archive = new Uint8Array(plan.size);
+		archive.set(plan.head, 0);
+		for (const segment of plan.segments) {
+			archive.set(segment.source.data, segment.position);
+		}
+		await writeFile(join(outDir, this.#core), archive);
 		return { ...archiveSizes(this.#core, plan, files.length), stem: this.#core, reused: false };
 	}
 
