@@ -140,6 +140,165 @@ const termsInto = (out: Terms, { curve, r }: DrawnCurve): Terms => {
 const valueAt = (curve: AnimationCurve | null, u: number): number =>
 	curve === null ? 1 : evaluateCurve(curve, u);
 
+/** pre-resolved term of a {@link PreparedIntegral}: its table (`null` when constant 1) and endpoint values */
+interface PreparedTerm {
+	table: IntegralTable | null;
+	at0: number;
+	at1: number;
+}
+
+/**
+ * pre-resolved integral tables for a `(curve, scale, power)` triple, built once per particle system so
+ * per-particle evaluation does no `WeakMap` lookups
+ */
+export interface PreparedIntegral {
+	curve: MinMaxCurveInfo;
+	scale: MinMaxCurveInfo | null;
+	power: 0 | 1;
+	/** fast path when `scale` is null and `curve` is Constant or TwoConstants */
+	constantOnly: boolean;
+	/** `aCount × bCount` terms in row-major order */
+	terms: PreparedTerm[];
+}
+
+const INV_2_INTERVALS = 1 / (2 * INTERVALS);
+
+const sampleTable = (table: IntegralTable | null, power: 0 | 1, u: number): number => {
+	if (table === null) {
+		return power === 1 ? 0.5 * u * u : u;
+	}
+	const x = Math.min(Math.max(u, 0), 1) * INTERVALS;
+	const i = Math.min(Math.floor(x), INTERVALS - 1);
+	const f = x - i;
+	const from = table.values[i];
+	return table.sums[i] + (from + from + (table.values[i + 1] - from) * f) * f * INV_2_INTERVALS;
+};
+
+const curveList = (curve: MinMaxCurveInfo): (AnimationCurve | null)[] => {
+	switch (curve.mode) {
+		case CurveMode.Constant:
+		case CurveMode.TwoConstants: {
+			return [null];
+		}
+		case CurveMode.Curve: {
+			return [curve.curve];
+		}
+		case CurveMode.TwoCurves: {
+			return [curve.minCurve, curve.curve];
+		}
+	}
+};
+
+/**
+ * pre-resolves the integral tables for `curve · scale · age^power` once for a system
+ *
+ * @param curve the rate curve
+ * @param scale optional scale curve (such as speed modifier), or `null`
+ * @param power 0 or 1
+ * @returns a prepared integral for {@link evalPreparedIntegral}
+ */
+export const prepareIntegral = (
+	curve: MinMaxCurveInfo,
+	scale: MinMaxCurveInfo | null,
+	power: 0 | 1,
+): PreparedIntegral => {
+	const aCurves = curveList(curve);
+	const bCurves = scale === null ? [null] : curveList(scale);
+	const prepared: PreparedTerm[] = [];
+	for (const a of aCurves) {
+		for (const b of bCurves) {
+			const first = a ?? b;
+			const second = a === null || b === null ? ALONE : b;
+			prepared.push({
+				table: first === null ? null : tableOf(first, second, power),
+				at0: valueAt(a, 0) * valueAt(b, 0),
+				at1: valueAt(a, 1) * valueAt(b, 1),
+			});
+		}
+	}
+	return {
+		curve,
+		scale,
+		power,
+		constantOnly:
+			scale === null && (curve.mode === CurveMode.Constant || curve.mode === CurveMode.TwoConstants),
+		terms: prepared,
+	};
+};
+
+/**
+ * evaluates a {@link PreparedIntegral} for one particle without `WeakMap` lookups
+ *
+ * @param prepared from {@link prepareIntegral}
+ * @param r the particle's random value for `curve`, 0–1
+ * @param scaleR the particle's random value for `scale`, 0–1 (ignored when `scale` is `null`)
+ * @param age particle age, s
+ * @param life particle lifetime, s
+ * @returns the integral from birth to `age`
+ */
+export const evalPreparedIntegral = (
+	prepared: PreparedIntegral,
+	r: number,
+	scaleR: number,
+	age: number,
+	life: number,
+): number => {
+	const { curve, scale, power, terms: preparedTerms } = prepared;
+	if (scale === null) {
+		if (curve.mode === CurveMode.Constant) {
+			return curve.scalar * (power === 1 ? 0.5 * age * age : age);
+		}
+		if (curve.mode === CurveMode.TwoConstants) {
+			return (curve.min + (curve.scalar - curve.min) * r) * (power === 1 ? 0.5 * age * age : age);
+		}
+	}
+	// common fast path: single unscaled curve
+	if (scale === null && preparedTerms.length === 1) {
+		const factor = curve.scalar;
+		if (factor === 0) {
+			return 0;
+		}
+		const term = preparedTerms[0];
+		const within = life > 0 ? Math.min(age, life) : 0;
+		const beyond = power === 1 ? 0.5 * (age * age - within * within) : age - within;
+		let integral = 0;
+		if (within > 0) {
+			const lifeScale = power === 1 ? life * life : life;
+			integral += lifeScale * sampleTable(term.table, power, within / life);
+		}
+		if (beyond > 0) {
+			integral += (life > 0 ? term.at1 : term.at0) * beyond;
+		}
+		return factor * integral;
+	}
+	const a = termsInto(ofCurve, { curve, r });
+	const b = scale === null ? UNSCALED : termsInto(ofScale, { curve: scale, r: scaleR });
+	const within = life > 0 ? Math.min(age, life) : 0;
+	const u = life > 0 ? within / life : 0;
+	const lifeScale = power === 1 ? life * life : life;
+	const beyond = power === 1 ? 0.5 * (age * age - within * within) : age - within;
+	let sum = 0;
+	let idx = 0;
+	for (let i = 0; i < a.count; i++) {
+		for (let j = 0; j < b.count; j++) {
+			const term = preparedTerms[idx++];
+			const factor = a.factors[i] * b.factors[j];
+			if (factor === 0) {
+				continue;
+			}
+			let integral = 0;
+			if (within > 0) {
+				integral += lifeScale * sampleTable(term.table, power, u);
+			}
+			if (beyond > 0) {
+				integral += (life > 0 ? term.at1 : term.at0) * beyond;
+			}
+			sum += factor * integral;
+		}
+	}
+	return sum;
+};
+
 /**
  * @param drawn a rate read at a particle's age over its lifetime (held at its end past the lifetime, and at
  *   its start for a particle without a lifetime)

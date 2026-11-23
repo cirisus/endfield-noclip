@@ -68,13 +68,14 @@ const DEFAULT_WEIGHT = 1 / 3;
  */
 export const evaluateCurve = (curve: AnimationCurve, time: number): number => {
 	const keys = curve.keys;
-	if (keys.length === 0) {
+	const n = keys.length;
+	if (n === 0) {
 		return 0;
 	}
 	if (time <= keys[0].time) {
 		return keys[0].value;
 	}
-	const last = keys.at(-1)!;
+	const last = keys[n - 1];
 	if (time >= last.time) {
 		return last.value;
 	}
@@ -133,18 +134,29 @@ const weightedSegment = (
 ): number => {
 	const x1 = outWeight;
 	const x2 = 1 - inWeight;
-	// x rises over u while both weights stay within 0–1, so bisection finds where it reaches s
+	// x(u) = 3(1-u)² u x1 + 3(1-u) u² x2 + u³ rises monotonically on [0, 1]; safeguarded Newton converges in
+	// a few iterations
+	const c1 = 3 * x1;
+	const c2 = 3 * (x2 - 2 * x1);
+	const c3 = 1 + 3 * (x1 - x2);
 	let lo = 0;
 	let hi = 1;
-	for (let i = 0; i < 32; i++) {
-		const mid = (lo + hi) / 2;
-		if (bezier(0, x1, x2, 1, mid) < s) {
-			lo = mid;
-		} else {
-			hi = mid;
+	let u = s;
+	for (let i = 0; i < 12; i++) {
+		const err = ((c3 * u + c2) * u + c1) * u - s;
+		if (Math.abs(err) < 1e-7) {
+			break;
 		}
+		if (err < 0) {
+			lo = u;
+		} else {
+			hi = u;
+		}
+		const deriv = (3 * c3 * u + 2 * c2) * u + c1;
+		const next = deriv > 1e-9 ? u - err / deriv : (lo + hi) * 0.5;
+		u = next > lo && next < hi ? next : (lo + hi) * 0.5;
 	}
-	return bezier(from, from + outRise * outWeight, to - inRise * inWeight, to, (lo + hi) / 2);
+	return bezier(from, from + outRise * outWeight, to - inRise * inWeight, to, u);
 };
 
 /**

@@ -17,12 +17,17 @@ import { srgbToLinear } from '../math/color.ts';
 import { eulerQuaternion, eulerQuaternionInto, type Quat, rotateByInto, rotateInto } from '../math/quat.ts';
 import { normalizeOrZInto } from '../math/vec3.ts';
 
-import { type DrawnCurve, integrateOverAge } from './curve-integrals.ts';
+import {
+	type DrawnCurve,
+	type PreparedIntegral,
+	evalPreparedIntegral,
+	prepareIntegral,
+} from './curve-integrals.ts';
 import { evaluateMinMax, evaluateMinMaxGradientInto, livedAt, upperBound } from './curves.ts';
 import { type EmissionStream, emissionStream } from './emission-rate.ts';
 import { applyForces, type ForceRandoms, type PreparedField, prepareField } from './forces.ts';
 import { meshShapePoint, type PreparedMeshShape, prepareMeshShape } from './mesh-shape.ts';
-import { dragged, draggedFall, type SteppedState, splinePoint, steppedPath, travelled } from './motion.ts';
+import { dragged, draggedFall, type SteppedState, splinePoint, steppedPath } from './motion.ts';
 import { Channel, hash2, random } from './random.ts';
 import { sheetTile } from './texture-sheet.ts';
 import { unitVectorInto } from './vector-math.ts';
@@ -152,6 +157,8 @@ const isZeroCurve = (curve: MinMaxCurveInfo): boolean =>
  */
 interface BirthState {
 	born: number;
+	/** last {@link ParticleSimulation.#evalFrame} this particle was alive */
+	frame: number;
 	u: number;
 	life: number;
 	drawsMesh: boolean;
@@ -206,6 +213,7 @@ interface BirthState {
 
 const emptyBirth = (): BirthState => ({
 	born: 0,
+	frame: 0,
 	u: 0,
 	life: 0,
 	drawsMesh: true,
@@ -438,10 +446,10 @@ export class ParticleSimulation {
 	#stepped = new Map<number, SteppedState>();
 	/** the stepped particles placed during the current {@link evaluate} */
 	#steppedNow = new Map<number, SteppedState>();
-	/** live particles' cached birth attributes from the last {@link evaluate}, keyed by particle id */
-	#births = new Map<number, BirthState>();
-	/** birth attributes still live during the current {@link evaluate} */
-	#birthsNow = new Map<number, BirthState>();
+	/** live particles' cached birth attributes, keyed by particle id and stamped with {@link #evalFrame} */
+	readonly #births = new Map<number, BirthState>();
+	/** increments on each {@link evaluate} to stamp live {@link BirthState}s without Map churn */
+	#evalFrame = 0;
 	/** recycled {@link BirthState} records from dead particles */
 	readonly #birthPool: BirthState[] = [];
 	/** precomputed flags for skipping constant-zero modules on every particle */
@@ -452,6 +460,16 @@ export class ParticleSimulation {
 	readonly #spinAxis: readonly [boolean, boolean, boolean];
 	readonly #hasCustom: boolean;
 	readonly #modifierConstant: boolean;
+	/** pre-resolved curve integrals for this system, avoiding WeakMap lookups per particle */
+	readonly #scaleInt0: PreparedIntegral | null;
+	readonly #scaleInt1: PreparedIntegral | null;
+	readonly #linearInts: readonly [PreparedIntegral, PreparedIntegral, PreparedIntegral] | null;
+	readonly #radialInt: PreparedIntegral | null;
+	readonly #orbitalInts: readonly [PreparedIntegral, PreparedIntegral, PreparedIntegral] | null;
+	readonly #spinInts:
+		| readonly [PreparedIntegral | null, PreparedIntegral | null, PreparedIntegral | null]
+		| null;
+	readonly #splineInt: PreparedIntegral | null;
 	/** world down in the emitter's frame, for the current {@link evaluate} */
 	#down: Readonly<Vec3> = ZERO;
 	/** turns a world direction into the emitter's frame, for the current {@link evaluate} */
@@ -553,6 +571,36 @@ export class ParticleSimulation {
 			velocity === null ||
 			velocity.speedModifier.mode === CurveMode.Constant ||
 			velocity.speedModifier.mode === CurveMode.TwoConstants;
+		const scaleCurve = velocity !== null && !this.#modifierConstant ? velocity.speedModifier : null;
+		this.#scaleInt0 = scaleCurve === null ? null : prepareIntegral(scaleCurve, null, 0);
+		this.#scaleInt1 = scaleCurve === null ? null : prepareIntegral(scaleCurve, null, 1);
+		this.#linearInts =
+			velocity !== null && this.#hasLinear
+				? [
+						prepareIntegral(velocity.linear[0], scaleCurve, 0),
+						prepareIntegral(velocity.linear[1], scaleCurve, 0),
+						prepareIntegral(velocity.linear[2], scaleCurve, 0),
+					]
+				: null;
+		this.#radialInt =
+			velocity !== null && this.#hasRadial ? prepareIntegral(velocity.radial, scaleCurve, 0) : null;
+		this.#orbitalInts =
+			velocity !== null && this.#hasOrbital
+				? [
+						prepareIntegral(velocity.orbital[0], scaleCurve, 0),
+						prepareIntegral(velocity.orbital[1], scaleCurve, 0),
+						prepareIntegral(velocity.orbital[2], scaleCurve, 0),
+					]
+				: null;
+		this.#spinInts =
+			spin !== null && this.#hasSpin
+				? [
+						this.#spinAxis[0] ? prepareIntegral(spin[0], null, 0) : null,
+						this.#spinAxis[1] ? prepareIntegral(spin[1], null, 0) : null,
+						this.#spinAxis[2] ? prepareIntegral(spin[2], null, 0) : null,
+					]
+				: null;
+		this.#splineInt = info.motion.kind === 'spline' ? prepareIntegral(info.motion.speed, null, 0) : null;
 	}
 
 	/** seconds a looping system needs to look as if it had always played */
@@ -597,8 +645,8 @@ export class ParticleSimulation {
 		this.#worldToLocal = worldToLocal;
 		this.#emittedFrom = emittedFrom ?? null;
 		const emissions = this.#capped ? this.#admit(time) : this.#emitted(time - this.#lookback, time);
+		const evalFrame = ++this.#evalFrame;
 		this.#steppedNow.clear();
-		this.#birthsNow.clear();
 		const capacity = Math.floor(out.length / PARTICLE_FLOATS);
 		if (this.info.trail !== null && this.#written.length < capacity * WRITTEN_FLOATS) {
 			this.#written = new Float64Array(capacity * WRITTEN_FLOATS);
@@ -668,32 +716,32 @@ export class ParticleSimulation {
 				count++;
 			}
 		}
-		// keep only the particles still drawn, recycling dead birth records
+		// keep only the particles still drawn; sweep dead birth records periodically to avoid per-frame Map churn
 		[this.#stepped, this.#steppedNow] = [this.#steppedNow, this.#stepped];
-		for (const dead of this.#births.values()) {
-			this.#birthPool.push(dead);
+		if ((evalFrame & 63) === 0 || this.#births.size > Math.max(this.info.maxParticles * 2, 128)) {
+			for (const [id, entry] of this.#births) {
+				if (entry.frame !== evalFrame) {
+					this.#births.delete(id);
+					this.#birthPool.push(entry);
+				}
+			}
 		}
-		this.#births.clear();
-		[this.#births, this.#birthsNow] = [this.#birthsNow, this.#births];
 		return count;
 	}
 
-	/**
-	 * looks up or creates a live particle's {@link BirthState}, moving it into {@link #birthsNow} so it stays
-	 * cached while alive
-	 */
+	/** looks up or creates a live particle's {@link BirthState}, stamping it with {@link #evalFrame} */
 	#birthOf(emission: Emission): BirthState {
 		const { id, time: born } = emission;
 		const hasEmittedFrom = this.#emittedFrom !== null;
 		let birth = this.#births.get(id);
 		if (birth !== undefined && birth.born === born && birth.emittedFrom === hasEmittedFrom) {
-			this.#births.delete(id);
-			this.#birthsNow.set(id, birth);
+			birth.frame = this.#evalFrame;
 			return birth;
 		}
 		birth = this.#birthPool.pop() ?? emptyBirth();
 		const u = this.#loopFraction(born);
 		birth.born = born;
+		birth.frame = this.#evalFrame;
 		birth.u = u;
 		birth.life = evaluateMinMax(this.info.startLifetime, u, random(this.#seed, id, Channel.Lifetime));
 		birth.drawsMesh = this.#drawsMesh(id);
@@ -702,7 +750,7 @@ export class ParticleSimulation {
 		if (this.info.motion.kind === 'spline') {
 			birth.splineR = random(this.#seed, id, Channel.SplineSpeed);
 		}
-		this.#birthsNow.set(id, birth);
+		this.#births.set(id, birth);
 		return birth;
 	}
 
@@ -712,10 +760,10 @@ export class ParticleSimulation {
 	 */
 	#splineAt(r: number, age: number, life: number): { position: Vec3; moving: Vec3 } | null | undefined {
 		const spline = this.info.motion;
-		if (spline.kind !== 'spline') {
+		if (spline.kind !== 'spline' || this.#splineInt === null) {
 			return undefined;
 		}
-		const point = splinePoint(spline, travelled(spline.speed, age, life, r));
+		const point = splinePoint(spline, evalPreparedIntegral(this.#splineInt, r, 0, age, life));
 		if (point === null) {
 			return null;
 		}
@@ -1095,12 +1143,13 @@ export class ParticleSimulation {
 	): void {
 		const down = this.#down;
 		const { start, direction, speed, modifier, modifierAt, gravity, startSize, age, life } = motion;
-		const scale = modifierAt === null ? undefined : motion.modifierCurve;
+		const scaleR = birth.modifierR;
 		// a ring buffer's paused particle moves on past its lifetime with its curves at their end
 		const lived = livedAt(age, life);
 		// the game moves a particle by its whole velocity times the speed modifier: `scaledAge` is the modifier's
 		// integral over the age, which a constant velocity moves by, and `scaleNow` its value now
-		const scaledAge = scale === undefined ? age : integrateOverAge(scale, null, 0, age, life);
+		const scaledAge =
+			this.#scaleInt0 === null ? age : evalPreparedIntegral(this.#scaleInt0, scaleR, 0, age, life);
 		const scaleNow = modifierAt === null ? 1 : modifierAt(age);
 		let launch: number, launchSpeed: number, fall: number, fallSpeed: number;
 		if (drag === null) {
@@ -1108,9 +1157,9 @@ export class ParticleSimulation {
 			launchSpeed = speed * modifier * scaleNow;
 			// gravity builds up in the velocity the modifier scales, so the fall is ∫ g·τ·m(τ) dτ
 			fall =
-				scale === undefined
+				this.#scaleInt1 === null
 					? 0.5 * gravity * modifier * age * age
-					: gravity * integrateOverAge(scale, null, 1, age, life);
+					: gravity * evalPreparedIntegral(this.#scaleInt1, scaleR, 0, age, life);
 			fallSpeed = gravity * age * modifier * scaleNow;
 		} else {
 			// drag slows the velocity itself and the constant modifier (curves don't come with drag) scales the move
@@ -1132,10 +1181,11 @@ export class ParticleSimulation {
 			return;
 		}
 		const { linear, linearNow, turn, around } = free;
-		if (this.#hasLinear) {
-			linear[0] = travelled(velocity.linear[0], age, life, birth.linearR0, scale);
-			linear[1] = travelled(velocity.linear[1], age, life, birth.linearR1, scale);
-			linear[2] = travelled(velocity.linear[2], age, life, birth.linearR2, scale);
+		const linearInts = this.#linearInts;
+		if (linearInts !== null) {
+			linear[0] = evalPreparedIntegral(linearInts[0], birth.linearR0, scaleR, age, life);
+			linear[1] = evalPreparedIntegral(linearInts[1], birth.linearR1, scaleR, age, life);
+			linear[2] = evalPreparedIntegral(linearInts[2], birth.linearR2, scaleR, age, life);
 			linearNow[0] = evaluateMinMax(velocity.linear[0], lived, birth.linearR0) * scaleNow;
 			linearNow[1] = evaluateMinMax(velocity.linear[1], lived, birth.linearR1) * scaleNow;
 			linearNow[2] = evaluateMinMax(velocity.linear[2], lived, birth.linearR2) * scaleNow;
@@ -1150,9 +1200,10 @@ export class ParticleSimulation {
 			moving[1] += linearNow[1] * modifier;
 			moving[2] += linearNow[2] * modifier;
 		}
-		if (this.#hasRadial) {
+		const radialInt = this.#radialInt;
+		if (radialInt !== null) {
 			const radialSpeed = evaluateMinMax(velocity.radial, lived, birth.radialR) * modifier * scaleNow;
-			const radial = travelled(velocity.radial, age, life, birth.radialR, scale) * modifier;
+			const radial = evalPreparedIntegral(radialInt, birth.radialR, scaleR, age, life) * modifier;
 			position[0] += birth.outwardX * radial;
 			position[1] += birth.outwardY * radial;
 			position[2] += birth.outwardZ * radial;
@@ -1160,14 +1211,15 @@ export class ParticleSimulation {
 			moving[1] += birth.outwardY * radialSpeed;
 			moving[2] += birth.outwardZ * radialSpeed;
 		}
-		if (this.#hasOrbital) {
+		const orbitalInts = this.#orbitalInts;
+		if (orbitalInts !== null) {
 			// the orbit turns the particle about the offset by its rate's integral over the age; applied to the whole
 			// path, which is exact when the other motion runs along the orbit's axis (the crater rocks rise along
 			// theirs)
 			const offset = velocity.orbitalOffset;
-			turn[0] = travelled(velocity.orbital[0], age, life, birth.orbitalR0, scale) * modifier;
-			turn[1] = travelled(velocity.orbital[1], age, life, birth.orbitalR1, scale) * modifier;
-			turn[2] = travelled(velocity.orbital[2], age, life, birth.orbitalR2, scale) * modifier;
+			turn[0] = evalPreparedIntegral(orbitalInts[0], birth.orbitalR0, scaleR, age, life) * modifier;
+			turn[1] = evalPreparedIntegral(orbitalInts[1], birth.orbitalR1, scaleR, age, life) * modifier;
+			turn[2] = evalPreparedIntegral(orbitalInts[2], birth.orbitalR2, scaleR, age, life) * modifier;
 			around[0] = position[0] - offset[0];
 			around[1] = position[1] - offset[1];
 			around[2] = position[2] - offset[2];
@@ -1592,11 +1644,20 @@ export class ParticleSimulation {
 			out[at + ParticleFloat.size + 2] = birth.sizeZ * evaluateMinMax(over[2], l, birth.growth);
 		}
 
-		if (this.#hasSpin && info.rotationOverLifetime !== null) {
-			const spin = info.rotationOverLifetime;
-			const ax = this.#spinAxis[0] ? birth.rotX + travelled(spin[0], moved, life, birth.spinR0) : birth.rotX;
-			const ay = this.#spinAxis[1] ? birth.rotY + travelled(spin[1], moved, life, birth.spinR1) : birth.rotY;
-			const az = this.#spinAxis[2] ? birth.rotZ + travelled(spin[2], moved, life, birth.spinR2) : birth.rotZ;
+		const spinInts = this.#spinInts;
+		if (spinInts !== null) {
+			const ax =
+				spinInts[0] !== null
+					? birth.rotX + evalPreparedIntegral(spinInts[0], birth.spinR0, 0, moved, life)
+					: birth.rotX;
+			const ay =
+				spinInts[1] !== null
+					? birth.rotY + evalPreparedIntegral(spinInts[1], birth.spinR1, 0, moved, life)
+					: birth.rotY;
+			const az =
+				spinInts[2] !== null
+					? birth.rotZ + evalPreparedIntegral(spinInts[2], birth.spinR2, 0, moved, life)
+					: birth.rotZ;
 			const rotation = eulerQuaternionInto(placed.rotation, ax, ay, az);
 			out[at + ParticleFloat.rotation] = rotation[0];
 			out[at + ParticleFloat.rotation + 1] = rotation[1];
