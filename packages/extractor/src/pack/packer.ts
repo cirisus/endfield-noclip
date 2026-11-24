@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { encodeClothTable } from '@endfield-noclip/package-format/cloth';
 import { encodeGeometryTable } from '@endfield-noclip/package-format/geometry-table';
 import { encodeChains } from '@endfield-noclip/package-format/instances';
 import { encodeIrradianceTable } from '@endfield-noclip/package-format/irradiance';
@@ -40,6 +41,7 @@ import { addSceneStateControls, buildSceneStates, progressionControls } from './
 import { BlobDir } from './store/blob-file.ts';
 import { BlobStore } from './store/blob-store.ts';
 import { PackCache } from './store/pack-cache.ts';
+import { finishCloth, packCloth } from './tables/cloth.ts';
 import {
 	finishEnvironments,
 	gateEnvironments,
@@ -282,10 +284,15 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			material: (id) => content.materials.keyOf(id),
 			particles: (id) => content.particles.keyOf(id),
 		});
+		const cloth = await packCloth(context, store, entities.clothGroups, {
+			stem: layout.assets.stem(null),
+			zstdLevel: options.zstdLevel,
+		});
 		const instances = await packInstances({ store, layout, builder, debugLog }, content.collector, {
 			grid: scene.grid,
 			chainHashes: chainOrder.hashes,
 			volumes: new Map(water.table.volumes.map(({ entityId }, i) => [entityId, i])),
+			cloths: cloth.clothIndexByHash,
 		});
 		await debugLog.close();
 		content.collector.releaseRows();
@@ -298,6 +305,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			environments.textures.map((ref) => ({ ref, place: null })),
 			water.textures,
 			reflectionProbes.textures,
+			cloth.windNoiseTexture === null ? [] : [{ ref: cloth.windNoiseTexture, place: null }],
 		];
 		let conversion: AssetConversion | null = null;
 		let assetTables: Pick<AssetConversion, 'geometries' | 'materials' | 'textures' | 'extraTextureIds'>;
@@ -358,7 +366,9 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		timer.end('states');
 
 		// #region write
-		const [environmentTextureIds, waterTextureIds, reflectionProbeTextureIds] = assetTables.extraTextureIds;
+		const [environmentTextureIds, waterTextureIds, reflectionProbeTextureIds, clothTextureIds] =
+			assetTables.extraTextureIds;
+		const clothTable = finishCloth(cloth, clothTextureIds);
 		const environmentTable = finishEnvironments(environments, environmentTextureIds);
 		indexEnvironmentControls(environmentTable, states.controlIndex);
 		const waterTable = finishWater(water, waterTextureIds);
@@ -406,6 +416,9 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 					},
 				),
 			},
+			...(clothTable.cloths.length > 0
+				? [{ path: CORE_PATHS.cloth, data: binaryTable(encodeClothTable(clothTable)) }]
+				: []),
 		];
 		const written = await writePackage(
 			{ store, layout, dir: stage, previous },

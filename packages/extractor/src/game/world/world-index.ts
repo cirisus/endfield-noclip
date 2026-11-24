@@ -1,4 +1,9 @@
 import { type ChunkLight, readChunkLights } from '@endfield-noclip/formats/endfield/chunk-lights';
+import {
+	type ClothGroup,
+	hasClothGroups,
+	readClothGroups,
+} from '@endfield-noclip/formats/endfield/cloth-groups';
 import { readDynamicScene, type DynamicEntity } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	hasFoliageGrids,
@@ -96,6 +101,7 @@ export interface ChunkContent {
 	entities: IndexedEntity[];
 	lights: ChunkLight[];
 	foliage: FoliageGrid[];
+	clothGroups: ClothGroup[];
 	decalMaterials: Map<number, bigint>;
 	waterDecalMeshes: Map<number, bigint>;
 	hlodClusters: Map<number, HlodLink>;
@@ -518,6 +524,7 @@ export class WorldIndex {
 			}
 		}
 		const foliage = foliaged && streaming !== null ? readFoliageGrids(chunk.rows, streaming.raw) : [];
+		const clothGroups = hasClothGroups(chunk.rows) ? readClothGroups(chunk.rows) : [];
 		const decalMaterials = new Map<number, bigint>();
 		const waterDecalMeshes = new Map<number, bigint>();
 		const hlodClusters = new Map<number, HlodLink>();
@@ -549,6 +556,7 @@ export class WorldIndex {
 			entities,
 			lights,
 			foliage,
+			clothGroups,
 			decalMaterials,
 			waterDecalMeshes,
 			hlodClusters,

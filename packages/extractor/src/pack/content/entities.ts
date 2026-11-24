@@ -1,3 +1,5 @@
+import type { ClothGroup } from '@endfield-noclip/formats/endfield/cloth-groups';
+
 import type { Context } from '../../context.ts';
 import { poseDecorationModels } from '../../game/dynamic/decoration-animators.ts';
 import { type DynamicStructures, loadDynamicStructures } from '../../game/dynamic/dynamic-structures.ts';
@@ -35,6 +37,8 @@ export interface SceneEntities extends Pick<
 	chunkVolumes: SceneVolumes;
 	/** placed water surfaces and global bindings collected from the scene's Global chunk files */
 	sceneWater: SceneWater;
+	/** unique cloth simulation groups referenced by packed entities */
+	clothGroups: ClothGroup[];
 	/** environment volumes that placed prefabs carry */
 	placedVolumes: SceneEnvironmentVolume[];
 	/** Dijiang's cabin slots, with the group that shows their built cabin */
@@ -60,7 +64,7 @@ export const collectEntities = async (
 	cache: PackCache | null = null,
 ): Promise<SceneEntities> => {
 	const { scene, controls } = content;
-	const { hlodNameMatches, chunkVolumes, sceneWater } = await collectStaticChunks(
+	const { hlodNameMatches, chunkVolumes, sceneWater, clothGroups } = await collectStaticChunks(
 		context.world,
 		content,
 		cache,
@@ -111,6 +115,7 @@ export const collectEntities = async (
 		hlodNameMatches,
 		chunkVolumes,
 		sceneWater,
+		clothGroups,
 		placedVolumes,
 		cabinRooms: cabinRooms.map(({ control, levelTag, position, roomType }) => ({
 			group: controls.group(levelTag, controls.condition({ alternatives: [[{ control, mask: 2 }]] })),

@@ -29,6 +29,8 @@ export interface InstanceInput {
 	 * rows of one block that share a path object share its stored path
 	 */
 	ride?: RowPath;
+	/** `u32` cloth hash (InitChunkData component 60) for GPU-simulated cloth entities; absent on other rows */
+	clothHash?: number;
 }
 
 /**
@@ -56,6 +58,8 @@ export class InstanceBlockBuilder {
 	readonly #floatsOn = new Map<number, string>();
 	/** by insertion index, the riding rows' paths */
 	readonly #rides = new Map<number, RowPath>();
+	/** by insertion index, the simulated cloth rows' cloth hashes */
+	readonly #cloths = new Map<number, number>();
 
 	/** number of rows */
 	get length(): number {
@@ -94,6 +98,9 @@ export class InstanceBlockBuilder {
 		if (row.ride !== undefined) {
 			this.#rides.set(this.#chains.length - 1, row.ride);
 		}
+		if (row.clothHash !== undefined) {
+			this.#cloths.set(this.#chains.length - 1, row.clothHash);
+		}
 		return this.#chains.length - 1;
 	}
 
@@ -111,6 +118,7 @@ export class InstanceBlockBuilder {
 		origin: [x: number, y: number, z: number],
 		chainHashes: BigUint64Array,
 		volumes: ReadonlyMap<string, number>,
+		cloths: ReadonlyMap<number, number> = new Map(),
 	): { block: InstanceBlock; order: Uint32Array } {
 		const count = this.#chains.length;
 		const hashOf = (i: number): bigint => chainHashes[this.#chains[i]];
@@ -137,6 +145,8 @@ export class InstanceBlockBuilder {
 		const floaterVolumes: number[] = [];
 		const rideRows: number[] = [];
 		const ridePaths: number[] = [];
+		const clothRows: number[] = [];
+		const clothIndices: number[] = [];
 		/** the block's paths, in the order its rows first ride them */
 		const paths = new Map<RowPath, number>();
 		let decals = 0;
@@ -195,6 +205,12 @@ export class InstanceBlockBuilder {
 				rideRows.push(out);
 				ridePaths.push(paths.getOrInsertComputed(ride, () => paths.size));
 			}
+			const clothHash = this.#cloths.get(i);
+			const clothIndex = clothHash === undefined ? undefined : cloths.get(clothHash);
+			if (clothIndex !== undefined) {
+				clothRows.push(out);
+				clothIndices.push(clothIndex);
+			}
 		}
 		return {
 			block: {
@@ -209,6 +225,9 @@ export class InstanceBlockBuilder {
 				floaters: { rows: Uint32Array.from(floaterRows), values: Uint32Array.from(floaterVolumes) },
 				rides: { rows: Uint32Array.from(rideRows), values: Uint32Array.from(ridePaths) },
 				paths: [...paths.keys()],
+				...(clothRows.length > 0
+					? { cloths: { rows: Uint32Array.from(clothRows), values: Uint32Array.from(clothIndices) } }
+					: {}),
 			},
 			order,
 		};

@@ -1,4 +1,5 @@
 import type { ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
+import type { ClothGroup } from '@endfield-noclip/formats/endfield/cloth-groups';
 import type { RendererDraw, WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import { levelTagOf } from '@endfield-noclip/formats/endfield/level-partition';
 import type { MonoObject } from '@endfield-noclip/formats/endfield/mono-objects';
@@ -94,6 +95,7 @@ interface StaticChunksMemo {
 	hlodNameMatches: number;
 	chunkVolumes: SceneVolumes;
 	sceneWater: SceneWater;
+	clothGroups: ClothGroup[];
 	counts: Record<string, number>;
 	skipped: SkippedEntityRow[];
 	seen: Uint32Array;
@@ -158,6 +160,8 @@ export interface StaticChunkSummary {
 	chunkVolumes: SceneVolumes;
 	/** placed water surfaces and global config bindings of the scene's Global chunks */
 	sceneWater: SceneWater;
+	/** unique cloth simulation groups whose cloths are referenced by packed entities */
+	clothGroups: ClothGroup[];
 }
 
 /** replays a cached {@link StaticChunksMemo} into an empty {@link PackContent} */
@@ -286,6 +290,7 @@ const replayStaticChunks = (content: PackContent, memo: StaticChunksMemo): Stati
 		hlodNameMatches: memo.hlodNameMatches,
 		chunkVolumes: memo.chunkVolumes,
 		sceneWater: memo.sceneWater,
+		clothGroups: memo.clothGroups,
 	};
 };
 
@@ -354,6 +359,8 @@ export const collectStaticChunks = async (
 		surfaces: readonly WaterSurface[];
 		globals: readonly WaterGlobalBinding[];
 	}[] = [];
+	const allClothGroups = new Map<number, ClothGroup>();
+	const usedClothHashes = new Set<number>();
 
 	const addHlod = (cluster: HlodCluster & { visibility: Visibility | null }, key: TileKey): void => {
 		const [x, , z] = cluster.row.bounds.center;
@@ -566,9 +573,9 @@ export const collectStaticChunks = async (
 					continue;
 				}
 				content.count('packed');
-				// drawn as its mesh stands: the simulation isn't run (docs/status.md)
 				if (entity.clothHash !== null) {
 					content.count('clothSimulated');
+					usedClothHashes.add(entity.clothHash);
 				}
 				let draws: ChainDraw[] = [];
 				let drawSpecs: CachedDrawSpec[] = [];
@@ -598,6 +605,9 @@ export const collectStaticChunks = async (
 				if (entity.rotator !== null) {
 					row.spin = entity.rotator;
 				}
+				if (entity.clothHash !== null) {
+					row.clothHash = entity.clothHash;
+				}
 				place(
 					entity.id,
 					{
@@ -612,6 +622,11 @@ export const collectStaticChunks = async (
 					file,
 				);
 				collector.noteOwner(entity.levelTag, rowReach(row));
+			}
+			for (const group of read.clothGroups) {
+				if (!allClothGroups.has(group.groupHash)) {
+					allClothGroups.set(group.groupHash, group);
+				}
 			}
 			for (const foliage of read.foliage) {
 				if (repeat(foliage.id)) {
@@ -696,11 +711,15 @@ export const collectStaticChunks = async (
 	waterFiles.sort(byFileName);
 	const chunkVolumes = collectSceneVolumes(volumeFiles);
 	const sceneWater = collectSceneWater(waterFiles);
+	const clothGroups = [...allClothGroups.values()].filter((group) =>
+		group.cloths.some((cloth) => usedClothHashes.has(cloth.hash)),
+	);
 	if (memoKey !== null && cache !== null) {
 		await cache.rememberValue(memoKey, {
 			hlodNameMatches,
 			chunkVolumes,
 			sceneWater,
+			clothGroups,
 			counts: { ...content.counts },
 			skipped: content.skipped.rows(),
 			seen: Uint32Array.from(seen),
@@ -712,7 +731,7 @@ export const collectStaticChunks = async (
 			areas: [...requiredAreas],
 		} satisfies StaticChunksMemo);
 	}
-	return { hlodNameMatches, chunkVolumes, sceneWater };
+	return { hlodNameMatches, chunkVolumes, sceneWater, clothGroups };
 };
 
 const byFileName = (a: { file: ChunkFile }, b: { file: ChunkFile }): number =>
