@@ -36,8 +36,7 @@ import {
 
 import { mapDefined } from '@mary-ext/array-fns';
 
-import { DEFAULT_OUT } from '../cli-args.ts';
-import type { Keys } from '../config.ts';
+import { DEFAULT_OUT, type Keys } from '../config.ts';
 import { ignoreMissing } from '../errors.ts';
 
 import { type Vfs, type VfsFile, VfsGroup } from './vfs.ts';

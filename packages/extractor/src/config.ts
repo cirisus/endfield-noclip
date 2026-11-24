@@ -40,6 +40,9 @@ export interface Keys {
 
 export const DEFAULT_CONFIG_PATH = 'endfield.local.json';
 
+/** the repository's gitignored output directory, where packages go by default */
+export const DEFAULT_OUT = new URL('../../../out/', import.meta.url);
+
 /**
  * @param path config file; defaults to `endfield.local.json` in the working directory
  * @returns the parsed config

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_OUT } from '../cli-args.ts';
+import { DEFAULT_OUT } from '../config.ts';
 import type { Context } from '../context.ts';
 import type { SceneEnvironmentVolume } from '../game/environment.ts';
 
