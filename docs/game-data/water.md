@@ -361,9 +361,12 @@ transforms it into box-local space:
   raft wake has `_Bias = 2.3`).
 - **colour**: `_BaseColorMap` (UVs scaled by `_ST` × placement tiling, scrolled by
   `_BaseColorSpeed.xy` × placement speed). `a' = _UseAChannelAsAlpha ? a : 1`;
-  `colour = (_BaseColor + rgb · a' · _BaseColorTint) · mask` (`_USE_MASK`: UVs rotated about 0.5 by
-  `_MaskTexUVRotateMatrix`, `_ST`, scrolled; alpha applied if `_UseMaskTexAsAlpha`). final output
-  multiplies by `(1 + a')`, edge fade, `_OverallOpacity`, and placement opacity/brightness/tint.
+  `colour = (_BaseColor + rgb · a' · _BaseColorTint [+ rgb₂ · a₂' · _BaseColorTint2]) · mask`
+  (`_BLEND_BASECOLOR2` adds a second base map sampled at `_BaseColorSwitchUV2`, mip bias
+  `floor(_Bias2)`, adding `a₂'` to the `(1 + a')` cover factor; `_USE_MASK`: UVs rotated about 0.5
+  by `_MaskTexUVRotateMatrix`, `_ST`, scrolled; alpha applied if `_UseMaskTexAsAlpha`). final output
+  multiplies by `(1 + a' [+ a₂'])`, edge fade, `_OverallOpacity`, and placement
+  opacity/brightness/tint.
 - **dissolve (`_USE_DISSOLVE`)**: `_DissolveTex.r` at mip `floor(_Bias)` (scrolled, then `_ST`)
   minus `_DissolveScheduleOffset · 2.02 − 1.01` scales colour/alpha and adds
   `_DissolveEmissiveColor` at the edge (same as VFXBaseV2).

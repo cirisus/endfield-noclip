@@ -242,10 +242,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **foam boxes (`HGRP/WaterDecal`)** ([viewer](viewer/water.md#foam-boxes)):
   - missing: `_BLEND_DISPLACEMENT`, prefab `HGWaterDecalRenderer` values (neutral on map02), and
     unnamed distortion mip bias.
-  - unsupported: `_BLEND_BASECOLOR2` (11 map02 materials), keywords beyond `_USE_DISTURB`,
-    `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`, `_USE_BUBBLE`,
-    `_USE_TWO_LAYER_FLOATING_MAP`, `_ZTest` outside 4/5/8, and erosion combined with
-    dissolve/distortion/mask/bubble/floating.
+  - unsupported: keywords beyond `_BLEND_BASECOLOR2`, `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`,
+    `_USE_DISSOLVE`, `_USE_WATER_EROSION`, `_USE_BUBBLE`, `_USE_TWO_LAYER_FLOATING_MAP`, `_ZTest`
+    outside 4/5/8, erosion combined with dissolve/distortion/mask/bubble/floating/base2, and
+    `_BLEND_BASECOLOR2` with `_USE_BUBBLE` (0 unsupported `HGRP/WaterDecal` materials on map02).
   - unverified in game: Wuling falls foam, Wuling City red tide
     ([erosion](game-data/water.md#water-erosion), clamped samplers approximated), and non-acid fluid
     types.

@@ -7,7 +7,14 @@ import { materialLooks } from '../material-looks.ts';
 import { described } from '../test-materials.ts';
 
 import { EffectKind, EffectRow } from './effect-look.ts';
-import { BUBBLE_SLOT, EROSION_SLOTS, FLOATING_SLOTS, WaterFoamFlags, WaterFoamRow } from './water-foam.ts';
+import {
+	BASE2_SLOT,
+	BUBBLE_SLOT,
+	EROSION_SLOTS,
+	FLOATING_SLOTS,
+	WaterFoamFlags,
+	WaterFoamRow,
+} from './water-foam.ts';
 
 const texture = (id: number, overrides: Partial<EffectTexture> = {}): EffectTexture => ({
 	texture: id,
@@ -48,6 +55,7 @@ test('a water foam box draws into the water’s foam, by the depth test its mate
 		erosion: null,
 		bubble: null,
 		floating: null,
+		base2: null,
 	};
 	const [front, behind, through] = materialLooks({
 		entries: [
@@ -105,6 +113,7 @@ test('a red tide’s erosion takes the slots after the base colour map, with its
 		dissolve: null,
 		bubble: null,
 		floating: null,
+		base2: null,
 		erosion: {
 			flow: texture(3, { scale: [15, 1.29], offset: [-11.75, 0] }),
 			flowNoise: texture(4),
@@ -164,6 +173,7 @@ test('acid bubbles and floating layers take slots 4–6 and pack their rows', ()
 			randomFactor2: 0.22,
 			peakTime: 0.028,
 		},
+		base2: null,
 		floating: {
 			textures: [texture(4, { scale: [4.39, 4.69] }), texture(5, { scale: [13.28, 16.87] })],
 			source: 2,
@@ -202,5 +212,33 @@ test('acid bubbles and floating layers take slots 4–6 and pack their rows', ()
 	assert.deepEqual(
 		[...look.params.subarray(WaterFoamRow.floatingColorDark, WaterFoamRow.floatingColorDark + 4)],
 		[0, 1, 0.87, 0].map(Math.fround),
+	);
+
+	const [withBase2] = materialLooks({
+		entries: [
+			described({
+				...base,
+				bubble: null,
+				floating: null,
+				base2: {
+					texture: texture(6, { scale: [2, 3], scroll: [0.1, -0.2] }),
+					source: 2,
+					tint: [1, 2, 3],
+					baseAlpha: 0.5,
+					disturbUse: 0,
+					mipBias: -1,
+				},
+			}),
+		],
+	});
+	assert.equal(withBase2.textures[BASE2_SLOT], 6);
+	assert.equal(withBase2.params[WaterFoamRow.tint + 3], WaterFoamFlags.Disturb | WaterFoamFlags.Base2);
+	assert.deepEqual(
+		[...withBase2.params.subarray(WaterFoamRow.base2Tint, WaterFoamRow.base2Tint + 4)],
+		[1, 2, 3, 0.5].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...withBase2.params.subarray(WaterFoamRow.base2, WaterFoamRow.base2 + 4)],
+		[2, 0, -1, 0].map(Math.fround),
 	);
 });

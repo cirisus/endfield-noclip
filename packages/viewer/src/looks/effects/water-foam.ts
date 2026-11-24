@@ -46,6 +46,10 @@ export const WaterFoamRow = {
 	floatingColor: 152,
 	/** `_USE_TWO_LAYER_FLOATING_MAP`: second layer colour rgb (HDR), 0 */
 	floatingColorDark: 156,
+	/** `_BLEND_BASECOLOR2`: `_BaseColorTint2` rgb (HDR), `_UseAChannelAsAlpha2` */
+	base2Tint: 160,
+	/** `_BLEND_BASECOLOR2`: UV source, `_MainTexUseDisturb2`, `floor(_Bias2)`, 0 */
+	base2: 164,
 } as const;
 
 /**
@@ -54,8 +58,11 @@ export const WaterFoamRow = {
  */
 export const EROSION_SLOTS = { flow: 1, flowNoise: 2, gradient: 3, layers: 4 } as const;
 
-/** the slot of `_AcidTexture` (`_USE_BUBBLE`), past slots 0–3 */
+/** the slot of `_AcidTexture` (`_USE_BUBBLE`) or `_BaseColorMap2` (`_BLEND_BASECOLOR2`), past slots 0–3 */
 export const BUBBLE_SLOT = 4;
+
+/** the slot of `_BaseColorMap2` (`_BLEND_BASECOLOR2`), sharing slot 4 with {@link BUBBLE_SLOT} */
+export const BASE2_SLOT = 4;
 
 /** the slots of `_ParallaxNoiseMap0` and `_ParallaxNoiseMap1` (`_USE_TWO_LAYER_FLOATING_MAP`), past slot 4 */
 export const FLOATING_SLOTS = [5, 6] as const;
@@ -72,6 +79,7 @@ export const WaterFoamFlags = {
 	Bubble: 1 << 7,
 	Floating0: 1 << 8,
 	Floating1: 1 << 9,
+	Base2: 1 << 10,
 } as const;
 
 /**
@@ -83,7 +91,7 @@ export const WaterFoamFlags = {
 export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 	const look = emptyEffect();
 	const params = look.params;
-	const { textures, dissolve, erosion, bubble, floating } = foam;
+	const { textures, dissolve, erosion, bubble, floating, base2 } = foam;
 	[textures.base, textures.disturb, textures.mask, dissolve?.texture ?? null].forEach((texture, i) => {
 		if (texture !== null) {
 			setSlot(look, i, texture, EffectRole.Main);
@@ -129,6 +137,11 @@ export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 		params.set([...floating.color, floating.useDisturb], WaterFoamRow.floatingColor);
 		params.set([...floating.colorDark, 0], WaterFoamRow.floatingColorDark);
 	}
+	if (base2 !== null) {
+		setSlot(look, BASE2_SLOT, base2.texture, EffectRole.Main);
+		params.set([...base2.tint, base2.baseAlpha], WaterFoamRow.base2Tint);
+		params.set([base2.source, base2.disturbUse, base2.mipBias, 0], WaterFoamRow.base2);
+	}
 	const flags =
 		(textures.disturb === null ? 0 : WaterFoamFlags.Disturb) |
 		(textures.mask === null ? 0 : WaterFoamFlags.Mask) |
@@ -138,7 +151,8 @@ export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 		(foam.soft === null ? 0 : WaterFoamFlags.Soft) |
 		(erosion === null ? 0 : WaterFoamFlags.Erosion) |
 		(bubble === null ? 0 : WaterFoamFlags.Bubble) |
-		floatingFlags;
+		floatingFlags |
+		(base2 === null ? 0 : WaterFoamFlags.Base2);
 	params.set([...foam.baseColor, foam.opacity], WaterFoamRow.base);
 	params.set([...foam.tint, flags], WaterFoamRow.tint);
 	params.set([foam.disturbBias, ...foam.disturb, foam.blendMode], WaterFoamRow.disturb);

@@ -1399,6 +1399,8 @@ const WF_BUBBLE_COLOR = 36u;
 const WF_FLOATING = 37u;
 const WF_FLOATING_COLOR = 38u;
 const WF_FLOATING_COLOR_DARK = 39u;
+const WF_BASE2_TINT = 40u;
+const WF_BASE2 = 41u;
 
 // `WaterFoamFlags`
 const WF_DISTURB_ON = 1u;
@@ -1411,13 +1413,15 @@ const WF_EROSION_ON = 64u;
 const WF_BUBBLE_ON = 128u;
 const WF_FLOATING0_ON = 256u;
 const WF_FLOATING1_ON = 512u;
+const WF_BASE2_ON = 1024u;
 
-// `EROSION_SLOTS`, `BUBBLE_SLOT` and `FLOATING_SLOTS` in water-foam.ts
+// `EROSION_SLOTS`, `BUBBLE_SLOT`, `BASE2_SLOT` and `FLOATING_SLOTS` in water-foam.ts
 const WF_SLOT_FLOW = 1u;
 const WF_SLOT_FLOW_NOISE = 2u;
 const WF_SLOT_GRADIENT = 3u;
 const WF_SLOT_LAYERS = 4u;
 const WF_SLOT_BUBBLE = 4u;
+const WF_SLOT_BASE2 = 4u;
 const WF_SLOT_FLOATING0 = 5u;
 const WF_SLOT_FLOATING1 = 6u;
 
@@ -1558,6 +1562,20 @@ fn fs_water_foam(in: EffectOut) -> @location(0) vec4f {
 	let base_alpha = mix(1.0, base.a, use_disturb.w);
 	var color = fx_row(id, FX_TINT).rgb + base.rgb * base_alpha * tint.rgb;
 	var cover = 1.0 + base_alpha;
+	if ((flags & WF_BASE2_ON) != 0u) {
+		let b2 = fx_row(id, WF_BASE2);
+		let b2_tint = fx_row(id, WF_BASE2_TINT);
+		let st = fx_row(id, FX_UV + WF_SLOT_BASE2);
+		let b2_bias = bias * exp2(b2.z);
+		let b2_src = wf_pick(b2.x, box, polar, world, mesh);
+		let b2_dx = wf_pick(b2.x, box_dx, polar_dx, world_dx, mesh_dx) * b2_bias;
+		let b2_dy = wf_pick(b2.x, box_dy, polar_dy, world_dy, mesh_dy) * b2_bias;
+		let uv = (b2_src + offset * b2.y) * st.xy + st.zw + fx_row(id, FX_ANIM + WF_SLOT_BASE2).xy * t;
+		let sample2 = fx_sample(WF_SLOT_BASE2, uv, b2_dx * st.xy, b2_dy * st.xy);
+		let alpha2 = mix(1.0, sample2.a, b2_tint.w);
+		color += sample2.rgb * alpha2 * b2_tint.rgb;
+		cover += alpha2;
+	}
 	// the dissolve, read at a fixed mip level as the game does: scrolled, then its `_ST`
 	if ((flags & WF_DISSOLVE_ON) != 0u) {
 		let st = fx_row(id, FX_UV + 3u);

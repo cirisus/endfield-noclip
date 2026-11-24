@@ -1707,6 +1707,24 @@ export interface WaterFoamSurface {
 	bubble: WaterBubble | null;
 	/** `_USE_TWO_LAYER_FLOATING_MAP`, two parallax-offset floating noise layers; `null` without */
 	floating: WaterFloatingLayers | null;
+	/** `_BLEND_BASECOLOR2`, second additive base colour map; `null` without */
+	base2: WaterBase2 | null;
+}
+
+/** a WaterDecal's `_BLEND_BASECOLOR2` second base colour layer */
+export interface WaterBase2 {
+	/** `_BaseColorMap2`, scrolled by `_BaseColorSpeed2` */
+	texture: EffectTexture;
+	/** UV source (`_BaseColorSwitchUV2`) */
+	source: WaterFoamSource;
+	/** `_BaseColorTint2` `[HDR]`, as stored */
+	tint: Rgb;
+	/** `_UseAChannelAsAlpha2`, weighing the layer and adding to cover */
+	baseAlpha: Weight;
+	/** `_MainTexUseDisturb2`, share of the distortion applied to its UVs */
+	disturbUse: number;
+	/** `floor(_Bias2)` */
+	mipBias: number;
 }
 
 /** a WaterDecal's `_USE_BUBBLE` animated acid bubbles */

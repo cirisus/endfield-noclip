@@ -132,10 +132,10 @@ water pass when any are in frame:
   values generate a material variant (`placedWaterFoam` in
   [`water-foam.ts`](../../packages/extractor/src/game/materials/effects/water-foam.ts)) applying
   tiling to base UVs, speed to scroll, and opacity/brightness/tint to output.
-- **unsupported and divergences**: keywords beyond `_BLEND_BASECOLOR`, `_BLEND_DISPLACEMENT`,
-  `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`,
-  `_USE_BUBBLE`, `_USE_TWO_LAYER_FLOATING_MAP`, or `_ZTest` other than 4, 5, 8 show as
-  [unsupported](materials.md#unsupported-materials). displacement pass is omitted
+- **unsupported and divergences**: keywords beyond `_BLEND_BASECOLOR`, `_BLEND_BASECOLOR2`,
+  `_BLEND_DISPLACEMENT`, `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`,
+  `_USE_WATER_EROSION`, `_USE_BUBBLE`, `_USE_TWO_LAYER_FLOATING_MAP`, or `_ZTest` other than 4, 5, 8
+  show as [unsupported](materials.md#unsupported-materials). displacement pass is omitted
   (`_BLEND_DISPLACEMENT` draws foam only; value read but unused), `_USE_TWO_LAYER_FLOATING_MAP` uses
   an upward geometric normal `(0, 1, 0)` instead of sampling `normalRoughnessWithWater`, prefab
   `HGWaterDecalRenderer` values are not packed (all map02 prefabs are neutral), soft blend uses the

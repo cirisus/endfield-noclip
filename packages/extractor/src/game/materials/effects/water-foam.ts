@@ -2,6 +2,7 @@ import type { WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-da
 import type {
 	EffectTexture,
 	UnsupportedSurface,
+	WaterBase2,
 	WaterBubble,
 	WaterErosion,
 	WaterErosionLayer,
@@ -63,12 +64,25 @@ export const placedWaterFoam = (foam: WaterFoamSurface, placement: WaterDecal): 
 						color: tintRgb(foam.floating.color, tint),
 						colorDark: tintRgb(foam.floating.colorDark, tint),
 					},
+		base2:
+			foam.base2 === null
+				? null
+				: {
+						...foam.base2,
+						texture: {
+							...foam.base2.texture,
+							scale: [foam.base2.texture.scale[0] * tiling, foam.base2.texture.scale[1] * tiling],
+							scroll: [foam.base2.texture.scroll[0] * speed, foam.base2.texture.scroll[1] * speed],
+						},
+						tint: tintRgb(foam.base2.tint, tint),
+					},
 	};
 };
 
 /** WaterDecal keywords that are drawn; `_BLEND_BASECOLOR` must be among them */
 const WATER_FOAM_KEYWORDS = new Set([
 	'_BLEND_BASECOLOR',
+	'_BLEND_BASECOLOR2',
 	// the displacement pass raises the water's surface under the box; the foam is drawn without it
 	'_BLEND_DISPLACEMENT',
 	'_USE_DISTURB',
@@ -112,8 +126,8 @@ const erosionOf = (reader: MaterialReader): WaterErosion | null | UnsupportedSur
 	if (has('_USE_DISSOLVE')) {
 		return unsupported('_USE_WATER_EROSION with a dissolve');
 	}
-	if (has('_USE_BUBBLE') || has('_USE_TWO_LAYER_FLOATING_MAP')) {
-		return unsupported('_USE_WATER_EROSION with bubble or floating layers');
+	if (has('_USE_BUBBLE') || has('_USE_TWO_LAYER_FLOATING_MAP') || has('_BLEND_BASECOLOR2')) {
+		return unsupported('_USE_WATER_EROSION with bubble, floating, or second base colour');
 	}
 	if (has('_USE_DISTURB') && disturbIntensityOf(reader, 1).some((v) => v !== 0)) {
 		return unsupported('_USE_WATER_EROSION with a distortion');
@@ -177,6 +191,25 @@ const floatingOf = (reader: MaterialReader): WaterFloatingLayers | null => {
 	};
 };
 
+const base2Of = (reader: MaterialReader): WaterBase2 | null | UnsupportedSurface => {
+	const { float, has } = reader;
+	if (!has('_BLEND_BASECOLOR2')) {
+		return null;
+	}
+	if (has('_USE_BUBBLE')) {
+		return unsupported('_BLEND_BASECOLOR2 with _USE_BUBBLE');
+	}
+	const tint = reader.colorOrVector('_BaseColorTint2') ?? [1, 1, 1, 1];
+	return {
+		texture: effectTexture(reader.slot('_BaseColorMap2') ?? UNSET_WHITE, speedOf(reader, '_BaseColorSpeed2')),
+		source: float('_BaseColorSwitchUV2', 0),
+		tint: [tint[0], tint[1], tint[2]],
+		baseAlpha: float('_UseAChannelAsAlpha2', 1),
+		disturbUse: float('_MainTexUseDisturb2', 1),
+		mipBias: Math.floor(float('_Bias2', 0)),
+	};
+};
+
 /**
  * `HGRP/WaterDecal`: foam projected onto the water surface inside a box, written into the water's foam colour
  * (`docs/game-data/water.md#waterdecal`)
@@ -229,6 +262,10 @@ export const describeWaterFoam = (reader: MaterialReader): WaterFoamSurface | Un
 	if (isUnsupported(erosion)) {
 		return erosion;
 	}
+	const base2 = base2Of(reader);
+	if (isUnsupported(base2)) {
+		return base2;
+	}
 	const base = color('_BaseColor') ?? [0, 0, 0, 0];
 	const tint = color('_BaseColorTint') ?? [1, 1, 1, 1];
 	return {
@@ -271,5 +308,6 @@ export const describeWaterFoam = (reader: MaterialReader): WaterFoamSurface | Un
 		erosion,
 		bubble: bubbleOf(reader),
 		floating: floatingOf(reader),
+		base2,
 	};
 };

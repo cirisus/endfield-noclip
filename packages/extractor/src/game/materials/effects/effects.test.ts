@@ -2233,11 +2233,59 @@ describe('WaterDecal', () => {
 		);
 	});
 
+	it('extracts _BLEND_BASECOLOR2 second base colour layer and folds placement tiling/speed/tint', () => {
+		const foam = ofKind(
+			describeMaterial(
+				material({
+					keywords: ['_BLEND_BASECOLOR', '_BLEND_BASECOLOR2', '_USE_DISTURB'],
+					slots: {
+						_BaseColorMap: slot(1),
+						_BaseColorMap2: slot(2, [2, 3]),
+						_DisturbTex1: slot(3),
+					},
+					floats: {
+						_BaseColorSwitchUV2: 2,
+						_MainTexUseDisturb2: 0,
+						_UseAChannelAsAlpha2: 0.5,
+						_Bias2: -1.2,
+					},
+					colors: { _BaseColorTint2: [2, 4, 6, 1] },
+					vectors: { _BaseColorSpeed2: [0.1, -0.2, 0, 0] },
+				}),
+				waterDecal,
+			),
+			'waterFoam',
+		);
+		assert.deepEqual(foam.base2, {
+			texture: {
+				texture: 2,
+				scale: [2, 3],
+				offset: [0, 0],
+				scroll: [0.1, -0.2],
+				rotation: [1, 0],
+				customScroll: [0, 0],
+			},
+			source: 2,
+			tint: [2, 4, 6],
+			baseAlpha: 0.5,
+			disturbUse: 0,
+			mipBias: -2,
+		});
+		const placed = placedWaterFoam(foam, {
+			params: [2, 3, 1, 1],
+			displacementTint: [1, 0.5, 0.25, 1],
+		});
+		assert.deepEqual(placed.base2?.texture.scale, [4, 6]);
+		assert.deepEqual(placed.base2?.texture.scroll, [0.1 * 3, -0.2 * 3]);
+		assert.deepEqual(placed.base2?.tint, [1, 1, 6]);
+	});
+
 	it('leaves variants without the base colour blend, or with other keywords, unsupported', () => {
 		for (const keywords of [
 			['_USE_DISTURB'],
-			['_BLEND_BASECOLOR', '_BLEND_BASECOLOR2'],
+			['_BLEND_BASECOLOR', '_USE_SEQUENCE_FRAME'],
 			['_BLEND_BASECOLOR', '_USE_WATER_EROSION', '_USE_BUBBLE'],
+			['_BLEND_BASECOLOR', '_BLEND_BASECOLOR2', '_USE_BUBBLE'],
 		]) {
 			const surface = describeMaterial(material({ keywords, slots: { _BaseColorMap: slot(1) } }), waterDecal);
 			assert.equal(surface.kind, 'unsupported');
