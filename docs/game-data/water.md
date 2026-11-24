@@ -205,11 +205,15 @@ map02 (~60 volumes, ~⅕ script-moved), Suiming, one race, three dungeons, and f
 3. unlisted or null entries fall back to `waterSurfaceMissingFallback` (water prefab on map02).
 
 each surface prefab holds a `MeshFilter`, `MeshCollider`, and `HGWaterRendererV2` (proxy render type
-1, wetness offset 0.25 m, standard `WaterConfig`). mesh comes from `meshPathHash`
+1, wetness offset 0.25 m, standard `WaterConfig`). when `decalPrefab` is set (`WaterVolumeDecal_*`:
+acid, dirty, foliage, xiranite, hyper_xiranite), `WaterVolumeManager.GetMesh` instantiates it as a
+child of the surface at `(0, 0.01, 0)` (`m_waterDecalPositionOffset`), assigns the volume's own
+surface mesh to its `MeshFilter`, and renders it through `HGRP/WaterDecal` (neutral
+`HGWaterDecalRenderer` values, world-XZ UVs). mesh comes from `meshPathHash`
 (`…/Gameplay/Water/<itemType>#<volumeId>_WaterSurface.asset`, ~half of map02 volumes) or runtime
 `(x, z)` triangulation of `points`. `isUseLunaConfig` swaps in `lunaConfigPathHash` (most map02
-volumes leave it off). non-default flow speed/direction allocates a dedicated config slot; default
-shares the type's slot.
+volumes leave it off; the decal still comes from the liquid's `waterSurfaceSettingDict` entry).
+non-default flow speed/direction allocates a dedicated config slot; default shares the type's slot.
 
 **script actions**:
 
@@ -363,12 +367,23 @@ transforms it into box-local space:
 - **dissolve (`_USE_DISSOLVE`)**: `_DissolveTex.r` at mip `floor(_Bias)` (scrolled, then `_ST`)
   minus `_DissolveScheduleOffset · 2.02 − 1.01` scales colour/alpha and adds
   `_DissolveEmissiveColor` at the edge (same as VFXBaseV2).
+- **bubbles (`_USE_BUBBLE`)**: used by `M_waterdecal_gameplay_acid`. samples `_AcidTexture` at
+  `world.xz · 0.1 · _ST.xy` (mip bias 0):
+  `phase = fract(t · _BubbleSpeed + _BubbleRandomFactor · g + _BubbleRandomFactor2 · r)`, triangle
+  pulse peaking at `_BubblePeakTime`, adding `_BubbleColor · pulse · _BubbleHeightScale · r · 10` to
+  the foam colour before multiplying by `(1 + a')` and opacities.
+- **floating layers (`_USE_TWO_LAYER_FLOATING_MAP`)**: used by `M_waterdecal_gameplay_foliage` and
+  `M_waterdecal_gameplay_xiranite`. shifts two cycle-offset phases
+  (`t · 0.05 · _ParallaxStrengthSpeed`, second offset by `_ParallaxLayerOffset`) by view parallax
+  along the water normal and adds
+  `(_ParallaxNoiseMap0 · (0.5 − |0.5 − f₀|) · _ParallaxColor + _ParallaxNoiseMap1 · (0.5 − |0.5 − f₁|) · _ParallaxColorDark) · saturate(V·N)`.
 - **fades**: `_UseEdgeFade`: `saturate(1 − |abs(uv − 0.5) + _EdgeFadeRange.xy| · √2)` (0 at
   corners). `_USE_SOFTBLEND`: `saturate((saturate(water − face) + _SoftBias) / _SoftDistance)`
   (reversed-Z device depths). `_MeshType != 0` clips outside the box.
 - **render state**: fixed premultiplied blend `(One, OneMinusSrcAlpha)` into RGB only; alpha
-  `(1 + a') · (1 − _BlendMode)` (all map02 materials set `_BlendMode = 1`, additive foam). stencil
-  `Equal 1` on bit 0 (set by water passes). culled by `_CullMode`, depth-tested by `_ZTest` against
+  `(1 + a') · (1 − _BlendMode)` (map02 waterfall boxes set `_BlendMode = 1`, additive foam; volume
+  decals like acid/xiranite set `_BlendMode = 0`, replacing underlying foam). stencil `Equal 1` on
+  bit 0 (set by water passes). culled by `_CullMode`, depth-tested by `_ZTest` against
   `depthWithWater` without writing depth (`4` LessEqual for most; `5` Greater + front-cull for
   `M_fx_map02_lv001_waterfall_2105_05`, covering all water in front of back faces; `8` Always for
   bamboo raft wake `M_fx_interactive_bambooraft_waterdecal_802`).
@@ -417,5 +432,5 @@ across `u ≈ 0.78–0.85`.
   depletable pools, whether an empty pool's surface still draws, and confirming the inferred
   1-minute `timer` step.
 - [WaterDecal](#waterproxy-and-waterdecal): unnamed distortion texture mip-bias material parameter.
-- visual checks against in-game shots: Wuling falls grey-teal vs white, Test Area sewage/acid
-  opacity, Suiming lily pad depth at stage 1, and overlapping volume + placed surface draws.
+- visual checks against in-game shots: Wuling falls grey-teal vs white, Test Area sewage opacity,
+  Suiming lily pad depth at stage 1, and overlapping volume + placed surface draws.

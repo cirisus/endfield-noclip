@@ -86,8 +86,11 @@ divergences from the game:
 - volumes without a config use their water type's
   [surface prefab](../game-data/water.md#water-volumes) config
   ([`water-volume-surfaces.ts`](../../packages/extractor/src/game/water/water-volume-surfaces.ts));
-  prefab foam decals and per-level multipliers are omitted, and outlines are always triangulated
-  instead of loading `_WaterSurface` meshes.
+  when the type names a `decalPrefab`, the packer emits a resident global floating instance sharing
+  the volume's polygon mesh 1 cm above the surface
+  (`WaterVolumeManager.m_waterDecalPositionOffset`), so it rises and falls with the volume and
+  shades through `fs_water_foam`. per-level multipliers are omitted, and outlines are always
+  triangulated instead of loading `_WaterSurface` meshes.
 - moves are linear (no end-of-move easing; scripts without a fixed speed use fill speed as m/s).
 - floaters keep authored height above water without settling to `surface_offset` or lagging.
 - switches, clocks, and quests are listed by script ID in labels, not executed.
@@ -130,8 +133,10 @@ water pass when any are in frame:
   [`water-foam.ts`](../../packages/extractor/src/game/materials/effects/water-foam.ts)) applying
   tiling to base UVs, speed to scroll, and opacity/brightness/tint to output.
 - **unsupported and divergences**: keywords beyond `_BLEND_BASECOLOR`, `_BLEND_DISPLACEMENT`,
-  `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`, or `_ZTest`
-  other than 4, 5, 8 show as [unsupported](materials.md#unsupported-materials). displacement pass is
-  omitted (`_BLEND_DISPLACEMENT` draws foam only; value read but unused), prefab
+  `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`,
+  `_USE_BUBBLE`, `_USE_TWO_LAYER_FLOATING_MAP`, or `_ZTest` other than 4, 5, 8 show as
+  [unsupported](materials.md#unsupported-materials). displacement pass is omitted
+  (`_BLEND_DISPLACEMENT` draws foam only; value read but unused), `_USE_TWO_LAYER_FLOATING_MAP` uses
+  an upward geometric normal `(0, 1, 0)` instead of sampling `normalRoughnessWithWater`, prefab
   `HGWaterDecalRenderer` values are not packed (all map02 prefabs are neutral), soft blend uses the
   viewer's near plane, and distortion mip bias is omitted (unidentified property).

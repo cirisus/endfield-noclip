@@ -243,22 +243,23 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - missing: `_BLEND_DISPLACEMENT`, prefab `HGWaterDecalRenderer` values (neutral on map02), and
     unnamed distortion mip bias.
   - unsupported: `_BLEND_BASECOLOR2` (11 map02 materials), keywords beyond `_USE_DISTURB`,
-    `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`, `_ZTest` outside 4/5/8,
-    and erosion combined with dissolve/distortion/mask.
+    `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`, `_USE_WATER_EROSION`, `_USE_BUBBLE`,
+    `_USE_TWO_LAYER_FLOATING_MAP`, `_ZTest` outside 4/5/8, and erosion combined with
+    dissolve/distortion/mask/bubble/floating.
   - unverified in game: Wuling falls foam, Wuling City red tide
-    ([erosion](game-data/water.md#water-erosion), clamped samplers approximated), and other fluid
+    ([erosion](game-data/water.md#water-erosion), clamped samplers approximated), and non-acid fluid
     types.
 - **water volumes** ([viewer](viewer/water.md#water-volumes),
   [game-data](game-data/water.md#water-volumes)):
-  - volumes without their own `WaterConfig` use the type's prefab config without foam decals or
-    per-level multipliers.
+  - volumes without their own `WaterConfig` use the type's prefab config (and its surface decal
+    prefab when set) without per-level multipliers.
   - moves are linear; floaters keep authored height with no lag; `ground_distance`, flow, and
     inter-volume transfers unread; no shoreline wetness; coinciding placed surfaces draw twice
     (unchecked).
   - [pumped pools](game-data/water.md#depletable-pools) offer only empty/authored/full (server start
     amount and empty-surface visibility unchecked).
   - unverified in game: Suiming lily pads (0.9 m under pit surface at stage 1 per data) and Test
-    Area sewage/acid opacity (acid faintly shows bed).
+    Area sewage opacity.
 - **waterfalls**: Jingyu pool falls (−763, 209, −1190) and Si's Painting lily pool cascade (980,
   293, 972) read grey-teal instead of white (unverified from matching pose); at Jingyu, the VFXWater
   sheet sits inside the rocks in front of the falls.
