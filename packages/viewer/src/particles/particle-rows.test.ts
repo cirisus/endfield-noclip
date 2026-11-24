@@ -155,6 +155,15 @@ describe('ParticleField', () => {
 		// its pivot moves the head along the velocity by its size, and the streak across by half its width
 		const pivoted = written(moving([0, 1, 0], [1, 0.5, 0]), view);
 		assert.ok(near(pivoted, [0, -2, 0, 1, 0, 0, 0, 0, 1, 0.5, -0.5, 0]), [...pivoted.subarray(0, 12)].join());
+		// negative lengthScale stretches ahead of the head and flips both axes (keeping positive determinant)
+		const neg = written(
+			{
+				...fog,
+				stretch: { lengthScale: -2, velocityScale: 0, freeform: false, rotateWithStretchDirection: false },
+			},
+			view,
+		);
+		assert.ok(near(neg, [0, 2, 0, -1, 0, 0, 0, 0, 1, 0, 1, 0]), [...neg.subarray(0, 12)].join());
 		// m_Flip packs UV flip bits into the sheet word for quads and negates particle size for meshes
 		const flippedQuad = written({ ...fog, flip: [1, 1, 0] }, view);
 		assert.equal(new Uint32Array(flippedQuad.buffer)[RowWord.sheet], rowSheet([1, 1], 0, 0, 3));

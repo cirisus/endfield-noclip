@@ -315,7 +315,19 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	const width = drawn ? sizes[0] : 0;
 	const length = drawn ? particle.length * stretch.lengthScale + speed * stretch.velocityScale : 0;
 	if (drawn) {
-		sizes[0] = length;
+		if (length < 0) {
+			// in Unity (0x1803aa9e0), tail = head - vel * length sits ahead of head, so T × H also flips sign:
+			// both axes negate (180° in-plane turn), keeping positive determinant and front-face winding
+			back[0] = sx;
+			back[1] = sy;
+			back[2] = sz;
+			across[0] = -across[0];
+			across[1] = -across[1];
+			across[2] = -across[2];
+			sizes[0] = -length;
+		} else {
+			sizes[0] = length;
+		}
 		sizes[1] = width;
 	} else {
 		sizes.fill(0);
