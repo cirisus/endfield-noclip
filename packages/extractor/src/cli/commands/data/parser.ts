@@ -67,8 +67,8 @@ const dataScriptsParser = merge(
 	object({
 		command: constant('data'),
 		subcommand: constant('scripts'),
-		level: argument(string({ metavar: 'LEVEL' }), {
-			description: message`level id`,
+		level: argument(string({ metavar: 'LEVEL|SCENE[,…]' }), {
+			description: message`level id, scene name (all its levels), or comma-separated list`,
 		}),
 		id: optional(option('--id', string({ metavar: 'N' }), { description: message`script id filter` })),
 		filter: optional(option('--filter', ciRegExp(), { description: message`filter scripts by regex` })),
@@ -82,8 +82,8 @@ const dataInteractivesParser = merge(
 	object({
 		command: constant('data'),
 		subcommand: constant('interactives'),
-		level: argument(string({ metavar: 'LEVEL' }), {
-			description: message`level id`,
+		level: argument(string({ metavar: 'LEVEL|SCENE[,…]' }), {
+			description: message`level id, scene name (all its levels), or comma-separated list`,
 		}),
 		id: optional(option('--id', string({ metavar: 'N' }), { description: message`interactive id filter` })),
 		filter: optional(option('--filter', ciRegExp(), { description: message`filter interactives by regex` })),

@@ -265,7 +265,9 @@ const readTable = async (
 		}
 	}
 	if (matchedPath === undefined) {
-		throw new Error(`table ${name} not found; see \`data tables\``);
+		throw new Error(
+			`table ${name} not found in Table group; see \`data tables\` (or \`vfs ls JsonData\` for JSON tables)`,
+		);
 	}
 	const table = parseSparkTable(await context.vfs.read(VfsGroup.Table, matchedPath));
 	const matched: { key: string | number | bigint; value: unknown }[] = [];
@@ -309,28 +311,60 @@ const readTable = async (
 
 const SCRIPT_ROOT = 'Beyond_Gameplay_LevelScriptDataForMemoryPack';
 
+/** expands a level id, scene name, or comma-separated list into distinct level ids */
+const expandLevels = async (world: WorldIndex, target: string): Promise<string[]> => {
+	const levels: string[] = [];
+	const seen = new Set<string>();
+	for (const part of target
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean)) {
+		// oxlint-disable-next-line no-await-in-loop -- usually 1 target
+		const partition = await world.partition(part);
+		const expanded =
+			partition !== undefined && partition.levels.length > 0 ? partition.levels.map((l) => l.id) : [part];
+		for (const id of expanded) {
+			if (!seen.has(id)) {
+				seen.add(id);
+				levels.push(id);
+			}
+		}
+	}
+	return levels;
+};
+
 const readScripts = async (
 	context: Context,
-	level: string,
+	target: string,
 	options: { id: string | undefined; filter: RegExp | undefined; limit: number; json: boolean },
 ): Promise<void> => {
-	const group = await context.vfs.group(VfsGroup.JsonData);
-	const prefix = `Data/Json/LevelScriptData/${level}/`;
-	const files = group.catalog
-		.names()
-		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
-		.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`)
-		.toArray();
-	files.sort(compareNatural);
-	if (files.length === 0) {
+	const [group, levels] = await Promise.all([
+		context.vfs.group(VfsGroup.JsonData),
+		expandLevels(context.world, target),
+	]);
+	const entries: { level: string; prefix: string; name: string }[] = [];
+	for (const level of levels) {
+		const prefix = `Data/Json/LevelScriptData/${level}/`;
+		const files = group.catalog
+			.names()
+			.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
+			.filter((name) => options.id === undefined || name === `${prefix}${options.id}.json`)
+			.toArray();
+		files.sort(compareNatural);
+		for (const name of files) {
+			entries.push({ level, prefix, name });
+		}
+	}
+	if (entries.length === 0) {
 		throw new Error(
-			`no level scripts found for ${level}${options.id === undefined ? '' : ` id ${options.id}`}`,
+			`no level scripts found for ${target}${options.id === undefined ? '' : ` id ${options.id}`}`,
 		);
 	}
 
 	const mp = await context.memoryPack();
+	const multiLevel = levels.length > 1;
 	const matched: object[] = [];
-	for (const name of files) {
+	for (const { level, prefix, name } of entries) {
 		const scriptId = name.slice(prefix.length, -'.json'.length);
 		// oxlint-disable-next-line no-await-in-loop -- stops at --limit
 		const decoded = mp.decode(await context.vfs.read(VfsGroup.JsonData, name), SCRIPT_ROOT);
@@ -338,7 +372,7 @@ const readScripts = async (
 			continue;
 		}
 		if (options.id !== undefined || options.json) {
-			matched.push({ id: scriptId, file: name, data: decoded });
+			matched.push({ id: scriptId, level, file: name, data: decoded });
 		} else {
 			const graph = toScript(scriptId, level, decoded);
 			const types = new Set<string>();
@@ -350,8 +384,9 @@ const readScripts = async (
 				}
 			}
 			const list = [...types];
+			const levelPrefix = multiLevel ? `${level.padEnd(14)} ` : '';
 			console.log(
-				`${scriptId.padEnd(14)} ${String(graph?.headers.length ?? 0).padStart(2)} headers  ${String(graph?.nodes.size ?? 0).padStart(3)} nodes  ${list.slice(0, 6).join(', ')}${list.length > 6 ? ` (+${list.length - 6})` : ''}`,
+				`${levelPrefix}${scriptId.padEnd(14)} ${String(graph?.headers.length ?? 0).padStart(2)} headers  ${String(graph?.nodes.size ?? 0).padStart(3)} nodes  ${list.slice(0, 6).join(', ')}${list.length > 6 ? ` (+${list.length - 6})` : ''}`,
 			);
 			matched.push({ id: scriptId });
 		}
@@ -369,24 +404,33 @@ const readScripts = async (
 		);
 	}
 	console.error(
-		`${matched.length} scripts matched out of ${files.length}${matched.length === options.limit ? ' (limit reached; raise --limit for more)' : ''}`,
+		`${matched.length} scripts matched out of ${entries.length}${matched.length === options.limit ? ' (limit reached; raise --limit for more)' : ''}`,
 	);
 };
 
 const readInteractives = async (
 	context: Context,
-	level: string,
+	target: string,
 	options: { id: string | undefined; filter: RegExp | undefined; limit: number; json: boolean },
 ): Promise<void> => {
-	const group = await context.vfs.group(VfsGroup.JsonData);
-	const prefix = `Data/Json/LevelData/${level}/`;
-	const files = group.catalog
-		.names()
-		.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
-		.toArray();
-	files.sort();
-	if (files.length === 0) {
-		throw new Error(`no LevelData files found for ${level}`);
+	const [group, levels] = await Promise.all([
+		context.vfs.group(VfsGroup.JsonData),
+		expandLevels(context.world, target),
+	]);
+	const entries: { level: string; name: string }[] = [];
+	for (const level of levels) {
+		const prefix = `Data/Json/LevelData/${level}/`;
+		const files = group.catalog
+			.names()
+			.filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
+			.toArray();
+		files.sort();
+		for (const name of files) {
+			entries.push({ level, name });
+		}
+	}
+	if (entries.length === 0) {
+		throw new Error(`no LevelData files found for ${target}`);
 	}
 	const pool = await context.world.stringPool();
 	const resolveString = (id: number): string | null => {
@@ -397,9 +441,10 @@ const readInteractives = async (
 		}
 	};
 
+	const multiLevel = levels.length > 1;
 	const matched: object[] = [];
 	const skipped: string[] = [];
-	for (const name of files) {
+	for (const { level, name } of entries) {
 		// oxlint-disable-next-line no-await-in-loop -- stops at --limit
 		const bytes = await context.vfs.read(VfsGroup.JsonData, name);
 		let rows;
@@ -419,6 +464,7 @@ const readInteractives = async (
 			}
 			const plain = {
 				id: idText,
+				level,
 				template: row.template,
 				createState: row.createState,
 				isLocked: row.isLocked,
@@ -440,8 +486,9 @@ const readInteractives = async (
 					row.createState !== 0 ? `create=${row.createState}` : '',
 					row.isLocked ? 'locked' : '',
 				]).join(' ');
+				const levelPrefix = multiLevel ? `${level.padEnd(14)} ` : '';
 				console.log(
-					`${idText.padStart(12)}  ${pos.padEnd(24)} ${row.template.padEnd(36)} ${flags}  @ ${name.split('/').pop()}`,
+					`${levelPrefix}${idText.padStart(12)}  ${pos.padEnd(24)} ${row.template.padEnd(36)} ${flags}  @ ${name.split('/').pop()}`,
 				);
 			}
 			if (matched.length >= options.limit) {
