@@ -509,30 +509,38 @@ const readEffectSetting: ComponentReader = {
 		for (const switched of await effectLodNodes(walk.resolver, component.ref, data)) {
 			walk.lodSwitched.add(switched);
 		}
-		if (walk.effectLod === 'proxy') {
-			// the dynamic scene drives only the root's setting, by its LOD proxy
-			const byLevel = node.isRoot ? await effectProxyBands(walk.resolver, component.ref, data) : null;
-			for (const [switched, levels] of byLevel ?? []) {
-				walk.proxySwitched.set(switched, levels);
+		switch (walk.effectLod) {
+			case 'none': {
+				return;
 			}
-			return;
-		}
-		const byDistance = await effectDistanceLod(walk.resolver, component.ref, data);
-		if (byDistance === null) {
-			return;
-		}
-		state.distanceOrigin = true;
-		const switchByDistance = (key: string, ranges: DistanceRange[]): void => {
-			const known = walk.distanceSwitched.get(key);
-			// under nested tables, the later (inner) setting's origin
-			walk.distanceSwitched.set(key, {
-				ranges: known === undefined ? ranges : intersectRanges(known.ranges, ranges),
-				setting: node.key,
-			});
-		};
-		switchByDistance(node.key, byDistance.self);
-		for (const [switched, ranges] of byDistance.nodes) {
-			switchByDistance(switched, ranges);
+			case 'proxy': {
+				// the dynamic scene drives only the root's setting, by its LOD proxy
+				const byLevel = node.isRoot ? await effectProxyBands(walk.resolver, component.ref, data) : null;
+				for (const [switched, levels] of byLevel ?? []) {
+					walk.proxySwitched.set(switched, levels);
+				}
+				return;
+			}
+			case 'camera': {
+				const byDistance = await effectDistanceLod(walk.resolver, component.ref, data);
+				if (byDistance === null) {
+					return;
+				}
+				state.distanceOrigin = true;
+				const switchByDistance = (key: string, ranges: DistanceRange[]): void => {
+					const known = walk.distanceSwitched.get(key);
+					// under nested tables, the later (inner) setting's origin
+					walk.distanceSwitched.set(key, {
+						ranges: known === undefined ? ranges : intersectRanges(known.ranges, ranges),
+						setting: node.key,
+					});
+				};
+				switchByDistance(node.key, byDistance.self);
+				for (const [switched, ranges] of byDistance.nodes) {
+					switchByDistance(switched, ranges);
+				}
+				return;
+			}
 		}
 	},
 };

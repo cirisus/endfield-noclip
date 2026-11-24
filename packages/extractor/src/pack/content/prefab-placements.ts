@@ -173,8 +173,17 @@ export const placePrefabs = async (
 			continue;
 		}
 		const locked = placement.locked ?? false;
-		// a dynamic scene's effect rows have their LOD band set by a LOD proxy instead of the camera
-		const effectLod: EffectLodSource = placement.lodGrids === undefined ? 'camera' : 'proxy';
+		// dynamic scene effects have their LOD band set by a LOD proxy; dynamic scene models are plain
+		// prefabs whose nested EffectSettings are never initialized or ticked; interactives drive theirs by
+		// camera distance (docs/game-data/effects.md#effect-lod-tables)
+		let effectLod: EffectLodSource;
+		if (placement.lodGrids !== undefined) {
+			effectLod = 'proxy';
+		} else if (placement.grid !== undefined) {
+			effectLod = 'none';
+		} else {
+			effectLod = 'camera';
+		}
 		const key = `${model.pathHash}:${pose?.key ?? ''}:${locked}:${effectLod}`;
 		activePlacements.push({ placement, key });
 		uniqueHashes.add(model.pathHash);

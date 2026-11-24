@@ -121,9 +121,10 @@ export interface SizeRange {
 
 /**
  * what drives a placed effect's LOD tables (docs/game-data/effects.md#effect-lod-tables): the camera's
- * distance, or for an effect a dynamic scene places, its LOD proxy
+ * distance, a dynamic scene effect's LOD proxy, or nothing (dynamic scene models, whose nested
+ * `EffectSetting`s are never initialized or ticked)
  */
-export type EffectLodSource = 'camera' | 'proxy';
+export type EffectLodSource = 'camera' | 'proxy' | 'none';
 
 /** the camera distances an effect's distance LOD shows something at */
 export interface DistanceBands {
@@ -227,7 +228,8 @@ const IDENTITY = trsMatrix([0, 0, 0], [0, 0, 0, 1], [1, 1, 1]);
  *   root `UnlockEffectConfigMono`'s locked model on and its unlocked model off
  * @param options.effectLod what picks the effect LOD tables' bands: `camera`, every table by the camera's
  *   distance ({@link PrefabRenderer.distances}); `proxy`, for a dynamic scene's effect row, the root's table
- *   by its LOD proxy's level ({@link PrefabRenderer.proxyLevels}) and the others never
+ *   by its LOD proxy's level ({@link PrefabRenderer.proxyLevels}) and the others never; `none`, for a dynamic
+ *   scene's model row, whose nested `EffectSetting`s are never driven
  * @returns enabled mesh renderers relative to the prefab root; the caller supplies the root placement. those
  *   under GameObjects switched off as saved are stand-ins ({@link PrefabRenderer.unsupported}); those the
  *   pose or lock switches off are left out

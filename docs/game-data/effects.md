@@ -603,14 +603,23 @@ per-band `_distanceLodInfos` with `isActive` and `speedPercent`).
     GameObject disables until back in range. `lodFadeTime` fades transitions.
     - example: collectible marker (`int_collection_common_postmodel`): bands 0, 30, 60 m, culled at
       80 m (0–30 m all; 30–60 m icon + rings; 60–80 m icon only).
-  - **LOD proxy** ([dynamic structures](world.md#dynamic-load-grids)): ignores camera distance,
-    `isUseDistanceLod`, and `cullDis`. only the root `EffectSetting` is driven: band 0 when near
-    grid is loaded, 1 when only far grid is loaded, 2 when neither is loaded (missing bands leave
-    the table unchanged).
+  - **LOD proxy** ([dynamic structures](world.md#dynamic-load-grids), `DynamicSceneEffectSystem`):
+    ignores camera distance, `isUseDistanceLod`, and `cullDis`. only the root `EffectSetting` is
+    driven: band 0 when near grid is loaded, 1 when only far grid is loaded, 2 when neither is
+    loaded (missing bands leave the table unchanged).
     - example: indie_ccdg002 green light beam (`p_fxmap_map02_lv002_dragonball_lightbeam_01`,
       `cullDis` 150 m) stays visible 225 m away across the arena's `x < 0` half because its level-2
       near grid (`x` 128–256) unloads while its far grid selects band 1 (`01_ad` on, `01` and
       `wenli` off).
+  - **dynamic scene models** (`DynamicSceneModelSystem`): never initialize or tick `EffectSetting`
+    components on their prefabs, so nested `EffectSetting`s keep their saved GameObject activity and
+    never switch bands or cull by distance.
+    - example: North Wuling Exclusion Zone's Xiranite bridge (`P_igroup_bridge_m2l8_postmodel`,
+      level-7 model) embeds `P_fxmap_map02_lv008_bridge_2101` (`cullDis` 100 m from its far end),
+      which stays visible past 100 m.
+  - **unmanaged model effects** (`ModelManager` → `EffectManager.AddUnmanagedEffect`): initializes
+    nested `EffectSetting`s and drives distance bands, but clears `_isCullDisable` so they never
+    disable past `cullDis`.
 
 ## open
 

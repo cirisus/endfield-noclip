@@ -25,7 +25,7 @@ const inspectPrefabParser = merge(
 		command: constant('inspect'),
 		subcommand: constant('prefab'),
 		effectLod: withDefault(
-			option('--effect-lod', choice(['camera', 'proxy'] as const), {
+			option('--effect-lod', choice(['camera', 'proxy', 'none'] as const), {
 				description: message`effect LOD branch to inspect`,
 			}),
 			'camera',

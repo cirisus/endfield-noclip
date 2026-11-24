@@ -628,3 +628,111 @@ test('prefab lights read the enabled lights of active GameObjects with their HG 
 	assert.equal(lights[0].light.volumetricScatteringIntensity, 0.5);
 	assert.equal(lights[0].light.tubeLength, 0);
 });
+
+test('effectLod none leaves nested EffectSetting renderers uncapped while camera applies distance LOD', async () => {
+	const values = new Map<bigint, TypeTreeObject>();
+	const objects: ObjectInfo[] = [];
+	const add = (id: bigint, classId: number, data: TypeTreeObject, fields: string[] = []): void => {
+		const info = object(id, classId);
+		info.type?.nodes.push(
+			...fields.map((name, index) => ({
+				type: '',
+				name,
+				level: 1,
+				byteSize: -1,
+				typeFlags: 0,
+				metaFlag: 0,
+				version: 1,
+				index,
+				refTypeHash: 0n,
+			})),
+		);
+		objects.push(info);
+		values.set(id, data);
+	};
+	const vector = (x: number, y: number, z: number) => ({ x, y, z });
+	const transform = (go: bigint, children: bigint[]) => ({
+		m_GameObject: pointer(go),
+		m_LocalPosition: vector(0, 0, 0),
+		m_LocalRotation: { x: 0, y: 0, z: 0, w: 1 },
+		m_LocalScale: vector(1, 1, 1),
+		m_Children: children.map((id) => pointer(id)),
+	});
+	add(1n, UnityClass.GameObject, {
+		m_Name: 'root',
+		m_IsActive: true,
+		m_Component: [{ component: pointer(2n) }],
+	});
+	add(2n, UnityClass.Transform, transform(1n, [11n]));
+	add(10n, UnityClass.GameObject, {
+		m_Name: 'effect',
+		m_IsActive: true,
+		m_Component: [11n, 12n].map((id) => ({ component: pointer(id) })),
+	});
+	add(11n, UnityClass.Transform, transform(10n, [21n, 31n]));
+	add(
+		12n,
+		UnityClass.MonoBehaviour,
+		{
+			m_Enabled: 1,
+			effectLogicCfg: {},
+			isUseDistanceLod: 1,
+			_isCullDisable: 1,
+			cullDis: 100,
+			distanceLodCfgList: [{ distance: 0 }, { distance: 40 }],
+			lodSetting: [
+				{
+					gameobject: pointer(20n),
+					_distanceLodInfos: [{ isActive: 1 }, { isActive: 1 }],
+				},
+				{
+					gameobject: pointer(30n),
+					_distanceLodInfos: [{ isActive: 1 }, { isActive: 0 }],
+				},
+			],
+		},
+		['m_Enabled', 'effectLogicCfg'],
+	);
+	for (const [id, name, active] of [
+		[20n, 'deck', true],
+		[30n, 'savedOff', false],
+	] as const) {
+		add(id, UnityClass.GameObject, {
+			m_Name: name,
+			m_IsActive: active,
+			m_Component: [id + 1n, id + 2n, id + 3n].map((componentId) => ({ component: pointer(componentId) })),
+		});
+		add(id + 1n, UnityClass.Transform, transform(id, []));
+		add(id + 2n, UnityClass.MeshFilter, { m_Mesh: pointer(50n) });
+		add(id + 3n, UnityClass.MeshRenderer, { m_Enabled: true, m_CastShadows: 1, m_Materials: [pointer(60n)] });
+	}
+	add(50n, UnityClass.Mesh, {
+		m_LocalAABB: { m_Center: vector(0, 0, 0), m_Extent: vector(1, 1, 1) },
+		m_SubMeshes: [{}],
+	});
+	add(60n, UnityClass.Material, {});
+	const owner = file('CAB-prefab', objects, values);
+	const root = { bundleIndex: 0, file: owner, info: objects[0] };
+	const asCamera = await readPrefabRenderers(resolver([owner]), root, {
+		viewPose: null,
+		particleQuad: null,
+		decalCube: null,
+		locked: false,
+		effectLod: 'camera',
+	});
+	assert.deepEqual(
+		asCamera.map((row) => [row.name, row.distances?.ranges]),
+		[['deck', [{ near: 0, far: 100 }]]],
+	);
+	const asNone = await readPrefabRenderers(resolver([owner]), root, {
+		viewPose: null,
+		particleQuad: null,
+		decalCube: null,
+		locked: false,
+		effectLod: 'none',
+	});
+	assert.deepEqual(
+		asNone.map((row) => [row.name, row.distances, row.proxyLevels]),
+		[['deck', null, null]],
+	);
+});

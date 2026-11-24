@@ -205,7 +205,7 @@ const inspectPrefab = async (
 	context: Context,
 	resolver: AssetResolver,
 	root: ObjectRef,
-	options: { effectLod: 'camera' | 'proxy'; particles: boolean; json: boolean },
+	options: { effectLod: 'camera' | 'proxy' | 'none'; particles: boolean; json: boolean },
 ): Promise<object> => {
 	const bundleName = resolver.manifest.bundleName(root.bundleIndex);
 	const rootName = (await root.file.peekName(root.info)) ?? '?';
