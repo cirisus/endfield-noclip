@@ -149,6 +149,8 @@ export interface RendererWalk {
 	lockModels: Map<string, boolean | null>;
 	/** Transforms a component of the root shows only while its interactive moves, so never at rest */
 	movingOnly: Set<string>;
+	/** GameObjects an active `InteractHighlightMono` switches off in `Awake`, so never shown at rest */
+	awakeHidden: Set<string>;
 	/**
 	 * by GameObject, the distances an EffectSetting's distance LOD leaves it on at and that setting's
 	 * GameObject
@@ -207,6 +209,7 @@ export const createRendererWalk = (
 	lodSwitched: new Set(),
 	lockModels: new Map(),
 	movingOnly: new Set(),
+	awakeHidden: new Set(),
 	distanceSwitched: new Map(),
 	proxySwitched: new Map(),
 	settingOrigins: new Map(),
@@ -308,7 +311,7 @@ const switchedOff = async (
 		return (lockShown ?? node.active) ? null : { standIn: null };
 	}
 	// the interactive's logic keeps these off while it stands still, whatever the prefab saved
-	if (walk.movingOnly.has(node.transformKey)) {
+	if (walk.movingOnly.has(node.transformKey) || walk.awakeHidden.has(node.key)) {
 		return { standIn: null };
 	}
 	const clips = walk.pose?.clips ?? [];
@@ -466,6 +469,33 @@ const readRaftPostmodel: ComponentReader = {
 	},
 };
 
+/** the fields of `InteractHighlightMono` that hold its highlight and outline GameObjects */
+const INTERACT_HIGHLIGHT_OBJECTS = ['_highlightObject', '_outlineObject'] as const;
+
+/** whether a MonoBehaviour is an `InteractHighlightMono`, which hides its highlight and outline in `Awake` */
+const isInteractHighlightType = (ref: ObjectRef): boolean =>
+	hasTypeFields(ref.info.type, ...INTERACT_HIGHLIGHT_OBJECTS);
+
+/**
+ * `InteractHighlightMono` on an active GameObject: `Awake` calls `SetIsShow(false)`, switching off both
+ * `_highlightObject` and `_outlineObject` regardless of whether the component is enabled
+ */
+const readInteractHighlight: ComponentReader = {
+	accepts: behaviourOf(isInteractHighlightType),
+	async read(walk, _, state, component) {
+		if (state.off !== null) {
+			return;
+		}
+		const data = await component.read();
+		for (const name of INTERACT_HIGHLIGHT_OBJECTS) {
+			const target = await walk.resolver.resolve(component.ref, pptrField(data, name));
+			if (target !== null) {
+				walk.awakeHidden.add(objectKey(target));
+			}
+		}
+	},
+};
+
 /** `AnimationProperties_Emissive`: the emission colours it writes to its renderers */
 const readEmissiveOverrideComponent: ComponentReader = {
 	accepts: behaviourOf(isEmissiveOverrideType),
@@ -561,6 +591,7 @@ const COMPONENT_READERS: readonly ComponentReader[] = [
 	readAdjustLengthComponent,
 	readUnlockConfig,
 	readRaftPostmodel,
+	readInteractHighlight,
 	readEmissiveOverrideComponent,
 	readViewStateController,
 	readEffectSetting,

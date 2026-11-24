@@ -115,6 +115,16 @@ model (sparks and smoke, saved off) and a `Fixed` model (saved on). placement 35
 36, 182) has a mini-game lock (`M01L06_B1_easy_1_1`), so it starts broken. placement 3500021688
 (near 435, 36, 187) has only a script lock, so it stays fixed.
 
+## highlight overlays
+
+interactive post-models such as `int_switch_union_postmodel` and `int_switch_union_v2_postmodel`
+carry `InteractHighlightMono` (`Beyond.Gameplay.View.InteractHighlightMono`), whose
+`_highlightObject` (`Highlight`, `HGRP/Factory/UnlitFactoryBuildingPlacement`) and `_outlineObject`
+(`Outline`, `HGRP/Factory/UnlitFactoryBuildingOutline`) child subtrees are saved active.
+`InteractHighlightMono.Awake` calls `SetIsShow(false)`, which disables both GameObjects on load
+regardless of `m_Enabled`; nothing else in the client calls `SetIsShow` (runtime proximity
+highlights are instead played as effects by `InteractHighlightComponent`).
+
 ## interactive view states
 
 `Data/Json/Interactive/ModelViewStateControllerData/<model id>.json` (MemoryPack, root

@@ -30,6 +30,10 @@ Transforms. cross-node passes (followers, force fields) settle after the full hi
 - **raft wakes**: the two wake subtrees named by a root `InteractiveSummonTeamPostmodelMono` only
   show while moving ([bamboo rafts](../game-data/interactives.md#bamboo-rafts)) and are omitted (not
   stand-ins).
+- **highlight overlays**: `_highlightObject` and `_outlineObject` named by an
+  `InteractHighlightMono` on an active GameObject are switched off in `Awake`
+  ([highlight overlays](../game-data/interactives.md#highlight-overlays)) and are omitted (not
+  stand-ins).
 - **emission overrides**: an enabled `AnimationProperties_Emissive` on an active GameObject passes
   non-zero-alpha colours and breathing to listed renderers
   ([emission](../game-data/materials.md#emission)), creating a material variant. emissive configs

@@ -390,7 +390,11 @@ test('skinned prefab meshes resolve bones under inactive GameObjects, whose rend
 	assert.equal(rows[0].pose?.[0][12], 7);
 });
 
-test('a root UnlockEffectConfigMono draws the locked model of a locked placement, and never stands in the other', async () => {
+/** builds a single-file prefab with one MonoBehaviour on the root and mesh children under it */
+const buildRootComponentPrefab = (
+	behaviour: { data: TypeTreeObject; fields: string[] },
+	children: readonly (readonly [id: bigint, name: string, active: boolean])[],
+): { owner: BundleAssetFile; root: ObjectInfo } => {
 	const values = new Map<bigint, TypeTreeObject>();
 	const objects: ObjectInfo[] = [];
 	const add = (id: bigint, classId: number, data: TypeTreeObject, fields: string[] = []): void => {
@@ -412,30 +416,28 @@ test('a root UnlockEffectConfigMono draws the locked model of a locked placement
 		values.set(id, data);
 	};
 	const vector = (x: number, y: number, z: number) => ({ x, y, z });
-	const transform = (go: bigint, children: bigint[]) => ({
+	const transform = (go: bigint, childTransforms: bigint[]) => ({
 		m_GameObject: pointer(go),
 		m_LocalPosition: vector(0, 0, 0),
 		m_LocalRotation: { x: 0, y: 0, z: 0, w: 1 },
 		m_LocalScale: vector(1, 1, 1),
-		m_Children: children.map((id) => pointer(id)),
+		m_Children: childTransforms.map((id) => pointer(id)),
 	});
 	add(1n, UnityClass.GameObject, {
 		m_Name: 'root',
 		m_IsActive: true,
 		m_Component: [2n, 3n].map((id) => ({ component: pointer(id) })),
 	});
-	add(2n, UnityClass.Transform, transform(1n, [11n, 21n]));
 	add(
-		3n,
-		UnityClass.MonoBehaviour,
-		{ m_Enabled: 1, useDifferentModel: 1, lockedModel: pointer(20n), unlockedModel: pointer(10n) },
-		['m_Enabled', 'useDifferentModel', 'lockedModel', 'unlockedModel'],
+		2n,
+		UnityClass.Transform,
+		transform(
+			1n,
+			children.map(([id]) => id + 1n),
+		),
 	);
-	// as saved, the fixed model is on and the broken one off
-	for (const [id, name, active] of [
-		[10n, 'Fixed', true],
-		[20n, 'Broken', false],
-	] as const) {
+	add(3n, UnityClass.MonoBehaviour, behaviour.data, behaviour.fields);
+	for (const [id, name, active] of children) {
 		add(id, UnityClass.GameObject, {
 			m_Name: name,
 			m_IsActive: active,
@@ -450,12 +452,26 @@ test('a root UnlockEffectConfigMono draws the locked model of a locked placement
 		m_SubMeshes: [{}],
 	});
 	add(60n, UnityClass.Material, {});
-	const owner = file('CAB-prefab', objects, values);
+	return { owner: file('CAB-prefab', objects, values), root: objects[0] };
+};
+
+test('a root UnlockEffectConfigMono draws the locked model of a locked placement, and never stands in the other', async () => {
+	// as saved, the fixed model is on and the broken one off
+	const { owner, root } = buildRootComponentPrefab(
+		{
+			data: { m_Enabled: 1, useDifferentModel: 1, lockedModel: pointer(20n), unlockedModel: pointer(10n) },
+			fields: ['m_Enabled', 'useDifferentModel', 'lockedModel', 'unlockedModel'],
+		},
+		[
+			[10n, 'Fixed', true],
+			[20n, 'Broken', false],
+		],
+	);
 	const read = async (locked: boolean) =>
 		(
 			await readPrefabRenderers(
 				resolver([owner]),
-				{ bundleIndex: 0, file: owner, info: objects[0] },
+				{ bundleIndex: 0, file: owner, info: root },
 				{ viewPose: null, particleQuad: null, decalCube: null, locked, effectLod: 'camera' },
 			)
 		).map((row) => [row.name, row.unsupported !== null]);
@@ -464,76 +480,55 @@ test('a root UnlockEffectConfigMono draws the locked model of a locked placement
 });
 
 test('a raft post-model draws nothing for its wakes, which show only while it moves', async () => {
-	const values = new Map<bigint, TypeTreeObject>();
-	const objects: ObjectInfo[] = [];
-	const add = (id: bigint, classId: number, data: TypeTreeObject, fields: string[] = []): void => {
-		const info = object(id, classId);
-		info.type?.nodes.push(
-			...fields.map((name, index) => ({
-				type: '',
-				name,
-				level: 1,
-				byteSize: -1,
-				typeFlags: 0,
-				metaFlag: 0,
-				version: 1,
-				index,
-				refTypeHash: 0n,
-			})),
-		);
-		objects.push(info);
-		values.set(id, data);
-	};
-	const vector = (x: number, y: number, z: number) => ({ x, y, z });
-	const transform = (go: bigint, children: bigint[]) => ({
-		m_GameObject: pointer(go),
-		m_LocalPosition: vector(0, 0, 0),
-		m_LocalRotation: { x: 0, y: 0, z: 0, w: 1 },
-		m_LocalScale: vector(1, 1, 1),
-		m_Children: children.map((id) => pointer(id)),
-	});
-	add(1n, UnityClass.GameObject, {
-		m_Name: 'root',
-		m_IsActive: true,
-		m_Component: [2n, 3n].map((id) => ({ component: pointer(id) })),
-	});
-	add(2n, UnityClass.Transform, transform(1n, [11n, 21n, 31n]));
-	// the mono names its wake roots by their Transforms
-	add(
-		3n,
-		UnityClass.MonoBehaviour,
-		{ m_Enabled: 1, headAnchorRoot: pointer(21n), tailAnchorRoot: pointer(31n), decalHeadRoot: pointer(0n) },
-		['m_Enabled', 'headAnchorRoot', 'tailAnchorRoot', 'decalHeadRoot'],
+	// the mono names its wake roots by their Transforms; as saved, the wakes are off
+	const { owner, root } = buildRootComponentPrefab(
+		{
+			data: {
+				m_Enabled: 1,
+				headAnchorRoot: pointer(21n),
+				tailAnchorRoot: pointer(31n),
+				decalHeadRoot: pointer(0n),
+			},
+			fields: ['m_Enabled', 'headAnchorRoot', 'tailAnchorRoot', 'decalHeadRoot'],
+		},
+		[
+			[10n, 'Raft', true],
+			[20n, 'Head', false],
+			[30n, 'Tail', false],
+		],
 	);
-	// as saved, the wakes are off; another switched-off model still stands in
-	for (const [id, name, active] of [
-		[10n, 'Raft', true],
-		[20n, 'Head', false],
-		[30n, 'Tail', false],
-	] as const) {
-		add(id, UnityClass.GameObject, {
-			m_Name: name,
-			m_IsActive: active,
-			m_Component: [id + 1n, id + 2n, id + 3n].map((componentId) => ({ component: pointer(componentId) })),
-		});
-		add(id + 1n, UnityClass.Transform, transform(id, []));
-		add(id + 2n, UnityClass.MeshFilter, { m_Mesh: pointer(50n) });
-		add(id + 3n, UnityClass.MeshRenderer, { m_Enabled: true, m_CastShadows: 1, m_Materials: [pointer(60n)] });
-	}
-	add(50n, UnityClass.Mesh, {
-		m_LocalAABB: { m_Center: vector(0, 0, 0), m_Extent: vector(1, 1, 1) },
-		m_SubMeshes: [{}],
-	});
-	add(60n, UnityClass.Material, {});
-	const owner = file('CAB-prefab', objects, values);
 	const rows = await readPrefabRenderers(
 		resolver([owner]),
-		{ bundleIndex: 0, file: owner, info: objects[0] },
+		{ bundleIndex: 0, file: owner, info: root },
 		{ viewPose: null, particleQuad: null, decalCube: null, locked: false, effectLod: 'camera' },
 	);
 	assert.deepEqual(
 		rows.map((row) => [row.name, row.unsupported !== null]),
 		[['Raft', false]],
+	);
+});
+
+test('InteractHighlightMono hides its highlight and outline subtrees without standing them in', async () => {
+	// both overlay GameObjects are saved active and switched off in Awake even when the component is disabled
+	const { owner, root } = buildRootComponentPrefab(
+		{
+			data: { m_Enabled: 0, _highlightObject: pointer(20n), _outlineObject: pointer(30n) },
+			fields: ['m_Enabled', '_highlightObject', '_outlineObject'],
+		},
+		[
+			[10n, 'Switch', true],
+			[20n, 'Highlight', true],
+			[30n, 'Outline', true],
+		],
+	);
+	const rows = await readPrefabRenderers(
+		resolver([owner]),
+		{ bundleIndex: 0, file: owner, info: root },
+		{ viewPose: null, particleQuad: null, decalCube: null, locked: false, effectLod: 'camera' },
+	);
+	assert.deepEqual(
+		rows.map((row) => [row.name, row.unsupported !== null]),
+		[['Switch', false]],
 	);
 });
 
