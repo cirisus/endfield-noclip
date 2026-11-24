@@ -30,6 +30,8 @@ export const BlobKind = {
 	Animation: 8,
 	/** compact foliage cluster block (`.fol`, `EFFL`) */
 	Foliage: 9,
+	/** GPU cloth simulation data (`.clth`, `EFCL`) */
+	Cloth: 10,
 } as const;
 
 export type BlobKind = (typeof BlobKind)[keyof typeof BlobKind];
@@ -46,6 +48,7 @@ const BLOB_EXTENSIONS: Record<BlobKind, string> = {
 	[BlobKind.Irradiance]: 'iv',
 	[BlobKind.Animation]: 'anim',
 	[BlobKind.Foliage]: 'fol',
+	[BlobKind.Cloth]: 'clth',
 };
 
 /** human-readable blob kind names, for stats and debug output */
@@ -60,6 +63,7 @@ export const BLOB_KIND_NAMES: Record<BlobKind, string> = {
 	[BlobKind.Irradiance]: 'irradiance',
 	[BlobKind.Animation]: 'animation',
 	[BlobKind.Foliage]: 'foliage',
+	[BlobKind.Cloth]: 'cloth',
 };
 
 /** the outer compression of a stored blob */

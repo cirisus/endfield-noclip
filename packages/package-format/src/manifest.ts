@@ -53,6 +53,7 @@ export const CORE_PATHS = {
 	particles: 'tables/particles.json.zst',
 	environment: 'tables/environment.json.zst',
 	irradiance: 'tables/irradiance.bin',
+	cloth: 'tables/cloth.bin.zst',
 } as const;
 
 /**

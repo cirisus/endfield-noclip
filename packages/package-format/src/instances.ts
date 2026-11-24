@@ -174,6 +174,8 @@ export interface InstanceBlock {
 	lodGroups?: RowSection;
 	/** optional sparse assembly node bindings (`ASMB` section: 1 u32 node id per row) */
 	assemblyNodes?: RowSection<Uint32Array>;
+	/** optional sparse GPU cloth bindings (`CLTH` section: 1 u32 index into `ClothTable.cloths` per row) */
+	cloths?: RowSection<Uint32Array>;
 }
 
 /**
@@ -258,6 +260,7 @@ const TAG_PATH = fourcc('PATH');
 const TAG_MOTN = fourcc('MOTN');
 const TAG_LODG = fourcc('LODG');
 const TAG_ASMB = fourcc('ASMB');
+const TAG_CLTH = fourcc('CLTH');
 const INSTANCES_TAGS = new Set([
 	TAG_HEAD,
 	TAG_PLTT,
@@ -274,6 +277,7 @@ const INSTANCES_TAGS = new Set([
 	TAG_MOTN,
 	TAG_LODG,
 	TAG_ASMB,
+	TAG_CLTH,
 ]);
 
 const CHAIN_SIZE = 16;
@@ -622,6 +626,9 @@ export const encodeInstanceBlock = (block: InstanceBlock): Uint8Array => {
 	if (block.assemblyNodes !== undefined) {
 		addSparse(TAG_ASMB, block.assemblyNodes, 1, false);
 	}
+	if (block.cloths !== undefined) {
+		addSparse(TAG_CLTH, block.cloths, 1, false);
+	}
 
 	if (block.paths.length > 0) {
 		const pathBytes = block.paths.reduce((sum, p) => sum + PATH_HEADER_SIZE + p.offsets.byteLength, 0);
@@ -741,6 +748,8 @@ export const decodeInstanceBlock = (
 		lodgSec === undefined ? undefined : readSparseF32(lodgSec, LOD_GROUP_FLOATS, count, 'LODG');
 	const asmbSec = container.sections.get(TAG_ASMB);
 	const assemblyNodes = asmbSec === undefined ? undefined : readSparseU32(asmbSec, count, 'ASMB');
+	const clthSec = container.sections.get(TAG_CLTH);
+	const cloths = clthSec === undefined ? undefined : readSparseU32(clthSec, count, 'CLTH');
 
 	const paths: RowPath[] = [];
 	const pathSec = container.sections.get(TAG_PATH);
@@ -786,5 +795,6 @@ export const decodeInstanceBlock = (
 		...(motions !== undefined ? { motions } : {}),
 		...(lodGroups !== undefined ? { lodGroups } : {}),
 		...(assemblyNodes !== undefined ? { assemblyNodes } : {}),
+		...(cloths !== undefined ? { cloths } : {}),
 	};
 };
