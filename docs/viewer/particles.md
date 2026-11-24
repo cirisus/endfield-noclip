@@ -105,9 +105,10 @@ system, index):
 - **GPU vs CPU turn**: camera-facing and vertical rows set [billboard](#billboards) bits for
   `row_basis` on the GPU; others rotate on the CPU.
 - **texture sheet & colour**: frame from start frame + age (over lifetime or FPS); row random, by
-  mesh index, fixed, or full grid; packs into `rowSheet` for `sheet_uv` in `frame.wgsl` (1×1 for
-  other rows). colour is `startColor * colorOverLifetime`, blended in authored space and linearized
-  into `RowWord.color`.
+  mesh index, fixed, or full grid; packs into `rowSheet` (along with quad `flip` UV bits 26–27) for
+  `sheet_uv` in `frame.wgsl` (1×1 unflipped for other rows). mesh `flip` negates particle size per
+  axis. colour is `startColor * colorOverLifetime`, blended in authored space and linearized into
+  `RowWord.color`.
 
 ### trails
 

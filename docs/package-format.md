@@ -572,7 +572,8 @@ each `ParticleSystem` playing on awake packs in one of three ways:
    encodes the [scaling mode](game-data/particles.md#size-and-pose) (`Hierarchy`, `Local`, `Shape`),
    with `sizedByScale` false for `Shape`. entry stores:
    - render mode, stretched length/velocity scales, quad `screenSize` limits, `sizedByScale`, render
-     alignment (`Facing` stored as `View`), pivot (pre-multiplied by mesh size for mesh particles)
+     alignment (`Facing` stored as `View`), pivot (pre-multiplied by mesh size for mesh particles),
+     optional `flip` probabilities (`m_Flip`, omitted when zero)
    - `duration`, `looping`, `startDelay` (constants only), particle cap (cap 0 stays 0 for looping
      ring buffers, else set to emission bound), simulation speed, emission bound
    - `MinMaxCurve`s (start lifetime/speed/size/rotation, gravity, rate), bursts, `MinMaxGradient`s

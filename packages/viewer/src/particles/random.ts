@@ -70,6 +70,9 @@ export const Channel = {
 	TrailColor: 55,
 	TrailColorOverTrail: 56,
 	SubEmitter: 57,
+	FlipX: 58,
+	FlipY: 59,
+	FlipZ: 60,
 } as const;
 
 /**

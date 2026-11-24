@@ -987,4 +987,13 @@ test('a mesh shape reaches its farthest vertex', () => {
 	assert.ok(Math.abs(reach - Math.hypot(1, 1)) < 1e-3);
 });
 
+test('reads non-zero m_Flip and omits all-zero m_Flip', () => {
+	const zero = readParticleSystem(system(), renderer({ m_Flip: vector(0, 0, 0) }));
+	assert.ok(zero !== null && 'info' in zero);
+	assert.equal(zero.info.flip, undefined);
+	const flipped = readParticleSystem(system(), renderer({ m_Flip: vector(1, 0.5, 0) }));
+	assert.ok(flipped !== null && 'info' in flipped);
+	assert.deepEqual(flipped.info.flip, [1, 0.5, 0]);
+});
+
 // #endregion

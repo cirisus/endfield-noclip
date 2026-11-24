@@ -70,16 +70,28 @@ export type RowKind = (typeof RowKind)[keyof typeof RowKind];
 
 /**
  * a row's texture sheet word ({@link RowWord.sheet}): the tile its mesh's UVs are remapped into (`sheet_uv`
- * in frame.wgsl), tiles across − 1 in bits 0–5, down − 1 in bits 6–11, the tile in bits 12–23, and which UV
- * sets take it (bit 24 UV0, bit 25 UV1). 0, a 1×1 sheet, leaves the UVs as they are
+ * in frame.wgsl), tiles across − 1 in bits 0–5, down − 1 in bits 6–11, the tile in bits 12–23, which UV sets
+ * take the tile (bit 24 UV0, bit 25 UV1), and per-axis UV flips before tile remapping (bit 26 U, bit 27 V).
+ * 0, a 1×1 unflipped sheet, leaves the UVs as they are
  *
  * @param tiles tiles across and down, 1–64 each
  * @param tile the tile, counted from the sheet's top-left along its rows
  * @param uvChannels bit 0 for UV0, bit 1 for UV1
+ * @param flip bit 0 to flip U (`1 - u`), bit 1 to flip V (`1 - v`)
  * @returns the sheet word
  */
-export const rowSheet = (tiles: readonly [number, number], tile: number, uvChannels: number): number =>
-	((tiles[0] - 1) | ((tiles[1] - 1) << 6) | ((tile & 0xfff) << 12) | ((uvChannels & 3) << 24)) >>> 0;
+export const rowSheet = (
+	tiles: readonly [number, number],
+	tile: number,
+	uvChannels: number,
+	flip = 0,
+): number =>
+	((tiles[0] - 1) |
+		((tiles[1] - 1) << 6) |
+		((tile & 0xfff) << 12) |
+		((uvChannels & 3) << 24) |
+		((flip & 3) << 26)) >>>
+	0;
 
 const customHalves = new Float16Array(4);
 const customWords = new Uint32Array(customHalves.buffer);

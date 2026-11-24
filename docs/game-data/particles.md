@@ -133,6 +133,10 @@ details:
 - **pivot (`m_Pivot`)**: offsets particle in its rotated frame by `pivot · size`. in mesh mode, also
   scales by mesh bounds size `2 · (|centre| + extent)` per axis (e.g. Dijiang robot lamps
   `P_fxmap_common_robot_lamp_802` offset 0.1 m eye planes by ±0.95 → 7 cm under 30× parent).
+- **flip (`m_Flip`)**: per-axis probability (0–1) of flipping each particle. on quads, flips U (`x`)
+  and/or V (`y`) within the tile without changing quad corners or winding (e.g. Si's Painting birds
+  `P_fxmap_map02_lv010_bird_black_01_s` set `(1, 1, 0)` on stretched quads). on meshes, negates the
+  particle's size along `x`/`y`/`z` before applying pivot (e.g. campfire meshes set `(0, 0, 1)`).
 - **meshes**: up to four (`m_Mesh`..`m_Mesh3`), uniform or weighted by `m_MeshWeighting*` when
   `m_MeshDistribution = 1`.
 - **render alignment (`m_RenderAlignment`)**: `0` View, `1` World, `2` Local, `3` Facing, `4`

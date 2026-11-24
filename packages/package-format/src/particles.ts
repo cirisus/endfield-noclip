@@ -439,6 +439,11 @@ export interface ParticleSystemInfo {
 	 */
 	pivot: Vec3;
 	/**
+	 * per-axis probability (0–1) of flipping each particle (Unity's `ParticleSystemRenderer.m_Flip`): quads
+	 * flip their UVs along x/y, meshes negate their size along x/y/z. omitted when all zero
+	 */
+	flip?: Vec3;
+	/**
 	 * the relative chance of each of the system's meshes (up to four); each particle draws one. a renderer with
 	 * several meshes is one entry per mesh, differing only in {@link mesh}, each drawing its own particles.
 	 * quads are one mesh, `[1]`

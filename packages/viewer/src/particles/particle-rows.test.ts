@@ -155,6 +155,31 @@ describe('ParticleField', () => {
 		// its pivot moves the head along the velocity by its size, and the streak across by half its width
 		const pivoted = written(moving([0, 1, 0], [1, 0.5, 0]), view);
 		assert.ok(near(pivoted, [0, -2, 0, 1, 0, 0, 0, 0, 1, 0.5, -0.5, 0]), [...pivoted.subarray(0, 12)].join());
+		// m_Flip packs UV flip bits into the sheet word for quads and negates particle size for meshes
+		const flippedQuad = written({ ...fog, flip: [1, 1, 0] }, view);
+		assert.equal(new Uint32Array(flippedQuad.buffer)[RowWord.sheet], rowSheet([1, 1], 0, 0, 3));
+		const flippedMesh = written(
+			system({
+				renderMode: ParticleRenderMode.Mesh,
+				alignment: ParticleAlignment.World,
+				looping: false,
+				startLifetime: constant(5),
+				rate: constant(0),
+				bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+				shape: null,
+				startSize: [constant(2), constant(3), constant(4)],
+				startRotation: [constant(0), constant(0), constant(0)],
+				gravityModifier: constant(0),
+				flip: [0, 1, 1],
+			}),
+			view,
+		);
+		assert.ok(
+			near(flippedMesh, [2, 0, 0, 0, -3, 0, 0, 0, -4, 0, 0, 0]),
+			[...flippedMesh.subarray(0, 12)].join(),
+		);
+		assert.equal(new Uint32Array(flippedMesh.buffer)[RowWord.sheet], 0);
+		assert.equal(flippedMesh[RowWord.extent], 4);
 	});
 
 	it('keeps a freeform stretched billboard centred on the particle and stretches it linearly along velocity', () => {

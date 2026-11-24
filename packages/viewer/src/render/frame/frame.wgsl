@@ -988,15 +988,19 @@ struct InstanceRow {
 	custom: vec2u,
 }
 
-// a mesh's UV sets (xy: UV0, zw: UV1) remapped into the tile of an instance row's texture sheet word
-// (`rowSheet` in instance-rows.ts). tiles count from the sheet's top-left; UV (0, 0) is its bottom-left
+// a mesh's UV sets (xy: UV0, zw: UV1) flipped by bits 26–27 (U, V) and remapped into the tile of an instance
+// row's texture sheet word (`rowSheet` in instance-rows.ts). tiles count from the sheet's top-left; UV (0, 0)
+// is its bottom-left
 fn sheet_uv(sheet: u32, uv: vec4f) -> vec4f {
+	let flip = vec2<bool>((sheet & (1u << 26u)) != 0u, (sheet & (1u << 27u)) != 0u);
+	let u0 = select(uv.xy, 1.0 - uv.xy, flip);
+	let u1 = select(uv.zw, 1.0 - uv.zw, flip);
 	let tiles = vec2u((sheet & 63u) + 1u, ((sheet >> 6u) & 63u) + 1u);
 	let tile = (sheet >> 12u) & 4095u;
 	let size = 1.0 / vec2f(tiles);
 	let corner = vec2f(f32(tile % tiles.x), f32(tiles.y - 1u - min(tile / tiles.x, tiles.y - 1u))) * size;
-	let uv0 = select(uv.xy, uv.xy * size + corner, (sheet & (1u << 24u)) != 0u);
-	let uv1 = select(uv.zw, uv.zw * size + corner, (sheet & (1u << 25u)) != 0u);
+	let uv0 = select(u0, u0 * size + corner, (sheet & (1u << 24u)) != 0u);
+	let uv1 = select(u1, u1 * size + corner, (sheet & (1u << 25u)) != 0u);
 	return vec4f(uv0, uv1);
 }
 

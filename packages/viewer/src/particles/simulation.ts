@@ -39,9 +39,10 @@ import { unitVectorInto } from './vector-math.ts';
 /**
  * floats per particle in {@link ParticleSimulation.evaluate}'s output: position, rotation (xyzw), size, the
  * texture sheet's tile (0 without a sheet), colour (linear rgb, alpha), velocity (m/s), all in the emitter's
- * frame, then its custom data (`ParticleSystemInfo.customData`, zero without)
+ * frame, then its custom data (`ParticleSystemInfo.customData`, zero without) and its 3-bit axis flip mask
+ * (`ParticleSystemInfo.flip`, bit 0 x, bit 1 y, bit 2 z)
  */
-export const PARTICLE_FLOATS = 22;
+export const PARTICLE_FLOATS = 23;
 
 /** where each value starts in a particle's {@link PARTICLE_FLOATS} */
 export const ParticleFloat = {
@@ -52,6 +53,7 @@ export const ParticleFloat = {
 	color: 11,
 	velocity: 15,
 	custom: 18,
+	flip: 22,
 } as const;
 
 /** the most particles one emitter shows */
@@ -315,6 +317,8 @@ interface BirthState {
 	customR1: number;
 	customR2: number;
 	customR3: number;
+	/** 3-bit axis flip mask (bit 0 x, bit 1 y, bit 2 z) */
+	flip: number;
 }
 
 const emptyBirth = (): BirthState => ({
@@ -370,6 +374,7 @@ const emptyBirth = (): BirthState => ({
 	customR1: 0,
 	customR2: 0,
 	customR3: 0,
+	flip: 0,
 });
 
 /** a live particle being placed */
@@ -1906,6 +1911,16 @@ export class ParticleSimulation {
 			birth.colorOverR = random(seed, id, Channel.ColorOverLifetime);
 		}
 
+		if (info.flip !== undefined) {
+			const [fx, fy, fz] = info.flip;
+			birth.flip =
+				(fx > 0 && (fx >= 1 || random(seed, id, Channel.FlipX) < fx) ? 1 : 0) |
+				(fy > 0 && (fy >= 1 || random(seed, id, Channel.FlipY) < fy) ? 2 : 0) |
+				(fz > 0 && (fz >= 1 || random(seed, id, Channel.FlipZ) < fz) ? 4 : 0);
+		} else {
+			birth.flip = 0;
+		}
+
 		if (this.#hasCustom && info.customData !== null) {
 			if (info.customData[0] !== null) {
 				birth.customR0 = random(seed, id, Channel.CustomX);
@@ -2099,5 +2114,6 @@ export class ParticleSimulation {
 			out[at + ParticleFloat.custom + 2] = 0;
 			out[at + ParticleFloat.custom + 3] = 0;
 		}
+		out[at + ParticleFloat.flip] = birth.flip;
 	}
 }

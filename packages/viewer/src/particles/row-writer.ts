@@ -816,9 +816,21 @@ export class ParticleRowWriter {
 				ax2[1] = yz - wx;
 				ax2[2] = 1 - xx - yy;
 			}
+			const flip = particles[base + ParticleFloat.flip];
 			particle.size[0] = particles[base + ParticleFloat.size];
 			particle.size[1] = particles[base + ParticleFloat.size + 1];
 			particle.size[2] = particles[base + ParticleFloat.size + 2];
+			if (info.renderMode === ParticleRenderMode.Mesh && flip !== 0) {
+				if (flip & 1) {
+					particle.size[0] = -particle.size[0];
+				}
+				if (flip & 2) {
+					particle.size[1] = -particle.size[1];
+				}
+				if (flip & 4) {
+					particle.size[2] = -particle.size[2];
+				}
+			}
 			particle.velocity[0] = particles[base + ParticleFloat.velocity];
 			particle.velocity[1] = particles[base + ParticleFloat.velocity + 1];
 			particle.velocity[2] = particles[base + ParticleFloat.velocity + 2];
@@ -880,8 +892,13 @@ export class ParticleRowWriter {
 			out[o + RowWord.extent + 2] = extent;
 			words[o + RowWord.block] = slot;
 			words[o + RowWord.info] = infoWord;
+			const quadFlip = info.renderMode === ParticleRenderMode.Mesh ? 0 : flip & 3;
 			words[o + RowWord.sheet] =
-				sheet === null ? 0 : rowSheet(sheet.tiles, particles[base + ParticleFloat.tile], sheet.uvChannels);
+				sheet === null
+					? quadFlip === 0
+						? 0
+						: rowSheet([1, 1], 0, 0, quadFlip)
+					: rowSheet(sheet.tiles, particles[base + ParticleFloat.tile], sheet.uvChannels, quadFlip);
 			color[0] = particles[base + ParticleFloat.color];
 			color[1] = particles[base + ParticleFloat.color + 1];
 			color[2] = particles[base + ParticleFloat.color + 2];

@@ -1106,6 +1106,8 @@ export const readParticleSystem = (
 	if (!isConstantCurve(delay)) {
 		return { reason: 'start delay curve' };
 	}
+	const flip = isObject(renderer['m_Flip']) ? vector3Field(renderer, 'm_Flip') : null;
+	const hasFlip = flip !== null && (flip[0] !== 0 || flip[1] !== 0 || flip[2] !== 0);
 	return {
 		info: {
 			renderMode,
@@ -1158,6 +1160,7 @@ export const readParticleSystem = (
 			rotationOverLifetime,
 			alignment,
 			pivot: vector3Field(renderer, 'm_Pivot'),
+			...(hasFlip ? { flip } : {}),
 			meshWeights,
 			mesh: 0,
 			ringBuffer,

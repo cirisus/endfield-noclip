@@ -259,6 +259,17 @@ export const frozenParticleMatrix = (
 	if (size === null || angles === null) {
 		return null;
 	}
+	if (isObject(renderer['m_Flip'])) {
+		const flip = vector3Field(renderer, 'm_Flip');
+		for (let axis = 0; axis < 3; axis++) {
+			if (flip[axis] > 0 && flip[axis] < 1) {
+				return null;
+			}
+			if (flip[axis] >= 1) {
+				size[axis] = -size[axis];
+			}
+		}
+	}
 	const degrees = angles.map((radians) => (radians * 180) / Math.PI);
 	// the shape's centre moves with the emitter's matrix, as played particles do
 	const [x, y, z] = booleanField(shape, 'enabled') ? vector3Field(shape, 'm_Position') : [0, 0, 0];

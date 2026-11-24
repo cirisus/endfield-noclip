@@ -229,3 +229,25 @@ test('a frozen mesh particle is moved by its pivot within its turned, sized fram
 	// the pivot of 0.5 mesh sizes, 0.05 m at size 1, times the start size 12 and the emitter's x scale 2
 	assert.deepEqual(Array.from(m!.subarray(12, 15), round), [2.2, 2, 3]);
 });
+
+test('a frozen mesh particle negates its size on deterministic m_Flip axes and unfreezes on random ones', () => {
+	const flipped = frozenParticleMatrix(
+		system({ initial: { startRotation: constant(0) } }),
+		{ m_RenderMode: 4, m_RenderAlignment: 2, m_Pivot: ZERO, m_Flip: { x: 0, y: 0, z: 1 } },
+		identity,
+		emitter,
+		UNIT_MESH,
+	);
+	assert.ok(flipped !== null);
+	assert.deepEqual(Array.from(flipped.subarray(8, 11), round), [0, 0, -7]);
+	assert.equal(
+		frozenParticleMatrix(
+			system({ initial: { startRotation: constant(0) } }),
+			{ m_RenderMode: 4, m_RenderAlignment: 2, m_Pivot: ZERO, m_Flip: { x: 0.5, y: 0, z: 0 } },
+			identity,
+			emitter,
+			UNIT_MESH,
+		),
+		null,
+	);
+});

@@ -29,7 +29,9 @@ describe('sheetTile', () => {
 		assert.equal((sheetWord & 63) + 1, 8);
 		assert.equal(((sheetWord >>> 6) & 63) + 1, 4);
 		assert.equal((sheetWord >>> 12) & 0xfff, 63);
-		assert.equal(sheetWord >>> 24, 1);
+		assert.equal((sheetWord >>> 24) & 3, 1);
+		assert.equal((sheetWord >>> 26) & 3, 0);
+		assert.equal((rowSheet([1, 1], 0, 0, 3) >>> 26) & 3, 3);
 		assert.equal(rowSheet([1, 1], 0, 0), 0);
 		assert.equal(packRowColor([1, 0, 0.5, 0.25]), (64 << 24) | (128 << 16) | 255);
 		// f16 pairs, low half first: 1.0 is 0x3c00, 0.5 is 0x3800, 2.0 is 0x4000
