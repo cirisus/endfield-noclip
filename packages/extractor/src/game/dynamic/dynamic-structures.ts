@@ -58,6 +58,13 @@ import {
 } from '../state/scene-control.ts';
 import { controllerKey, progressionId } from '../state/scenery-variants.ts';
 
+import {
+	collectWaterPipes,
+	type DrivenWaterPipe,
+	noteWaterPipeConditions,
+	waterPipeLooks,
+} from './water-pipes.ts';
+
 // the scene's DynamicStreaming content (docs/extraction/prefabs-and-interactives.md#dynamic-structures): the
 // `fb_main` files list resource owners, each owner's resource groups name rows of prefab placements or ECS
 // groups, and every row loads under its owner's and group's gates, controllers, scene states and stream
@@ -157,10 +164,20 @@ export const loadDynamicStructures = async (
 	const files = new DynamicFiles(context.vfs, scene);
 	const { grids, owners } = await files.readOwners();
 	const blights = claimBlights(owners, game);
+	const waterPipes = collectWaterPipes(owners);
 	const driven = await drivenViewStates(context, owners, blights, cache);
 	noteOwnerConditions(game, owners, blights, driven);
+	noteWaterPipeConditions(game, waterPipes);
 
-	const pass = new OwnerPass(context, { game, partition, grids, owners: owners.length, blights, driven });
+	const pass = new OwnerPass(context, {
+		game,
+		partition,
+		grids,
+		owners: owners.length,
+		blights,
+		driven,
+		waterPipes,
+	});
 	for (const owner of owners) {
 		// oxlint-disable-next-line no-await-in-loop -- owners in order; poses are cached per model and value
 		await pass.place(owner);
@@ -608,6 +625,7 @@ interface OwnerScene {
 	owners: number;
 	blights: ReadonlyMap<DynamicSceneEntity, Blight>;
 	driven: ReadonlyMap<DynamicSceneEntity, DrivenViewStates>;
+	waterPipes: ReadonlyMap<DynamicSceneEntity, DrivenWaterPipe>;
 }
 
 /** gates each owner's resource groups and places their rows, in owner order */
@@ -833,31 +851,35 @@ class OwnerPass {
 		if (effect) {
 			this.result.counts.effects += models.length;
 		}
-		const view = effect ? undefined : this.#scene.driven.get(entity);
-		const looks: { suffix: string; when: Alternatives; pose: PrefabPose | null }[] = [];
-		if (view === undefined) {
-			looks.push({ suffix: '', when: [[]], pose: null });
-		} else {
-			const { variable, states, values } = view;
-			for (const value of values) {
-				looks.push({
-					suffix: `@state=${value}`,
-					when: game.requirements(variableIs(variable, value)),
-					// oxlint-disable-next-line no-await-in-loop -- poses are cached per model and value
-					pose: await this.#poseAt(states, value),
+		const pipe = effect ? undefined : this.#scene.waterPipes.get(entity);
+		const view = effect || pipe !== undefined ? undefined : this.#scene.driven.get(entity);
+		const sharedLooks: { suffix: string; when: Alternatives; pose: PrefabPose | null }[] = [];
+		if (pipe === undefined) {
+			if (view === undefined) {
+				sharedLooks.push({ suffix: '', when: [[]], pose: null });
+			} else {
+				const { variable, states, values } = view;
+				for (const value of values) {
+					sharedLooks.push({
+						suffix: `@state=${value}`,
+						when: game.requirements(variableIs(variable, value)),
+						// oxlint-disable-next-line no-await-in-loop -- poses are cached per model and value
+						pose: await this.#poseAt(states, value),
+					});
+				}
+				sharedLooks.push({
+					suffix: '@saved',
+					when: game.requirements({
+						kind: 'any',
+						reverse: true,
+						conditions: values.map((value) => variableIs(variable, value)),
+					}),
+					pose: null,
 				});
 			}
-			looks.push({
-				suffix: '@saved',
-				when: game.requirements({
-					kind: 'any',
-					reverse: true,
-					conditions: values.map((value) => variableIs(variable, value)),
-				}),
-				pose: null,
-			});
 		}
 		for (const [index, model] of models.entries()) {
+			const looks = pipe === undefined ? sharedLooks : waterPipeLooks(game, pipe, model.rotation);
 			for (const { suffix, when, pose } of looks) {
 				const key = `${effect ? 'effect:' : ''}${ref.grid}/${ref.index + index}${suffix}`;
 				this.#models
