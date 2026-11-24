@@ -62,7 +62,7 @@ import { TextureRequests } from './texture-requests.ts';
 /** this frame's mesh selection, reused across frames */
 export interface MeshSelection {
 	buckets: MeshBucket[];
-	/** rows drawn as boxes (geometry pending or not converted) */
+	/** rows drawn as boxes while their geometry streams */
 	boxes: number[];
 	/** whether it draws emitters' particles, which move with the clock while the view holds still */
 	particles: boolean;

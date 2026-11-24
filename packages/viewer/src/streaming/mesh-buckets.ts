@@ -266,8 +266,8 @@ export class MeshBuckets {
 	}
 
 	/**
-	 * materials the game draws nothing visible with are dropped, as are shadow-only draws whose material casts
-	 * no shadow
+	 * draws whose geometry wasn't converted, materials the game draws nothing visible with, and shadow-only
+	 * draws whose material casts no shadow are dropped
 	 *
 	 * @param chain chain index
 	 * @returns the chain's drawn slots, built on first use
@@ -277,6 +277,9 @@ export class MeshBuckets {
 		if (slots === null) {
 			slots = [];
 			for (const draw of this.#chains[chain].draws) {
+				if (this.#geometries.blob(draw.geometry) === null) {
+					continue;
+				}
 				const material = draw.role === DrawRole.Unsupported ? this.#standIn : draw.material;
 				const look = material === null ? undefined : this.#lookOf(material);
 				const shadowOnly = draw.role === DrawRole.ShadowOnly;
