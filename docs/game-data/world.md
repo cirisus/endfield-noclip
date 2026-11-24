@@ -360,25 +360,28 @@ threshold.
 group holds up to 4 cloths (512 nodes total); Streaming holds only the group hash under
 `0xff050000`.
 
-| key          | content                                                                                                          |
-| ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `0xff000000` | `ClothGroupMeta` (80 B): cloth count, group hash, world XZ, then 4 each of cloth hashes, node/batch/cache counts |
-| `0xff010000` | `ClothMetaData` (176 B per cloth)                                                                                |
-| `0xff020000` | `ClothNodeData` (192 B per node, cloths concatenated)                                                            |
-| `0xff030000` | batch records (`4 × i32` each, all zero in cells read)                                                           |
-| `0xff040000` | batch cache records (`4 × i32` each, all zero in cells read)                                                     |
+| key          | content                                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `0xff000000` | `ClothGroupMeta` (80 B): cloth count, group hash, world XZ, then 4 each of cloth hashes, node/batch/cache counts     |
+| `0xff010000` | `ClothMetaData` (176 B per cloth)                                                                                    |
+| `0xff020000` | `ClothNodeData` (192 B per node, cloths concatenated)                                                                |
+| `0xff030000` | batch records (`4 × i32` per pair of batches: `(cacheStart, cacheEnd)` per batch in `.xy` / `.zw`)                   |
+| `0xff040000` | batch cache records (`4 × i32` per pair of cross-batch neighbours: `(srcNode, sharedSlot)` per entry in `.xy`/`.zw`) |
 
 - **cloth (`ClothMetaData`)**: node range (`u32` start, end), `u32` first batch, `u32` iterations (3
   seen), `f32` damping / wind frequency factor / wind balance factor / wind intensity scale,
-  `4 × i32` runtime-filled, `vec4` (`x` = longest anchor distance), cloth normal, and rows of 3×4
+  `4 × i32` runtime group offsets (`nodeOffset`, `batchOffset`, `cacheOffset`, 0), `vec4`
+  (`longestAnchorDist`, `softClamp` flag, `windSpatialScale`, 0), cloth normal, and rows of 3×4
   local-to-world and world-to-local matrices.
 - **node (`ClothNodeData`, world space)**: 2 anchor indices (−1 none) + rest distances; UV; 2
-  collision-plane floats; rest pos (`w` = weight growing from anchors), normal, tangent; previous
-  pos, current pos, current normal (starting at rest); 8 neighbour indices (−1 none) + rest
-  distances (`1e7` none).
+  collision-plane floats (`plane.xy`); rest pos (`w` = max deviation radius growing from anchors),
+  normal (`w` = `plane.z`), tangent (`w` = bitangent sign); previous pos (`w` = `plane.w`), current
+  pos, current normal (starting at rest); 8 neighbour indices (−1 none) + rest distances (`1e7`
+  none).
 
-an entity's [component 60](#initchunkdata-layout) holds its cloth hash. verified against one Sword
-Vault Dale cell (node positions lie on its canvases); batch records and unnamed fields are unread.
+an entity's [component 60](#initchunkdata-layout) holds its cloth hash. verified across all 2,169
+cloth group proxies in the install (1,388 unique groups, 3,158 cloths, 538,477 nodes; 0 size
+mismatches).
 
 ## stream areas
 

@@ -597,8 +597,24 @@ lets a draw read positions from a cloth simulation.
   weight.
 - simulation inputs ship per 128 m cell as [cloth groups](world.md#cloth-groups) (iterations,
   damping, wind factors, transform; per node: rest position/normal/tangent, ≤2 anchors, ≤8
-  neighbours with rest distances). compute shaders (`ClothSingleDispatchCS`, `ClothDataUploadCS`,
-  fixed `1/60 · 1.4 s` step, ≤4 character capsule colliders) are not read.
+  neighbours with rest distances, collision plane).
+- **`ClothSingleDispatchCS` (`ClothSimMain`)**: 256 threads per workgroup, one workgroup per cloth
+  (1–2 batches of ≤256 nodes; cross-batch neighbours load into shared memory via batch/cache
+  records). steps at fixed `dt = 0.023333333 s` (`1/60 · 1.4`, max 2 substeps/frame via
+  `GpuClothManager.UpdateTimer`):
+  - **wind**: samples `_WindGlobalNoiseTex` (`WindNoise`, 512×512 RGBA32 linear repeat in
+    `HGRenderPipelineGlobalSettings`) at `pos.xz · 0.05 + windNoiseUV`, advancing `windTime += step`
+    and `windNoiseUV -= windDir · step` with `step = windSpeed · 0.25 · 0.08 · dt`
+    (`windSpeed = 8`). combines wind lift/drag and gravity `(0, −5, 0)` via Verlet integration with
+    damping and pre-constraint max-deviation clamping.
+  - **constraints**: `iterNum` weighted-Jacobi distance passes in ping-pong shared memory paired
+    with per-node collision-plane projection `(planeXY.x, planeXY.y, baseNormal.w, prevPos.w)`,
+    optional ≤4 character capsule colliders, post-constraint base-position clamp (soft or hard), and
+    up to 2 anchor tethers.
+  - **skinning matrix**: rebuilds each node's orthonormal `(T, B, N)` frame from its neighbour ring
+    and writes `worldToLocal · CurFrame · inv(BaseFrame) · localToWorld` (3×4 row-major) into the
+    skeleton buffer. vertex shading applies only the position transform (normals/tangents stay as
+    authored).
 
 ## vertex offset
 
