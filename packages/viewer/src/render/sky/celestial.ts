@@ -236,17 +236,16 @@ export class CelestialLayer {
 			const r = RAY_OFFSET;
 			// in f64 here: the planet is hundreds of kilometres away
 			const origin = [eye[0] - ray.center[0], eye[1] - ray.center[1], eye[2] - ray.center[2]];
+			// `_LightDataBuffer._DirectionalLightColor` folds `1 / π` in (`directIntensityDividePi`)
 			const lightColor = ray.lightColor ?? sunIlluminance;
+			const lightScale = ray.lightColor === null ? ray.lightScale / Math.PI : ray.lightScale;
 			f.set([...origin, ray.radius], r);
 			f.set([ray.groundRadius, ray.topRadius, ray.cloudRadius, ray.viewSamples], r + 4);
 			f.set([...ray.scaleHeights, ray.mieAnisotropy, ray.useLut ? 1 : 0], r + 8);
 			f.set([...ray.rayleigh, ray.brightness], r + 12);
 			f.set([...ray.mie, ray.cloudShadows ? 1 : 0], r + 16);
 			f.set([...(ray.light ?? sun), 0], r + 20);
-			f.set(
-				lightColor.map((c) => c * ray.lightScale),
-				r + 24,
-			);
+			f.set([lightColor[0] * lightScale, lightColor[1] * lightScale, lightColor[2] * lightScale], r + 24);
 			f.set(ray.tilt[0], r + 28);
 			f.set(ray.tilt[1], r + 32);
 			f.set(ray.tilt[2], r + 36);

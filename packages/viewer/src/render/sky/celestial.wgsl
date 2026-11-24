@@ -512,7 +512,7 @@ fn ray_planet(direction: vec3f) -> RayPlanetHit {
 		atmosphere = (ray.rayleigh.rgb * phase_rayleigh * rayleigh + ray.mie.rgb * phase_mie * mie +
 			ray.ambient.rgb * depth.x) * ray.rayleigh.w;
 	}
-	let inscatter = max(atmosphere * post.sun_illuminance.rgb, vec3f(0.0)) * rim_mask;
+	let inscatter = max(atmosphere * (post.sun_illuminance.rgb / PI), vec3f(0.0)) * rim_mask;
 	return RayPlanetHit(inscatter + surface, select(0.0, 1.0, hit));
 }
 

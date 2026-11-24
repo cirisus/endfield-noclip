@@ -63,9 +63,9 @@ from `celestialConfig` and `starConfig`:
   sea mask) for sea colours, point-sampled RGBA cloud atlas (4 quadrants of longitude ×
   hemisphere) + cloud shadows, URP minimal GGX, soft terminator `1 / (1 + e^(−20 n·l))`, rim, flat
   ambient, and a 3-sample single-scattering atmosphere with transmittance LUT. lit from
-  `_CustomLightDir` if `_CustomLightDirection` is set, by directional light colour or material
-  colour if `_CustomLightColorPla` is set (rim and flat ambient ignore light colour). replaces the
-  sky behind its disc.
+  `_CustomLightDir` if `_CustomLightDirection` is set, by `_DirectionalLightColor`
+  (`linear(directColor) · directIntensityDividePi`) or material colour if `_CustomLightColorPla` is
+  set (rim and flat ambient ignore light colour). replaces the sky behind its disc.
 - **sky planets (`planetConfig`, `talosAlphaConfig`, when `drawPlanetInSkydome`)**: spheres viewed
   from `moonConfig.orbitRadius − moonConfig.radius` along `skydomeDrawer.pitchYaw`, lit from
   `incidentLightingPitchYaw`. frame is `Euler(selfTiltX, 0, selfTiltZ)` rotated by `selfRotationY`
@@ -157,8 +157,7 @@ fog banks at Marker Stone), applied in deferred lighting after all fog:
 
 - whether `cloudFadeAlpha` reaches cloud alpha without `brightnessAffectCloudAlpha` (two differing
   code paths; PC path unchecked).
-- which phases draw the moon's ring and its exact layer order; which light a space level gives the
-  ray-traced planet.
+- which phases draw the moon's ring and its exact layer order.
 - volumetric fog's slices per doubling (`S`), jitter scales, history weight, native diffuse-ambient
   scale on sky term, and local fog volume shader.
 - flow-noise blending in the volumetric section's height-fog set (read from height-fog section;

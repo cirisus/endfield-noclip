@@ -41,8 +41,9 @@ other derived fields on `lightConfig` can be stale: `forwardDirect` disagrees wi
 by tens of degrees in over a dozen shipped phases (map01 lv000 destruction/cave, indie_race001
 boss), and `directIntensity` disagrees with `directLux · preExposure` in about as many.
 
-the sun uses the same BRDF lobe as [local lights](#local-lights); foliage uses its two-sided model
-([foliage](materials.md#foliage)).
+the sun uses the same BRDF lobe as [local lights](#local-lights), with `_DirectionalLightColor`
+populated on the CPU from `linear(directColor) · directIntensityDividePi` (`1/π` folded in); foliage
+uses its two-sided model ([foliage](materials.md#foliage)).
 
 ## shadows
 
@@ -301,8 +302,6 @@ per-renderer value and `_VFXParams1` ([blending](effects.md#blending)).
 
 ## open
 
-- sun units: sun uses the local-light lobe (no `1/π` on diffuse); whether the CPU folds `1/π` into
-  sun colour is unknown (`directIntensityDividePi` also exists on phases).
 - baked lightmaps on HLOD and terrain (unchecked).
 - [local light shadows](#local-light-shadows): native dirty flag that triggers cached tile redraws,
   native caster cull and small-caster metric, how static+dynamic lights combine both tiles, and how

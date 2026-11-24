@@ -31,14 +31,14 @@ in the same pass to preserve the
 [game's layer order](../game-data/sky-and-fog.md#beyond-the-atmosphere).
 
 - **ray-traced planet**: linearises `HGRP/Planet/PlanetBillboard` parameters; lit by the pre-exposed
-  sun (or the material's own colour; space-level lighting is unchecked). skipped if any of its four
-  textures is missing (listed in `debug/environments.json`).
+  sun over π (matching `_DirectionalLightColor`, or the material's own colour). skipped if any of
+  its four textures is missing (listed in `debug/environments.json`).
 - **sky planets**: swaps right and forward vectors into the shader, matching the game. divergences:
   always additive regardless of `_BlendMode`, omits global colour adjustment on the first slot, and
   does not thin stars behind rings.
 - **omitted**: the moon's sky-wide ring and the aurora.
 
-none of these layers has been checked against an in-game shot.
+sky planets have not been checked against an in-game shot.
 
 ## fog
 

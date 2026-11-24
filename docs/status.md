@@ -50,8 +50,6 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - levels refill whole rather than partially; room bakes reach only the finest clipmap.
   - scene-state bake selection is inferred, not read from the game's native selector.
   - index pair table, trailing rows, three directory words, and other index magics are unread.
-- **sun** ([viewer](viewer/lighting.md#sun), [open](game-data/lighting.md#open)): may be `π` too
-  dark relative to local lights and the game (unchecked).
 - **sun shadows** ([viewer](viewer/lighting.md#shadows)):
   - missing: contact shadows, per-layer screen-size caster culling (measure undecoded),
     `_ShadowCullMode`, and map02's `shadowOC_CAVE_*` cave shadow occluders (InitChunkData component
@@ -133,9 +131,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - sky-view LUT ground bounce not drawn; PC cloud-alpha path selection unchecked.
   - Power Plateau overcast reads 15–20 sRGB levels brighter with lighter/thinner clouds than in game
     (Wuling matches).
-- **celestial layers** ([viewer](viewer/sky-and-fog.md#beyond-the-atmosphere)): unverified in game.
-  planets always add (ignoring `_BlendMode`) without global colour adjustment; stars are not thinned
-  behind rings; ray-traced planet uses viewer sun; moon ring (`HG_RING`) and aurora are not drawn.
+- **celestial layers** ([viewer](viewer/sky-and-fog.md#beyond-the-atmosphere)): sky planets
+  unverified in game; planets always add (ignoring `_BlendMode`) without global colour adjustment;
+  stars are not thinned behind rings; moon ring (`HG_RING`) and aurora are not drawn.
 - **volumetric & height fog** ([viewer](viewer/sky-and-fog.md#fog),
   [flow noise](viewer/sky-and-fog.md#flow-noise)):
   - missing: local fog volumes and `enableVLFlowNoise`.
