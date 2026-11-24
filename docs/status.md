@@ -341,17 +341,18 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   [viewer](viewer/particles.md#particles)):
   - **frozen mesh particles**: lose start colour, drift, and spin; take midpoint of random
     constants.
-  - **played systems**: ignore noise, collision, trigger, sub-emitter, light, and by-speed modules;
-    use viewer RNG; advance only while rendering (fish school circles without noise wobble);
-    flipbook copies step in phase.
+  - **played systems**: ignore noise, collision, trigger, light, by-speed, and non-Birth/Death
+    sub-emitter modules; use viewer RNG; advance only while rendering (fish school circles without
+    noise wobble); flipbook copies step in phase.
   - **trails** ([game-data](game-data/particles.md#trails)): follow Unity docs (unverified, e.g.
     purification swirls `dung01_wrdg001` ~2, 355, 208); fixed 9 points/trail (ignoring
     `minVertexDistance`); `worldSpace` unread (moving emitter drags trails). omitted: ribbon mode,
     other texture modes, trails outliving particles, and trails on ring-buffered/force-field/
     speed-limited systems.
   - **stand-ins**: non-play-on-awake; renderless systems without supported trails (map02 water
-    ribbons) or light/sub-emitter-only (storehouse sparks); curve start delay/drag; per-axis speed
-    limit; speed-modifier curve + drag without speed limit; non-sphere or vector-field force fields;
+    ribbons) or driving active particle lights / non-Birth/Death sub-emitters (empty renderless
+    systems with null targets are omitted); curve start delay/drag; per-axis speed limit;
+    speed-modifier curve + drag without speed limit; non-sphere or vector-field force fields;
     unsupported shapes (< 20 map02 systems: single-sided/box edges); mesh shapes with texture,
     Loop/PingPong edges, or mixed topologies; sprite sheets, non-lifetime/fps sheet timing, sheets
     > 64×64.

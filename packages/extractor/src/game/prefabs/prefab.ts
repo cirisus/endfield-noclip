@@ -29,7 +29,7 @@ import type { PrefabBillboard } from './billboard.ts';
 import type { EmissiveColors } from './emissive-override.ts';
 import { playedFloats, posedMaterialValues } from './material-values.ts';
 import { walkPrefab } from './prefab-walk.ts';
-import { moveFollowers, resolveForces } from './renderer-passes.ts';
+import { moveFollowers, resolveForces, resolveSubEmitters } from './renderer-passes.ts';
 import {
 	ABOVE_ROOT,
 	createRendererWalk,
@@ -246,6 +246,7 @@ export const readPrefabRenderers = async (
 	await walkPrefab(resolver, root, rendererVisitor(walk), ABOVE_ROOT);
 	moveFollowers(walk);
 	await resolveForces(walk);
+	await resolveSubEmitters(walk);
 	const frames = pose === null ? null : poseFrames(walk.nodes, pose);
 	const result: PrefabRenderer[] = [];
 	for (const candidate of walk.candidates) {

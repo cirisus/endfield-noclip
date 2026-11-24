@@ -294,6 +294,37 @@ export interface ParticleShapeMeshInfo {
 	areaCdf?: Float32Array;
 }
 
+const resolveSystemLuts = (system: ParticleSystemInfo, luts: LutsTable): ParticleSystemInfo => {
+	let next = system;
+	if (next.shape?.kind === ParticleShapeKind.Mesh && next.shape.mesh.lut !== undefined) {
+		const entry = luts.shapeMeshes[next.shape.mesh.lut];
+		if (entry !== undefined) {
+			next = {
+				...next,
+				shape: {
+					...next.shape,
+					mesh: {
+						...next.shape.mesh,
+						positions: entry.positions,
+						normals: entry.normals,
+						colors: entry.colors,
+						corners: entry.primSize,
+						primitives: entry.primitives,
+						areaCdf: entry.areaCdf,
+					},
+				},
+			};
+		}
+	}
+	if (next.subEmitter != null) {
+		const parent = resolveSystemLuts(next.subEmitter.parent, luts);
+		if (parent !== next.subEmitter.parent) {
+			next = { ...next, subEmitter: { ...next.subEmitter, parent } };
+		}
+	}
+	return next;
+};
+
 /**
  * hydrates `lut`-referenced particle shape meshes in a {@link ParticlesTable} from a decoded {@link LutsTable}
  *
@@ -302,30 +333,7 @@ export interface ParticleShapeMeshInfo {
  * @returns a new {@link ParticlesTable} with shape-mesh typed arrays and `areaCdf` filled in
  */
 export const resolveParticleLuts = (table: ParticlesTable, luts: LutsTable): ParticlesTable => ({
-	systems: table.systems.map((system) => {
-		if (system.shape?.kind !== ParticleShapeKind.Mesh || system.shape.mesh.lut === undefined) {
-			return system;
-		}
-		const entry = luts.shapeMeshes[system.shape.mesh.lut];
-		if (entry === undefined) {
-			return system;
-		}
-		return {
-			...system,
-			shape: {
-				...system.shape,
-				mesh: {
-					...system.shape.mesh,
-					positions: entry.positions,
-					normals: entry.normals,
-					colors: entry.colors,
-					corners: entry.primSize,
-					primitives: entry.primitives,
-					areaCdf: entry.areaCdf,
-				},
-			},
-		};
-	}),
+	systems: table.systems.map((system) => resolveSystemLuts(system, luts)),
 });
 
 /** a burst of particles (Unity's `ParticleSystem.Burst`), repeated within each loop */
@@ -463,6 +471,53 @@ export interface ParticleSystemInfo {
 	 * entries and trails), avoiding runtime `JSON.stringify` inference
 	 */
 	seedSalt?: number;
+	/**
+	 * the parent system driving this system as a sub-emitter (Unity's `SubModule`), absent or `null` for
+	 * standalone systems
+	 */
+	subEmitter?: ParticleSubEmitterInfo | null;
+}
+
+/** {@link ParticleSubEmitterInfo.type} values, Unity's `ParticleSystemSubEmitterType` */
+export const ParticleSubEmitterType = {
+	Birth: 0,
+	Collision: 1,
+	Death: 2,
+	Trigger: 3,
+	Manual: 4,
+} as const;
+
+export type ParticleSubEmitterType = (typeof ParticleSubEmitterType)[keyof typeof ParticleSubEmitterType];
+
+/** {@link ParticleSubEmitterInfo.properties} bits, Unity's `ParticleSystemSubEmitterProperties` */
+export const ParticleSubEmitterProperty = {
+	Color: 1 << 0,
+	Size: 1 << 1,
+	Rotation: 1 << 2,
+	Lifetime: 1 << 3,
+	Duration: 1 << 4,
+} as const;
+
+/**
+ * a parent particle system driving this system as a sub-emitter (Unity's `SubModule`). the parent's particles
+ * spawn bursts/streams of this system at their own positions (transformed from the parent emitter's frame
+ * into this emitter's frame by {@link fromParent}), inheriting whichever {@link ParticleSubEmitterProperty}
+ * bits {@link properties} sets
+ */
+export interface ParticleSubEmitterInfo {
+	/** the parent system; may itself be a sub-emitter */
+	parent: ParticleSystemInfo;
+	/**
+	 * 4×4 column-major matrix taking a point in the parent emitter's frame into this sub-emitter's frame
+	 * (`inverse(childEmitter) * parentEmitter`)
+	 */
+	fromParent: number[];
+	/** {@link ParticleSubEmitterType} (`Birth` or `Death`) */
+	type: ParticleSubEmitterType;
+	/** {@link ParticleSubEmitterProperty} bitmask */
+	properties: number;
+	/** chance each parent particle triggers this sub-emitter, 0–1 */
+	probability: number;
 }
 
 /**

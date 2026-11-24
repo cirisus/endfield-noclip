@@ -63,61 +63,75 @@ export class ParticleTable {
 	finish(): { particles: ParticlesTable; luts: LutsTable } {
 		const shapeMeshes: ParticleShapeMeshLut[] = [];
 		const meshIds = new Map<string, number>();
-		const systems = this.#systems.map((system): ParticleSystemInfo => {
-			if (system.shape?.kind !== ParticleShapeKind.Mesh) {
-				return system;
-			}
-			const { mesh } = system.shape;
-			const key = JSON.stringify([mesh.corners, mesh.positions, mesh.normals, mesh.colors, mesh.primitives]);
-			const lut = meshIds.getOrInsertComputed(key, () => {
-				const positions =
-					mesh.positions instanceof Float32Array ? mesh.positions : Float32Array.from(mesh.positions);
-				const normals =
-					mesh.normals === null
-						? null
-						: mesh.normals instanceof Float32Array
-							? mesh.normals
-							: Float32Array.from(mesh.normals);
-				const colors =
-					mesh.colors === null
-						? null
-						: mesh.colors instanceof Uint8Array
-							? mesh.colors
-							: Uint8Array.from(mesh.colors);
-				const primitives =
-					mesh.primitives instanceof Uint32Array ? mesh.primitives : Uint32Array.from(mesh.primitives);
-				const areaCdf = computeShapeMeshCdf(positions, primitives, mesh.corners);
-				return (
-					shapeMeshes.push({
-						primSize: mesh.corners,
-						hasColor: colors !== null,
-						positions,
-						normals,
-						colors,
-						primitives,
-						areaCdf,
-					}) - 1
-				);
-			});
-			return {
-				...system,
-				shape: {
-					...system.shape,
-					mesh: {
-						placement: mesh.placement,
-						spawn: mesh.spawn,
-						spread: mesh.spread,
-						normalOffset: mesh.normalOffset,
-						lut,
-						positions: [],
-						normals: null,
-						colors: null,
-						corners: mesh.corners,
-						primitives: [],
+		const extractSystem = (system: ParticleSystemInfo): ParticleSystemInfo => {
+			let next = system;
+			if (next.shape?.kind === ParticleShapeKind.Mesh) {
+				const { mesh } = next.shape;
+				const key = JSON.stringify([
+					mesh.corners,
+					mesh.positions,
+					mesh.normals,
+					mesh.colors,
+					mesh.primitives,
+				]);
+				const lut = meshIds.getOrInsertComputed(key, () => {
+					const positions =
+						mesh.positions instanceof Float32Array ? mesh.positions : Float32Array.from(mesh.positions);
+					const normals =
+						mesh.normals === null
+							? null
+							: mesh.normals instanceof Float32Array
+								? mesh.normals
+								: Float32Array.from(mesh.normals);
+					const colors =
+						mesh.colors === null
+							? null
+							: mesh.colors instanceof Uint8Array
+								? mesh.colors
+								: Uint8Array.from(mesh.colors);
+					const primitives =
+						mesh.primitives instanceof Uint32Array ? mesh.primitives : Uint32Array.from(mesh.primitives);
+					const areaCdf = computeShapeMeshCdf(positions, primitives, mesh.corners);
+					return (
+						shapeMeshes.push({
+							primSize: mesh.corners,
+							hasColor: colors !== null,
+							positions,
+							normals,
+							colors,
+							primitives,
+							areaCdf,
+						}) - 1
+					);
+				});
+				next = {
+					...next,
+					shape: {
+						...next.shape,
+						mesh: {
+							placement: mesh.placement,
+							spawn: mesh.spawn,
+							spread: mesh.spread,
+							normalOffset: mesh.normalOffset,
+							lut,
+							positions: [],
+							normals: null,
+							colors: null,
+							corners: mesh.corners,
+							primitives: [],
+						},
 					},
-				},
-			};
-		});
+				};
+			}
+			if (next.subEmitter != null) {
+				const parent = extractSystem(next.subEmitter.parent);
+				if (parent !== next.subEmitter.parent) {
+					next = { ...next, subEmitter: { ...next.subEmitter, parent } };
+				}
+			}
+			return next;
+		};
+		const systems = this.#systems.map(extractSystem);
 		return {
 			particles: { systems },
 			luts: { curves: [], gradients: [], shapeMeshes },

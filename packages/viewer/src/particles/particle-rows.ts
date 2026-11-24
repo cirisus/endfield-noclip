@@ -231,16 +231,17 @@ export class ParticleField {
 				return NO_ROWS;
 			}
 			// a moving emitter's system plays from where its clip starts, the viewer's clock's 0, as in the game, where
-			// both start as the prefab loads
+			// both start as the prefab loads. a sub-emitter loops whenever its driving parent loops
 			const moving = info.emitterMotion !== null;
+			const loops = simulation.loops;
 			let offset = 0;
-			if (info.looping) {
+			if (loops) {
 				offset = moving
 					? Math.ceil(simulation.settleTime / info.duration) * info.duration
 					: simulation.settleTime;
 			}
 			const id = this.#nextEmitterId++;
-			const start = moving && info.looping ? 0 : view.time;
+			const start = moving && loops ? 0 : view.time;
 			emitter = {
 				id,
 				simulation,

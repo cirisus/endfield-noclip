@@ -564,12 +564,24 @@ test('trails the viewer cannot draw stand in without particles, and are left off
 		}),
 		{ empty: true },
 	);
+	// a RenderMode.None system with only Birth/Death sub-emitters is read so it can drive its children
+	const subParent = drives({
+		LightsModule: { enabled: true, light: pointer(0n), ratio: 1, maxLights: 20 },
+		SubModule: {
+			enabled: true,
+			subEmitters: [{ emitter: pointer(9n), type: 0, properties: 20, emitProbability: 0.5 }],
+		},
+	});
+	assert.ok(subParent !== null && 'info' in subParent);
+	assert.equal(subParent.info.renderMode, ParticleRenderMode.None);
+	assert.equal(subParent.subEmitters.length, 1);
+	// active lights or unsupported sub-emitter triggers (e.g. Collision = 1) still report what's missing
 	assert.deepEqual(
 		drives({
 			LightsModule: { enabled: true, light: pointer(7n), ratio: 1, maxLights: 1 },
 			SubModule: {
 				enabled: true,
-				subEmitters: [{ emitter: pointer(9n), type: 0, properties: 20, emitProbability: 0.5 }],
+				subEmitters: [{ emitter: pointer(9n), type: 1, properties: 20, emitProbability: 0.5 }],
 			},
 		}),
 		{ reason: 'no render mode: lights and sub-emitters only' },

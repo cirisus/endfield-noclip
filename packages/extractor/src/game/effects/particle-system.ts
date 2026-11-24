@@ -45,6 +45,7 @@ import {
 	type ParticleShapePlacement,
 	type ParticleShapeRadius,
 	type ParticleSheetRows,
+	ParticleSubEmitterType,
 	type ParticleSystemInfo,
 	type ParticleTextureSheetInfo,
 	type ParticleTrailInfo,
@@ -147,6 +148,8 @@ export type ParticleSystemRead =
 			 * `null` without, or when the viewer can't draw them (the particles then play without)
 			 */
 			trail: ParticleTrailInfo | null;
+			/** active `SubModule` entries (non-null target PPtr, positive probability) */
+			subEmitters: SubEmitterRead[];
 	  }
 	| { reason: string }
 	| {
@@ -772,14 +775,15 @@ export const readActiveSubEmitters = (system: TypeTreeObject): SubEmitterRead[] 
 	return out;
 };
 
-/**
- * @returns why a system that draws no particles or trails of its own is missing something the viewer doesn't
- *   evaluate, or `null` when it drives nothing at all
- */
+/** whether a `SubModule` entry's trigger type is evaluated by the viewer */
+export const isSupportedSubEmitterType = (type: number): type is ParticleSubEmitterType =>
+	type === ParticleSubEmitterType.Birth || type === ParticleSubEmitterType.Death;
 const undrawnReason = (system: TypeTreeObject): string | null => {
 	const drives = definite([
 		hasActiveLights(system) ? 'lights' : null,
-		readActiveSubEmitters(system).length > 0 ? 'sub-emitters' : null,
+		readActiveSubEmitters(system).some((entry) => !isSupportedSubEmitterType(entry.type))
+			? 'sub-emitters'
+			: null,
 	]);
 	return drives.length === 0 ? null : `no render mode: ${drives.join(' and ')} only`;
 };
@@ -910,6 +914,7 @@ export const readParticleSystem = (
 	system: TypeTreeObject,
 	renderer: TypeTreeObject,
 ): ParticleSystemRead | null => {
+	const subEmitters = readActiveSubEmitters(system);
 	const renderMode = numberField(renderer, 'm_RenderMode');
 	switch (renderMode) {
 		case ParticleRenderMode.Billboard:
@@ -922,7 +927,12 @@ export const readParticleSystem = (
 		case ParticleRenderMode.None: {
 			if (!enabled(system, 'TrailModule')) {
 				const reason = undrawnReason(system);
-				return reason === null ? { empty: true } : { reason };
+				if (reason !== null) {
+					return { reason };
+				}
+				if (subEmitters.length === 0) {
+					return { empty: true };
+				}
 			}
 			break;
 		}
@@ -1159,6 +1169,7 @@ export const readParticleSystem = (
 		forces,
 		shapeMesh,
 		trail: typeof trail === 'string' ? null : trail,
+		subEmitters,
 	};
 };
 
@@ -1372,5 +1383,26 @@ export const particleReach = (info: ParticleSystemInfo, meshRadius: number): Aab
 		);
 	}
 	half += fieldReach;
+	if (info.subEmitter != null) {
+		// parent particles spawn this system anywhere within the parent's reach, mapped into this emitter's frame
+		const parent = particleReach(info.subEmitter.parent, 0);
+		const m = info.subEmitter.fromParent;
+		const px =
+			Math.abs(m[12]) +
+			Math.abs(m[0]) * parent.extents[0] +
+			Math.abs(m[4]) * parent.extents[1] +
+			Math.abs(m[8]) * parent.extents[2];
+		const py =
+			Math.abs(m[13]) +
+			Math.abs(m[1]) * parent.extents[0] +
+			Math.abs(m[5]) * parent.extents[1] +
+			Math.abs(m[9]) * parent.extents[2];
+		const pz =
+			Math.abs(m[14]) +
+			Math.abs(m[2]) * parent.extents[0] +
+			Math.abs(m[6]) * parent.extents[1] +
+			Math.abs(m[10]) * parent.extents[2];
+		half += Math.max(px, py, pz);
+	}
 	return { center: [0, 0, 0], extents: [half, half, half] };
 };

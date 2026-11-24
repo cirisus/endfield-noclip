@@ -8,14 +8,14 @@ spline movers. see [effects.md](effects.md) for particle shaders and custom data
 
 `ParticleSystemRenderer.m_RenderMode`:
 
-| value | mode                                                                                                                                            |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | billboard quad                                                                                                                                  |
-| 1     | stretched quad                                                                                                                                  |
-| 2     | horizontal quad                                                                                                                                 |
-| 3     | vertical quad                                                                                                                                   |
-| 4     | mesh                                                                                                                                            |
-| 5     | none (trails/sub-emitters/lights only, e.g. storehouse sparks `light` in `p_fxmap_uninteractive_storehous_01`, `_var1`, `p_fxmap_map_spark_02`) |
+| value | mode                                                                                                                                                                                                                                                                                |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | billboard quad                                                                                                                                                                                                                                                                      |
+| 1     | stretched quad                                                                                                                                                                                                                                                                      |
+| 2     | horizontal quad                                                                                                                                                                                                                                                                     |
+| 3     | vertical quad                                                                                                                                                                                                                                                                       |
+| 4     | mesh                                                                                                                                                                                                                                                                                |
+| 5     | none (trails/sub-emitters/lights only, e.g. `light` in `p_fxmap_map_spark_02` driving `huoxing`, or `lizi` in `p_fxmap_map02_lv002_machine_ring_01_start`; empty/null-target `light` emitters in `p_fxmap_map_spark_01` and `p_fxmap_uninteractive_storehous_01` produce no output) |
 
 ### emission and lifetime
 
@@ -200,6 +200,26 @@ code unread):
     width 0.037–0.05 m head → 0.017–0.023 m tail.
 - **Ribbon mode (`mode = 1`)**: connects particles to each other (e.g. map02 water pours in
   `int_big_wheel_postmodel`, `int_fake_waterfall_postmodel`, `int_waterpipe_postmodel`).
+
+### sub-emitters
+
+`SubModule` triggers child `ParticleSystem`s from parent particles:
+
+- entries with a null `emitter` PPtr, an inactive target GameObject, or `emitProbability = 0` are
+  skipped. active targets are marked as sub-emitters when the parent starts and do not auto-play on
+  their own even when `playOnAwake` is set.
+- `type = 0` (Birth) runs continuously over each parent particle's lifetime (up to the sub-emitter's
+  duration when non-looping), evaluating the sub-emitter's rate and bursts against the parent
+  particle's age minus `startDelay`; `type = 2` (Death) fires once on particle death. each parent
+  particle tests `emitProbability` once against its own seed.
+- `properties` bitmask: `1` Color, `2` Size, `4` Rotation, `8` Lifetime (sets child start lifetime
+  to the parent particle's remaining lifetime), `16` Duration (passes the parent particle's
+  normalized age as the sub-emitter's emission curve time).
+- examples: Aburrey Quarry sparks (`light` → `huoxing` in `p_fxmap_map_spark_02`: `RenderMode.None`
+  parent with null `LightsModule`, Birth, prob 0.5, Rotation | Duration), The Hub sparks (`star` →
+  `spark` → `smoke` in `p_fxmap_lv001_common_spark`), water-drop refraction ripples (`shuiobo` →
+  `niuqu` in `p_fxmap_map_drop_02`), and Marker Stone lightning clouds (`LightningCloud` → 2–5
+  non-looping children inheriting Lifetime in `p_fxmap_map02_lv004_lightningcloud_*`).
 
 ### examples
 

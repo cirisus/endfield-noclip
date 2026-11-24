@@ -9,7 +9,7 @@ import type { ParticleSystemInfo } from '@endfield-noclip/package-format/particl
 
 import { objectKey, type AssetResolver, type ObjectRef } from '../assets/assets.ts';
 import type { LocalTransform } from '../effects/particle-mesh.ts';
-import type { ExternalForcesRead } from '../effects/particle-system.ts';
+import type { ExternalForcesRead, SubEmitterRead } from '../effects/particle-system.ts';
 import {
 	animatorHiddenNodes,
 	type DistanceRange,
@@ -100,6 +100,15 @@ export interface PlacedForceField {
 	matrix: Float32Array;
 }
 
+/** a played particle system recorded during the walk, for resolving `SubModule` parent→child links */
+export interface WalkedParticleSystem {
+	ref: ObjectRef;
+	info: ParticleSystemInfo;
+	emitter: Float32Array;
+	candidates: RendererCandidate[];
+	subEmitters: SubEmitterRead[];
+}
+
 /**
  * what the renderer walk collects across a prefab. a GameObject can switch, scale or tint others met later in
  * the walk, so what it finds is kept here, by the target's key, until the target is met
@@ -163,6 +172,11 @@ export interface RendererWalk {
 	forceFields: Map<string, PlacedForceField>;
 	/** by candidate, the played systems whose force fields are resolved after the walk */
 	pendingForces: Map<RendererCandidate, PendingForces>;
+	/**
+	 * by ParticleSystem component key, every played particle system in the prefab (incl. RenderMode.None
+	 * parents)
+	 */
+	particleSystems: Map<string, WalkedParticleSystem>;
 	/** the played systems simulated in world space, whose particles stay where a moving emitter left them */
 	worldSimulated: Set<RendererCandidate>;
 }
@@ -197,6 +211,7 @@ export const createRendererWalk = (
 	followers: new Map(),
 	forceFields: new Map(),
 	pendingForces: new Map(),
+	particleSystems: new Map(),
 	worldSimulated: new Set(),
 });
 

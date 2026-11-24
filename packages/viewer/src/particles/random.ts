@@ -69,6 +69,7 @@ export const Channel = {
 	TrailWidth: 54,
 	TrailColor: 55,
 	TrailColorOverTrail: 56,
+	SubEmitter: 57,
 } as const;
 
 /**

@@ -29,11 +29,12 @@ as an emitter: it culls and streams geometry normally, but submits its live part
   `RowWord.color` (RGBA8, white for non-particles) and multiplies mesh vertex colour.
 - multi-mesh renderers split into one emitter per mesh sharing random seeds, each drawing the
   particles that pick its mesh.
-- frozen single-particle systems arrive as plain instances; unplayable systems arrive as
-  [stand-ins](../package-format.md#stand-ins) (mesh or quad with
+- frozen single-particle systems arrive as plain instances; empty `RenderMode.None` systems (no
+  trails, no active light prefab, no active sub-emitters) are omitted; other unplayable systems
+  arrive as [stand-ins](../package-format.md#stand-ins) (mesh or quad with
   [unsupported](materials.md#unsupported-materials) checker under "missing content").
-- ignored modules: noise, collision, triggers, sub-emitters, lights, by-speed modules (systems play
-  without them).
+- ignored modules: noise, collision, triggers, lights, by-speed modules, and non-Birth/Death
+  sub-emitters (systems play without them).
 
 ### emission
 
@@ -119,6 +120,22 @@ particle salt (`ParticleField`) and evaluate every particle regardless of mesh.
   segment and sightline, −Z facing camera, mean colour, tile `j` of an 8×1 sheet).
 - divergence: the game samples every `minVertexDistance`, giving smoother bends and continuous
   edges; here segments meet at ends only.
+
+### sub-emitters
+
+systems with `subEmitter` ([package format](../package-format.md#particles)) hold a nested
+`ParticleSimulation` for their parent (recursively for multi-level chains).
+
+- before evaluating its own particles, the child evaluates its parent over the window of parent
+  particles that could still have live children (retaining expired emissions on capped parents so
+  children can outlive short-lived parents such as `p_fxmap_map_spark_02`'s 0.15 s `light`), so
+  module-level scratch buffers never nest.
+- `Birth` evaluates the child's rate and bursts over each passing parent particle's life; `Death`
+  fires the child's `t = 0` bursts at parent death. parent positions transform into child emitter
+  space via `fromParent` (falling back to per-axis inversion on zero-scale axes), and inherited
+  Color/Size/Rotation/Lifetime/Duration apply at child birth.
+- `ParticleSimulation.loops` and `settleTime` follow the parent, so non-looping children of looping
+  parents (water-drop ripples, Marker Stone lightning clouds) play continuously.
 
 ### moving emitters
 

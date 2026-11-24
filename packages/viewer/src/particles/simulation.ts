@@ -10,6 +10,9 @@ import {
 	ParticleShapeKind,
 	type ParticleShapeRadius,
 	type ParticleClampInfo,
+	type ParticleSubEmitterInfo,
+	ParticleSubEmitterProperty,
+	ParticleSubEmitterType,
 	type ParticleSystemInfo,
 } from '@endfield-noclip/package-format/particles';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
@@ -98,6 +101,48 @@ interface AdmittedEmission extends Emission {
 	/** s */
 	life: number;
 }
+
+/** a sub-emitter emission spawned by a parent particle, carrying its inherited start state */
+interface SubEmission extends Emission {
+	/** spawn offset in this emitter's frame, m */
+	ox: number;
+	oy: number;
+	oz: number;
+	/** inherited start colour multiplier (sRGB, 1 when uninherited) */
+	cr: number;
+	cg: number;
+	cb: number;
+	ca: number;
+	/** inherited start size multiplier (1 when uninherited) */
+	sx: number;
+	sy: number;
+	sz: number;
+	/** inherited Euler rotation offset, rad (0 when uninherited) */
+	rx: number;
+	ry: number;
+	rz: number;
+	/** inherited lifetime, s (-1 when uninherited) */
+	lifeOverride: number;
+	/** inherited normalized emission time, 0–1 (-1 when uninherited) */
+	inheritedU: number;
+}
+
+/**
+ * inverse of `srgbToLinear`, for passing a parent particle's linear colour into a sub-emitter's sRGB start
+ * colour
+ */
+const linearToSrgb = (c: number): number => {
+	if (c <= 0) {
+		return 0;
+	}
+	if (c <= 0.0031308) {
+		return c * 12.92;
+	}
+	if (c >= 1) {
+		return c ** (1 / 2.2);
+	}
+	return 1.055 * c ** (1 / 2.4) - 0.055;
+};
 
 const byTime = (a: Emission, b: Emission): number => a.time - b.time;
 
@@ -547,6 +592,13 @@ export class ParticleSimulation {
 	#written = new Float64Array(0);
 	/** one particle's floats, which {@link trailPoints} places it at its trail's earlier ages into */
 	readonly #earlier = new Float32Array(PARTICLE_FLOATS);
+	/** parent simulation when this system is driven as a sub-emitter (`SubModule`); `null` otherwise */
+	readonly #subEmitter: ParticleSubEmitterInfo | null;
+	readonly #parent: ParticleSimulation | null;
+	/** scratch buffer for evaluating one parent particle at a sub-emitter spawn time */
+	readonly #parentOut: Float32Array | null;
+	/** sub-emitter emissions collected for the current {@link evaluate} */
+	readonly #subEmissions: SubEmission[] = [];
 	/** the particle being placed's random value for a channel */
 	readonly #randomOf = (channel: number): number => random(this.#seed, placing.id, channel);
 
@@ -557,8 +609,22 @@ export class ParticleSimulation {
 	constructor(info: ParticleSystemInfo, seed: number) {
 		this.info = info;
 		this.#seed = seed;
+		this.#subEmitter = info.subEmitter ?? null;
+		this.#parent =
+			this.#subEmitter === null
+				? null
+				: new ParticleSimulation(this.#subEmitter.parent, hash2(seed, 0x517c_c1b7));
+		this.#parentOut = this.#parent === null ? null : new Float32Array(PARTICLE_FLOATS);
 		this.#startDelay = Math.max(evaluateMinMax(info.startDelay, 0, random(seed, 0, Channel.StartDelay)), 0);
 		this.#longest = Math.max(upperBound(info.startLifetime), 0);
+		if (
+			this.#subEmitter !== null &&
+			(this.#subEmitter.properties & ParticleSubEmitterProperty.Lifetime) !== 0
+		) {
+			const parentSpeed = Math.max(this.#subEmitter.parent.simulationSpeed, 1e-6);
+			const parentLongest = Math.max(upperBound(this.#subEmitter.parent.startLifetime), 0);
+			this.#longest = Math.max(this.#longest, (parentLongest * info.simulationSpeed) / parentSpeed);
+		}
 		this.#stream = emissionStream(info.rate, info.duration);
 		this.#lookback = this.#longest;
 		if (info.ringBuffer !== null) {
@@ -686,8 +752,18 @@ export class ParticleSimulation {
 		this.#colorOverLut = tabulateGradient(info.colorOverLifetime);
 	}
 
+	/** whether this system loops on its own or is driven by a looping parent sub-emitter */
+	get loops(): boolean {
+		return this.#parent !== null ? this.#parent.loops : this.info.looping;
+	}
+
 	/** seconds a looping system needs to look as if it had always played */
 	get settleTime(): number {
+		if (this.#parent !== null) {
+			const speedRatio =
+				Math.max(this.info.simulationSpeed, 1e-6) / Math.max(this.#parent.info.simulationSpeed, 1e-6);
+			return this.#parent.settleTime * speedRatio + this.#lookback;
+		}
 		return this.#startDelay + this.#lookback + this.info.duration;
 	}
 
@@ -697,6 +773,9 @@ export class ParticleSimulation {
 	 */
 	get liveBound(): number {
 		const { maxParticles, ringBuffer, emissionBound } = this.info;
+		if (this.#parent !== null) {
+			return Math.min(maxParticles, MAX_PARTICLES);
+		}
 		if (ringBuffer === null) {
 			return Math.min(maxParticles, emissionBound);
 		}
@@ -724,10 +803,17 @@ export class ParticleSimulation {
 		out: Float32Array,
 		emittedFrom?: (born: number) => Readonly<Float64Array>,
 	): number {
+		// sub-emitters evaluate their parent first so module-level scratch buffers never nest
+		const subEmissions = this.#parent !== null ? this.#collectSubEmissions(time, down, worldToLocal) : null;
 		this.#down = down;
 		this.#worldToLocal = worldToLocal;
 		this.#emittedFrom = emittedFrom ?? null;
-		const emissions = this.#capped ? this.#admit(time) : this.#emitted(time - this.#lookback, time);
+		const emissions: readonly Emission[] =
+			subEmissions !== null
+				? subEmissions
+				: this.#capped
+					? this.#admit(time)
+					: this.#emitted(time - this.#lookback, time);
 		const evalFrame = ++this.#evalFrame;
 		this.#steppedNow.clear();
 		const capacity = Math.floor(out.length / PARTICLE_FLOATS);
@@ -743,9 +829,10 @@ export class ParticleSimulation {
 				break;
 			}
 			const emission = emissions[i];
+			const sub = subEmissions !== null ? subEmissions[i] : null;
 			const { time: born, id } = emission;
 			let age = time - born;
-			const birth = this.#birthOf(emission);
+			const birth = this.#birthOf(emission, sub);
 			const life = birth.life;
 			if (age < 0 || (ringBuffer === null && age >= life)) {
 				continue;
@@ -787,7 +874,7 @@ export class ParticleSimulation {
 				placing.life = life;
 				placing.age = age;
 				placing.moved = moved;
-				this.#place(placing, birth, out, count * PARTICLE_FLOATS);
+				this.#place(placing, birth, out, count * PARTICLE_FLOATS, sub);
 				if (this.info.trail !== null) {
 					const w = count * WRITTEN_FLOATS;
 					this.#written[w] = id;
@@ -812,8 +899,178 @@ export class ParticleSimulation {
 		return count;
 	}
 
+	/**
+	 * collects sub-emitter emissions driven by {@link #parent} whose particles may still be alive at `time`. all
+	 * parent evaluations finish before returning, so module-level scratch buffers never nest
+	 */
+	#collectSubEmissions(
+		time: number,
+		down: Vec3,
+		worldToLocal: (direction: Vec3) => Vec3,
+		windowFrom = time - this.#lookback,
+	): SubEmission[] {
+		const sub = this.#subEmitter!;
+		const parent = this.#parent!;
+		const parentOut = this.#parentOut!;
+		const out = this.#subEmissions;
+		out.length = 0;
+
+		const childSpeed = Math.max(this.info.simulationSpeed, 1e-6);
+		const parentSpeed = Math.max(parent.info.simulationSpeed, 1e-6);
+		const speedRatio = parentSpeed / childSpeed;
+		const parentTime = time * speedRatio;
+		const parentFrom = windowFrom * speedRatio;
+
+		// gather parent emissions whose lifetimes overlap [parentFrom, parentTime]
+		const parentEvents = parent.#collectWindow(parentFrom, parentTime, down, worldToLocal);
+		if (parentEvents.length === 0) {
+			return out;
+		}
+
+		// collect candidate child triggers (parent event + spawn time) without touching `#place` scratch yet
+		interface Trigger {
+			parent: { emission: Emission; sub: SubEmission | null; life: number };
+			born: number;
+			id: number;
+		}
+		const triggers: Trigger[] = [];
+		const parentSeed = parent.#seed;
+		for (const pe of parentEvents) {
+			if (random(parentSeed, pe.emission.id, Channel.SubEmitter) >= sub.probability) {
+				continue;
+			}
+			const cStart = pe.emission.time / speedRatio;
+			const cLife = pe.life / speedRatio;
+			if (sub.type === ParticleSubEmitterType.Birth) {
+				const localFrom = Math.max(0, windowFrom - cStart);
+				const localTo = Math.min(cLife, time - cStart);
+				if (localTo < localFrom) {
+					continue;
+				}
+				const localEmissions = this.#emitted(localFrom, localTo);
+				for (let j = 0; j < localEmissions.length; j++) {
+					const le = localEmissions[j];
+					const born = cStart + le.time;
+					if (born < windowFrom || born > time) {
+						continue;
+					}
+					triggers.push({ parent: pe, born, id: hash2(pe.emission.id, le.id) });
+				}
+			} else if (sub.type === ParticleSubEmitterType.Death) {
+				const born = cStart + cLife;
+				if (born < windowFrom || born > time) {
+					continue;
+				}
+				const localEmissions = this.#emitted(0, 1e-6);
+				for (let j = 0; j < localEmissions.length; j++) {
+					const le = localEmissions[j];
+					triggers.push({ parent: pe, born, id: hash2(pe.emission.id, le.id) });
+				}
+			}
+		}
+		if (triggers.length === 0) {
+			return out;
+		}
+
+		// evaluate each parent particle at its trigger time (all parent `#place` calls finish here)
+		parent.#down = down;
+		parent.#worldToLocal = worldToLocal;
+		parent.#emittedFrom = null;
+		const m = sub.fromParent;
+		const props = sub.properties;
+		const inheritColor = (props & ParticleSubEmitterProperty.Color) !== 0;
+		const inheritSize = (props & ParticleSubEmitterProperty.Size) !== 0;
+		const inheritRotation = (props & ParticleSubEmitterProperty.Rotation) !== 0;
+		const inheritLifetime = (props & ParticleSubEmitterProperty.Lifetime) !== 0;
+		const inheritDuration = (props & ParticleSubEmitterProperty.Duration) !== 0;
+
+		for (const trigger of triggers) {
+			const pe = trigger.parent;
+			const pBorn = pe.emission.time;
+			const pAt = trigger.born * speedRatio;
+			const pAge = Math.min(Math.max(pAt - pBorn, 0), pe.life);
+			const pBirth = parent.#birthOf(pe.emission, pe.sub);
+			placing.id = pe.emission.id;
+			placing.born = pBorn;
+			placing.life = pe.life;
+			placing.age = pAge;
+			placing.moved = pAge;
+			parent.#place(placing, pBirth, parentOut, 0, pe.sub);
+
+			const px = parentOut[ParticleFloat.position];
+			const py = parentOut[ParticleFloat.position + 1];
+			const pz = parentOut[ParticleFloat.position + 2];
+			const ox = m[0] * px + m[4] * py + m[8] * pz + m[12];
+			const oy = m[1] * px + m[5] * py + m[9] * pz + m[13];
+			const oz = m[2] * px + m[6] * py + m[10] * pz + m[14];
+
+			out.push({
+				time: trigger.born,
+				id: trigger.id,
+				ox,
+				oy,
+				oz,
+				cr: inheritColor ? linearToSrgb(parentOut[ParticleFloat.color]) : 1,
+				cg: inheritColor ? linearToSrgb(parentOut[ParticleFloat.color + 1]) : 1,
+				cb: inheritColor ? linearToSrgb(parentOut[ParticleFloat.color + 2]) : 1,
+				ca: inheritColor ? parentOut[ParticleFloat.color + 3] : 1,
+				sx: inheritSize ? parentOut[ParticleFloat.size] : 1,
+				sy: inheritSize ? parentOut[ParticleFloat.size + 1] : 1,
+				sz: inheritSize ? parentOut[ParticleFloat.size + 2] : 1,
+				rx: inheritRotation ? pBirth.rotX : 0,
+				ry: inheritRotation ? pBirth.rotY : 0,
+				rz: inheritRotation ? pBirth.rotZ : 0,
+				lifeOverride: inheritLifetime ? Math.max(pe.life - pAge, 0) / speedRatio : -1,
+				inheritedU: inheritDuration ? livedAt(pAge, pe.life) : -1,
+			});
+		}
+		out.sort(byTime);
+		return out;
+	}
+
+	/** returns this system's emissions whose lifetimes overlap `[from, to]`, for driving a child sub-emitter */
+	#collectWindow(
+		from: number,
+		to: number,
+		down: Vec3,
+		worldToLocal: (direction: Vec3) => Vec3,
+	): { emission: Emission; sub: SubEmission | null; life: number }[] {
+		const events: { emission: Emission; sub: SubEmission | null; life: number }[] = [];
+		if (this.#parent !== null) {
+			// multi-level chain: gather our own sub-emissions whose lifetimes can overlap [from, to]
+			const subs = this.#collectSubEmissions(to, down, worldToLocal, from - this.#longest);
+			for (const s of subs) {
+				const life = s.lifeOverride >= 0 ? s.lifeOverride : this.#lifetime(s);
+				if (s.time + life >= from && s.time <= to) {
+					events.push({ emission: { time: s.time, id: s.id }, sub: { ...s }, life });
+				}
+			}
+			return events;
+		}
+		if (this.#capped) {
+			const retain = Math.max(to - from, 0);
+			const source = this.#admit(to, retain);
+			for (let i = 0; i < source.length; i++) {
+				const e = source[i];
+				if (e.time + e.life >= from && e.time <= to) {
+					events.push({ emission: { time: e.time, id: e.id }, sub: null, life: e.life });
+				}
+			}
+		} else {
+			const source = this.#emitted(from - this.#longest, to);
+			for (let i = 0; i < source.length; i++) {
+				const e = source[i];
+				const life = this.#lifetime(e);
+				if (e.time + life >= from && e.time <= to) {
+					events.push({ emission: { time: e.time, id: e.id }, sub: null, life });
+				}
+			}
+		}
+		return events;
+	}
+
 	/** looks up or creates a live particle's {@link BirthState}, stamping it with {@link #evalFrame} */
-	#birthOf(emission: Emission): BirthState {
+	#birthOf(emission: Emission, sub: SubEmission | null = null): BirthState {
 		const { id, time: born } = emission;
 		const hasEmittedFrom = this.#emittedFrom !== null;
 		let birth = this.#births.get(id);
@@ -822,11 +1079,14 @@ export class ParticleSimulation {
 			return birth;
 		}
 		birth = this.#birthPool.pop() ?? emptyBirth();
-		const u = this.#loopFraction(born);
+		const u = sub !== null && sub.inheritedU >= 0 ? sub.inheritedU : this.#loopFraction(born);
 		birth.born = born;
 		birth.frame = this.#evalFrame;
 		birth.u = u;
-		birth.life = evaluateMinMax(this.info.startLifetime, u, random(this.#seed, id, Channel.Lifetime));
+		birth.life =
+			sub !== null && sub.lifeOverride >= 0
+				? sub.lifeOverride
+				: evaluateMinMax(this.info.startLifetime, u, random(this.#seed, id, Channel.Lifetime));
 		birth.drawsMesh = this.#drawsMesh(id);
 		birth.placed = false;
 		birth.emittedFrom = hasEmittedFrom;
@@ -871,14 +1131,14 @@ export class ParticleSimulation {
 	 *
 	 * @returns the admitted emissions that may still be alive, oldest first
 	 */
-	#admit(time: number): AdmittedEmission[] {
+	#admit(time: number, retain = 0): AdmittedEmission[] {
 		const { maxParticles } = this.info;
 		const startDelay = this.#startDelay;
 		const admitted = this.#admitted;
 		const ends = this.#admittedEnds;
-		// further back than a few lifetimes the history barely shows, so a long jump or a step back starts
-		// afresh from an empty system there
-		const horizon = 4 * this.#longest + this.info.duration;
+		// further back than a few lifetimes (plus any sub-emitter retention) the history barely shows, so a long
+		// jump or a step back starts afresh from an empty system there
+		const horizon = 4 * this.#longest + this.info.duration + retain;
 		let after = this.#admittedUntil;
 		if (time < after || time - after > horizon) {
 			admitted.length = 0;
@@ -919,10 +1179,10 @@ export class ParticleSimulation {
 					pushMin(ends, emission.time + life);
 				}
 			}
-			// drop those gone by the window's end, in order
+			// drop those past their lifetime + retention by the window's end, in order
 			let kept = 0;
 			for (const emission of admitted) {
-				if (emission.time + emission.life > to) {
+				if (emission.time + emission.life + retain > to) {
 					admitted[kept++] = emission;
 				}
 			}
@@ -933,7 +1193,7 @@ export class ParticleSimulation {
 			// a jump past the end skips the window's drop
 			let kept = 0;
 			for (const emission of admitted) {
-				if (emission.time + emission.life > time) {
+				if (emission.time + emission.life + retain > time) {
 					admitted[kept++] = emission;
 				}
 			}
@@ -1522,13 +1782,18 @@ export class ParticleSimulation {
 	}
 
 	/** computes a particle's immutable birth attributes and random draws once, into `birth` */
-	#populateBirth(id: number, birth: BirthState): void {
+	#populateBirth(id: number, birth: BirthState, sub: SubEmission | null): void {
 		const info = this.info;
 		const seed = this.#seed;
 		const u = birth.u;
 		const start = begin.position;
 		const direction = begin.direction;
 		this.#start(id, start, direction);
+		if (sub !== null) {
+			start[0] += sub.ox;
+			start[1] += sub.oy;
+			start[2] += sub.oz;
+		}
 		if (this.#emittedFrom !== null) {
 			// it leaves from the shape where the emitter was then, and moves on in the world from there
 			const m = this.#emittedFrom(birth.born);
@@ -1552,9 +1817,9 @@ export class ParticleSimulation {
 		birth.dirZ = direction[2];
 
 		const sizeRandom = random(seed, id, Channel.Size);
-		birth.sizeX = evaluateMinMax(info.startSize[0], u, sizeRandom);
-		birth.sizeY = evaluateMinMax(info.startSize[1], u, sizeRandom);
-		birth.sizeZ = evaluateMinMax(info.startSize[2], u, sizeRandom);
+		birth.sizeX = evaluateMinMax(info.startSize[0], u, sizeRandom) * (sub?.sx ?? 1);
+		birth.sizeY = evaluateMinMax(info.startSize[1], u, sizeRandom) * (sub?.sy ?? 1);
+		birth.sizeZ = evaluateMinMax(info.startSize[2], u, sizeRandom) * (sub?.sz ?? 1);
 		birth.growth = info.sizeOverLifetime === null ? 0 : random(seed, id, Channel.SizeOverLifetime);
 
 		const motion = info.motion;
@@ -1593,9 +1858,12 @@ export class ParticleSimulation {
 			}
 		}
 
-		birth.rotX = evaluateMinMax(info.startRotation[0], u, random(seed, id, Channel.RotationX));
-		birth.rotY = evaluateMinMax(info.startRotation[1], u, random(seed, id, Channel.RotationY));
-		birth.rotZ = evaluateMinMax(info.startRotation[2], u, random(seed, id, Channel.RotationZ));
+		birth.rotX =
+			evaluateMinMax(info.startRotation[0], u, random(seed, id, Channel.RotationX)) + (sub?.rx ?? 0);
+		birth.rotY =
+			evaluateMinMax(info.startRotation[1], u, random(seed, id, Channel.RotationY)) + (sub?.ry ?? 0);
+		birth.rotZ =
+			evaluateMinMax(info.startRotation[2], u, random(seed, id, Channel.RotationZ)) + (sub?.rz ?? 0);
 		if (this.#hasSpin) {
 			if (this.#spinAxis[0]) {
 				birth.spinR0 = random(seed, id, Channel.SpinX);
@@ -1621,10 +1889,10 @@ export class ParticleSimulation {
 			random(seed, id, Channel.Color),
 		);
 		const shapeTint = begin.tint;
-		const red = color[0] * shapeTint[0];
-		const green = color[1] * shapeTint[1];
-		const blue = color[2] * shapeTint[2];
-		const alpha = color[3] * shapeTint[3];
+		const red = color[0] * shapeTint[0] * (sub?.cr ?? 1);
+		const green = color[1] * shapeTint[1] * (sub?.cg ?? 1);
+		const blue = color[2] * shapeTint[2] * (sub?.cb ?? 1);
+		const alpha = color[3] * shapeTint[3] * (sub?.ca ?? 1);
 		if (info.colorOverLifetime === null) {
 			birth.colorR = srgbToLinear(red);
 			birth.colorG = srgbToLinear(green);
@@ -1655,11 +1923,17 @@ export class ParticleSimulation {
 		birth.placed = true;
 	}
 
-	#place(particle: Readonly<Placing>, birth: BirthState, out: Float32Array, at: number): void {
+	#place(
+		particle: Readonly<Placing>,
+		birth: BirthState,
+		out: Float32Array,
+		at: number,
+		sub: SubEmission | null = null,
+	): void {
 		const info = this.info;
 		const { id, life, age, moved } = particle;
 		if (!birth.placed) {
-			this.#populateBirth(id, birth);
+			this.#populateBirth(id, birth, sub);
 		}
 		const start = begin.position;
 		start[0] = birth.startX;

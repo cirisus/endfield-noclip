@@ -313,7 +313,12 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 		reason = `doesn't play on awake`;
 	} else if (reason === null && read !== null && 'reason' in read) {
 		reason = read.reason;
-	} else if (reason === null && !drawsParticles && trailMaterials.length === 0) {
+	} else if (
+		reason === null &&
+		!drawsParticles &&
+		trailMaterials.length === 0 &&
+		(read === null || !('info' in read) || read.subEmitters.length === 0)
+	) {
 		reason = 'no trail material';
 	}
 	if (reason !== null) {
@@ -393,6 +398,13 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 			}),
 		);
 	}
+	walk.particleSystems.set(objectKey(system.ref), {
+		ref: system.ref,
+		info: read.info,
+		emitter,
+		candidates,
+		subEmitters: read.subEmitters,
+	});
 	for (const candidate of candidates) {
 		walk.candidates.push(candidate);
 		// a custom simulation space's Transform is taken to hold still, as the world does

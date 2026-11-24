@@ -6,12 +6,15 @@ import {
 	transformPoint,
 	trsMatrix,
 } from '@endfield-noclip/formats/unity/transform';
-import type { ParticleForceFieldInfo } from '@endfield-noclip/package-format/particles';
+import type {
+	ParticleForceFieldInfo,
+	ParticleSubEmitterType,
+} from '@endfield-noclip/package-format/particles';
 
 import { objectKey } from '../assets/assets.ts';
-import { InfluenceFilter, readForceField } from '../effects/particle-system.ts';
+import { InfluenceFilter, isSupportedSubEmitterType, readForceField } from '../effects/particle-system.ts';
 
-import type { RendererWalk } from './renderer-walk.ts';
+import type { RendererWalk, WalkedParticleSystem } from './renderer-walk.ts';
 
 // what the renderer walk settles once the whole hierarchy is placed, since what it depends on can come later
 // in the walk
@@ -108,10 +111,127 @@ export const resolveForces = async (walk: RendererWalk): Promise<void> => {
 			candidate.unsupported = reason;
 			candidate.matrix = standIn;
 		} else if (infos.length > 0 && particles?.motion.kind === 'free') {
-			candidate.particles = {
+			const updated = {
 				...particles,
 				motion: { ...particles.motion, forces: { multiplier: forces.multiplier, fields: infos } },
 			};
+			candidate.particles = updated;
+			const walked = walk.particleSystems.get(objectKey(system));
+			if (walked !== undefined) {
+				walked.info = updated;
+			}
 		}
+	}
+};
+
+/**
+ * computes `inverse(child) * parent`, falling back to a safe per-axis inverse when `child` is singular (e.g.
+ * a flat sub-emitter with zero scale on one axis) so the non-zero axes still map positions cleanly
+ */
+const fromParentMatrix = (child: Float32Array, parent: Float32Array): number[] => {
+	try {
+		return [...multiplyMatrices(inverseAffine(child), parent)];
+	} catch {
+		// invert translation and non-zero column lengths independently; zero-scale rows stay 0
+		const inv = new Float32Array(16);
+		inv[15] = 1;
+		for (let axis = 0; axis < 3; axis++) {
+			const x = child[axis * 4];
+			const y = child[axis * 4 + 1];
+			const z = child[axis * 4 + 2];
+			const len2 = x * x + y * y + z * z;
+			if (len2 > 1e-12) {
+				const s = 1 / len2;
+				inv[axis] = x * s;
+				inv[4 + axis] = y * s;
+				inv[8 + axis] = z * s;
+			}
+		}
+		const tx = child[12];
+		const ty = child[13];
+		const tz = child[14];
+		inv[12] = -(inv[0] * tx + inv[4] * ty + inv[8] * tz);
+		inv[13] = -(inv[1] * tx + inv[5] * ty + inv[9] * tz);
+		inv[14] = -(inv[2] * tx + inv[6] * ty + inv[10] * tz);
+		return [...multiplyMatrices(inv, parent)];
+	}
+};
+
+/**
+ * links each sub-emitter `ParticleSystem` to its driving parent system (`SubModule`), in topological order so
+ * multi-level chains (`parent → child → grandchild`) carry the full chain. runs after {@link resolveForces} so
+ * parent force fields are already populated
+ *
+ * @param walk the finished walk, whose candidates are updated in place
+ */
+export const resolveSubEmitters = async (walk: RendererWalk): Promise<void> => {
+	interface Link {
+		parent: WalkedParticleSystem;
+		child: WalkedParticleSystem;
+		type: ParticleSubEmitterType;
+		properties: number;
+		probability: number;
+	}
+	const incoming = new Map<string, Link>();
+	for (const parent of walk.particleSystems.values()) {
+		for (const entry of parent.subEmitters) {
+			if (!isSupportedSubEmitterType(entry.type)) {
+				continue;
+			}
+			const target = await walk.resolver.resolve(parent.ref, entry.emitter);
+			if (target === null) {
+				continue;
+			}
+			const childKey = objectKey(target);
+			const child = walk.particleSystems.get(childKey);
+			if (child === undefined || child === parent || incoming.has(childKey)) {
+				continue;
+			}
+			incoming.set(childKey, {
+				parent,
+				child,
+				type: entry.type,
+				properties: entry.properties,
+				probability: entry.probability,
+			});
+		}
+	}
+	if (incoming.size === 0) {
+		return;
+	}
+	// attach parents before their children so multi-level chains embed the already-linked parent info
+	const resolved = new Set<string>();
+	const visiting = new Set<string>();
+	const attach = (childKey: string): void => {
+		if (resolved.has(childKey) || visiting.has(childKey)) {
+			return;
+		}
+		const link = incoming.get(childKey);
+		if (link === undefined) {
+			return;
+		}
+		visiting.add(childKey);
+		const parentKey = objectKey(link.parent.ref);
+		if (incoming.has(parentKey)) {
+			attach(parentKey);
+		}
+		visiting.delete(childKey);
+		resolved.add(childKey);
+		const subEmitter = {
+			parent: link.parent.info,
+			fromParent: fromParentMatrix(link.child.emitter, link.parent.emitter),
+			type: link.type,
+			properties: link.properties,
+			probability: link.probability,
+		};
+		link.child.info = { ...link.child.info, subEmitter };
+		for (const candidate of link.child.candidates) {
+			if (candidate.particles !== null) {
+				candidate.particles = { ...candidate.particles, subEmitter };
+			}
+		}
+	};
+	for (const childKey of incoming.keys()) {
+		attach(childKey);
 	}
 };

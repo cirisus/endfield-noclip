@@ -6,7 +6,10 @@ import {
 	type ParticleClampInfo,
 	ParticleMeshPlacement,
 	ParticleMeshSpawn,
+	ParticleRenderMode,
 	ParticleShapeKind,
+	ParticleSubEmitterProperty,
+	ParticleSubEmitterType,
 } from '@endfield-noclip/package-format/particles';
 
 import { compareNumbers } from '../compare.ts';
@@ -522,5 +525,114 @@ describe('ring buffers', () => {
 			points({ ...none, trail: none.trail === null ? null : { ...none.trail, ratio: 0 } }).length,
 			0,
 		);
+	});
+
+	it('spawns birth sub-emitter particles at parent positions and outlives a capped short-lived parent', () => {
+		// mirrors p_fxmap_map_spark_02: RenderMode.None capped parent (life 0.15s, max 1) -> child bursts (life 2s)
+		const still = {
+			kind: 'free' as const,
+			startSpeed: constant(0),
+			gravityModifier: constant(0),
+			velocity: null,
+			clamp: null,
+			forces: null,
+		};
+		const parent = system({
+			renderMode: ParticleRenderMode.None,
+			maxParticles: 1,
+			emissionBound: 2,
+			duration: 1,
+			looping: true,
+			startLifetime: constant(0.15),
+			rate: constant(4),
+			shape: null,
+			motion: still,
+		});
+		const fromParent = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 3, -2, 5, 1];
+		const child = system({
+			looping: false,
+			duration: 1,
+			maxParticles: 100,
+			emissionBound: 3,
+			startLifetime: constant(2),
+			rate: constant(0),
+			bursts: [{ time: 0, count: constant(3), cycles: 1, interval: 0.01, probability: 1 }],
+			shape: null,
+			motion: still,
+			subEmitter: {
+				parent,
+				fromParent,
+				type: ParticleSubEmitterType.Birth,
+				properties: ParticleSubEmitterProperty.Duration,
+				probability: 1,
+			},
+		});
+		const sim = new ParticleSimulation(child, 11);
+		assert.equal(sim.loops, true);
+		const live = run(child, 5.1);
+		// parent emits every 0.25 s (capped at 1, life 0.15 s), so ~8 parent births in the 2 s child window × 3 = 24
+		assert.ok(live.length >= 20, `expected >= 20 live sparks, got ${live.length}`);
+		for (const p of live) {
+			assert.ok(Math.abs(p.position[0] - 3) < 1e-4);
+			assert.ok(Math.abs(p.position[1] + 2) < 1e-4);
+			assert.ok(Math.abs(p.position[2] - 5) < 1e-4);
+		}
+	});
+
+	it('inherits size and lifetime on sub-emitters and supports multi-level chains', () => {
+		const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+		const grandparent = system({
+			looping: true,
+			duration: 2,
+			maxParticles: 10,
+			emissionBound: 10,
+			startLifetime: constant(1),
+			startSize: [constant(2), constant(2), constant(2)],
+			rate: constant(0),
+			bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+			shape: null,
+		});
+		const parent = system({
+			looping: false,
+			duration: 1,
+			maxParticles: 10,
+			emissionBound: 10,
+			startLifetime: constant(0.001),
+			startSize: [constant(0.5), constant(0.5), constant(0.5)],
+			rate: constant(0),
+			bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+			shape: null,
+			subEmitter: {
+				parent: grandparent,
+				fromParent: identity,
+				type: ParticleSubEmitterType.Birth,
+				properties: ParticleSubEmitterProperty.Size | ParticleSubEmitterProperty.Lifetime,
+				probability: 1,
+			},
+		});
+		// parent inherits size 2 (0.5 * 2 = 1) and lifetime 1 s from grandparent
+		const mid = run(parent, 2.5);
+		assert.equal(mid.length, 1);
+		assert.ok(Math.abs(mid[0].size[0] - 1) < 1e-4);
+
+		const child = system({
+			looping: false,
+			duration: 1,
+			maxParticles: 10,
+			emissionBound: 10,
+			startLifetime: constant(0.5),
+			rate: constant(0),
+			bursts: [{ time: 0, count: constant(2), cycles: 1, interval: 0.01, probability: 1 }],
+			shape: null,
+			subEmitter: {
+				parent,
+				fromParent: identity,
+				type: ParticleSubEmitterType.Birth,
+				properties: 0,
+				probability: 1,
+			},
+		});
+		const leaf = run(child, 2.25);
+		assert.equal(leaf.length, 2);
 	});
 });
