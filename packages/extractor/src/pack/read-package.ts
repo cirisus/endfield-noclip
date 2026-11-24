@@ -23,6 +23,10 @@ import {
 	type PackageManifest,
 } from '@endfield-noclip/package-format/manifest';
 import type { MaterialTable } from '@endfield-noclip/package-format/materials';
+import {
+	decodeReflectionProbesTable,
+	type ReflectionProbesTable,
+} from '@endfield-noclip/package-format/reflection-probes';
 import { decodeTree, type Tree } from '@endfield-noclip/package-format/tree';
 import type { WaterTable } from '@endfield-noclip/package-format/water';
 
@@ -64,6 +68,7 @@ export class PackedPackage implements AsyncDisposable {
 	#water: Promise<WaterTable> | undefined;
 	#environment: Promise<EnvironmentTable> | undefined;
 	#lights: Promise<LightsTable> | undefined;
+	#reflectionProbes: Promise<ReflectionProbesTable> | undefined;
 	#luts: Promise<LutsTable> | undefined;
 	#irradiance: Promise<IrradianceTable> | undefined;
 
@@ -174,6 +179,14 @@ export class PackedPackage implements AsyncDisposable {
 	lights(): Promise<LightsTable> {
 		this.#lights ??= readCoreMember(this.#core, CORE_PATHS.lights).then(decodeLightsTable);
 		return this.#lights;
+	}
+
+	/** @returns decoded `tables/reflection-probes.bin.zst` */
+	reflectionProbes(): Promise<ReflectionProbesTable> {
+		this.#reflectionProbes ??= readCoreMember(this.#core, CORE_PATHS.reflectionProbes).then(
+			decodeReflectionProbesTable,
+		);
+		return this.#reflectionProbes;
 	}
 
 	/** @returns decoded `tables/luts.bin.zst` */
