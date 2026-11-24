@@ -84,7 +84,7 @@ const sceneFindParser = merge(
 			option('--limit', integer({ min: 1, metavar: 'N' }), {
 				description: message`maximum rows to print`,
 			}),
-			100,
+			50,
 		),
 		json: option('--json', { description: message`emit JSON array` }),
 	}),
