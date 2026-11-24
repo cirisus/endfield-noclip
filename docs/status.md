@@ -410,8 +410,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - draw settled pose from starting `state` only (server/script updates unfollowed).
   - only vertical rope `RopeLength`, lift door bools (lifts stay at starting floor), and broken
     robot `level`/`damage_type`/`exit_type` are read before view states start.
-  - `VFXAdjustLength` supports scale and tiling only (others box the prefab); `PositionFollower`
-    holds its walk position under looping clips.
+  - `VFXAdjustLength` omits renderer bounds (boxes the prefab); `PositionFollower` holds its walk
+    position under looping clips.
 - **interactive effects** ([one-shot](game-data/effects.md#one-shot-effects),
   [at rest](extraction/prefabs-and-interactives.md#effects-at-rest)):
   - one-shot effects, transition bursts (talosite activation), and door/bridge/facility-form looping
@@ -484,9 +484,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - `ActivityControlComp`-only entities are ungated (every owner's component is empty,
   [open](game-data/scene-states.md#open)).
 - **runtime-moved scenery** ([other runtime state](game-data/scene-states.md#other-runtime-state)):
-  draws as authored (water pipe rotations, bamboo puzzles, rune columns, script-moved/attached
-  entities, scripted factory buildings, conveyor motion, scripted water look overrides); LevelData
-  energy-point environment volumes unread.
+  draws as authored (bamboo puzzles, rune columns, script-moved/attached entities, scripted factory
+  buildings, conveyor motion, scripted water look overrides); LevelData energy-point environment
+  volumes unread.
 - **event placements** ([game-data](game-data/scene-states.md#event-placements)): photo spots share
   one control per scene; other event placements recognised only via missions/dungeon scripts.
 - **doodads**: resource nodes ([doodad groups](game-data/scene-states.md#doodad-groups)) share one

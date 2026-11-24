@@ -256,6 +256,12 @@ for a DynamicStreaming entity whose current-version view-state controller reads 
   the others for masks >16 levels) without creating a `logic:` toggle.
 - old-version controllers (entity type 5), trigger-driven controllers, and script-set states
   (`SetDecorationViewState`) aren't posed.
+- **water pipes** ([water-pipes.ts](../../packages/extractor/src/game/dynamic/water-pipes.ts),
+  [water pipes](../game-data/scene-states.md#water-pipes)): non-outfall `WaterPipeComp` entities
+  register `0` and `1` on their `mapVar` (and upstream outfall/pipe `mapVar`s) and emit posed looks
+  rotating `RotateRoot` to `targetAngle` (`state = 1`, default) or `initialAngle` (`state ≠ 1`),
+  hiding `Effect` when any upstream pipe/outfall is not at `1`, and setting `VFXAdjustLength` on
+  `WaterFall` and `Splash` to `heightToDownStream` or `heightToGround` when water is present.
 
 ## doodad groups
 

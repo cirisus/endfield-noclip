@@ -197,10 +197,12 @@ pivots.
 [lengths](../game-data/interactives.md#lengths-view-states-set) set along every layer's path (not
 just its resting state). vertical ropes settle per placement with `RopeLength` from `target`;
 [broken robots](../game-data/interactives.md#broken-robots) settle with `level`, `damage_type`, and
-`exit_type`. during the walk, `VFXAdjustLength` scales target local scales (before clip transforms)
-and stretches renderer material texture scale/offset. a `VFXAdjustLength` that also modifies
-renderer bounds, particle lifetimes, or moved Transforms fails the prefab (becomes a stand-in box).
-`PositionFollower`s move with their subtrees after the walk finishes so forward references resolve.
+`exit_type`. during the walk, `VFXAdjustLength` scales target local scales (before clip transforms),
+stretches renderer material texture scale/offset, scales target particle systems'
+`startLifetime.constantMax`, and moves target Transforms with their subtrees after the walk finishes
+(before `PositionFollower`s). a `VFXAdjustLength` that also modifies renderer bounds fails the
+prefab (becomes a stand-in box). `PositionFollower`s move with their subtrees after the walk
+finishes so forward references resolve.
 
 **controlled poses**:
 

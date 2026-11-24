@@ -208,12 +208,12 @@ same variable. type-5 interactive ids (`300002576`–`79`, `2100390192`/`97` on 
 LevelData rows on map01 or map02.
 
 among map02's ~100 variable-driven models, ~2/3 toggle GameObjects by `state`, ~1/4 switch clips,
-and the rest play effects (the water pipe model has no `state` key). examples: magic bridges
-(`off`/`on`), drawing puzzles (`Off`/`On`), Si's Painting Maliang reveals (`dyn_Maliang_*`,
-`Disable`/`Enable` > 0), align patterns (`Empty`/`Phantom`/`Entity`), Snowy Forest tower
-(`off`/`light_on`/`on`), floor tiles (`off_idle`/`on_idle`), progress towers (0–6), rifts
-(`Unsuppressed`…`Filled`), waterwheels (`Stop`/`Rotating`). indie_dg016's type-40 floor owners name
-models with no layers.
+and the rest play effects (water pipes are driven by `DynamicSceneWaterPipeSystem`,
+[below](#water-pipes)). examples: magic bridges (`off`/`on`), drawing puzzles (`Off`/`On`), Si's
+Painting Maliang reveals (`dyn_Maliang_*`, `Disable`/`Enable` > 0), align patterns
+(`Empty`/`Phantom`/`Entity`), Snowy Forest tower (`off`/`light_on`/`on`), floor tiles
+(`off_idle`/`on_idle`), progress towers (0–6), rifts (`Unsuppressed`…`Filled`), waterwheels
+(`Stop`/`Rotating`). indie_dg016's type-40 floor owners name models with no layers.
 
 ### outpost tiers
 
@@ -550,30 +550,61 @@ runtime scenery mechanisms beyond the selectors above (from a census of DynamicS
 all few thousand shipped level scripts). outfalls and anchor-wave proxies are standard
 [variable gates](#dynamic-load-gates); scripts, the player, or the server drive the rest:
 
-| mechanism                  | stored in                                                                                                                                                                                               | driven by                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| water pipes                | entity type 30 with `WaterPipeComp` (initial/target angle, connected, its interactive and upstream one, heights, outfall flag) and view-state controller on `waterState`; a few on map02                | switch chain; `SetWaterPipeRotateState`                 |
-| outfalls                   | entity type 35, loading while its `int_outfall`'s `state` variable is 1 (dung02_cdg004)                                                                                                                 | pipe chain                                              |
-| anchor-wave cores          | `int_anchor_wave_core` (`state`, `hp_ratio`, `is_enabled` as map variables) with three type-37 proxies loading while `state` ≠ 0 (map01)                                                                | player; `RefreshAnchorCoreDecoration`                   |
-| bamboo puzzles             | `int_move_bamboo`'s saved `current_pos_index`; `MoveBambooNext` (~200 uses, mostly map02), `SetBambooPosIndex`, `MoveBambooLast`; `BambooRaftWideConfig` names a raft and spline                        | scripts and player                                      |
-| rune columns               | script module `RunePuzzleData`; `SetRuneColumnUnstableState`, `SetRuneColumnShowHide`, `MoveRuneColumns…`                                                                                               | scripts                                                 |
-| entities moved by script   | `EntityMoveToWithDuration` (commonest, several hundred uses), `SetEntityPosition`, `EntityMoveToWithSpeed`, `SetEntityEulerAngles`, `EntityRotate*`, `EntityAttachToParent`, `AttachEntityToDecoration` | scripts, mostly transient                               |
-| scripted Animators         | `SetAnimatorInt` and `SetAnimatorTrigger` (a few hundred uses) on interactives, dungeons only; [decoration animators](animation.md#decoration-animators)                                                | scripts                                                 |
-| scripted factory buildings | `FacChangeBuildingTemplate` (map01 and map02), `FacPlayBuildEffect`                                                                                                                                     | scripts and quests                                      |
-| conveyors                  | entity types 10, 11, 12 (belt, box, group with spline and speed; dozens on map01); belt view states scroll UVs by factory `speed`                                                                       | always moving                                           |
-| water look override        | `WaterConfigOverride` (map02_lv010 script 37900070004): swaps water material slot 21 for `Config_water_Map02_29` over 1 s, then releases                                                                | script                                                  |
-| water progress sync        | script module `WaterProgressSyncData` (mostly map02): decrease ratio and cooldown over listed entities                                                                                                  | runtime                                                 |
-| energy point volumes       | LevelData `environmentVolumes` (`LevelEnvironmentVolume`: `Env_EnergyPoint_<level>`, blend mode 2, polyline, priority 300; map01 and map02)                                                             | presumably energy point state (`WorldEnergyPointTable`) |
-| Dijiang perform objects    | `SetSpaceshipPerformObjectActive` (base01_lv001 script 9800280001) by `SpaceshipGameLevelObjectType`                                                                                                    | script                                                  |
-| dynamic occlude areas      | LevelData `dynamicOccludeAreas` (map01 and map02): quest condition and factory grid lines (reads as build blocking, not scenery)                                                                        | quests                                                  |
-| cutscene hides             | `PlayLevelSequenceAndControlSceneObjects` (commonest), `PlayDialogAndHideSceneObject`, `StartCutsceneAndControlSceneObject`, `StartCutsceneAndHideSceneObject`                                          | scripts, during cutscene only                           |
-| extra streaming            | `LoadExtraStreamingAction` and its clear: position to preload around                                                                                                                                    | scripts                                                 |
+| mechanism                  | stored in                                                                                                                                                                                               | driven by                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| water pipes                | entity type 30 with `WaterPipeComp` and view-state controller (`dyn_waterPipe_postmodel`); six on map02 (`map02_lv001`), four in `dung02_cdg004`                                                        | `int_aquapipeline` `state` mapVar; `SetWaterPipeRotateState` |
+| outfalls                   | entity type 35, loading while its `int_outfall`'s `state` variable is 1 (dung02_cdg004)                                                                                                                 | pipe chain                                                   |
+| anchor-wave cores          | `int_anchor_wave_core` (`state`, `hp_ratio`, `is_enabled` as map variables) with three type-37 proxies loading while `state` ≠ 0 (map01)                                                                | player; `RefreshAnchorCoreDecoration`                        |
+| bamboo puzzles             | `int_move_bamboo`'s saved `current_pos_index`; `MoveBambooNext` (~200 uses, mostly map02), `SetBambooPosIndex`, `MoveBambooLast`; `BambooRaftWideConfig` names a raft and spline                        | scripts and player                                           |
+| rune columns               | script module `RunePuzzleData`; `SetRuneColumnUnstableState`, `SetRuneColumnShowHide`, `MoveRuneColumns…`                                                                                               | scripts                                                      |
+| entities moved by script   | `EntityMoveToWithDuration` (commonest, several hundred uses), `SetEntityPosition`, `EntityMoveToWithSpeed`, `SetEntityEulerAngles`, `EntityRotate*`, `EntityAttachToParent`, `AttachEntityToDecoration` | scripts, mostly transient                                    |
+| scripted Animators         | `SetAnimatorInt` and `SetAnimatorTrigger` (a few hundred uses) on interactives, dungeons only; [decoration animators](animation.md#decoration-animators)                                                | scripts                                                      |
+| scripted factory buildings | `FacChangeBuildingTemplate` (map01 and map02), `FacPlayBuildEffect`                                                                                                                                     | scripts and quests                                           |
+| conveyors                  | entity types 10, 11, 12 (belt, box, group with spline and speed; dozens on map01); belt view states scroll UVs by factory `speed`                                                                       | always moving                                                |
+| water look override        | `WaterConfigOverride` (map02_lv010 script 37900070004): swaps water material slot 21 for `Config_water_Map02_29` over 1 s, then releases                                                                | script                                                       |
+| water progress sync        | script module `WaterProgressSyncData` (mostly map02): decrease ratio and cooldown over listed entities                                                                                                  | runtime                                                      |
+| energy point volumes       | LevelData `environmentVolumes` (`LevelEnvironmentVolume`: `Env_EnergyPoint_<level>`, blend mode 2, polyline, priority 300; map01 and map02)                                                             | presumably energy point state (`WorldEnergyPointTable`)      |
+| Dijiang perform objects    | `SetSpaceshipPerformObjectActive` (base01_lv001 script 9800280001) by `SpaceshipGameLevelObjectType`                                                                                                    | script                                                       |
+| dynamic occlude areas      | LevelData `dynamicOccludeAreas` (map01 and map02): quest condition and factory grid lines (reads as build blocking, not scenery)                                                                        | quests                                                       |
+| cutscene hides             | `PlayLevelSequenceAndControlSceneObjects` (commonest), `PlayDialogAndHideSceneObject`, `StartCutsceneAndControlSceneObject`, `StartCutsceneAndHideSceneObject`                                          | scripts, during cutscene only                                |
+| extra streaming            | `LoadExtraStreamingAction` and its clear: position to preload around                                                                                                                                    | scripts                                                      |
 
 uninspected: rune columns, water progress sync, Dijiang perform objects, and map01's
 `FogNestControllerData` and `SpecialSightControllerData` modules. no time-of-day volume or weather
 table exists (map02_lv009's night is a scene state). `LevelConfig.enableFactoryBuildingSnowCoverage`
 is set only on map02_lv009; no level sets `isDimensionLevel`. seats (type 6) hold no resources, and
 snowfall trees (types 50, 52) only react to the player.
+
+### water pipes
+
+a rotatable water chute (`int_aquapipeline`, entity type 30) carries `WaterPipeComp` (48 B:
+`initialAngle`, `targetAngle`, `isConnectedToWaterWheel`, `interactiveId`, `upstreamInteractiveId`,
+`delayActivateDownStream`, `heightToDownStream`, `heightToGround`, `isOutFall`), a
+`MapVarControlComp` (`controlLoad` 0) reading its `int_aquapipeline` `state` variable (fresh-world
+default 0 in `AutoNameMapVarTable`), and `ModelViewStateControllerNewComp` naming
+`dyn_waterPipe_postmodel`. an outfall (`int_outfall`, entity type 35, `isOutFall` 1, in
+`dung02_cdg004`) carries `WaterPipeComp` and loads while its `state` variable is 1.
+
+`DynamicSceneWaterPipeSystem` drives each non-outfall pipe from its `state` variable and upstream
+chain:
+
+- **rotation**: on `OnModelViewStateLoad`, sets the child `Animator` Transform (`RotateRoot` in
+  `int_waterPipe_postmodel`) world rotation to `Euler(0, targetAngle, 0)` when `state` is 1, or
+  `Euler(0, initialAngle, 0)` for any other set value (leaving it as authored while unset).
+- **upstream water**: water is present if `upstreamInteractiveId` is 0 (fed directly by a
+  waterfall), else if the upstream entity is an active outfall (`state` 1), else if the upstream
+  pipe is rotated to its `targetAngle` and itself has water.
+- **effects (`dyn_waterPipe_postmodel`)**:
+  - no upstream water → `waterState` 0 (`NoWater`), switching `Effect` off (`effectLength` −1)
+  - has water, not at `targetAngle` → `waterState` 2 (`Ground`), switching `Effect` on with
+    `effectLength = heightToGround` on `WaterFall` and `Splash` (`VFXAdjustLength`)
+  - has water, at `targetAngle` → `waterState` 1 (`DownStream`), switching `Effect` on with
+    `effectLength = heightToDownStream` (and `toWaterWheel` true when `isConnectedToWaterWheel`,
+    audio only)
+
+hittable switches (`int_switch_attack_multi_state`, `TargetPipe` property) fire level scripts that
+call `SetWaterPipeRotateState` and `CallServer`; the server updates each pipe's `state` variable and
+the downstream waterwheel's (`int_waterwheel` / `int_big_waterwheel`) separate `state` variable.
 
 ## quest and mission labels
 

@@ -221,7 +221,11 @@ setting it applies `ratio = length / presetLength`:
 - **tiling (`useTillingOffset`)**: updates each listed renderer's property block `_ST` from its
   material along `tillingDir` (0 u, 1 v): scale multiplies by `ratio` (or `1 / ratio` with
   `revertScale`), and offset becomes `scale · offset · (1 − ratio)`.
-- separate switches handle renderer bounds, particle lifetimes, and moved Transforms.
+- **moved Transforms (`useMoveTransformPositions`)**: sets each listed Transform's world position to
+  `TransformPoint(axis · length)` in the `VFXAdjustLength` Transform's frame.
+- **particle lifetimes (`useParticleSystemLifeTimes`)**: sets each listed ParticleSystem's
+  `startLifetime.constantMax` to `(offsetLength + length) / startSpeed.constantMax`.
+- a separate switch (`useMultiRenderersEnable`) handles renderer bounds.
 
 `PositionFollower` copies its `source` Transform's world position every frame while keeping its own
 rotation and scale, anchoring objects to a stretched part's end.
