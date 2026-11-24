@@ -91,7 +91,7 @@ export const WaterFoamFlags = {
 export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 	const look = emptyEffect();
 	const params = look.params;
-	const { textures, dissolve, erosion, bubble, floating, base2 } = foam;
+	const { textures, dissolve, erosion, bubble = null, floating = null, base2 = null } = foam;
 	[textures.base, textures.disturb, textures.mask, dissolve?.texture ?? null].forEach((texture, i) => {
 		if (texture !== null) {
 			setSlot(look, i, texture, EffectRole.Main);

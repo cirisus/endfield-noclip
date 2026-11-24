@@ -1704,11 +1704,11 @@ export interface WaterFoamSurface {
 	 */
 	erosion: WaterErosion | null;
 	/** `_USE_BUBBLE`, animated acid bubbles sampled in world XZ; `null` without */
-	bubble: WaterBubble | null;
+	bubble?: WaterBubble | null;
 	/** `_USE_TWO_LAYER_FLOATING_MAP`, two parallax-offset floating noise layers; `null` without */
-	floating: WaterFloatingLayers | null;
+	floating?: WaterFloatingLayers | null;
 	/** `_BLEND_BASECOLOR2`, second additive base colour map; `null` without */
-	base2: WaterBase2 | null;
+	base2?: WaterBase2 | null;
 }
 
 /** a WaterDecal's `_BLEND_BASECOLOR2` second base colour layer */

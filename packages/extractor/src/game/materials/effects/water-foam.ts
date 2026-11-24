@@ -55,9 +55,9 @@ export const placedWaterFoam = (foam: WaterFoamSurface, placement: WaterDecal): 
 		baseColor: tintRgb(foam.baseColor, tint),
 		tint: tintRgb(foam.tint, tint),
 		opacity: foam.opacity * opacity * brightness,
-		bubble: foam.bubble === null ? null : { ...foam.bubble, color: tintRgb(foam.bubble.color, tint) },
+		bubble: foam.bubble == null ? null : { ...foam.bubble, color: tintRgb(foam.bubble.color, tint) },
 		floating:
-			foam.floating === null
+			foam.floating == null
 				? null
 				: {
 						...foam.floating,
@@ -65,7 +65,7 @@ export const placedWaterFoam = (foam: WaterFoamSurface, placement: WaterDecal): 
 						colorDark: tintRgb(foam.floating.colorDark, tint),
 					},
 		base2:
-			foam.base2 === null
+			foam.base2 == null
 				? null
 				: {
 						...foam.base2,

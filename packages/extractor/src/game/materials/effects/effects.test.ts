@@ -2209,7 +2209,7 @@ describe('WaterDecal', () => {
 			'waterFoam',
 		);
 		assert.equal(xiranite.bubble, null);
-		assert.ok(xiranite.floating !== null);
+		assert.ok(xiranite.floating != null);
 		assert.deepEqual(
 			[xiranite.floating.textures[0]?.texture, xiranite.floating.textures[1]?.texture],
 			[3, 4],
