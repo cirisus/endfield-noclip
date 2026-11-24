@@ -539,15 +539,40 @@ test('trails the viewer cannot draw stand in without particles, and are left off
 	const ribbons = readParticleSystem(system({ TrailModule: purificationTrail({ mode: 1 }) }), renderer());
 	assert.ok(ribbons !== null && 'info' in ribbons);
 	assert.equal(ribbons.trail, null);
-	// without trails, what such a system drives is what's missing (the storehouse sparks' `light`)
-	const drives = (modules: Record<string, unknown>) => {
-		const read = readParticleSystem(system({ TrailModule: { enabled: false }, ...modules }), none);
-		return read !== null && 'reason' in read ? read.reason : null;
-	};
-	assert.equal(drives({}), 'no render mode or trails');
-	assert.equal(
-		drives({ LightsModule: { enabled: true }, SubModule: { enabled: true } }),
-		'no render mode: lights and sub-emitters only',
+	// without trails, a system that drives nothing (disabled modules, null PPtrs, or zero probability/ratio)
+	// is empty rather than a stand-in; only active lights or sub-emitters report what's missing
+	const drives = (modules: Record<string, unknown>) =>
+		readParticleSystem(system({ TrailModule: { enabled: false }, ...modules }), none);
+	assert.deepEqual(drives({}), { empty: true });
+	assert.deepEqual(
+		drives({
+			LightsModule: { enabled: true, light: pointer(0n), ratio: 1, maxLights: 20 },
+			SubModule: {
+				enabled: true,
+				subEmitters: [{ emitter: pointer(0n), type: 0, properties: 0, emitProbability: 0.5 }],
+			},
+		}),
+		{ empty: true },
+	);
+	assert.deepEqual(
+		drives({
+			LightsModule: { enabled: true, light: pointer(7n), ratio: 0, maxLights: 20 },
+			SubModule: {
+				enabled: true,
+				subEmitters: [{ emitter: pointer(9n), type: 0, properties: 0, emitProbability: 0 }],
+			},
+		}),
+		{ empty: true },
+	);
+	assert.deepEqual(
+		drives({
+			LightsModule: { enabled: true, light: pointer(7n), ratio: 1, maxLights: 1 },
+			SubModule: {
+				enabled: true,
+				subEmitters: [{ emitter: pointer(9n), type: 0, properties: 20, emitProbability: 0.5 }],
+			},
+		}),
+		{ reason: 'no render mode: lights and sub-emitters only' },
 	);
 });
 

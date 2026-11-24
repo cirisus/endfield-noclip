@@ -111,6 +111,17 @@ export interface ExternalForcesRead {
 	list: PPtr[];
 }
 
+/** one active entry of a `ParticleSystem`'s `SubModule` */
+export interface SubEmitterRead {
+	emitter: PPtr;
+	/** Unity's `ParticleSystemSubEmitterType`: 0 Birth, 1 Collision, 2 Death, 3 Trigger, 4 Manual */
+	type: number;
+	/** Unity's `ParticleSystemSubEmitterProperties` bitmask */
+	properties: number;
+	/** 0–1 */
+	probability: number;
+}
+
 /** what {@link readParticleSystem} found */
 export type ParticleSystemRead =
 	| {
@@ -137,7 +148,11 @@ export type ParticleSystemRead =
 			 */
 			trail: ParticleTrailInfo | null;
 	  }
-	| { reason: string };
+	| { reason: string }
+	| {
+			/** renders no particles, trails, lights or sub-emitters (e.g. `RenderMode.None` with empty modules) */
+			empty: true;
+	  };
 
 const WRAP_MODES = new Set<number>(Object.values(CurveWrapMode));
 const isWrapMode = (mode: number): mode is CurveWrapMode => WRAP_MODES.has(mode);
@@ -711,15 +726,62 @@ const readTrail = (
 };
 
 /**
- * @returns why a system that draws no particles of its own shows nothing the viewer plays: what it drives
- *   instead, which the viewer doesn't evaluate
+ * @param system a `ParticleSystem`
+ * @returns whether its `LightsModule` actually spawns lights (enabled, non-null light PPtr, positive ratio
+ *   and cap)
  */
-const undrawnReason = (system: TypeTreeObject): string => {
+export const hasActiveLights = (system: TypeTreeObject): boolean => {
+	if (!enabled(system, 'LightsModule')) {
+		return false;
+	}
+	const module = objectField(system, 'LightsModule');
+	return (
+		pptrField(module, 'light').pathId !== 0n &&
+		numberField(module, 'ratio') > 0 &&
+		numberField(module, 'maxLights') > 0
+	);
+};
+
+/**
+ * @param system a `ParticleSystem`
+ * @returns the entries of its `SubModule` that actually trigger a target emitter (enabled, non-null emitter
+ *   PPtr, positive probability)
+ */
+export const readActiveSubEmitters = (system: TypeTreeObject): SubEmitterRead[] => {
+	if (!enabled(system, 'SubModule')) {
+		return [];
+	}
+	const module = objectField(system, 'SubModule');
+	const out: SubEmitterRead[] = [];
+	for (const entry of arrayField(module, 'subEmitters')) {
+		if (!isObject(entry)) {
+			throw new FormatError('sub-emitter entry is not an object');
+		}
+		const emitter = pptrField(entry, 'emitter');
+		const probability = numberField(entry, 'emitProbability');
+		if (emitter.pathId === 0n || probability <= 0) {
+			continue;
+		}
+		out.push({
+			emitter,
+			type: numberField(entry, 'type'),
+			properties: numberField(entry, 'properties'),
+			probability,
+		});
+	}
+	return out;
+};
+
+/**
+ * @returns why a system that draws no particles or trails of its own is missing something the viewer doesn't
+ *   evaluate, or `null` when it drives nothing at all
+ */
+const undrawnReason = (system: TypeTreeObject): string | null => {
 	const drives = definite([
-		enabled(system, 'LightsModule') ? 'lights' : null,
-		enabled(system, 'SubModule') ? 'sub-emitters' : null,
+		hasActiveLights(system) ? 'lights' : null,
+		readActiveSubEmitters(system).length > 0 ? 'sub-emitters' : null,
 	]);
-	return drives.length === 0 ? 'no render mode or trails' : `no render mode: ${drives.join(' and ')} only`;
+	return drives.length === 0 ? null : `no render mode: ${drives.join(' and ')} only`;
 };
 
 // #endregion
@@ -859,7 +921,8 @@ export const readParticleSystem = (
 		}
 		case ParticleRenderMode.None: {
 			if (!enabled(system, 'TrailModule')) {
-				return { reason: undrawnReason(system) };
+				const reason = undrawnReason(system);
+				return reason === null ? { empty: true } : { reason };
 			}
 			break;
 		}

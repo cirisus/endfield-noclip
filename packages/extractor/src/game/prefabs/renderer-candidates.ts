@@ -303,6 +303,9 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 		}
 	}
 	const read = await readPlayedSystem(walk, system, rendererData);
+	if (read !== null && 'empty' in read) {
+		return;
+	}
 	const drawsParticles = numberField(rendererData, 'm_RenderMode') !== ParticleRenderMode.None;
 	// a system a script starts is still there to see, so it gets a stand-in too
 	let reason = state.standIn;
@@ -373,8 +376,6 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 				decal: null,
 			}),
 		);
-	}
-	if (read.trail !== null && drawsParticles) {
 	}
 	if (read.trail !== null && trailMaterials.length > 0 && walk.particleQuad !== null) {
 		// every particle's trail, whichever mesh it picked, as one strip of quads
