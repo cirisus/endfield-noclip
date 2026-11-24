@@ -96,11 +96,12 @@ system, index):
   shortest turn from +Z via `turnFromZ` for velocity billboards, untraced). emitter scale applies
   along rotated axes.
 - **quad render modes**: billboards follow render alignment; vertical faces camera heading;
-  horizontal lies flat (+Y); legacy stretched extends back along velocity with width across velocity
-  in view plane (`ParticleView.eye`), face normal (`m_NormalDirection == 1`, edge lean omitted),
-  zero size when still or along sightline, no camera velocity subtraction; freeform stretched builds
-  a centred camera-facing billboard rotated by Z (plus projected velocity when
-  `rotateWithStretchDirection` is set) and linearly stretched along velocity.
+  horizontal lies flat (+Y); legacy stretched extends back along `−vel` on quad X (`u = 0` at head,
+  `1` at tail) with width across velocity in the view plane on quad Y (`ParticleView.eye`), face
+  normal (`m_NormalDirection == 1`, edge lean omitted), zero size when still or along sightline, no
+  camera velocity subtraction; freeform stretched builds a centred camera-facing billboard rotated
+  by Z (plus projected velocity when `rotateWithStretchDirection` is set) and linearly stretched
+  along velocity.
 - **GPU vs CPU turn**: camera-facing and vertical rows set [billboard](#billboards) bits for
   `row_basis` on the GPU; others rotate on the CPU.
 - **texture sheet & colour**: frame from start frame + age (over lifetime or FPS); row random, by

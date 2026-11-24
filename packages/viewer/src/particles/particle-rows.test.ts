@@ -134,8 +134,9 @@ describe('ParticleField', () => {
 		});
 		const near = (a: Float32Array, b: number[]) =>
 			b.every((value, i) => Math.abs(a[[0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11][i]] - value) < 1e-5);
-		// width along x, 2 m up the rise, its face's normal on the line of sight, the particle at the top end
-		const expected = [1, 0, 0, 0, 2, 0, 0, 0, 1, 0, -1, 0];
+		// x runs 2 m back from the head (u = 0 at head, 1 at tail), y runs across the width, its face's normal on
+		// the line of sight, the particle at the top end
+		const expected = [0, -2, 0, 1, 0, 0, 0, 0, 1, 0, -1, 0];
 		assert.ok(near(level, expected), [...level.subarray(0, 12)].join());
 		assert.ok(near(pitched, expected), [...pitched.subarray(0, 12)].join());
 		// moving along the line of sight it has no width, and the game draws nothing
@@ -153,7 +154,7 @@ describe('ParticleField', () => {
 		);
 		// its pivot moves the head along the velocity by its size, and the streak across by half its width
 		const pivoted = written(moving([0, 1, 0], [1, 0.5, 0]), view);
-		assert.ok(near(pivoted, [1, 0, 0, 0, 2, 0, 0, 0, 1, 0.5, -0.5, 0]), [...pivoted.subarray(0, 12)].join());
+		assert.ok(near(pivoted, [0, -2, 0, 1, 0, 0, 0, 0, 1, 0.5, -0.5, 0]), [...pivoted.subarray(0, 12)].join());
 	});
 
 	it('keeps a freeform stretched billboard centred on the particle and stretches it linearly along velocity', () => {

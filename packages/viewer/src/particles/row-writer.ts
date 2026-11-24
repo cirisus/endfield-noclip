@@ -248,36 +248,42 @@ const quadShape = (row: RowGeometry, particle: Readonly<ParticleInput>, context:
 };
 
 /**
- * a streak from the particle back along its velocity, lengthened by the length scale and the speed. its width
- * runs across the velocity as seen from the camera's position, flattened onto the view plane, so turning the
- * camera in place leaves it be
+ * a streak from the particle back along its velocity, lengthened by the length scale and the speed. in Unity
+ * (`0x1803aa9e0`) U runs from 0 at the head to 1 at the tail (`−vel`) and V runs across the velocity as seen
+ * from the camera's position, flattened onto the view plane, so turning the camera in place leaves it be
  */
 const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, context: RowContext): void => {
 	const { view, origin, info } = context;
 	const { axes, sizes, center } = row;
-	const [right, streak, face] = axes;
+	const [back, across, face] = axes;
 	const v = particle.velocity;
 	const velocity = toWorldInto(scratch.world, context.m, v[0], v[1], v[2]);
 	const speed = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
 	// a still particle has no streak, and the game draws nothing for it
+	let sx: number;
+	let sy: number;
+	let sz: number;
 	if (speed > 1e-15) {
 		const inv = 1 / speed;
-		streak[0] = velocity[0] * inv;
-		streak[1] = velocity[1] * inv;
-		streak[2] = velocity[2] * inv;
+		sx = velocity[0] * inv;
+		sy = velocity[1] * inv;
+		sz = velocity[2] * inv;
 	} else {
-		streak[0] = view.up[0];
-		streak[1] = view.up[1];
-		streak[2] = view.up[2];
+		sx = view.up[0];
+		sy = view.up[1];
+		sz = view.up[2];
 	}
+	back[0] = -sx;
+	back[1] = -sy;
+	back[2] = -sz;
 	const f = view.forward;
 	const sight = scratch.sight;
 	sight[0] = origin[0] + center[0] - view.eye[0];
 	sight[1] = origin[1] + center[1] - view.eye[1];
 	sight[2] = origin[2] + center[2] - view.eye[2];
-	const acrossX = streak[1] * sight[2] - streak[2] * sight[1];
-	const acrossY = streak[2] * sight[0] - streak[0] * sight[2];
-	const acrossZ = streak[0] * sight[1] - streak[1] * sight[0];
+	const acrossX = sy * sight[2] - sz * sight[1];
+	const acrossY = sz * sight[0] - sx * sight[2];
+	const acrossZ = sx * sight[1] - sy * sight[0];
 	const ahead = acrossX * f[0] + acrossY * f[1] + acrossZ * f[2];
 	const flatX = acrossX - f[0] * ahead;
 	const flatY = acrossY - f[1] * ahead;
@@ -285,19 +291,19 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	// one moving along the line of sight has no width, so the game draws nothing for it either
 	const flatLength = Math.sqrt(flatX * flatX + flatY * flatY + flatZ * flatZ);
 	if (flatLength > 1e-15) {
-		normalizeOrZInto(right, flatX, flatY, flatZ);
+		normalizeOrZInto(across, flatX, flatY, flatZ);
 	} else {
 		for (let r = 0; r < 3; r++) {
-			right[r] = view.right[r];
+			across[r] = view.right[r];
 		}
 	}
 	// the face's own normal, which the effect shaders' Fresnel fades by, turned so the quad's -z normal faces
 	// the camera
 	normalizeOrZInto(
 		face,
-		right[1] * streak[2] - right[2] * streak[1],
-		right[2] * streak[0] - right[0] * streak[2],
-		right[0] * streak[1] - right[1] * streak[0],
+		back[1] * across[2] - back[2] * across[1],
+		back[2] * across[0] - back[0] * across[2],
+		back[0] * across[1] - back[1] * across[0],
 	);
 	if (face[0] * sight[0] + face[1] * sight[1] + face[2] * sight[2] < 0) {
 		for (let r = 0; r < 3; r++) {
@@ -306,9 +312,11 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	}
 	const stretch = info.stretch ?? STILL_STRETCH;
 	const drawn = speed > 1e-15 && flatLength > 1e-15;
+	const width = drawn ? sizes[0] : 0;
 	const length = drawn ? particle.length * stretch.lengthScale + speed * stretch.velocityScale : 0;
 	if (drawn) {
-		sizes[1] = length;
+		sizes[0] = length;
+		sizes[1] = width;
 	} else {
 		sizes.fill(0);
 	}
@@ -316,10 +324,11 @@ const stretchedShape = (row: RowGeometry, particle: Readonly<ParticleInput>, con
 	// along the velocity by its y times the size before the limits, and the whole streak across by its x times
 	// half the width
 	const pivot = info.pivot;
-	for (let r = 0; r < 3; r++) {
-		center[r] +=
-			streak[r] * (pivot[1] * particle.length - length * 0.5) + right[r] * pivot[0] * sizes[0] * 0.5;
-	}
+	const along = pivot[1] * particle.length - length * 0.5;
+	const side = pivot[0] * width * 0.5;
+	center[0] += sx * along + across[0] * side;
+	center[1] += sy * along + across[1] * side;
+	center[2] += sz * along + across[2] * side;
 };
 
 /**
@@ -857,11 +866,11 @@ export class ParticleRowWriter {
 			out[o + 10] = ax2[2] * s2;
 			out[o + 11] = center[2];
 			const extent = unitAxes
-				? Math.max(s0, s1, s2)
+				? Math.max(Math.abs(s0), Math.abs(s1), Math.abs(s2))
 				: Math.max(
-						Math.sqrt(ax0[0] * ax0[0] + ax0[1] * ax0[1] + ax0[2] * ax0[2]) * s0,
-						Math.sqrt(ax1[0] * ax1[0] + ax1[1] * ax1[1] + ax1[2] * ax1[2]) * s1,
-						Math.sqrt(ax2[0] * ax2[0] + ax2[1] * ax2[1] + ax2[2] * ax2[2]) * s2,
+						Math.sqrt(ax0[0] * ax0[0] + ax0[1] * ax0[1] + ax0[2] * ax0[2]) * Math.abs(s0),
+						Math.sqrt(ax1[0] * ax1[0] + ax1[1] * ax1[1] + ax1[2] * ax1[2]) * Math.abs(s1),
+						Math.sqrt(ax2[0] * ax2[0] + ax2[1] * ax2[1] + ax2[2] * ax2[2]) * Math.abs(s2),
 					);
 			out[o + 12] = center[0];
 			out[o + 13] = center[1];

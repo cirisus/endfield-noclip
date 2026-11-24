@@ -146,11 +146,12 @@ details:
     to swim level).
 - **stretched quads** (`m_FreeformStretching` off vs on):
   - legacy (`m_FreeformStretching` off):
-    - length along `−vel`: `size.y · m_LengthScale · emitterScale.x + speed · m_VelocityScale`,
-      using `vel − cameraWorldVel · m_CameraVelocityScale`.
-    - width `size.x` along `vel × (particle − camera)` flattened onto the view plane (particle
-      rotation and `m_RotateWithStretchDirection` unused; zero velocity or velocity along view ray
-      draws nothing).
+    - length along `−vel` (quad `+x`, `u = 0` at head to `1` at tail):
+      `size.y · m_LengthScale · emitterScale.x + speed · m_VelocityScale`, using
+      `vel − cameraWorldVel · m_CameraVelocityScale`.
+    - width `size.x` along `vel × (particle − camera)` flattened onto the view plane (quad `+y`,
+      `v = 0` to `1`; particle rotation and `m_RotateWithStretchDirection` unused; zero velocity or
+      velocity along view ray draws nothing).
     - pivot shifts head forward by `pivot.y · size.y` (no length scale) and sideways by
       `pivot.x · width / 2` (`pivot.z` unused).
   - freeform (`m_FreeformStretching` on, e.g. Jingyu waterfall mist `shuiwu` in
