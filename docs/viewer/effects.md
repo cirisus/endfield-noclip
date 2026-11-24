@@ -22,6 +22,9 @@ particle-mesh effects run through [particles](particles.md#particles) and carry
   in step).
 - **water blending**: omitted (matches game above `_WaterHeight`). fragments below `_WaterHeight`
   show the unsupported checker; heights ≤ −1000 are treated as below all levels.
+- **rigid-body animation**: `_VAT_RIGIDBODY` bakes into a skeletal mesh during extraction
+  ([VAT baking](../extraction.md#asset-classes)) with the same rules as `HGRP/Lit`; variants that
+  can't bake (particle-driven, non-autoplaying, missing position/rotation texture) stay unsupported.
 - **soft-body animation**: rotation texture is unread, so soft bodies with lighting, Fresnel, vertex
   offset, 6th sample texture, or particle playback stay unsupported.
 - **camera pull & edge colour**: camera pull applies in the vertex stage (omitted in particle mode,

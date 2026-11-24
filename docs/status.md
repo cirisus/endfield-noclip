@@ -286,13 +286,13 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - **VFXBaseV2 & VFXDecal**: unsupported/missing — VFXBaseV2 additive blends; VFXDecal outside
     `_BlendMode` 1; `_BlendMode` 2 non-multiply or stenciled; opaque with stencil, soft blend, or
     edge colour (opaque fogged by composite; falling gravel unchecked); 6th texture + vertex offset;
-    vertex offset mask + all 5 textures; scan-line/fixed-point/player brightening;
-    rigid-body/fluid/particle VAT; lit/Fresnel/vertex-offset/particle-driven soft bodies (Aurelyne
-    blob unchecked); [water blending](game-data/effects.md#water-blending) (below-height fragments
-    show checker, surface height ignored); VFXDecal `_USE_IN_PARTICLE`, lighting, 3D textures,
-    parallax + blend layer, stencil masks outside 0/32; local lights on lit effects (irradiance
-    sampled per-pixel, not per-renderer). VFXBaseV2 breathing pulses in sync across placements;
-    Dijiang clue board and aisle-guide edge colour unchecked.
+    vertex offset mask + all 5 textures; scan-line/fixed-point/player brightening; non-autoplaying
+    or particle-driven rigid-body VAT; fluid/particle VAT; lit/Fresnel/vertex-offset/particle-driven
+    soft bodies (Aurelyne blob unchecked); [water blending](game-data/effects.md#water-blending)
+    (below-height fragments show checker, surface height ignored); VFXDecal `_USE_IN_PARTICLE`,
+    lighting, 3D textures, parallax + blend layer, stencil masks outside 0/32; local lights on lit
+    effects (irradiance sampled per-pixel, not per-renderer). VFXBaseV2 breathing pulses in sync
+    across placements; Dijiang clue board and aisle-guide edge colour unchecked.
   - **VFXDitherAlpha**:
     - effect variants blend without dithering/depth and support distortion, mask, dissolve,
       polar/screen UVs, vertex offset, and `_USE_MAIN2` (unsupported: lit, other dither modes,

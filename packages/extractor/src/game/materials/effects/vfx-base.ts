@@ -14,6 +14,7 @@ import type {
 import { pastUvSets, undrawnKeywords } from '../describe-steps.ts';
 import { BlendFactor } from '../material-classify.ts';
 import { isUnsupported, type MaterialReader, unsupported } from '../material-values.ts';
+import { VAT_KEYWORDS, vatOf } from '../surfaces/vat-animation.ts';
 
 import {
 	brightenOf,
@@ -165,7 +166,24 @@ const BASE_KEYWORDS = new Set([
 
 // #endregion
 
-// #region soft-body animation
+// #region vertex animation
+
+/**
+ * VFXBaseV2's `_VAT_RIGIDBODY` animation, baked into the mesh (`vatSkin`) with the same Houdini rigid-body
+ * math as `HGRP/Lit`. rejects the variants `vatOf` can't bake
+ *
+ * @returns `unsupported` when the variant can't be baked, else `null`
+ */
+const baseRigidBodyOf = (reader: MaterialReader): UnsupportedSurface | null => {
+	if (!reader.has(VAT_KEYWORDS.rigid)) {
+		return null;
+	}
+	if (reader.has(VAT_KEYWORDS.soft)) {
+		return unsupported('a rigid-body animation combined with a soft-body animation');
+	}
+	const animation = vatOf(reader);
+	return animation !== null && isUnsupported(animation) ? animation : null;
+};
 
 /**
  * VFXBaseV2's `_VAT_SOFTBODY` animation. its rotation texture only turns the normals, which the drawn
@@ -229,6 +247,10 @@ const baseKeywordDrawn = (keyword: string, reader: MaterialReader): boolean => {
 		case '_USE_WATER_BLEND': {
 			// the blend changes only what lies below `_WaterHeight`, which the viewer marks unsupported per fragment
 			// (`waterBlendOf`)
+			return true;
+		}
+		case '_VAT_RIGIDBODY': {
+			// baked into the mesh (`vatSkin`) after `baseRigidBodyOf` rejects the variants it can't play
 			return true;
 		}
 		case '_VAT_SOFTBODY': {
@@ -310,6 +332,10 @@ export const describeVfxBase = (
 	// drawn over the composited scene, which has no stencil
 	if (blendMode === 2 && stencil !== null) {
 		return unsupported('a multiplying blend with a stencil');
+	}
+	const rigidBody = baseRigidBodyOf(reader);
+	if (rigidBody !== null) {
+		return rigidBody;
 	}
 	const softBody = baseSoftBodyOf(reader);
 	if (isUnsupported(softBody)) {

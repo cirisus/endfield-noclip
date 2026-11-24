@@ -40,7 +40,7 @@ import { swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
 import { describeLit } from './surfaces/lit.ts';
 import { describeMattePainting } from './surfaces/matte-painting.ts';
 import { describeSludge } from './surfaces/sludge.ts';
-import { type VatAnimation, vatOf } from './surfaces/vat-animation.ts';
+import { VAT_KEYWORDS, type VatAnimation, vatOf } from './surfaces/vat-animation.ts';
 import { describeWetnessDecal } from './surfaces/wetness-decal.ts';
 
 /**
@@ -138,10 +138,18 @@ export const materialSway = (material: MaterialValues, shader: ShaderEntry): Lit
  *   keyword as a gap)
  */
 export const materialVat = (material: MaterialValues, shader: ShaderEntry): VatAnimation | null => {
+	const reader = readerOf(material, shader);
+	if (shader.name === 'HGRP/Effect/VFXBaseV2') {
+		if (!reader.has(VAT_KEYWORDS.rigid) || reader.has(VAT_KEYWORDS.soft)) {
+			return null;
+		}
+		const animation = vatOf(reader);
+		return animation === null || 'kind' in animation ? null : animation;
+	}
 	if (shader.name !== 'HGRP/Lit') {
 		return null;
 	}
-	const animation = vatOf(readerOf(material, shader));
+	const animation = vatOf(reader);
 	return animation === null || 'kind' in animation ? null : animation;
 };
 

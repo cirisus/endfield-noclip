@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 import type { MaterialSurface } from '@endfield-noclip/package-format/surfaces';
 
-import { describeMaterial } from '../material-describe.ts';
+import { describeMaterial, materialVat } from '../material-describe.ts';
 import type { MaterialValues, ShaderEntry, ShaderFamily } from '../material-values.ts';
 
 import { isNeutralWaterDecal, placedWaterFoam } from './water-foam.ts';
@@ -777,9 +777,45 @@ describe('VFXBaseV2', () => {
 			stackOf({ ...blob, keywords: [...blob.keywords, '_USE_FRESNEL'] }),
 			stackOf({ ...blob, slots: { _MainTex: slot(1) } }),
 			stackOf({ ...blob, floats: { ...blob.floats, _HoudiniVATInParticle: 1 } }),
-			stackOf({ ...blob, keywords: ['_VAT_RIGIDBODY'] }),
+			stackOf({ ...blob, keywords: ['_VAT_RIGIDBODY', '_VAT_SOFTBODY'] }),
 		].map((surface) => surface.kind);
 		assert.deepEqual(kinds, ['unsupported', 'unsupported', 'unsupported', 'unsupported']);
+	});
+
+	it('accepts rigid-body VAT for baking into the mesh and rejects variants it cannot bake', () => {
+		const rigid = {
+			keywords: ['_VAT_RIGIDBODY'],
+			slots: { _MainTex: slot(1), _PositionTexture: slot(2), _RotationTexture: slot(3) },
+			floats: {
+				_TextureFormat: 1,
+				_B_autoPlayback: 1,
+				_frameCount: 128,
+				_houdiniFPS: 24,
+				_playbackSpeed: 1,
+				_boundMinX: -7.5,
+				_boundMinY: -0.501,
+				_boundMinZ: -6.2,
+				_boundMaxX: 7.5,
+				_boundMaxY: 0.5,
+				_boundMaxZ: 6.15,
+			},
+		};
+		const stack = ofKind(stackOf(rigid), 'effectStack');
+		assert.equal(stack.softBody, null);
+		const vfxBase = shader('HGRP/Effect/VFXBaseV2', 'vfxBase');
+		const vat = materialVat(material(rigid), vfxBase);
+		assert.ok(vat !== null && vat.body === 'rigid');
+		assert.equal(vat.frameCount, 128);
+		assert.equal(vat.position, 2);
+		assert.equal(vat.rotation, 3);
+		// soft-body VFXBaseV2 stays in the shader rather than baking into the mesh
+		assert.equal(materialVat(material({ ...rigid, keywords: ['_VAT_SOFTBODY'] }), vfxBase), null);
+		const rejected = [
+			stackOf({ ...rigid, slots: { _MainTex: slot(1), _PositionTexture: slot(2) } }),
+			stackOf({ ...rigid, floats: { ...rigid.floats, _B_autoPlayback: 0 } }),
+			stackOf({ ...rigid, floats: { ...rigid.floats, _HoudiniVATInParticle: 1 } }),
+		].map((surface) => surface.kind);
+		assert.deepEqual(rejected, ['unsupported', 'unsupported', 'unsupported']);
 	});
 
 	it('stays out of the fog without _USE_FOG, and starts slots from polar UVs only where computed', () => {

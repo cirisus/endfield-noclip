@@ -246,6 +246,10 @@ frames @ 60 fps) drive `_displayFrame` from the wheel's
 [Animator clip](animation.md#scenery-animators) (four 1→375 ramps over 25 s, staggered half a ramp
 apart) alongside `_TintColorAlpha` and `_DissolveScheduleOffset`.
 
+VFXBaseV2's `_VAT_RIGIDBODY` moves mesh pieces rigidly with the same Houdini VAT math as
+[`HGRP/Lit`](materials.md#rigid-body-animation) (e.g. Yinglung Pass gate flow
+`M_fxmap_map02_lv007_gateflowvat` in `p_fxmap_map02_lv007_gateflow_2102`, 128 frames @ 24 fps).
+
 ## VFXDecal
 
 `HGRP/Effect/VFXDecal` draws a unit cube (`s_fx_particle_decal_cube`), reconstructs scene depth, and
