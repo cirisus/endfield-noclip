@@ -7,7 +7,7 @@ import { materialLooks } from '../material-looks.ts';
 import { described } from '../test-materials.ts';
 
 import { EffectKind, EffectRow } from './effect-look.ts';
-import { EROSION_SLOTS, WaterFoamFlags, WaterFoamRow } from './water-foam.ts';
+import { BUBBLE_SLOT, EROSION_SLOTS, FLOATING_SLOTS, WaterFoamFlags, WaterFoamRow } from './water-foam.ts';
 
 const texture = (id: number, overrides: Partial<EffectTexture> = {}): EffectTexture => ({
 	texture: id,
@@ -46,6 +46,8 @@ test('a water foam box draws into the water’s foam, by the depth test its mate
 		soft: { distance: 0.001, bias: 0.6 },
 		dissolve: null,
 		erosion: null,
+		bubble: null,
+		floating: null,
 	};
 	const [front, behind, through] = materialLooks({
 		entries: [
@@ -101,6 +103,8 @@ test('a red tide’s erosion takes the slots after the base colour map, with its
 		opacity: 1,
 		soft: null,
 		dissolve: null,
+		bubble: null,
+		floating: null,
 		erosion: {
 			flow: texture(3, { scale: [15, 1.29], offset: [-11.75, 0] }),
 			flowNoise: texture(4),
@@ -126,4 +130,77 @@ test('a red tide’s erosion takes the slots after the base colour map, with its
 	);
 	// the layers' noises scroll as their slots do
 	assert.equal(look.params[EffectRow.anim + (EROSION_SLOTS.layers + 1) * 4], Math.fround(-0.1));
+});
+
+test('acid bubbles and floating layers take slots 4–6 and pack their rows', () => {
+	const base: WaterFoamSurface = {
+		kind: 'waterFoam',
+		textures: { base: texture(1), disturb: texture(2), mask: null },
+		sources: { base: 2, disturb: 2, mask: 0, dissolve: 0 },
+		maskMatrix: [1, 0, 0, 1],
+		boxUv: [1, 1, 0, 0],
+		baseColor: [0, 0, 0],
+		tint: [0.58, 0.49, 0],
+		baseAlpha: 1,
+		maskAsAlpha: 1,
+		disturbBias: 1,
+		disturb: [0.15, 0.15],
+		disturbUse: [1, 0, 0],
+		edgeFade: null,
+		clipToBox: false,
+		depthTest: 'less-equal',
+		mipBias: { base: 0, mask: 0, dissolve: 0 },
+		blendMode: 0,
+		opacity: 0.33,
+		soft: null,
+		dissolve: null,
+		erosion: null,
+		bubble: {
+			texture: texture(3, { scale: [1.6, 1.6] }),
+			color: [0.83, 0.77, 0],
+			heightScale: 0.03,
+			speed: 0.396,
+			randomFactor: 7.67,
+			randomFactor2: 0.22,
+			peakTime: 0.028,
+		},
+		floating: {
+			textures: [texture(4, { scale: [4.39, 4.69] }), texture(5, { scale: [13.28, 16.87] })],
+			source: 2,
+			color: [0, 0.44, 0.37],
+			colorDark: [0, 1, 0.87],
+			layerOffset: 4.75,
+			strength: 0.15,
+			strengthSpeed: 3.22,
+			useDisturb: 1,
+		},
+	};
+	const [look] = materialLooks({ entries: [described(base)] });
+	assert.equal(look.textures[BUBBLE_SLOT], 3);
+	assert.equal(look.textures[FLOATING_SLOTS[0]], 4);
+	assert.equal(look.textures[FLOATING_SLOTS[1]], 5);
+	assert.equal(
+		look.params[WaterFoamRow.tint + 3],
+		WaterFoamFlags.Disturb | WaterFoamFlags.Bubble | WaterFoamFlags.Floating0 | WaterFoamFlags.Floating1,
+	);
+	assert.deepEqual(
+		[...look.params.subarray(WaterFoamRow.bubble, WaterFoamRow.bubble + 4)],
+		[0.03, 0.396, 7.67, 0.22].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(WaterFoamRow.bubbleColor, WaterFoamRow.bubbleColor + 4)],
+		[0.83, 0.77, 0, 0.028].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(WaterFoamRow.floating, WaterFoamRow.floating + 4)],
+		[2, 4.75, 0.15, 3.22].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(WaterFoamRow.floatingColor, WaterFoamRow.floatingColor + 4)],
+		[0, 0.44, 0.37, 1].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(WaterFoamRow.floatingColorDark, WaterFoamRow.floatingColorDark + 4)],
+		[0, 1, 0.87, 0].map(Math.fround),
+	);
 });

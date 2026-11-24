@@ -2,8 +2,10 @@ import type { WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-da
 import type {
 	EffectTexture,
 	UnsupportedSurface,
+	WaterBubble,
 	WaterErosion,
 	WaterErosionLayer,
+	WaterFloatingLayers,
 	WaterFoamSurface,
 } from '@endfield-noclip/package-format/surfaces';
 import type { Rgb } from '@endfield-noclip/package-format/values';
@@ -20,9 +22,15 @@ import { dissolveOf, disturbIntensityOf, effectTexture, speedOf, UNSET_WHITE } f
 export const isNeutralWaterDecal = (placement: WaterDecal): boolean =>
 	[...placement.params, ...placement.displacementTint].every((value) => value === 1);
 
+const tintRgb = (rgb: Rgb, tint: readonly number[]): Rgb => [
+	rgb[0] * tint[0],
+	rgb[1] * tint[1],
+	rgb[2] * tint[2],
+];
+
 /**
  * a static box's foam under its renderer values: the tiling scales the base map's UVs, the speed its scroll,
- * and the opacity, brightness and tint the whole output, both colour terms with it. the displacement is left
+ * and the opacity, brightness and tint the whole output, all colour terms with it. the displacement is left
  * out with the displacement pass
  *
  * @param foam the box material's foam
@@ -43,9 +51,18 @@ export const placedWaterFoam = (foam: WaterFoamSurface, placement: WaterDecal): 
 				scroll: [base.scroll[0] * speed, base.scroll[1] * speed],
 			},
 		},
-		baseColor: [foam.baseColor[0] * tint[0], foam.baseColor[1] * tint[1], foam.baseColor[2] * tint[2]],
-		tint: [foam.tint[0] * tint[0], foam.tint[1] * tint[1], foam.tint[2] * tint[2]],
+		baseColor: tintRgb(foam.baseColor, tint),
+		tint: tintRgb(foam.tint, tint),
 		opacity: foam.opacity * opacity * brightness,
+		bubble: foam.bubble === null ? null : { ...foam.bubble, color: tintRgb(foam.bubble.color, tint) },
+		floating:
+			foam.floating === null
+				? null
+				: {
+						...foam.floating,
+						color: tintRgb(foam.floating.color, tint),
+						colorDark: tintRgb(foam.floating.colorDark, tint),
+					},
 	};
 };
 
@@ -59,6 +76,8 @@ const WATER_FOAM_KEYWORDS = new Set([
 	'_USE_SOFTBLEND',
 	'_USE_DISSOLVE',
 	'_USE_WATER_EROSION',
+	'_USE_BUBBLE',
+	'_USE_TWO_LAYER_FLOATING_MAP',
 ]);
 
 /**
@@ -75,6 +94,11 @@ const movedTexture = (reader: MaterialReader, name: string, movement: string): E
 	};
 };
 
+const rgbOf = (reader: MaterialReader, name: string): Rgb => {
+	const c = reader.colorOrVector(name) ?? [0, 0, 0, 0];
+	return [c[0], c[1], c[2]];
+};
+
 /**
  * @returns `_USE_WATER_EROSION`'s red tide, `null` without it, or `unsupported` when the textures it takes
  *   would exceed the look's slots (`WaterFoamSurface.erosion`)
@@ -88,19 +112,18 @@ const erosionOf = (reader: MaterialReader): WaterErosion | null | UnsupportedSur
 	if (has('_USE_DISSOLVE')) {
 		return unsupported('_USE_WATER_EROSION with a dissolve');
 	}
+	if (has('_USE_BUBBLE') || has('_USE_TWO_LAYER_FLOATING_MAP')) {
+		return unsupported('_USE_WATER_EROSION with bubble or floating layers');
+	}
 	if (has('_USE_DISTURB') && disturbIntensityOf(reader, 1).some((v) => v !== 0)) {
 		return unsupported('_USE_WATER_EROSION with a distortion');
 	}
 	if (has('_USE_MASK') && reader.slot('_MaskTex') !== undefined) {
 		return unsupported('_USE_WATER_EROSION with a mask texture');
 	}
-	const rgb = (name: string): Rgb => {
-		const c = color(name) ?? [0, 0, 0, 0];
-		return [c[0], c[1], c[2]];
-	};
 	const layer = (suffix: string): WaterErosionLayer => ({
 		noise: movedTexture(reader, `_FlowGradientNoiseTex${suffix}`, `_FlowGradientMovement${suffix}`),
-		color: rgb(`_EdgeSharpColor${suffix}`),
+		color: rgbOf(reader, `_EdgeSharpColor${suffix}`),
 		threshold: float(`_EdgeSharp${suffix}`, 0),
 	});
 	const noiseMovement = color('_FlowmapNoiseMovement') ?? [0, 0, 0, 0];
@@ -113,7 +136,44 @@ const erosionOf = (reader: MaterialReader): WaterErosion | null | UnsupportedSur
 		flowShift: float('_FlowmapUVNoiseStrength', 0),
 		distance: float('_FlowDistance', 1),
 		offset: float('_FlowOffset', 0),
-		edgeColor: rgb('_EdgeColor'),
+		edgeColor: rgbOf(reader, '_EdgeColor'),
+	};
+};
+
+const bubbleOf = (reader: MaterialReader): WaterBubble | null => {
+	const { float, has } = reader;
+	if (!has('_USE_BUBBLE')) {
+		return null;
+	}
+	return {
+		texture: effectTexture(reader.slot('_AcidTexture') ?? UNSET_WHITE),
+		color: rgbOf(reader, '_BubbleColor'),
+		heightScale: float('_BubbleHeightScale', 0),
+		speed: float('_BubbleSpeed', 0),
+		randomFactor: float('_BubbleRandomFactor', 0),
+		randomFactor2: float('_BubbleRandomFactor2', 0),
+		peakTime: float('_BubblePeakTime', 0.8),
+	};
+};
+
+const floatingOf = (reader: MaterialReader): WaterFloatingLayers | null => {
+	const { float, has } = reader;
+	if (!has('_USE_TWO_LAYER_FLOATING_MAP')) {
+		return null;
+	}
+	const layerSlot = (name: string): EffectTexture | null => {
+		const slot = reader.slot(name);
+		return slot === undefined ? null : effectTexture(slot);
+	};
+	return {
+		textures: [layerSlot('_ParallaxNoiseMap0'), layerSlot('_ParallaxNoiseMap1')],
+		source: float('_ParallaxNoiseSwitchUV', 0),
+		color: rgbOf(reader, '_ParallaxColor'),
+		colorDark: rgbOf(reader, '_ParallaxColorDark'),
+		layerOffset: float('_ParallaxLayerOffset', 0),
+		strength: float('_ParallaxStrength', 0),
+		strengthSpeed: float('_ParallaxStrengthSpeed', 0),
+		useDisturb: float('_ParallaxUseDisturb', 0),
 	};
 };
 
@@ -209,5 +269,7 @@ export const describeWaterFoam = (reader: MaterialReader): WaterFoamSurface | Un
 			: null,
 		dissolve,
 		erosion,
+		bubble: bubbleOf(reader),
+		floating: floatingOf(reader),
 	};
 };

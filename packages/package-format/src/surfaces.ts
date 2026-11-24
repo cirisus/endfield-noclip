@@ -1703,6 +1703,48 @@ export interface WaterFoamSurface {
 	 * without. a surface with it has no distortion, mask or dissolve, which leaves their texture slots to it
 	 */
 	erosion: WaterErosion | null;
+	/** `_USE_BUBBLE`, animated acid bubbles sampled in world XZ; `null` without */
+	bubble: WaterBubble | null;
+	/** `_USE_TWO_LAYER_FLOATING_MAP`, two parallax-offset floating noise layers; `null` without */
+	floating: WaterFloatingLayers | null;
+}
+
+/** a WaterDecal's `_USE_BUBBLE` animated acid bubbles */
+export interface WaterBubble {
+	/** `_AcidTexture` sampled at `world.xz * 0.1 * scale`: R is bubble shape/height, G is per-bubble phase */
+	texture: EffectTexture;
+	/** `_BubbleColor` `[HDR]`, as stored */
+	color: Rgb;
+	/** `_BubbleHeightScale` */
+	heightScale: number;
+	/** `_BubbleSpeed` */
+	speed: number;
+	/** `_BubbleRandomFactor`, scaling G */
+	randomFactor: number;
+	/** `_BubbleRandomFactor2`, scaling R */
+	randomFactor2: number;
+	/** `_BubblePeakTime`, triangle-wave turn point in `(0, 1)` */
+	peakTime: number;
+}
+
+/** a WaterDecal's `_USE_TWO_LAYER_FLOATING_MAP` parallax-shifted floating layers */
+export interface WaterFloatingLayers {
+	/** `_ParallaxNoiseMap0` and `_ParallaxNoiseMap1`; an unset slot samples black */
+	textures: [EffectTexture | null, EffectTexture | null];
+	/** UV source (`_ParallaxNoiseSwitchUV`) */
+	source: WaterFoamSource;
+	/** `_ParallaxColor` `[HDR]`, as stored, tinting the first layer */
+	color: Rgb;
+	/** `_ParallaxColorDark` `[HDR]`, as stored, tinting the second layer */
+	colorDark: Rgb;
+	/** `_ParallaxLayerOffset`, phase offset of the second layer */
+	layerOffset: number;
+	/** `_ParallaxStrength`, view-dependent UV shift */
+	strength: number;
+	/** `_ParallaxStrengthSpeed`, phase cycle rate */
+	strengthSpeed: number;
+	/** `_ParallaxUseDisturb`, share of the distortion's U offset applied to the layers */
+	useDisturb: number;
 }
 
 /** one of {@link WaterErosion}'s three edge colours */

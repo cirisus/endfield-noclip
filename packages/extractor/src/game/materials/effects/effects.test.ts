@@ -2134,8 +2134,111 @@ describe('WaterDecal', () => {
 		assert.ok(!isNeutralWaterDecal({ params: [1, 0, 1, 1], displacementTint: [1, 1, 1, 1] }));
 	});
 
+	it('extracts _USE_BUBBLE acid bubbles and _USE_TWO_LAYER_FLOATING_MAP floating layers', () => {
+		const acid = ofKind(
+			describeMaterial(
+				material({
+					keywords: ['_BLEND_BASECOLOR', '_USE_DISTURB', '_USE_BUBBLE'],
+					slots: {
+						_BaseColorMap: slot(1),
+						_DisturbTex1: slot(2, [2, 2]),
+						_AcidTexture: slot(3, [1.6, 1.6]),
+					},
+					floats: {
+						_BaseColorSwitchUV: 2,
+						_DisturbSwitchUV: 2,
+						_BlendMode: 0,
+						_OverallOpacity: 0.33,
+						_BubbleHeightScale: 0.03,
+						_BubbleSpeed: 0.396,
+						_BubbleRandomFactor: 7.67,
+						_BubbleRandomFactor2: 0.22,
+						_BubblePeakTime: 0.028,
+					},
+					colors: {
+						_BaseColorTint: [0.58, 0.49, 0, 1],
+						_BubbleColor: [0.83, 0.77, 0, 1],
+					},
+				}),
+				waterDecal,
+			),
+			'waterFoam',
+		);
+		assert.deepEqual(acid.bubble, {
+			texture: {
+				texture: 3,
+				scale: [1.6, 1.6],
+				offset: [0, 0],
+				scroll: [0, 0],
+				rotation: [1, 0],
+				customScroll: [0, 0],
+			},
+			color: [0.83, 0.77, 0],
+			heightScale: 0.03,
+			speed: 0.396,
+			randomFactor: 7.67,
+			randomFactor2: 0.22,
+			peakTime: 0.028,
+		});
+		assert.equal(acid.floating, null);
+
+		const xiranite = ofKind(
+			describeMaterial(
+				material({
+					keywords: ['_BLEND_BASECOLOR', '_USE_DISTURB', '_USE_TWO_LAYER_FLOATING_MAP'],
+					slots: {
+						_BaseColorMap: slot(1),
+						_DisturbTex1: slot(2),
+						_ParallaxNoiseMap0: { ...slot(3, [4.39, 4.69]), offset: [5.3, -2.17] },
+						_ParallaxNoiseMap1: slot(4, [13.28, 16.87]),
+					},
+					floats: {
+						_ParallaxNoiseSwitchUV: 2,
+						_ParallaxLayerOffset: 4.75,
+						_ParallaxStrength: 0.15,
+						_ParallaxStrengthSpeed: 3.22,
+						_ParallaxUseDisturb: 1,
+					},
+					colors: {
+						_ParallaxColor: [0, 0.44, 0.37, 0.2],
+						_ParallaxColorDark: [0, 1, 0.87, 0.2],
+					},
+				}),
+				waterDecal,
+			),
+			'waterFoam',
+		);
+		assert.equal(xiranite.bubble, null);
+		assert.ok(xiranite.floating !== null);
+		assert.deepEqual(
+			[xiranite.floating.textures[0]?.texture, xiranite.floating.textures[1]?.texture],
+			[3, 4],
+		);
+		assert.deepEqual(
+			[
+				xiranite.floating.source,
+				xiranite.floating.layerOffset,
+				xiranite.floating.strength,
+				xiranite.floating.strengthSpeed,
+				xiranite.floating.useDisturb,
+			],
+			[2, 4.75, 0.15, 3.22, 1],
+		);
+		assert.deepEqual(
+			[xiranite.floating.color, xiranite.floating.colorDark],
+			[
+				[0, 0.44, 0.37],
+				[0, 1, 0.87],
+			],
+		);
+	});
+
 	it('leaves variants without the base colour blend, or with other keywords, unsupported', () => {
-		for (const keywords of [['_USE_DISTURB'], ['_BLEND_BASECOLOR', '_USE_BUBBLE']]) {
+		for (const keywords of [
+			['_USE_DISTURB'],
+			['_BLEND_BASECOLOR', '_BLEND_BASECOLOR2'],
+			['_BLEND_BASECOLOR', '_USE_WATER_EROSION', '_USE_BUBBLE'],
+		]) {
 			const surface = describeMaterial(material({ keywords, slots: { _BaseColorMap: slot(1) } }), waterDecal);
 			assert.equal(surface.kind, 'unsupported');
 		}

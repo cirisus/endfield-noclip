@@ -1394,6 +1394,11 @@ const WF_MIP = 26u;
 const WF_EROSION = 27u;
 const WF_EROSION_EDGE = 28u;
 const WF_EROSION_LAYERS = 32u;
+const WF_BUBBLE = 35u;
+const WF_BUBBLE_COLOR = 36u;
+const WF_FLOATING = 37u;
+const WF_FLOATING_COLOR = 38u;
+const WF_FLOATING_COLOR_DARK = 39u;
 
 // `WaterFoamFlags`
 const WF_DISTURB_ON = 1u;
@@ -1403,12 +1408,18 @@ const WF_EDGE_FADE = 8u;
 const WF_CLIP_TO_BOX = 16u;
 const WF_SOFT = 32u;
 const WF_EROSION_ON = 64u;
+const WF_BUBBLE_ON = 128u;
+const WF_FLOATING0_ON = 256u;
+const WF_FLOATING1_ON = 512u;
 
-// `EROSION_SLOTS` in water-foam.ts
+// `EROSION_SLOTS`, `BUBBLE_SLOT` and `FLOATING_SLOTS` in water-foam.ts
 const WF_SLOT_FLOW = 1u;
 const WF_SLOT_FLOW_NOISE = 2u;
 const WF_SLOT_GRADIENT = 3u;
 const WF_SLOT_LAYERS = 4u;
+const WF_SLOT_BUBBLE = 4u;
+const WF_SLOT_FLOATING0 = 5u;
+const WF_SLOT_FLOATING1 = 6u;
 
 // the layers' noises are read three mip levels finer, as the game's bias of −3
 const WF_LAYER_GRADIENT_SCALE = 0.125;
@@ -1570,6 +1581,49 @@ fn fs_water_foam(in: EffectOut) -> @location(0) vec4f {
 	}
 	if ((flags & WF_EROSION_ON) != 0u) {
 		color = wf_erosion(id, color, mesh, mesh_dx * bias, mesh_dy * bias, t);
+	}
+	if ((flags & WF_BUBBLE_ON) != 0u) {
+		let st = fx_row(id, FX_UV + WF_SLOT_BUBBLE);
+		let b = fx_row(id, WF_BUBBLE);
+		let bc = fx_row(id, WF_BUBBLE_COLOR);
+		let acid = fx_sample(WF_SLOT_BUBBLE, world * st.xy, world_dx * st.xy, world_dy * st.xy);
+		let phase = fract(t * b.y + b.z * acid.y + b.w * acid.x);
+		let peak = clamp(bc.w, 1e-4, 1.0 - 1e-4);
+		let dist = abs(phase - peak);
+		let pulse = step(peak, phase) * dist / (1.0 - peak) + step(phase, peak) * dist / peak;
+		color += bc.rgb * (pulse * b.x * acid.x * 10.0);
+	}
+	if ((flags & (WF_FLOATING0_ON | WF_FLOATING1_ON)) != 0u) {
+		let fl = fx_row(id, WF_FLOATING);
+		let fc0 = fx_row(id, WF_FLOATING_COLOR);
+		let fc1 = fx_row(id, WF_FLOATING_COLOR_DARK);
+		let view = normalize(-rel);
+		let n = vec3f(0.0, 1.0, 0.0);
+		let vt_raw = vec3f(view.x, 0.0, dot(view, n));
+		let vt = vt_raw * inverseSqrt(max(1.175494e-38, dot(vt_raw, vt_raw)));
+		let view_off = (vt.xy / max(0.001, vt.z + 0.42)) / max(vt.z, 0.001);
+		let t0 = t * 0.05;
+		let f0 = fract(t0 * fl.w);
+		let f1 = fract((t0 + fl.y) * fl.w);
+		let fl_src = wf_pick(fl.x, box, polar, world, mesh);
+		let fl_dx = wf_pick(fl.x, box_dx, polar_dx, world_dx, mesh_dx) * bias;
+		let fl_dy = wf_pick(fl.x, box_dy, polar_dy, world_dy, mesh_dy) * bias;
+		let du = vec2f(offset.x);
+		let p_uv = mix(fl_src, fl_src + du, fc0.w);
+		var layers = vec3f(0.0);
+		if ((flags & WF_FLOATING0_ON) != 0u) {
+			let uv0 = p_uv + view_off * (-(1.0 - f0) * fl.z) * 0.5;
+			let st0 = fx_row(id, FX_UV + WF_SLOT_FLOATING0);
+			let s0 = fx_sample(WF_SLOT_FLOATING0, mix(uv0, uv0 + du, fc0.w) * st0.xy + st0.zw, fl_dx * st0.xy, fl_dy * st0.xy).rgb;
+			layers += s0 * (0.5 - abs(0.5 - f0)) * fc0.rgb;
+		}
+		if ((flags & WF_FLOATING1_ON) != 0u) {
+			let uv1 = p_uv + view_off * (-(1.0 - f1) * fl.z) * 0.5;
+			let st1 = fx_row(id, FX_UV + WF_SLOT_FLOATING1);
+			let s1 = fx_sample(WF_SLOT_FLOATING1, mix(uv1, uv1 + du, fc0.w) * st1.xy + st1.zw, fl_dx * st1.xy, fl_dy * st1.xy).rgb;
+			layers += s1 * (0.5 - abs(0.5 - f1)) * fc1.rgb;
+		}
+		color += layers * saturate(dot(view, n));
 	}
 	let fade = fx_row(id, WF_FADE);
 	var edge_fade = 1.0;

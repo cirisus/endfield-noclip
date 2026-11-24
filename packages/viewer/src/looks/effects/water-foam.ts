@@ -36,6 +36,16 @@ export const WaterFoamRow = {
 	erosionEdge: 112,
 	/** each erosion layer's colour rgb (HDR) and threshold, three rows past the vertex stage's rows 30–31 */
 	erosionLayers: 128,
+	/** `_USE_BUBBLE`: heightScale, speed, randomFactor, randomFactor2 */
+	bubble: 140,
+	/** `_USE_BUBBLE`: colour rgb (HDR), peakTime */
+	bubbleColor: 144,
+	/** `_USE_TWO_LAYER_FLOATING_MAP`: UV source, layerOffset, strength, strengthSpeed */
+	floating: 148,
+	/** `_USE_TWO_LAYER_FLOATING_MAP`: first layer colour rgb (HDR), useDisturb */
+	floatingColor: 152,
+	/** `_USE_TWO_LAYER_FLOATING_MAP`: second layer colour rgb (HDR), 0 */
+	floatingColorDark: 156,
 } as const;
 
 /**
@@ -43,6 +53,12 @@ export const WaterFoamRow = {
  * gradient and the three layers' noises, in the slots the distortion, mask and dissolve leave free
  */
 export const EROSION_SLOTS = { flow: 1, flowNoise: 2, gradient: 3, layers: 4 } as const;
+
+/** the slot of `_AcidTexture` (`_USE_BUBBLE`), past slots 0–3 */
+export const BUBBLE_SLOT = 4;
+
+/** the slots of `_ParallaxNoiseMap0` and `_ParallaxNoiseMap1` (`_USE_TWO_LAYER_FLOATING_MAP`), past slot 4 */
+export const FLOATING_SLOTS = [5, 6] as const;
 
 /** {@link WaterFoamRow.tint}'s w bits, matching `effect.wgsl` */
 export const WaterFoamFlags = {
@@ -53,6 +69,9 @@ export const WaterFoamFlags = {
 	ClipToBox: 1 << 4,
 	Soft: 1 << 5,
 	Erosion: 1 << 6,
+	Bubble: 1 << 7,
+	Floating0: 1 << 8,
+	Floating1: 1 << 9,
 } as const;
 
 /**
@@ -64,7 +83,7 @@ export const WaterFoamFlags = {
 export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 	const look = emptyEffect();
 	const params = look.params;
-	const { textures, dissolve, erosion } = foam;
+	const { textures, dissolve, erosion, bubble, floating } = foam;
 	[textures.base, textures.disturb, textures.mask, dissolve?.texture ?? null].forEach((texture, i) => {
 		if (texture !== null) {
 			setSlot(look, i, texture, EffectRole.Main);
@@ -85,6 +104,31 @@ export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 		);
 		params.set([...erosion.edgeColor, 0], WaterFoamRow.erosionEdge);
 	}
+	if (bubble !== null) {
+		setSlot(look, BUBBLE_SLOT, bubble.texture, EffectRole.Main);
+		params.set(
+			[bubble.heightScale, bubble.speed, bubble.randomFactor, bubble.randomFactor2],
+			WaterFoamRow.bubble,
+		);
+		params.set([...bubble.color, bubble.peakTime], WaterFoamRow.bubbleColor);
+	}
+	let floatingFlags = 0;
+	if (floating !== null) {
+		if (floating.textures[0] !== null) {
+			setSlot(look, FLOATING_SLOTS[0], floating.textures[0], EffectRole.Main);
+			floatingFlags |= WaterFoamFlags.Floating0;
+		}
+		if (floating.textures[1] !== null) {
+			setSlot(look, FLOATING_SLOTS[1], floating.textures[1], EffectRole.Main);
+			floatingFlags |= WaterFoamFlags.Floating1;
+		}
+		params.set(
+			[floating.source, floating.layerOffset, floating.strength, floating.strengthSpeed],
+			WaterFoamRow.floating,
+		);
+		params.set([...floating.color, floating.useDisturb], WaterFoamRow.floatingColor);
+		params.set([...floating.colorDark, 0], WaterFoamRow.floatingColorDark);
+	}
 	const flags =
 		(textures.disturb === null ? 0 : WaterFoamFlags.Disturb) |
 		(textures.mask === null ? 0 : WaterFoamFlags.Mask) |
@@ -92,7 +136,9 @@ export const waterFoamLook = (foam: WaterFoamSurface): EffectLook => {
 		(foam.edgeFade === null ? 0 : WaterFoamFlags.EdgeFade) |
 		(foam.clipToBox ? WaterFoamFlags.ClipToBox : 0) |
 		(foam.soft === null ? 0 : WaterFoamFlags.Soft) |
-		(erosion === null ? 0 : WaterFoamFlags.Erosion);
+		(erosion === null ? 0 : WaterFoamFlags.Erosion) |
+		(bubble === null ? 0 : WaterFoamFlags.Bubble) |
+		floatingFlags;
 	params.set([...foam.baseColor, foam.opacity], WaterFoamRow.base);
 	params.set([...foam.tint, flags], WaterFoamRow.tint);
 	params.set([foam.disturbBias, ...foam.disturb, foam.blendMode], WaterFoamRow.disturb);
