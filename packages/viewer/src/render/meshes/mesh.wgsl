@@ -201,6 +201,8 @@ struct VertexOut {
 	@location(8) @interpolate(flat) origin: vec3f,
 	// transition fade code from `list_fade` (0 = opaque)
 	@location(9) @interpolate(flat) fade: u32,
+	// 1 when the instance matrix has a negative determinant (inverted triangle winding)
+	@location(10) @interpolate(flat) mirrored: u32,
 }
 
 @vertex
@@ -213,6 +215,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	let p = draw.offset.xyz + v.position.xyz * draw.scale.xyz;
 	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
 	let m = row_basis(row.t0, row.t1, row.t2, row.info);
+	let mirrored = determinant(m) < 0.0;
 	let flags = bitcast<u32>(draw.offset.w);
 	let uv = vec4f(v.uv0 * draw.uv0.xy + draw.uv0.zw, v.uv1 * draw.uv1.xy + draw.uv1.zw);
 	// as vs_cutout_depth computes it, so alpha-tested depth matches exactly where they're shaded
@@ -226,7 +229,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	}
 	var t = vec4f(0.0);
 	if ((flags & HAS_TANGENTS) != 0u) {
-		let sign = select(-1.0, 1.0, v.tangent.z >= 0.0) * select(-1.0, 1.0, determinant(m) >= 0.0);
+		let sign = select(-1.0, 1.0, v.tangent.z >= 0.0) * select(1.0, -1.0, mirrored);
 		t = vec4f(m * oct_decode(v.tangent.xy), sign);
 	}
 	let world = origin + frame.eye.xyz;
@@ -242,6 +245,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	out.color = select(vec4f(1.0), v.color, (flags & HAS_COLORS) != 0u) * unpack4x8unorm(row.color);
 	out.origin = origin;
 	out.fade = list_fade(entry);
+	out.mirrored = select(0u, 1u, mirrored);
 	return out;
 }
 
@@ -582,15 +586,31 @@ fn layer_surface(
 }
 // #endregion
 
+// true on a mesh's geometric front face: mirrored instances keep `FRONT_FACE` while inverting triangle
+// winding, so `@builtin(front_facing)` is inverted for them
+fn is_front_face(front_facing: bool, mirrored: u32) -> bool {
+	return front_facing == (mirrored == 0u);
+}
+
+// shading normal before normal mapping: the vertex normal (flipped on back faces when `flip` is set), or the
+// screen-space faceted normal (already facing the viewer) for meshes without vertex normals
+fn surface_normal(vertex_normal: vec3f, faceted: vec3f, flip: bool) -> vec3f {
+	if (dot(vertex_normal, vertex_normal) < 1e-6) {
+		return normalize(faceted);
+	}
+	let n = normalize(vertex_normal);
+	return select(n, -n, flip);
+}
+
 // a shader that may discard loses early depth and, on tile-based GPUs, hidden-surface removal, so only the
 // depth passes of alpha-tested materials discard (fs_cutout_depth). their shading runs fs_opaque where the
 // depth matches.
 
 @fragment
-fn fs_opaque(in: VertexOut) -> Shaded {
+fn fs_opaque(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Shaded {
 	let look = look_slot(draws[in.draw]);
 	let feedback = pack_mip_feedback(look, in.uv, in.rel, frame.params.y);
-	var out = shade(in, true);
+	var out = shade(in, true, is_front_face(front_facing, in.mirrored));
 	if (looks[look].detail2.w > 0.5) {
 		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
 	}
@@ -601,7 +621,7 @@ fn fs_opaque(in: VertexOut) -> Shaded {
 // alpha-tested surfaces that don't write depth (`HGRP/Lit` `_ZWRITE_OFF`, e.g. floor/wall mesh decals):
 // they skip the prepass and discard here against the opaque/cutout depth buffer
 @fragment
-fn fs_cutout_overlay(in: VertexOut) -> Shaded {
+fn fs_cutout_overlay(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Shaded {
 	if (fade_discard(in.fade, in.position.xy)) {
 		discard;
 	}
@@ -624,7 +644,7 @@ fn fs_cutout_overlay(in: VertexOut) -> Shaded {
 		discard;
 	}
 	let feedback = pack_mip_feedback(id, in.uv, in.rel, frame.params.y);
-	var out = shade(in, true);
+	var out = shade(in, true, is_front_face(front_facing, in.mirrored));
 	if (look.detail2.w > 0.5) {
 		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
 	}
@@ -635,13 +655,14 @@ fn fs_cutout_overlay(in: VertexOut) -> Shaded {
 // lean shading path for plain opaque Lit looks (base + normal only, no mask/emissive/detail/layer/parallax/
 // foliage/erosion/unlit/dither/gaps); keeps VGPRs low for the ~86% of opaque materials that need nothing else
 @fragment
-fn fs_opaque_lit(in: VertexOut) -> Shaded {
+fn fs_opaque_lit(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Shaded {
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
 	let look = looks[id];
 	let feedback = pack_mip_feedback(id, in.uv, in.rel, frame.params.y);
-	let faceted = cross(dpdy(in.rel), dpdx(in.rel));
+	// screen +Y is down, so dpdx × dpdy faces the viewer in left-handed space
+	let faceted = cross(dpdx(in.rel), dpdy(in.rel));
 	let bias = frame.params.y;
 	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
 	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
@@ -653,15 +674,8 @@ fn fs_opaque_lit(in: VertexOut) -> Shaded {
 	albedo = mix(albedo, look.tint.rgb, look.emissive.w);
 	let has_normal = (flags & NORMAL_MAP) != 0u;
 
-	var n = in.normal;
-	if (dot(n, n) < 1e-6) {
-		n = faceted;
-	}
-	n = normalize(n);
-	let towards_viewer = dot(n, in.rel) <= 0.0;
-	if (!towards_viewer) {
-		n = -n;
-	}
+	let front = is_front_face(front_facing, in.mirrored);
+	var n = surface_normal(in.normal, faceted, !front);
 	if (has_normal && in.tangent.w != 0.0) {
 		var rg = packed.rg;
 		if ((flags & NORMAL_RAG) != 0u) {
@@ -671,7 +685,7 @@ fn fs_opaque_lit(in: VertexOut) -> Shaded {
 		let tn = vec3f(xy * look.surface.w, normal_z(xy));
 		let t = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
 		var b = cross(in.normal, in.tangent.xyz) * in.tangent.w;
-		if (!towards_viewer) {
+		if (!front) {
 			b = -b;
 		}
 		b = normalize(b - n * dot(b, n));
@@ -704,7 +718,7 @@ fn fs_opaque_lit(in: VertexOut) -> Shaded {
 // drawn far to near over the composited scene (`TRANSPARENT_TARGETS` in render-targets.ts): premultiplied
 // colour and the opacity, the alpha the alpha test would read times `_BaseColor.a`
 @fragment
-fn fs_transparent(in: VertexOut) -> @location(0) vec4f {
+fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4f {
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
@@ -714,7 +728,7 @@ fn fs_transparent(in: VertexOut) -> @location(0) vec4f {
 	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
 	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
 	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
-	let shaded = shade(in, false);
+	let shaded = shade(in, false, is_front_face(front_facing, in.mirrored));
 	// a map still streaming leaves the tint's alpha alone
 	var alpha = 1.0;
 	if ((flags & ALPHA_NORMAL) != 0u) {
@@ -758,7 +772,7 @@ fn dither_vertex_color(look: Look, flags: u32, color: vec4f) -> vec3f {
 	return select(vec3f(1.0), color.rgb, (dither_bits(look, flags) & DITHER_VERTEX_COLOR) != 0u);
 }
 
-fn shade(in: VertexOut, wet: bool) -> Shaded {
+fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
@@ -766,7 +780,8 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	// derivatives (and implicit-LOD sampling) must happen in uniform control flow
 	let rel_dx = dpdx(in.rel);
 	let rel_dy = dpdy(in.rel);
-	let faceted = cross(rel_dy, rel_dx);
+	// screen +Y is down, so dpdx × dpdy faces the viewer in left-handed space
+	let faceted = cross(rel_dx, rel_dy);
 	let bias = frame.params.y;
 	let base = textureSampleBias(base_map, base_sampler, slot_uv(id, in.uv, flags, BASE_SLOT), bias);
 	let packed = textureSampleBias(normal_map, detail_sampler, slot_uv(id, in.uv, flags, NORMAL_SLOT), bias);
@@ -815,7 +830,7 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 		return unlit(clamp(c * mix(1.0, frame.ambient.y, look.emissive2.z), vec3f(0.0), vec3f(1000.0)));
 	}
 	if ((flags & EROSION) != 0u) {
-		var s = erosion_surface(look, in, flags, faceted, packed, mask, detail, uv0_dx, uv0_dy);
+		var s = erosion_surface(look, in, flags, faceted, front, packed, mask, detail, uv0_dx, uv0_dy);
 		if (wet) {
 			s = rain_wet_surface(s, in.rel);
 		}
@@ -856,19 +871,14 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	}
 	let detail_pbr = look.detail.w * detail_weight;
 
-	var n = in.normal;
-	if (dot(n, n) < 1e-6) {
-		n = faceted;
-	}
-	n = normalize(n);
-	// two-sided materials (foliage) show both faces, and smooth normals can face away at silhouettes: light the
-	// side facing us. leaves without `_TwoSidedNormal` keep the normals the canopy's shape gave them, whichever
-	// face shows, as the game's do
-	let canopy_normal = (flags & FOLIAGE_LEAF) != 0u && look.canopy_color.w < 0.5;
-	let towards_viewer = canopy_normal || dot(n, in.rel) <= 0.0;
-	if (!towards_viewer) {
-		n = -n;
-	}
+	// two-sided materials show both faces: flip the shading normal on back faces by winding, matching the game's
+	// `gl_FrontFacing` check. leaves and grass without `_TwoSidedNormal` keep their mesh normals on both faces
+	// (canopy-shaped normals on trees, ground-up normals on grass blades)
+	let grass = (flags & (FOLIAGE | FOLIAGE_LEAF)) == FOLIAGE;
+	let keep_back_normal = ((flags & FOLIAGE_LEAF) != 0u && look.canopy_color.w < 0.5) ||
+		(grass && look.foliage_ao.w < 0.5);
+	let flip_back = !front && !keep_back_normal;
+	var n = surface_normal(in.normal, faceted, flip_back);
 
 	// the layer, once both its maps are bound; the parallax glow can't share the slots
 	let layer_maps = PARALLAX_MAP | PARALLAX_NOISE_MAP;
@@ -902,7 +912,6 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 	}
 
 	var roughness = look.surface.y;
-	let grass = (flags & (FOLIAGE | FOLIAGE_LEAF)) == FOLIAGE;
 	if ((has_normal || layered) && in.tangent.w != 0.0) {
 		var tn = vec3f(0.0, 0.0, 1.0);
 		if (has_normal) {
@@ -927,7 +936,7 @@ fn shade(in: VertexOut, wet: bool) -> Shaded {
 		var b = cross(in.normal, in.tangent.xyz) * in.tangent.w;
 		// grass with `_TwoSidedNormal` flips only the surface normal on its back faces, so its bent normal keeps
 		// pointing up the blade
-		if (!towards_viewer && !(grass && look.foliage_ao.w > 0.5)) {
+		if (flip_back && !grass) {
 			b = -b;
 		}
 		b = normalize(b - n * dot(b, n));
@@ -1382,6 +1391,7 @@ fn erosion_surface(
 	in: VertexOut,
 	flags: u32,
 	faceted: vec3f,
+	front: bool,
 	packed_in: vec4f,
 	mask_in: vec4f,
 	detail_in: vec4f,
@@ -1415,15 +1425,7 @@ fn erosion_surface(
 	let flow_bottom = look.mask_metallic.rgb;
 	let flow = look.mask_scale;
 
-	var n = in.normal;
-	if (dot(n, n) < 1e-6) {
-		n = faceted;
-	}
-	n = normalize(n);
-	let towards_viewer = dot(n, in.rel) <= 0.0;
-	if (!towards_viewer) {
-		n = -n;
-	}
+	var n = surface_normal(in.normal, faceted, !front);
 	let v = normalize(-in.rel);
 	// 1 where metal
 	let metal = saturate(1.0 - metal_map.r);
@@ -1483,7 +1485,7 @@ fn erosion_surface(
 		);
 		tn.y = mix(tn.y, 0.0, metal);
 		let t = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
-		var bt = select(-b, b, towards_viewer);
+		var bt = select(-b, b, front);
 		bt = normalize(bt - n * dot(bt, n));
 		n = normalize(t * tn.x + bt * tn.y + n * tn.z);
 	}

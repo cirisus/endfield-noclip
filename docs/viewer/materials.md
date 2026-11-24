@@ -80,9 +80,10 @@ as Lit (without `_ObjectBlend*` soft depth blending).
 - `HGRP/Foliage/Leaf` and grass shaders pack `foliage`
   ([`foliage.ts`](../../packages/extractor/src/game/materials/surfaces/foliage.ts)) via `leafParams`
   / `grassParams`; leaf `_BLEND_COLOR` reuses tri-channel mask rows.
-- leaves without `_TwoSidedNormal` keep their normal on back faces; with it (and on all other
-  materials), normals flip toward the camera rather than by face winding. grass `h` is object-space
-  vertex height. grass card LOD omits bend and masks (normal decoding unread).
+- leaves and grass without `_TwoSidedNormal` keep their normal on back faces; with it (and on all
+  other materials), back faces flip their normal by face winding (corrected for mirrored instances).
+  grass `h` is object-space vertex height. grass card LOD omits bend and masks (normal decoding
+  unread).
 - `HGRP/Foliage/Trunk` uses Lit layout plus `_FOLIAGE_TRUNK` vertex AO/ramp (`trunkParams`, `Trunk`
   flag). `HGRP/Foliage/TreeFoliageCardMeshLod` draws as alpha-tested foliage.
 - [glowing foliage](../game-data/materials.md#glowing-foliage) (`describeFoliageGlow`) is Lit +
