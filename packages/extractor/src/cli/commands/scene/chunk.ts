@@ -19,7 +19,7 @@ import type { ChunkFile, WorldIndex } from '../../../game/world/world-index.ts';
 import { hashText, jsonReplacer } from '../../helpers.ts';
 
 import type { SceneSubArgs } from './parser.ts';
-import { type AssetNames, entityJson, formatHlodLink, layerName } from './shared.ts';
+import { type AssetNames, entityJson, findLevel, formatHlodLink, layerName } from './shared.ts';
 
 /**
  * runs `endfield-extract scene chunk`
@@ -38,10 +38,23 @@ export const runSceneChunk = async (args: SceneSubArgs<'chunk'>): Promise<void> 
 	});
 };
 
-const resolveChunkFile = async (world: WorldIndex, scene: string, query: string): Promise<ChunkFile> => {
-	const files = (await world.chunkFiles()).filter((file) => file.scene === scene);
+const resolveChunkFile = async (
+	world: WorldIndex,
+	sceneOrLevel: string,
+	query: string,
+): Promise<{ scene: string; file: ChunkFile }> => {
+	const allFiles = await world.chunkFiles();
+	let scene = sceneOrLevel;
+	let files = allFiles.filter((file) => file.scene === scene);
 	if (files.length === 0) {
-		throw new Error(`unknown streaming scene ${scene}`);
+		const resolved = await findLevel(world, sceneOrLevel).catch(() => null);
+		if (resolved !== null) {
+			scene = resolved.partition.mapId;
+			files = allFiles.filter((file) => file.scene === scene);
+		}
+	}
+	if (files.length === 0) {
+		throw new Error(`unknown streaming scene or level ${sceneOrLevel}`);
 	}
 	const exact = files.find(
 		(file) =>
@@ -50,15 +63,15 @@ const resolveChunkFile = async (world: WorldIndex, scene: string, query: string)
 			basename(file.name) === `InitChunkData_${query}.bytes`,
 	);
 	if (exact !== undefined) {
-		return exact;
+		return { scene, file: exact };
 	}
 	const defaultArea = files.find((file) => basename(file.name) === `InitChunkData_${query}_0_0.bytes`);
 	if (defaultArea !== undefined) {
-		return defaultArea;
+		return { scene, file: defaultArea };
 	}
 	const partial = files.filter((file) => basename(file.name).includes(query));
 	if (partial.length === 1) {
-		return partial[0];
+		return { scene, file: partial[0] };
 	}
 	const hint =
 		partial.length === 0
@@ -76,7 +89,7 @@ const resolveChunkFile = async (world: WorldIndex, scene: string, query: string)
 
 const inspectChunk = async (
 	world: WorldIndex,
-	scene: string,
+	sceneOrLevel: string,
 	query: string,
 	options: {
 		pattern: RegExp | undefined;
@@ -86,7 +99,7 @@ const inspectChunk = async (
 		json: boolean;
 	},
 ): Promise<void> => {
-	const file = await resolveChunkFile(world, scene, query);
+	const { scene, file } = await resolveChunkFile(world, sceneOrLevel, query);
 	const [initBytes, streamingBytes, partition, pathOf] = await Promise.all([
 		world.readInitPayload(file),
 		world.readStreamingPayload(file),
