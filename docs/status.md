@@ -195,8 +195,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   alpha-weighted animated meshes hold still. clock assumed seconds; unverified in game beyond
   Jingyu's cherry-tree islet ribbons flapping.
 - **unimplemented shaders** ([unsupported](viewer/materials.md#unsupported-materials), counted by
-  `pack`): on map02, `Hidden/HGRP/Effect/VFXInkWashPaint`, `HGRP/Effect/VFXRadialBlur`,
-  `HGRP/CharacterNPR`, and `HGRP/Effect/VFXTransparentDepthOnly`.
+  `pack`): on map02, `Hidden/HGRP/Effect/VFXInkWashPaint`, `HGRP/Effect/VFXRadialBlur`, and
+  `HGRP/CharacterNPR`.
 - **forward Lit** ([viewer](viewer/materials.md#forward-lit)): golden treasure chest reflects the
   scene instead of `_CUSTOM_IBL`; other variants undecoded.
 - **matte paintings** ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` unread

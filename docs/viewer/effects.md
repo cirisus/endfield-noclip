@@ -63,6 +63,15 @@ passes running after composite and water, into the composited scene with main-pa
 
 omitted and excluded from viewer SSR inputs.
 
+## transparent depth-only
+
+[VFXTransparentDepthOnly](../game-data/effects.md#transparent-depth-only) draws in the sorted
+transparent pass with colour write mask 0 and depth writes enabled, switching the pass to a writable
+depth attachment (copying opaque depth for soft-blend readers). its range sits after `effect` so
+coincident depth-only proxies (like waterfall `sawtoothfix` meshes) draw after their `VFXWater`
+sheets on a sort-band and distance tie. variants with keywords (`_USE_VERTOFFSET`, `_VAT_SOFTBODY`,
+`VFX_DEPTH_ONLY_DITHER`, …) or a non-`LEqual` `_ZTest` stay unsupported.
+
 ## portals
 
 [portals](../game-data/effects.md#portals) use a stencil buffer (requires `depth32float-stencil8`).

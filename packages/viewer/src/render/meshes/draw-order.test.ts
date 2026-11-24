@@ -18,6 +18,7 @@ test('a look draws in its queue, alpha-tested ones as opaque until their alpha i
 	assert.equal(drawRangeOf(look({ flags: LookFlags.ParallaxMap }), context), 'opaque');
 	assert.equal(drawRangeOf(look({ queue: 'transparent' }), context), 'transparent');
 	assert.equal(drawRangeOf(look({ queue: 'transparentDepthWrite' }), context), 'transparentDepthWrite');
+	assert.equal(drawRangeOf(look({ queue: 'transparentDepthOnly' }), context), 'transparentDepthOnly');
 	assert.equal(drawRangeOf(look({ queue: 'cutout' }), context), 'cutout');
 	assert.equal(
 		drawRangeOf(look({ queue: 'cutout' }), { ...context, state: { ...ready, alphaReady: false } }),

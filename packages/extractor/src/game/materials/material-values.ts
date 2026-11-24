@@ -43,6 +43,7 @@ export type ShaderFamily =
 	| 'vfxDitherAlpha'
 	| 'vfxSmokeSixWay'
 	| 'vfxFakeVolumeFog'
+	| 'vfxTransparentDepth'
 	| 'volumetricBeam'
 	| 'terrain'
 	| 'hlod'

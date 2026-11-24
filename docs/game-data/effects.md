@@ -369,6 +369,22 @@ and two ray-traced reflection passes. the deferred path draws `ForwardReflection
 materials: Very Large Rift portal `quan_ad_01_pass` (dung02_dg005, twin of VFXBaseV2 `quan_ad_01`)
 and `zhuangfangyi_shu_04_03_pass` (indie_dg005). on-screen effect is unchecked against the game.
 
+## transparent depth-only
+
+`HGRP/Effect/VFXTransparentDepthOnly` draws a single `ForwardOnly` pass in the transparent queue
+with `Blend Zero One` on colour, zero motion vector on RT1, hardcoded `ZWrite On` (ignoring the
+material's `_ZWrite` float), `ZTest [_ZTest]` (default `LEqual`), and `Cull [_CullMode]`. it leaves
+scene colour untouched while writing depth during the transparent pass to occlude later transparent
+draws and supply depth/motion vectors to post-processing:
+
+- Yinglung Pass waterfall (`P_fxmap_water_map02_sqwaterfall_pro_small_allowpost_2101_sawtoothfix`,
+  `M_fxmap_water_map02_sqwaterfall_pro_small_allowpost_near_2110`, queue 3000): shares the
+  `VFXWater` sheets' mesh and transform
+- Si's Painting dragon (`P_fxmap_map02_lv010_silly_dragon_01`,
+  `M_fxmap_map02_lv010_silly_dragon_23`, queue 3000): `mask` at sorting order −1 occludes the clouds
+  at sorting order 0 behind it
+- `indie_dg005` (`M_fxmap_zhuangfangyi_shu_03_depth`, queue 3010; `M_fx_ui_zfy_xuying_depth_01`)
+
 ## refraction
 
 `HGRP/Effect/VFXRefract` runs after transparent effects (`LightMode` `Distortion`), sampling a copy

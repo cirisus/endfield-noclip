@@ -54,3 +54,12 @@ test('unconverted materials show as unsupported', () => {
 	const [failed] = materialLooks({ entries: [{ status: 'failed' }] });
 	assert.equal(failed.unsupported, true);
 });
+
+test('transparentDepthOnly writes depth in the transparent pass without casting shadows', () => {
+	const [depthOnly] = materialLooks({
+		entries: [{ ...described({ kind: 'transparentDepthOnly' }), cull: 'none' }],
+	});
+	assert.deepEqual([depthOnly.drawn, depthOnly.unsupported, depthOnly.castsShadows], [true, false, false]);
+	assert.equal(depthOnly.queue, 'transparentDepthOnly');
+	assert.equal(depthOnly.cull, 'none');
+});

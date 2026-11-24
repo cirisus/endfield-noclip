@@ -749,7 +749,7 @@ export class MeshRenderer {
 		if (look.readsBackground && SORTED_RANGES.has(info.range)) {
 			this.transparentReadsBackground = true;
 		}
-		if (info.range === 'transparentDepthWrite') {
+		if (info.range === 'transparentDepthWrite' || info.range === 'transparentDepthOnly') {
 			this.transparentWritesDepth = true;
 		}
 		if (resident.skin !== null) {

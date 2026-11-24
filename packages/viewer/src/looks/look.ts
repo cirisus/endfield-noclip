@@ -188,6 +188,8 @@ export const GAPS_FLOAT = 144;
  *   computes, testing depth without writing it; never shadow-casting
  * - `transparentDepthWrite`: like `transparent`, writing depth (`_Zwrite` on `HGRP/LitTransparent`) so
  *   self-overlapping meshes and later transparent draws occlude against it
+ * - `transparentDepthOnly`: writes only depth (`HGRP/Effect/VFXTransparentDepthOnly`), with no colour output,
+ *   during the sorted transparent pass so later transparent draws behind it are occluded
  *
  * and scene effects ({@link LookFlags.Effect}), drawn by effect.wgsl once all their textures are bound:
  *
@@ -214,6 +216,7 @@ export type LookQueue =
 	| 'stencilMask'
 	| 'transparent'
 	| 'transparentDepthWrite'
+	| 'transparentDepthOnly'
 	| 'effect'
 	| 'effectOpaque'
 	| 'effectDecal'

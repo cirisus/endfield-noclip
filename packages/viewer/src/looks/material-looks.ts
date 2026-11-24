@@ -245,6 +245,13 @@ const surfaceLook = (entry: ReadyMaterial): MaterialLook => {
 		case 'stencilMask': {
 			return stencilMaskLook(surface, entry.cull);
 		}
+		case 'transparentDepthOnly': {
+			const look = emptyLook({ drawn: true });
+			look.cull = entry.cull;
+			look.queue = 'transparentDepthOnly';
+			look.castsShadows = false;
+			return look;
+		}
 		case 'waterSheet': {
 			return effectMaterialLook(waterSheetLook(surface), {
 				queue: 'effect',

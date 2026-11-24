@@ -60,4 +60,23 @@ describe('describeMaterial', () => {
 			reason: 'additive blending outside the effect shaders',
 		});
 	});
+
+	it('describes plain VFXTransparentDepthOnly and rejects undrawn keywords or depth tests', () => {
+		const shader = shaderEntry('HGRP/Effect/VFXTransparentDepthOnly', 'vfxTransparentDepth');
+		assert.deepEqual(
+			describeMaterial(materialValues({ renderQueue: 3000, blend: 'premultiplied' }), shader),
+			{
+				kind: 'transparentDepthOnly',
+			},
+		);
+		assert.equal(
+			describeMaterial(materialValues({ keywords: ['_USE_VERTOFFSET'] }), shader).kind,
+			'unsupported',
+		);
+		assert.equal(describeMaterial(materialValues({ floats: { _ZTest: 8 } }), shader).kind, 'unsupported');
+		assert.equal(
+			describeMaterial(materialValues({ floats: { _DisableZTest: 1 } }), shader).kind,
+			'unsupported',
+		);
+	});
 });

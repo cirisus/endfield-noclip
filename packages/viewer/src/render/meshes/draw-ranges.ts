@@ -39,6 +39,8 @@ export const DRAW_RANGES: readonly DrawRangeInfo[] = [
 	{ range: 'transparentDepthWrite', order: 'bindings', effect: false },
 	// effects that write the stencil first, so the effects testing it see the whole mask
 	{ range: 'effect', order: 'stencilWritesThenBindings', effect: true },
+	// after `effect` so a depth-only proxy sharing a waterfall sheet's sort band and position draws after it
+	{ range: 'transparentDepthOnly', order: 'bindings', effect: false },
 	{ range: 'effectDecal', order: 'bindings', effect: true },
 	{ range: 'mist', order: 'bindings', effect: true },
 	{ range: 'mistVolume', order: 'bindings', effect: true },
@@ -109,6 +111,13 @@ export const PHASES = {
 	},
 	transparent: shading('mesh/transparent', 'transparent'),
 	transparentDepthWrite: shading('mesh/transparent-depth-write', 'transparentDepthWrite'),
+	transparentDepthOnly: {
+		key: 'mesh/transparent-depth-only',
+		range: 'transparentDepthOnly',
+		textured: false,
+		shadow: false,
+		streams: 'position',
+	},
 	effectOpaque: shading('mesh/effect-opaque', 'effectOpaque'),
 	effect: shading('mesh/effect', 'effect'),
 	effectDecal: shading('mesh/effect-decal', 'effectDecal'),
@@ -199,6 +208,7 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 		PHASES.transparent,
 		PHASES.transparentDepthWrite,
 		PHASES.effect,
+		PHASES.transparentDepthOnly,
 		PHASES.effectDecal,
 		PHASES.mist,
 		PHASES.mistVolume,

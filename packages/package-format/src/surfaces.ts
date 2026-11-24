@@ -52,6 +52,7 @@ export type MaterialSurface =
 	| LightBeamSurface
 	| EffectStackSurface
 	| StencilMaskSurface
+	| TransparentDepthOnlySurface
 	| WaterSheetSurface
 	| SixWaySmokeSurface
 	| LitDecalSurface
@@ -1351,6 +1352,14 @@ export interface DecalParallax {
 export interface StencilMaskSurface {
 	kind: 'stencilMask';
 	stencil: EffectStencil;
+}
+
+/**
+ * `HGRP/Effect/VFXTransparentDepthOnly`: writes only depth (and zero colour) during the transparent pass,
+ * occluding later transparent draws behind it (`docs/game-data/effects.md#transparent-depth-only`)
+ */
+export interface TransparentDepthOnlySurface {
+	kind: 'transparentDepthOnly';
 }
 
 /** `HGRP/Effect/VFXWater`, a sheet of falling water (`docs/game-data/effects.md#waterfalls`) */

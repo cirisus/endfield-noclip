@@ -18,6 +18,7 @@ import { describeMistCard } from './effects/mist-card.ts';
 import { describeMistVolume } from './effects/mist-volume.ts';
 import { describeRefract } from './effects/refract.ts';
 import { describeSixWaySmoke } from './effects/six-way-smoke.ts';
+import { describeTransparentDepthOnly } from './effects/transparent-depth.ts';
 import { describeCharacterVfx, describeVfxAdvance } from './effects/vfx-advance.ts';
 import { describeVfxBase } from './effects/vfx-base.ts';
 import { describeVfxDecal } from './effects/vfx-decal.ts';
@@ -56,6 +57,7 @@ const EFFECT_FAMILIES: ReadonlySet<ShaderFamily> = new Set([
 	'vfxRefract',
 	'vfxDitherAlpha',
 	'vfxSmokeSixWay',
+	'vfxTransparentDepth',
 	'waterDecal',
 	'water',
 ]);
@@ -105,6 +107,7 @@ const DESCRIBERS: { readonly [F in ShaderFamily]?: Describer | ReadonlyMap<strin
 	}),
 	vfxRefract: byShader({ 'HGRP/Effect/VFXRefract': describeRefract }),
 	vfxSmokeSixWay: describeSixWaySmoke,
+	vfxTransparentDepth: describeTransparentDepthOnly,
 	water: byShader({ 'HGRP/Effect/VFXWater': describeWaterSheet }),
 	waterDecal: describeWaterFoam,
 };
