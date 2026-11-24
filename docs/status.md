@@ -16,8 +16,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **terrain**: heights, baked surface pages, and close-up layer blending
   ([terrain](viewer/terrain.md))
 - **scenery & animation**: initial/alternative dynamic structures, active prefabs, skinned meshes,
-  settled view-state and prefab Animator looping clips (skinned/rigid, ACL or uncompressed), and
-  spinning ECS scenery ([assets](game-data/assets.md), [animation](game-data/animation.md))
+  settled view-state and prefab Animator looping clips (skinned/rigid, ACL or uncompressed), GPU
+  cloth simulation, and spinning ECS scenery ([assets](game-data/assets.md),
+  [animation](game-data/animation.md), [cloth](viewer/materials.md#swaying-cloth))
 - **scene controls**: quests, missions, variables, derived scene states, dynamic load gates, story
   progress, progressions, facility forms (shops, depots, recycling stations, monitoring terminals),
   Dijiang cabins and Control Nexus region walls, doors, telescopic bridges, campfires, blight/cores,
@@ -186,9 +187,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   mesh, so meshes shared by different animations hold still (map02 `s_zmdmachinevat_lod*` and one
   Hongshan waterway mesh). frames interpolate (game steps); unverified in game.
 - **cloth simulation** ([game-data](game-data/materials.md#cloth-simulation),
-  [cloth groups](game-data/world.md#cloth-groups)): not run. `clothSimulated` entities draw at rest
-  with sway only (Qingbo Stockade's red emblem banners hang still); group reader and compute step
-  not implemented.
+  [viewer](viewer/materials.md#swaying-cloth)): runs `ClothSingleDispatchCS` physics and vertex
+  skinning across all passes; omits character capsule colliders and motion vectors (Qingbo Stockade
+  red emblem banners verified animating; unverified against an in-game video).
 - **Lit vertex offset (`_USE_VERTOFFSET`)** ([game-data](game-data/materials.md#vertex-offset)):
   alpha-tested materials only (all 4 on map02). opaque, normal-direction, parallax/layered, and
   alpha-weighted animated meshes hold still. clock assumed seconds; unverified in game beyond

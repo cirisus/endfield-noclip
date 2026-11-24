@@ -147,6 +147,7 @@ const LAYER_SLOT = 5u;
 @group(1) @binding(0) var<storage, read> rows: array<InstanceRow>;
 @group(1) @binding(1) var<storage, read> blocks: array<vec4f>;
 @group(1) @binding(2) var<storage, read> list: array<u32>;
+@group(1) @binding(4) var<storage, read> cloth_skeletons: array<vec4f>;
 @group(2) @binding(0) var<storage, read> draws: array<Draw>;
 // per visible-list entry: its index into `draws`
 @group(2) @binding(1) var<storage, read> draw_ids: array<u32>;
@@ -240,7 +241,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 		return out;
 	}
 	// as vs_cutout_depth computes it, so alpha-tested depth matches exactly where they're shaded
-	let rel = instance_rel(v.position, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
+	let rel = instance_rel(v.position, v.color, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
 	// no normals in the mesh: zero here, faceted in the fragment shader
 	var n = vec3f(0.0);
 	if ((flags & HAS_NORMALS) != 0u) {
@@ -271,21 +272,54 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 }
 
 // the depth-only stages read only the streams they need, so they bind fewer vertex buffers per geometry:
-// positions for opaque shadow casters, plus the UV sets for alpha-tested depth
+// positions (plus vertex colour for GPU cloth bone indices) for opaque shadow casters, plus the UV sets for
+// alpha-tested depth
 struct DepthIn {
 	@location(0) position: vec4f,
+	@location(5) color: vec4f,
 }
 
 struct CutoutDepthIn {
 	@location(0) position: vec4f,
 	@location(2) uv0: vec2f,
 	@location(4) uv1: vec2f,
+	@location(5) color: vec4f,
+}
+
+const ROW_CLOTH = 8u;
+
+fn cloth_bone_pos(bone: u32, p: vec4f) -> vec3f {
+	let base = bone * 3u;
+	return vec3f(
+		dot(cloth_skeletons[base], p),
+		dot(cloth_skeletons[base + 1u], p),
+		dot(cloth_skeletons[base + 2u], p),
+	);
+}
+
+// `_GPU_CLOTH` vertex skinning (`docs/game-data/materials.md#cloth-simulation`): vertex colour R/G index into
+// the simulated cloth's bone matrices (`B` blends two bones for ≤256-node cloths; `R * 256 + G` for larger
+// single-skeleton cloths)
+fn cloth_skin(p: vec3f, color: vec4f, row: InstanceRow) -> vec3f {
+	if ((row.info & ROW_CLOTH) == 0u) {
+		return p;
+	}
+	let offset = row.custom.x;
+	let p4 = vec4f(p, 1.0);
+	let r = u32(round(color.r * 255.0));
+	let g = u32(round(color.g * 255.0));
+	if (row.custom.y != 0u) {
+		return cloth_bone_pos(offset + r * 256u + g, p4);
+	}
+	let a = cloth_bone_pos(offset + r, p4);
+	let b = cloth_bone_pos(offset + g, p4);
+	return mix(a, b, color.b);
 }
 
 // the camera-relative position of a vertex of list entry `ii`; `position.w` is the geometry's sway weight
-fn instance_rel(position: vec4f, ii: u32, draw: Draw, look: Look) -> vec3f {
+fn instance_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: Look) -> vec3f {
 	let row = rows[list_row(list[ii])];
-	let p = draw.offset.xyz + position.xyz * draw.scale.xyz;
+	let p = cloth_skin(draw.offset.xyz + position.xyz * draw.scale.xyz, color, row);
 	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
 	let rel = row_basis(row.t0, row.t1, row.t2, row.info) * p + origin;
 	let flags = bitcast<u32>(draw.offset.w);
@@ -393,7 +427,7 @@ fn grass_lean(flags: u32, look: Look, height: f32) -> vec3f {
 fn vs_depth(v: DepthIn, @builtin(instance_index) ii: u32) -> @builtin(position) @invariant vec4f {
 	let draw = draws[draw_ids[ii]];
 	let look = looks[look_slot(draw)];
-	return frame.view_proj * vec4f(instance_rel(v.position, ii, draw, look), 1.0);
+	return frame.view_proj * vec4f(instance_rel(v.position, v.color, ii, draw, look), 1.0);
 }
 
 // the opaque depth prepass writes depth alone; the targets' write masks are 0
@@ -412,7 +446,7 @@ fn vs_depth_fade(v: DepthIn, @builtin(instance_index) ii: u32) -> FadeDepthOut {
 	let draw = draws[draw_ids[ii]];
 	let look = looks[look_slot(draw)];
 	var out: FadeDepthOut;
-	out.position = frame.view_proj * vec4f(instance_rel(v.position, ii, draw, look), 1.0);
+	out.position = frame.view_proj * vec4f(instance_rel(v.position, v.color, ii, draw, look), 1.0);
 	out.fade = list_fade(list[ii]);
 	return out;
 }
@@ -464,7 +498,7 @@ fn vs_cutout_depth(v: CutoutDepthIn, @builtin(instance_index) ii: u32) -> Cutout
 		return out;
 	}
 	// as vs_main computes it
-	let rel = instance_rel(v.position, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
+	let rel = instance_rel(v.position, v.color, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
 	var out: CutoutDepthOut;
 	out.position = frame.view_proj * vec4f(rel, 1.0);
 	out.uv = sheet_uv(row.sheet, uv);

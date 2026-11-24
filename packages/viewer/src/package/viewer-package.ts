@@ -1,4 +1,11 @@
 import { decodeBlobTable, type BlobRecord } from '@endfield-noclip/package-format/blob-table';
+import { BlobCodec } from '@endfield-noclip/package-format/blobs';
+import {
+	type ClothDataBlob,
+	type ClothTable,
+	decodeClothDataBlob,
+	decodeClothTable,
+} from '@endfield-noclip/package-format/cloth';
 import {
 	type ResolvedEnvironmentTable,
 	type EnvironmentTable,
@@ -63,6 +70,10 @@ export interface ViewerPackage {
 	environment: ResolvedEnvironmentTable;
 	/** the baked irradiance volume's cells (empty without one) */
 	irradiance: IrradianceTable;
+	/** GPU cloth simulation table, or `null` when the package has no simulated cloth */
+	cloth: ClothTable | null;
+	/** reads and decodes the scene's `.clth` simulation blob, or `null` when absent */
+	readClothData(): Promise<ClothDataBlob | null>;
 	/**
 	 * @param index index of a blob in the core archive
 	 * @returns the blob's stored bytes (codec not undone), in a buffer of their own
@@ -141,6 +152,7 @@ export const openViewerPackage = async (
 		rawParticles,
 		environment,
 		irradiance,
+		cloth,
 	] = await Promise.all([
 		member(CORE_PATHS.tree).then(decodeTree),
 		member(CORE_PATHS.blobs).then(decodeBlobTable),
@@ -163,8 +175,36 @@ export const openViewerPackage = async (
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
 		(json(CORE_PATHS.environment) as Promise<EnvironmentTable>).then(resolveEnvironment),
 		member(CORE_PATHS.irradiance).then(decodeIrradianceTable),
+		optionalMember(CORE_PATHS.cloth).then((bytes): ClothTable | null =>
+			bytes === null ? null : decodeClothTable(bytes),
+		),
 	]);
 	const particles = luts === null ? rawParticles : resolveParticleLuts(rawParticles, luts);
+
+	const readCoreBlob = (index: number): Promise<ArrayBuffer> => {
+		const blob = blobs[index];
+		const start = coreData + blob.offset;
+		if (blob.archive !== CORE_ARCHIVE_INDEX || start + blob.length > core.length) {
+			return Promise.reject(new PackageError(`blob ${index} isn't in ${CORE_ARCHIVE}`));
+		}
+		// copied out of the archive buffer, so it can be transferred to a worker
+		return Promise.resolve(core.slice(start, start + blob.length).buffer);
+	};
+
+	const blobRange = (index: number): BlobRange => {
+		const blob = blobs[index];
+		const info = manifest.archives[blob.archive];
+		if (info.role === 'core') {
+			throw new PackageError(`blob ${index} is in ${CORE_ARCHIVE}, which is read whole`);
+		}
+		return {
+			archive: blob.archive,
+			path: info.name,
+			start: info.dataOffset + blob.offset,
+			length: blob.length,
+			archiveSize: info.size,
+		};
+	};
 
 	return {
 		source,
@@ -181,28 +221,27 @@ export const openViewerPackage = async (
 		particles,
 		environment,
 		irradiance,
-		readCoreBlob(index) {
-			const blob = blobs[index];
-			const start = coreData + blob.offset;
-			if (blob.archive !== CORE_ARCHIVE_INDEX || start + blob.length > core.length) {
-				return Promise.reject(new PackageError(`blob ${index} isn't in ${CORE_ARCHIVE}`));
+		cloth,
+		async readClothData() {
+			if (cloth === null || cloth.blob === null) {
+				return null;
 			}
-			// copied out of the archive buffer, so it can be transferred to a worker
-			return Promise.resolve(core.slice(start, start + blob.length).buffer);
-		},
-		blobRange(index) {
-			const blob = blobs[index];
-			const info = manifest.archives[blob.archive];
-			if (info.role === 'core') {
-				throw new PackageError(`blob ${index} is in ${CORE_ARCHIVE}, which is read whole`);
+			const record = blobs[cloth.blob];
+			let stored: Uint8Array;
+			if (record.archive === CORE_ARCHIVE_INDEX) {
+				stored = new Uint8Array(await readCoreBlob(cloth.blob));
+			} else {
+				const range = blobRange(cloth.blob);
+				stored = await source.readRange(range.path, {
+					offset: range.start,
+					length: range.length,
+					fileSize: range.archiveSize,
+				});
 			}
-			return {
-				archive: blob.archive,
-				path: info.name,
-				start: info.dataOffset + blob.offset,
-				length: blob.length,
-				archiveSize: info.size,
-			};
+			const raw = record.codec === BlobCodec.Zstd ? decompressZstd(stored, record.rawLength) : stored;
+			return decodeClothDataBlob(raw);
 		},
+		readCoreBlob,
+		blobRange,
 	};
 };

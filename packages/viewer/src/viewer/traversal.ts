@@ -6,6 +6,7 @@ import type { MeshSelection } from '../streaming/mesh-selection.ts';
 import type { ResidentInstances } from '../streaming/resident.ts';
 import type { InstanceRange } from '../streaming/selection.ts';
 import { TextureReduction } from '../streaming/texture-reduction.ts';
+import { streamWholeTexture } from '../streaming/texture-requests.ts';
 
 import type { EnvironmentLook } from './environment-state.ts';
 import type { ViewerOptions } from './options.ts';
@@ -176,6 +177,18 @@ export class Traversal {
 			{ environment, celestial, flowNoise: options.flowNoise },
 			{ post: renderer.post, bindings: renderer.bindings },
 		);
+		const windNoiseId = scene.pkg.cloth?.windNoiseTexture ?? null;
+		const windNoise =
+			windNoiseId === null
+				? null
+				: streamWholeTexture({
+						stream,
+						textures: scene.textures,
+						id: windNoiseId,
+						kind: '2d',
+						priority: 1e6,
+					});
+		renderer.cloth.setWindNoise(windNoise?.binding?.view ?? null);
 		renderer.reflectionProbes.prepare({
 			camera,
 			planes: view.planes,

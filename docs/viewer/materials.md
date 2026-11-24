@@ -82,8 +82,13 @@ cutout-depth, and shadow passes.
 - pendulums use exact sin/cos instead of Taylor series (within 10⁻³); the packer grows bounds by
   turn reach on all axes. pendulums with gravity, custom anchor, or no swing (none on map02), and
   sways on Lit trunks, stay still and record a gap.
-- [cloth simulation](../game-data/materials.md#cloth-simulation) is not run (draws at rest with sway
-  only; `pack` reports `clothSimulated`).
+- **cloth simulation** ([game-data](../game-data/materials.md#cloth-simulation)): `ClothSimulator`
+  runs `cloth-sim.wgsl` (compute port of `ClothSingleDispatchCS`) once per frame at fixed
+  `dt = 0.023333333 s` (up to 2 substeps) over all cloths in the package's `.clth` blob using
+  `WindNoiseTex` and the blended environment's wind intensity/direction. the mesh vertex stage
+  (`vs_main`, `vs_depth`, `vs_depth_fade`, `vs_cutout_depth`) binds vertex colour (stream 5) and
+  skins object-space positions from the resulting 3×4 skeleton buffer before sway. omits character
+  capsule colliders and motion vectors.
 
 ## vertex animation textures
 

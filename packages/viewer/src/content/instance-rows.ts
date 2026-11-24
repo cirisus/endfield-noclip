@@ -5,6 +5,7 @@
  * @module
  */
 
+import type { ClothTable } from '@endfield-noclip/package-format/cloth';
 import {
 	type Chain,
 	ChainFlags,
@@ -118,6 +119,36 @@ export const RowBillboard = {
 } as const;
 
 export type RowBillboard = (typeof RowBillboard)[keyof typeof RowBillboard];
+
+/**
+ * bit in {@link RowWord.info} marking a GPU-simulated cloth row (`row.custom` holds `[skeletonOffset,
+ * singleSkeleton]`)
+ */
+export const ROW_CLOTH_BIT = 1 << 3;
+
+/**
+ * marks GPU-simulated cloth rows in their info and custom words, in place, from the package's cloth table
+ *
+ * @param built rows from {@link buildInstanceRows}; modified in place
+ * @param table the package's cloth table, or `null` when the package has no simulated cloth
+ */
+export const markClothRows = (built: InstanceRows, table: ClothTable | null): void => {
+	if (table === null || built.cloths === null) {
+		return;
+	}
+	const { rows: clothRows, values } = built.cloths;
+	const { rows } = built;
+	for (let i = 0; i < clothRows.length; i++) {
+		const entry = table.cloths[values[i]];
+		if (entry === undefined) {
+			continue;
+		}
+		const at = clothRows[i] * ROW_WORDS;
+		rows[at + RowWord.info] = (rows[at + RowWord.info] | ROW_CLOTH_BIT) >>> 0;
+		rows[at + RowWord.custom] = entry.skeletonOffset >>> 0;
+		rows[at + RowWord.custom + 1] = entry.nodeCount > 256 ? 1 : 0;
+	}
+};
 
 /**
  * marks the rows of billboard chains in their info words, in place, by the block's chain runs
@@ -237,6 +268,16 @@ export interface InstanceRows {
 	floaters: RowFloaters | null;
 	/** the block's rows riding paths, or `null` when none does */
 	rides: RowRides | null;
+	/** the block's GPU-simulated cloth rows and their cloth table indices, or `null` when none */
+	cloths: RowCloths | null;
+}
+
+/** a block's GPU-simulated cloth rows */
+export interface RowCloths {
+	/** the rows, ascending */
+	rows: Uint32Array<ArrayBuffer>;
+	/** per row, the index into `ClothTable.cloths` */
+	values: Uint32Array<ArrayBuffer>;
 }
 
 /** a block's rows floating on water volumes, which follow their volume's surface up and down */
@@ -359,6 +400,10 @@ export const buildInstanceRows = (block: InstanceBlock, kinds: RowKinds): Instan
 				? null
 				: { rows: new Uint32Array(block.floaters.rows), volumes: new Uint32Array(block.floaters.values) },
 		rides,
+		cloths:
+			block.cloths !== undefined && block.cloths.rows.length > 0
+				? { rows: new Uint32Array(block.cloths.rows), values: new Uint32Array(block.cloths.values) }
+				: null,
 	};
 };
 

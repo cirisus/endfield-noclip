@@ -25,6 +25,7 @@ import { InstanceRenderer } from '../render/instances/instance-renderer.ts';
 import { IrradianceVolume } from '../render/lighting/irradiance-volume.ts';
 import { type LocalLightFrame, LocalLights } from '../render/lighting/local-lights.ts';
 import { ReflectionProbes } from '../render/lighting/reflection-probes.ts';
+import { ClothSimulator } from '../render/meshes/cloth-simulator.ts';
 import { MeshRenderer } from '../render/meshes/mesh-renderer.ts';
 import { PostProcess } from '../render/post/post-process.ts';
 import { SHADOW_LAYERS, ShadowMap } from '../render/shadows/shadow-map.ts';
@@ -51,6 +52,8 @@ export interface RenderInput {
 	index: number;
 	/** the animation clock, s */
 	time: number;
+	/** frame delta for GPU simulations, s (0 when paused) */
+	dt: number;
 	/** the wind clock (`Frame.wind.x`) */
 	windClock: number;
 	/** the loaded package's terrain, `null` or `undefined` for none */
@@ -80,6 +83,7 @@ export class Renderer {
 	readonly bindings: FrameBindings;
 	readonly profiler: GpuProfiler;
 	readonly terrain: TerrainRenderer;
+	readonly cloth: ClothSimulator;
 	readonly instances: InstanceRenderer;
 	readonly meshes: MeshRenderer;
 	readonly fog: VolumetricFog;
@@ -140,7 +144,11 @@ export class Renderer {
 			bc: gfx.features.textureCompressionBc,
 			shadow: this.shadows,
 		});
-		this.instances = new InstanceRenderer(device, layouts, this.pipelines, format, INSTANCE_ROWS);
+		this.cloth = new ClothSimulator(device, this.pipelines);
+		this.instances = new InstanceRenderer(device, layouts, this.pipelines, format, INSTANCE_ROWS, () => ({
+			buffer: this.cloth.skeletonBuffer,
+			version: this.cloth.version,
+		}));
 		this.fog = new VolumetricFog(device, this.pipelines, layouts.frame);
 		this.fog.setEnvironment(look.environment, near);
 		this.post = new PostProcess(device, this.pipelines, gfx.presentationFormat, look.environment, this.fog);
@@ -160,6 +168,7 @@ export class Renderer {
 			lightShadows: this.lights.shadows,
 			terrain: this.terrain,
 			instances: this.instances,
+			cloth: this.cloth,
 			meshes: this.meshes,
 			fog: this.fog,
 			water: this.water,
@@ -185,6 +194,7 @@ export class Renderer {
 			this.irradiance,
 			this.water,
 			this.meshes,
+			this.cloth,
 			this.instances,
 			this.terrain,
 			this.shadows,
@@ -308,6 +318,8 @@ export class Renderer {
 					lightShadowOffset === null ? null : { group: this.bindings.shadow, offset: lightShadowOffset },
 				index: input.index,
 				time: input.time,
+				dt: input.dt,
+				wind: look.environment.wind,
 				settings,
 				compiling,
 			},

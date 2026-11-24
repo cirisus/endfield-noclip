@@ -136,12 +136,16 @@ const meshVertex = (
 		{ arrayStride: uvStride, attributes: [{ shaderLocation: 2, offset: 0, format: uvFormat }] },
 		{ arrayStride: uvStride, attributes: [{ shaderLocation: 4, offset: 0, format: uvFormat }] },
 	];
+	const color: GPUVertexBufferLayout = {
+		arrayStride: 4,
+		attributes: [{ shaderLocation: 5, offset: 0, format: 'unorm8x4' }],
+	};
 	switch (streams) {
 		case 'position': {
-			return { module, entryPoint: 'vs_depth', buffers: [position] };
+			return { module, entryPoint: 'vs_depth', buffers: [position, color] };
 		}
 		case 'uv': {
-			return { module, entryPoint: 'vs_cutout_depth', buffers: [position, ...uvs] };
+			return { module, entryPoint: 'vs_cutout_depth', buffers: [position, ...uvs, color] };
 		}
 		case 'all': {
 			return {
@@ -152,7 +156,7 @@ const meshVertex = (
 					NORMAL_STREAM,
 					...uvs,
 					{ arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'snorm8x4' }] },
-					{ arrayStride: 4, attributes: [{ shaderLocation: 5, offset: 0, format: 'unorm8x4' }] },
+					color,
 				],
 			};
 		}

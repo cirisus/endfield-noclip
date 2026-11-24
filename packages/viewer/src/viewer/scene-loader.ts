@@ -1,4 +1,4 @@
-import { markBillboardRows } from '../content/instance-rows.ts';
+import { markBillboardRows, markClothRows } from '../content/instance-rows.ts';
 import { instanceRowKinds } from '../content/row-kinds.ts';
 import type { EnvironmentScene } from '../environment/blend.ts';
 import { LazyMaterialLooks } from '../looks/material-looks.ts';
@@ -108,8 +108,9 @@ export const openScene = (pkg: ViewerPackage, deps: SceneDeps): LoadedScene => {
 			instances: {
 				job: (blob, stored) => ({ kind: 'instances', ...stored, rowKinds: rowKinds.get(blob) ?? [] }),
 				upload: (_blob, decoded) => {
-					// the decode worker doesn't hold the chains
+					// the decode worker doesn't hold the chains or cloth table
 					markBillboardRows(decoded, pkg.chains);
+					markClothRows(decoded, pkg.cloth);
 					const resident = instances.upload(decoded);
 					if (resident !== null) {
 						waterLevels.track(resident);

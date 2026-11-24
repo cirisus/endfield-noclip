@@ -5,10 +5,12 @@
  * @module
  */
 
+import type { Environment } from '../../environment/environment.ts';
 import type { Camera } from '../../scene/camera.ts';
 import type { InstanceRenderer } from '../instances/instance-renderer.ts';
 import type { IrradianceVolume } from '../lighting/irradiance-volume.ts';
 import type { LightShadows } from '../lighting/light-shadows.ts';
+import type { ClothSimulator } from '../meshes/cloth-simulator.ts';
 import type { MeshRenderer } from '../meshes/mesh-renderer.ts';
 import type { PostProcess } from '../post/post-process.ts';
 import { type PostSettings, effectiveSettings } from '../post/settings.ts';
@@ -99,6 +101,10 @@ export interface FrameContext {
 	index: number;
 	/** the animation clock, s */
 	time: number;
+	/** frame delta for GPU simulations, s (0 when paused) */
+	dt: number;
+	/** current environment wind */
+	wind: Environment['wind'];
 	settings: FrameSettings;
 	/** whether pipelines are still compiling, which would leave shadow casters out */
 	compiling: boolean;
@@ -113,6 +119,7 @@ export interface FrameSystems {
 	lightShadows: LightShadows;
 	terrain: TerrainRenderer;
 	instances: InstanceRenderer;
+	cloth: ClothSimulator;
 	meshes: MeshRenderer;
 	fog: VolumetricFog;
 	water: WaterRenderer;
@@ -260,6 +267,7 @@ export const encodeFrame = (
 	systems.irradiance.encode(encoder);
 	const skinned = settings.scene && meshes.animate(encoder, context.time);
 	if (settings.scene) {
+		systems.cloth.step(encoder, context.dt, context.wind);
 		meshes.cull(encoder, {
 			camera,
 			aspect: width / height,

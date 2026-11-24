@@ -66,9 +66,11 @@ export class InstanceRenderer {
 
 	#device: GPUDevice;
 	#layout: GPUBindGroupLayout;
-	/** the rows and placement buffer versions {@link #bindGroup} binds */
+	/** the rows, placement, and cloth skeleton buffer versions {@link #bindGroup} binds */
 	#rowsVersion = -1;
 	#placementsVersion = -1;
+	#clothVersion = -1;
+	#clothSkeletons: () => { buffer: GPUBuffer; version: number };
 	#pool: GrowableBuffer;
 	/** the resident blocks' rect decal placements, each block's run starting at its block table entry's w */
 	#placements: GrowableBuffer;
@@ -102,10 +104,12 @@ export class InstanceRenderer {
 		pipelines: PipelineCache,
 		format: MainPassFormat,
 		maxRows: number,
+		clothSkeletons: () => { buffer: GPUBuffer; version: number },
 	) {
 		this.#device = device;
 		this.#pipelines = pipelines;
 		this.#layout = layouts.instances;
+		this.#clothSkeletons = clothSkeletons;
 		this.#pool = new GrowableBuffer(device, {
 			label: 'instance rows',
 			unitBytes: ROW_BYTES,
@@ -166,6 +170,8 @@ export class InstanceRenderer {
 	#createBindGroup(): GPUBindGroup {
 		this.#rowsVersion = this.#pool.version;
 		this.#placementsVersion = this.#placements.version;
+		const cloth = this.#clothSkeletons();
+		this.#clothVersion = cloth.version;
 		return this.#device.createBindGroup({
 			label: 'instances',
 			layout: this.#layout,
@@ -174,16 +180,22 @@ export class InstanceRenderer {
 				{ binding: 1, resource: { buffer: this.#blocks } },
 				{ binding: 2, resource: { buffer: this.#list } },
 				{ binding: 3, resource: { buffer: this.#placements.buffer } },
+				{ binding: 4, resource: { buffer: cloth.buffer } },
 			],
 		});
 	}
 
 	/**
-	 * @returns group 1 of the instance families (rows, block table, visible list, decal placements); a new
-	 *   group after the rows or placements grew, so fetch it every frame
+	 * @returns group 1 of the instance families (rows, block table, visible list, decal placements, cloth
+	 *   skeletons); a new group after the rows, placements, or cloth skeleton buffer changed, so fetch it every
+	 *   frame
 	 */
 	get bindGroup(): GPUBindGroup {
-		if (this.#rowsVersion !== this.#pool.version || this.#placementsVersion !== this.#placements.version) {
+		if (
+			this.#rowsVersion !== this.#pool.version ||
+			this.#placementsVersion !== this.#placements.version ||
+			this.#clothVersion !== this.#clothSkeletons().version
+		) {
 			this.#bindGroup = this.#createBindGroup();
 		}
 		return this.#bindGroup;

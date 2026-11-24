@@ -450,6 +450,9 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 			if (built.floaters !== null) {
 				transfer.push(built.floaters.rows.buffer, built.floaters.volumes.buffer);
 			}
+			if (built.cloths !== null) {
+				transfer.push(built.cloths.rows.buffer, built.cloths.values.buffer);
+			}
 			if (built.rides !== null) {
 				transfer.push(
 					built.rides.rows.buffer,

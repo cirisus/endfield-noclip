@@ -26,8 +26,8 @@ const INITIAL_ZERO_VERTICES = 65_536;
 
 /** per vertex buffer slot of each phase's layout, the {@link GeometryVertices.streams} entry it binds */
 const SLOT_STREAMS: Record<VertexStreams, readonly number[]> = {
-	position: [0],
-	uv: [0, 2, 3],
+	position: [0, 5],
+	uv: [0, 2, 3, 5],
 	all: [0, 1, 2, 3, 4, 5],
 };
 

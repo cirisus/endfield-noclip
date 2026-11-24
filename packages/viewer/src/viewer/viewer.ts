@@ -66,6 +66,7 @@ export class Viewer {
 	/** what the panels show of the blended environment, so a re-blend notifies only when that changes */
 	#environmentKey = '';
 	#lastDraws = 0;
+	#loadGeneration = 0;
 	#dirty = true;
 	/** compiled pipelines when the last frame began */
 	#seenPipelines = 0;
@@ -218,11 +219,24 @@ export class Viewer {
 		renderer.frame.shadowLayers.invalidate();
 		this.#emitState();
 		onProgress('streaming');
+		if (pkg.cloth !== null && pkg.cloth.blob !== null) {
+			const gen = ++this.#loadGeneration;
+			void pkg.readClothData().then((clothData) => {
+				if (gen !== this.#loadGeneration || clothData === null) {
+					return;
+				}
+				renderer.cloth.load(clothData);
+				this.#dirty = true;
+			});
+		}
 	}
 
 	/** drops the loaded package and its GPU content */
 	unload(): void {
+		this.#loadGeneration++;
 		const renderer = this.#renderer;
+		renderer.cloth.load(null);
+		renderer.cloth.setWindNoise(null);
 		this.scene?.stream.destroy();
 		this.scene?.particles.destroy();
 		this.scene?.textures.destroy();
@@ -690,7 +704,7 @@ export class Viewer {
 			resized ||
 			options.continuous ||
 			compiled ||
-			(options.animate && traversal.fadingShown) ||
+			(options.animate && (traversal.fadingShown || renderer.cloth.active)) ||
 			(scene !== null && scene.stream.version !== traversal.seenVersion) ||
 			// a local light's shadow tile waits for its casters to be selected and drawn
 			renderer.lights.shadows.pending;
@@ -761,6 +775,7 @@ export class Viewer {
 				look,
 				index: this.#frame,
 				time: this.#time,
+				dt: options.animate ? dt : 0,
 				windClock: this.#windClock,
 				terrain: scene?.pkg.manifest.terrain,
 				revealRadii: revealRadii(scene?.pkg.manifest.fireSeed ?? null, this.#sceneState.values),
