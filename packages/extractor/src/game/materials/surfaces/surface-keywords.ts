@@ -67,6 +67,7 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 		'HGRP/LitHLOD': SURFACE_KEYWORDS,
 		'HGRP/MattePainting': SURFACE_KEYWORDS,
 		'HGRP/Erosion': SURFACE_KEYWORDS,
+		'HGRP/ErosionDynamic': SURFACE_KEYWORDS,
 	}).map(([shader, keywords]) => [shader, new Set(keywords)]),
 );
 

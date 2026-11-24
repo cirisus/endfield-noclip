@@ -17,7 +17,7 @@
 
 import type { TextureSlot } from './materials.ts';
 import type { TextureRef } from './textures.ts';
-import type { Color, Rgb, Vec2 } from './values.ts';
+import type { Color, Rgb, Vec2, Vec4 } from './values.ts';
 
 /**
  * a switch the shaders blend by rather than test: 0 off, 1 on, and a fractional value blends between the two
@@ -44,6 +44,7 @@ export type MaterialSurface =
 	| LitSurface
 	| MattePaintingSurface
 	| ErosionSurface
+	| ErosionDynamicSurface
 	| DitheredSurface
 	| MistCardSurface
 	| MistVolumeSurface
@@ -684,6 +685,86 @@ export interface ErosionSurface {
 		emissiveStrength: number;
 		/** roughness lowered per unit of its brightness */
 		roughness: number;
+	};
+}
+
+/**
+ * `HGRP/ErosionDynamic`, clearable blight patches (`docs/game-data/materials.md#erosion`). all colours
+ * (`baseColor`, noise, flow, ripple) are HDR and stored as authored
+ */
+export interface ErosionDynamicSurface {
+	kind: 'erosionDynamic';
+	/** every map samples UV set 0, tiled by its own property rather than its `_ST`, offset 0 */
+	textures: {
+		/** 1D lookup table indexed by `1 - metalMix.r` */
+		colorLut: TextureSlot | null;
+		/** tangent-space RGB normal; A is the flow mask */
+		baseNormal: TextureSlot | null;
+		/** R rock mask (`1 - metal`), G occlusion and ripple noise, B ripple mask, A flow noise */
+		metalMix: TextureSlot | null;
+		/** sampled along object-space height, scale 1 */
+		flowRamp: TextureSlot | null;
+		/** DXT5nm detail normal; A also modulates roughness via `detailRoughnessCover` */
+		detailNormal: TextureSlot | null;
+		/** noise pattern: colour lookup samples it tiled, parallax march untiled */
+		noisePattern: TextureSlot | null;
+		/** DXT5nm matcap normal sampled in view-normal space, scale 1 */
+		matcapNormal: TextureSlot | null;
+	};
+	baseColor: Rgb;
+	roughness: number;
+	/** how far roughness multiplies by the detail normal map's alpha */
+	detailRoughnessCover: number;
+	metallic: number;
+	/** added to `metal` before clamping and scaling `metallic` */
+	metallicOffset: number;
+	normalScale: number;
+	detailNormalScale: number;
+	/** detail normal scroll per second */
+	detailNormalScroll: number;
+	occlusionStrength: number;
+	noise: {
+		/** parallax step depth */
+		depth: number;
+		tint: Rgb;
+		/** 0 keeps RGB, 1 desaturates where `metal` is low (`_NoiseColorMode`) */
+		colorMode: number;
+		/** floor of the `N·V` scale */
+		min: number;
+		/** emission scale (multiplied by 10 in the shader) */
+		emissiveStrength: number;
+		/** metres over which it fades out with distance */
+		fadeDistance: number;
+	};
+	flow: {
+		tiling: number;
+		noiseStrength: number;
+		/** ramp scroll per second */
+		scroll: number;
+		speedOffset: number;
+		colorOffset: number;
+		top: Rgb;
+		bottom: Rgb;
+		colorStrength: number;
+		roughness: number;
+		roughnessOffset: number;
+	};
+	matcap: {
+		tiling: number;
+		strength: number;
+		areaOffset: number;
+	};
+	ripple: {
+		/** three object-space ripple centres (xyz) and radii (w) */
+		configs: [Vec4, Vec4, Vec4];
+		width: number;
+		ringRatio: number;
+		/** ripple advance per second */
+		speed: number;
+		noiseStrength: number;
+		colorOffset: number;
+		top: Rgb;
+		bottom: Rgb;
 	};
 }
 

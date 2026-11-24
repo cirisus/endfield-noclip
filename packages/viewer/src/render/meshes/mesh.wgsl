@@ -193,8 +193,8 @@ struct VertexOut {
 	@location(4) @interpolate(flat) draw: u32,
 	// the sum of the object's world position components, which offsets the parallax pulse
 	@location(5) @interpolate(flat) phase: f32,
-	// the object-space height, along which the erosion flow band runs
-	@location(6) object_y: f32,
+	// the object-space position, along which erosion flow bands and ripples run
+	@location(6) object_pos: vec3f,
 	// the vertex colour, white for meshes without one
 	@location(7) color: vec4f,
 	// the camera-relative object origin, which the leaves' transmission fades out by
@@ -241,7 +241,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	out.uv = sheet_uv(row.sheet, uv);
 	out.draw = draw_id;
 	out.phase = world.x + world.y + world.z;
-	out.object_y = p.y;
+	out.object_pos = p;
 	out.color = select(vec4f(1.0), v.color, (flags & HAS_COLORS) != 0u) * unpack4x8unorm(row.color);
 	out.origin = origin;
 	out.fade = list_fade(entry);
@@ -830,7 +830,12 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 		return unlit(clamp(c * mix(1.0, frame.ambient.y, look.emissive2.z), vec3f(0.0), vec3f(1000.0)));
 	}
 	if ((flags & EROSION) != 0u) {
-		var s = erosion_surface(look, in, flags, faceted, front, packed, mask, detail, uv0_dx, uv0_dy);
+		var s: Surface;
+		if (look.emissive2.w > 0.5) {
+			s = erosion_dynamic_surface(look, in, flags, faceted, front, packed, mask, uv0_dx, uv0_dy);
+		} else {
+			s = erosion_surface(look, in, flags, faceted, front, packed, mask, detail, uv0_dx, uv0_dy);
+		}
 		if (wet) {
 			s = rain_wet_surface(s, in.rel);
 		}
@@ -1180,7 +1185,7 @@ fn leaf_surface(surface: Surface, look: Look, in: VertexOut, has_normal: bool, n
 // (`mask`), and transmission where those agree
 fn grass_surface(surface: Surface, look: Look, in: VertexOut, mask: f32) -> Surface {
 	var s = surface;
-	let height = max(in.object_y, 0.0);
+	let height = max(in.object_pos.y, 0.0);
 	let ao = look.foliage_ao;
 	s.occlusion = 1.0 - ao.z * (1.0 - saturate((height - ao.x) * ao.y));
 	let dir = 1.0 - look.foliage2.w * (1.0 - saturate((height - look.foliage2.y) * look.foliage2.z));
@@ -1377,7 +1382,7 @@ fn parallax_world_glow(
 	let norm_a = select(0.0, packed.a, has_normal);
 	let add_ch = pat_dark.w;
 	let add_mask = mix(mix(base_a, norm_b, saturate(add_ch)), norm_a, saturate(add_ch - 1.0));
-	let additional = (vec3f(0.3) + glow) * add_col.rgb * saturate(in.object_y - pat_bright.w) * add_mask;
+	let additional = (vec3f(0.3) + glow) * add_col.rgb * saturate(in.object_pos.y - pat_bright.w) * add_mask;
 	let height_mask = mix(base_a, saturate(rot.w - world.y), saturate(rot.w));
 	return additional + glow * height_mask * rot.z;
 }
@@ -1461,14 +1466,14 @@ fn erosion_surface(
 
 	// the flow band: the ramp read along the object's height, offset by the metal map's G and a scroll, coloured
 	// from the bottom colour below the offset height to the top colour above it
-	let flow_u = in.object_y * flow.x + metal_map.g * flow.y + frame.eye.w * flow.z + flow.w;
+	let flow_u = in.object_pos.y * flow.x + metal_map.g * flow.y + frame.eye.w * flow.z + flow.w;
 	var ramp = vec3f(0.5, 0.5, 1.0);
 	if ((flags & EMISSIVE_MAP) != 0u) {
 		ramp = textureSampleLevel(emissive_map, base_sampler, vec2f(flow_u, 0.5), 0.0).rgb;
 	}
 	var below = select(0.0, 1.0, flow_offset >= 0.0);
-	if (in.object_y != 0.0) {
-		below = saturate(flow_offset / in.object_y);
+	if (in.object_pos.y != 0.0) {
+		below = saturate(flow_offset / in.object_pos.y);
 	}
 	below = below * below * (3.0 - 2.0 * below);
 	let flow_color = ramp * mix(flow_bottom, flow_top, 1.0 - below);
@@ -1498,6 +1503,211 @@ fn erosion_surface(
 	s.f0 = look.surface2.y;
 	s.occlusion = 1.0 - occlusion_strength + metal_map.g * occlusion_strength;
 	s.emission = noise * noise_emissive + flow_color * flow_emissive * saturate(1.0 - metal_map.b);
+	return s;
+}
+
+// one concentric ripple ring of `HGRP/ErosionDynamic` around `cfg.xyz` with radius `cfg.w`: returns
+// `(ring, fade)`
+fn erosion_ripple_ring(
+	obj_pos: vec3f,
+	cfg: vec4f,
+	time_speed: f32,
+	noise: f32,
+	period: f32,
+	inner: f32,
+	band: f32,
+) -> vec2f {
+	if (period <= 1e-5 || cfg.w <= 1e-5) {
+		return vec2f(0.0, 0.0);
+	}
+	let d = length(cfg.xyz - obj_pos) * 0.5;
+	let norm_d = d / cfg.w;
+	let fade = 1.0 - saturate(norm_d);
+	let t = time_speed + noise * norm_d;
+	let phase = period - (t - floor(t / period) * period);
+	let wrapped = d - floor((d - phase) / period) * period;
+	let w = abs(((saturate(wrapped - inner) - phase) - inner) - band * 0.5) / band;
+	return vec2f(w * w * w, fade);
+}
+
+// `HGRP/ErosionDynamic` (`erosionDynamicLook` in special-looks.ts, parameters by `ErosionDynamicRow`):
+// clearable blight patches with a colour LUT, matcap normal, animated ripples and flowing bands
+fn erosion_dynamic_surface(
+	look: Look,
+	in: VertexOut,
+	flags: u32,
+	faceted: vec3f,
+	front: bool,
+	packed_in: vec4f,
+	mask_in: vec4f,
+	uv0_dx: vec2f,
+	uv0_dy: vec2f,
+) -> Surface {
+	let flat_normal = vec4f(0.5, 0.5, 1.0, 1.0);
+	let packed = select(flat_normal, packed_in, (flags & NORMAL_MAP) != 0u);
+	let metal_map = select(vec4f(1.0), mask_in, (flags & MASK_MAP) != 0u);
+	let base_color = look.tint.rgb;
+	let roughness = look.surface.x;
+	let roughness_cover = look.surface.y;
+	let metallic = look.surface.z;
+	let normal_scale = look.surface.w;
+	let occlusion_strength = look.surface2.x;
+	let metallic_offset = look.surface2.z;
+	let detail_scale = look.surface2.w;
+	let noise_emissive = look.emissive.x;
+	let flow_strength = look.emissive.y;
+	let detail_scroll = look.emissive.z;
+	let distance_blend = look.emissive.w;
+	let noise_color_mode = look.emissive2.x;
+	let flow_roughness_offset = look.emissive2.y;
+	let matcap_area_offset = look.emissive2.z;
+	let noise_tint = look.mask_albedo[0].rgb;
+	let noise_min = look.mask_albedo[0].w;
+	let noise_depth = look.mask_albedo[1].x;
+	let matcap_tiling = look.mask_albedo[1].y;
+	let matcap_strength = look.mask_albedo[1].z;
+	let flow_offset = look.mask_albedo[1].w;
+	let flow_top = look.mask_roughness.rgb;
+	let flow_roughness = look.mask_roughness.w;
+	let flow_bottom = look.mask_metallic.rgb;
+	let flow = look.mask_scale;
+	let ripple_top = look.parallax.rgb;
+	let ripple_width = look.parallax.w;
+	let ripple_bottom = look.parallax2.rgb;
+	let ring_ratio = look.parallax2.w;
+	let ripple_speed = look.parallax_color.x;
+	let ripple_noise_strength = look.parallax_color.y;
+	let ripple_color_offset = look.parallax_color.z;
+
+	let time = frame.eye.w;
+	var n = surface_normal(in.normal, faceted, !front);
+	let v = normalize(-in.rel);
+	let rock = metal_map.r;
+	let metal = saturate(1.0 - rock);
+	let has_tangent = in.tangent.w != 0.0;
+	var b = vec3f(0.0);
+	if (has_tangent) {
+		b = cross(in.normal, in.tangent.xyz) * in.tangent.w;
+	}
+
+	// noise layer: one parallax step into `_NoisePatternMap`, then a tinted lookup fading with distance
+	var noise_offset = vec2f(0.0);
+	if (has_tangent && (flags & PARALLAX_MAP) != 0u) {
+		let vt = normalize(vec3f(dot(v, in.tangent.xyz), dot(v, b), dot(v, in.normal)));
+		let delta = vt.xy / (vt.z + 0.42) / max(vt.z, 0.001) * -noise_depth;
+		let hit = textureSampleGrad(parallax_map, parallax_sampler, in.uv.xy + delta, uv0_dx, uv0_dy).x;
+		noise_offset = delta / (1.0 + max(hit, 0.0));
+	}
+	var noise_rgb = vec3f(1.0);
+	if ((flags & PARALLAX_MAP) != 0u) {
+		let tiling = look.slot_uv[PARALLAX_SLOT].xy;
+		noise_rgb = textureSampleGrad(
+			parallax_map,
+			parallax_sampler,
+			(in.uv.xy + noise_offset) * tiling,
+			uv0_dx * tiling,
+			uv0_dy * tiling,
+		).rgb;
+	}
+	let noise_grey = vec3f((noise_rgb.r + noise_rgb.g + noise_rgb.b) * (1.0 / 3.0));
+	let noise_c = mix(noise_rgb, noise_grey + (noise_rgb - noise_grey) * metal, noise_color_mode);
+	let fade = max(0.001, 1.0 - saturate(length(in.rel) / distance_blend));
+	let noise = mix(noise_c * noise_tint, noise_c, metal) * max(dot(n, v), noise_min) * fade;
+	let nm = rock - 0.2;
+	let noise_mask = saturate(nm * nm * nm);
+
+	// three object-space concentric ripples
+	let ripple_noise = metal_map.g * ripple_noise_strength;
+	let period = ripple_width * 2.0;
+	let inner = ripple_width * (1.0 - ring_ratio);
+	let band = max(0.01, period - inner);
+	let r0 = erosion_ripple_ring(in.object_pos, look.detail, time * ripple_speed, ripple_noise, period, inner, band);
+	let r1 = erosion_ripple_ring(in.object_pos, look.detail2, time * ripple_speed, ripple_noise, period, inner, band);
+	let r2 = erosion_ripple_ring(in.object_pos, look.detail_overlay, time * ripple_speed, ripple_noise, period, inner, band);
+	let ripple_color =
+		mix(ripple_top, ripple_bottom, r0.y + ripple_color_offset) * (r0.x * r0.y) +
+		mix(ripple_top, ripple_bottom, r1.y + ripple_color_offset) * (r1.x * r1.y) +
+		mix(ripple_top, ripple_bottom, r2.y + ripple_color_offset) * (r2.x * r2.y);
+	let n_eps = n * 0.01;
+	let d0 = look.detail.xyz - in.object_pos;
+	let d1 = look.detail2.xyz - in.object_pos;
+	let d2 = look.detail_overlay.xyz - in.object_pos;
+	let ripple_n = normalize(
+		mix(n, normalize((d0 - n * dot(d0, n)) * r0.x + n_eps), r0.y) +
+		mix(n, normalize((d1 - n * dot(d1, n)) * r1.x + n_eps), r1.y) +
+		mix(n, normalize((d2 - n * dot(d2, n)) * r2.x + n_eps), r2.y),
+	);
+
+	// flow band along object height + ripple shift
+	let h = in.object_pos.y + ripple_color.r * 0.2;
+	let flow_u = h * flow.x + metal_map.a * flow.y - time * flow.z + flow.w;
+	var ramp = vec3f(0.5, 0.5, 1.0);
+	if ((flags & EMISSIVE_MAP) != 0u) {
+		ramp = textureSampleLevel(emissive_map, base_sampler, vec2f(flow_u, 0.5), 0.0).rgb;
+	}
+	var below = select(0.0, 1.0, flow_offset >= 0.0);
+	if (h != 0.0) {
+		below = saturate(flow_offset / h);
+	}
+	below = below * below * (3.0 - 2.0 * below);
+	let ramp_grey = vec3f((ramp.r + ramp.g + ramp.b) * (1.0 / 3.0));
+	let flow_color = mix(ramp_grey, ramp, below) * mix(flow_bottom, flow_top, 1.0 - below);
+
+	// colour LUT in the base slot
+	var lut = vec3f(1.0);
+	if ((flags & BASE_MAP) != 0u) {
+		lut = textureSampleLevel(base_map, base_sampler, vec2f(metal, 0.5), 0.0).rgb;
+	}
+	let ripple_mask = metal_map.b;
+	let ripple_scale = max(0.1, ripple_mask);
+	let albedo =
+		lut * base_color +
+		noise * noise_mask +
+		clamp(ripple_color * ripple_scale, vec3f(0.0), vec3f(1.0)) * ripple_mask +
+		flow_color * flow_strength * packed.a;
+
+	// matcap normal (view space) and scrolling detail normal
+	var matcap = flat_normal;
+	if ((flags & PARALLAX_NOISE_MAP) != 0u) {
+		let view_n = vec2f(dot(ripple_n, frame.view_right.xyz), dot(ripple_n, frame.view_up.xyz));
+		let matcap_uv = (view_n * 0.5 + 0.5) * matcap_tiling;
+		matcap = textureSampleLevel(parallax_noise_map, noise_sampler, matcap_uv, 0.0);
+	}
+	var detail = flat_normal;
+	if ((flags & DETAIL_MAP) != 0u) {
+		let tiling = look.slot_uv[DETAIL_SLOT].xy;
+		let detail_uv = in.uv.xy * tiling + vec2f(detail_scroll * time) + ripple_color.xz + ripple_n.xz * 0.1;
+		detail = textureSampleGrad(detail_map, detail_sampler, detail_uv, uv0_dx * tiling, uv0_dy * tiling);
+	}
+
+	if (has_tangent) {
+		let base_n = packed.rgb * 2.0 - 1.0;
+		let base_tn = vec3f(base_n.xy * (normal_scale * rock), base_n.z);
+		let matcap_xy = vec2f(matcap.r * matcap.a, matcap.g) * 2.0 - 1.0;
+		let matcap_w = saturate(metal + matcap_area_offset) * matcap_strength * (rock + 0.1) * saturate(metal - 0.1);
+		let matcap_tn = vec3f(matcap_xy * matcap_w, normal_z(matcap_xy));
+		let detail_xy = vec2f(detail.r * detail.a, detail.g) * 2.0 - 1.0;
+		let detail_w = saturate(1.0 - metal - matcap_area_offset) * detail_scale * 5.0;
+		let detail_tn = vec3f(detail_xy * detail_w, normal_z(detail_xy));
+		let tn = normalize(base_tn + matcap_tn + detail_tn);
+		let t = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
+		var bt = select(-b, b, front);
+		bt = normalize(bt - n * dot(bt, n));
+		n = normalize(t * tn.x + bt * tn.y + n * tn.z);
+	}
+
+	var s = default_surface(clamp(albedo, vec3f(0.0), vec3f(1.0)), n);
+	let rough0 = saturate(
+		roughness +
+		rock * (1.0 - roughness) +
+		ripple_color.r * ripple_scale * ripple_mask -
+		length(flow_color) * flow_roughness * saturate(packed.a + flow_roughness_offset),
+	);
+	s.roughness = mix(rough0, rough0 * detail.a, roughness_cover);
+	s.metallic = mix(0.0, metallic, saturate(metal + metallic_offset));
+	s.f0 = look.surface2.y;
+	s.occlusion = 1.0 - occlusion_strength + metal_map.g * occlusion_strength;
+	s.emission = noise * noise_emissive * noise_mask * 10.0;
 	return s;
 }
 

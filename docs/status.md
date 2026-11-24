@@ -199,9 +199,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   scene instead of `_CUSTOM_IBL`; other variants undecoded.
 - **matte paintings** ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` unread
   (unused on map01).
-- **erosion rock** ([viewer](viewer/materials.md#erosion)): `_ObjectBlend*` soft blend and fake
-  translucency not drawn; `HGRP/ErosionDynamic` (clearable patches, hidden by default) is
-  unsupported.
+- **erosion rock & dynamic blight** ([viewer](viewer/materials.md#erosion)): `_ObjectBlend*` /
+  `_LineBlend*` soft blend, fake translucency, and `HGRP/ErosionDynamic` `_ANIMATION_FEATURE_*`
+  vertex animation are not drawn (clearable patches unverified in game).
 - **decals** ([viewer](viewer/materials.md#decals), [game-data](game-data/materials.md#decals)):
   - unsupported: `HGRP/DecalLit` footprint/UV-noise/arc variants, placements without colour/UV,
     non-box prefab `HGDecalProjector`s, and `HGRP/DecalUnlit`. terrain decals (InitChunkData

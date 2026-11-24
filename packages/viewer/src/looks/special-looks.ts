@@ -8,6 +8,7 @@
 import type { MaterialCull, TextureSlot } from '@endfield-noclip/package-format/materials';
 import type {
 	DitheredSurface,
+	ErosionDynamicSurface,
 	ErosionSurface,
 	MattePaintingSurface,
 } from '@endfield-noclip/package-format/surfaces';
@@ -95,6 +96,112 @@ export const erosionLook = (surface: ErosionSurface, cull: MaterialCull): Materi
 	params.set([...flow.top, flow.roughness], ErosionRow.flowTop);
 	params.set(flow.bottom, ErosionRow.flowBottom);
 	params.set([flow.tiling, flow.noiseStrength, flow.scroll, flow.speedOffset], ErosionRow.flow);
+	return look;
+};
+
+/**
+ * float offsets of an {@link erosionDynamicLook}'s parameters (`HGRP/ErosionDynamic`). distinguished from
+ * {@link erosionLook} by `mode[3] === 1` (`look.emissive2.w`)
+ */
+export const ErosionDynamicRow = {
+	/** HDR `_BaseColor`, no alpha test */
+	base: LookRow.tint,
+	/** `_Roughness`, `_DetailRoughnessCover`, `_Metallic`, `_NormalScale` */
+	surface: LookRow.surface,
+	/** `_OcclusionStrength`, f0 (0.04), `_MetallicOffset`, `_DetailNormalScale` */
+	surface2: LookRow.surface2,
+	/** `_NoiseEmissiveStrength`, `_FlowColorStrength`, detail normal scroll per second, `_DistanceBlend` */
+	strengths: LookRow.emissive,
+	/** `_NoiseColorMode`, `_FlowRoughnessOffset`, `_MatcapNormalAreaOffset`, 1 (dynamic discriminant) */
+	mode: LookRow.emissive2,
+	/** `_NoisePatternTintColor`, `_NoiseMin` */
+	noise: LookRow.maskAlbedo,
+	/** `_NoiseStrength`, `_MatcapNormalTilling * 0.01`, `_MatcapNormalStrength`, `_FlowColorOffset` */
+	noise2: LookRow.maskAlbedo + 4,
+	/** `_FlowTopColor`, `_FlowRoughness` */
+	flowTop: LookRow.maskRoughness,
+	/** `_FlowBottomColor` */
+	flowBottom: LookRow.maskMetallic,
+	/** `_FlowNormalTilling`, `_FlowNoiseStrength`, ramp scroll per second, `_FlowSpeedOffset` */
+	flow: LookRow.maskScale,
+	/** `_RippleConfig0` (object-space xyz, radius w) */
+	ripple0: LookRow.detail,
+	/** `_RippleConfig1` */
+	ripple1: LookRow.detail2,
+	/** `_RippleConfig2` */
+	ripple2: LookRow.detailOverlay,
+	/** `_RippleTopColor`, `_RippleWidth` */
+	rippleTop: LookRow.parallax,
+	/** `_RippleBottomColor`, `_RingRatio` */
+	rippleBottom: LookRow.parallax2,
+	/** ripple speed per second, `_RippleNoiseStrength`, `_RippleColorOffset`, 0 */
+	rippleParams: LookRow.parallaxColor,
+} as const;
+
+/**
+ * clearable blight patches ({@link ErosionDynamicSurface}). its seven fragment maps fill `SLOTS`: the colour
+ * LUT in base, base normal in normal, metal mix in mask, flow ramp in emissive, detail normal in detail,
+ * noise pattern in parallax, and matcap normal in parallax noise
+ *
+ * @param surface the surface
+ * @param cull the faces the material culls
+ * @returns a new look
+ */
+export const erosionDynamicLook = (surface: ErosionDynamicSurface, cull: MaterialCull): MaterialLook => {
+	const look = emptyLook({ drawn: true });
+	look.cull = cull;
+	look.flags |= LookFlags.Erosion;
+	const params = look.params;
+	const { textures, noise, flow, matcap, ripple } = surface;
+	const slots: [number, TextureSlot | null][] = [
+		[Slot.Base, textures.colorLut],
+		[Slot.Normal, textures.baseNormal],
+		[Slot.Mask, textures.metalMix],
+		[Slot.Emissive, textures.flowRamp],
+		[Slot.Detail, textures.detailNormal],
+		[Slot.Parallax, textures.noisePattern],
+		[Slot.ParallaxNoise, textures.matcapNormal],
+	];
+	for (const [i, slot] of slots) {
+		if (slot !== null) {
+			setTexture(look, i, slot);
+		}
+	}
+	// 1D LUTs stream at mip 0 regardless of screen size
+	if (textures.colorLut !== null) {
+		look.uvScales[Slot.Base] = 0;
+	}
+	if (textures.flowRamp !== null) {
+		look.uvScales[Slot.Emissive] = 0;
+	}
+	params.set([...surface.baseColor, -1], ErosionDynamicRow.base);
+	params.set(
+		[surface.roughness, surface.detailRoughnessCover, surface.metallic, surface.normalScale],
+		ErosionDynamicRow.surface,
+	);
+	params.set(
+		[surface.occlusionStrength, 0.04, surface.metallicOffset, surface.detailNormalScale],
+		ErosionDynamicRow.surface2,
+	);
+	params.set(
+		[noise.emissiveStrength, flow.colorStrength, surface.detailNormalScroll, noise.fadeDistance],
+		ErosionDynamicRow.strengths,
+	);
+	params.set([noise.colorMode, flow.roughnessOffset, matcap.areaOffset, 1], ErosionDynamicRow.mode);
+	params.set([...noise.tint, noise.min], ErosionDynamicRow.noise);
+	params.set(
+		[noise.depth, matcap.tiling * 0.01, matcap.strength, flow.colorOffset],
+		ErosionDynamicRow.noise2,
+	);
+	params.set([...flow.top, flow.roughness], ErosionDynamicRow.flowTop);
+	params.set(flow.bottom, ErosionDynamicRow.flowBottom);
+	params.set([flow.tiling, flow.noiseStrength, flow.scroll, flow.speedOffset], ErosionDynamicRow.flow);
+	params.set(ripple.configs[0], ErosionDynamicRow.ripple0);
+	params.set(ripple.configs[1], ErosionDynamicRow.ripple1);
+	params.set(ripple.configs[2], ErosionDynamicRow.ripple2);
+	params.set([...ripple.top, ripple.width], ErosionDynamicRow.rippleTop);
+	params.set([...ripple.bottom, ripple.ringRatio], ErosionDynamicRow.rippleBottom);
+	params.set([ripple.speed, ripple.noiseStrength, ripple.colorOffset, 0], ErosionDynamicRow.rippleParams);
 	return look;
 };
 

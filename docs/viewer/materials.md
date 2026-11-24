@@ -208,10 +208,11 @@ instead of its `_CUSTOM_IBL` cubemap, making metal darker than in-game.
 
 ## erosion
 
-[`erosionLook`](../../packages/viewer/src/looks/special-looks.ts) and `erosion_surface` in
-`mesh.wgsl` draw [erosion rock](../game-data/materials.md#erosion), reusing Lit texture slots and
-omitting `_ObjectBlend*` soft blending. `HGRP/ErosionDynamic` is
-[unsupported](#unsupported-materials).
+[`erosionLook`](../../packages/viewer/src/looks/special-looks.ts) / `erosion_surface` and
+`erosionDynamicLook` / `erosion_dynamic_surface` in `mesh.wgsl` draw
+[erosion rock and clearable blight patches](../game-data/materials.md#erosion), reusing Lit texture
+slots and omitting `_ObjectBlend*` / `_LineBlend*` soft blending and `HGRP/ErosionDynamic`'s
+`_ANIMATION_FEATURE_*` vertex displacement.
 
 ## unsupported materials
 
@@ -227,8 +228,7 @@ exposure-invariant, no shadows) via two off-by-default toggles:
 what becomes unsupported: effect shaders without a look ([effects](effects.md)); effect materials
 with unhandled keywords, blend modes, stencil ops, texture combos, or UV sets (>1, or >0 for
 VFXWater/VFXRefract); unhandled lit decals or ones lacking placement/base map; non-effect additive
-materials; shaders without a family (`HGRP/CharacterNPR`, `HGRP/ErosionDynamic`, etc.); failed
-conversions.
+materials; shaders without a family (`HGRP/CharacterNPR`, etc.); failed conversions.
 
 the extractor classifies these when [describing surfaces](../package-format.md#materials) and writes
 `unsupported`, `keywordsNotDrawn` (from

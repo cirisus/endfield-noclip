@@ -500,9 +500,29 @@ and used as stored.
 - **normals & depth blend**: base and detail normal maps sum (each with own scale); metal flattens
   the bitangent. `_ObjectBlend*` blends softly against scene depth.
 
-`HGRP/ErosionDynamic` (animated, glowing) is used only by clearable erosion prefabs
-(`P_erosion_map01_dynamic…`), load-gated while their map variable ≠ 2
-([blight and its cores](scene-states.md#dynamic-load-gates)).
+`HGRP/ErosionDynamic` is used by clearable blight patches (`P_erosion_map01_dynamic…`), load-gated
+while their map variable ≠ 2 ([blight and its cores](scene-states.md#blight-and-its-cores)). all
+colours (including `_BaseColor`) are HDR and used as stored:
+
+- **colour LUT & base**: `_ColorLUTMap` (256×1) indexed by `metal = saturate(1 − _MetalMixMap.r)`,
+  multiplied by `_BaseColor`. `_MetalMixMap` packs rock mask in R, occlusion and ripple noise in G,
+  ripple mask in B, and flow noise in A.
+- **noise layer**: same 1-step parallax march into `_NoisePatternMap`, optionally desaturated by
+  `_NoiseColorMode`, tinted where `metal` is low, masked by `saturate((rock − 0.2)³)` and faded over
+  `_DistanceBlend` m; adds to albedo and (`× _NoiseEmissiveStrength × 10`) emission.
+- **ripples**: three concentric object-space rings (`_RippleConfig0..2` xyz centre, w radius;
+  `_RippleWidth`, `_RingRatio`, `_RippleSpeed`, `_RippleNoiseStrength`) tinted between
+  `_RippleTopColor` and `_RippleBottomColor`, adding to albedo (masked by `_MetalMixMap.b`),
+  roughness, and perturbing the normal used by the matcap and detail layers.
+- **flow band**: `_FlowRampMap` sampled along `object.y + ripple.r · 0.2` (scrolled negatively by
+  `_FlowNormalSpeed`, shifted by `_MetalMixMap.a · _FlowNoiseStrength`), desaturated below
+  `_FlowColorOffset`, adding to albedo (masked by `_BaseNormalMap.a`) and reducing roughness.
+- **normals**: tangent-space RGB `_BaseNormalMap` (scaled by `_NormalScale · rock`) plus view-space
+  DXT5nm `_MatcapNormalMap` (tiled by `_MatcapNormalTilling · 0.01`) and scrolling DXT5nm
+  `_DetailNormalMap`; roughness multiplies toward `_DetailNormalMap.a` by `_DetailRoughnessCover`.
+- **vertex animation**: `_ANIMATION_FEATURE_BASE` and `_ANIMATION_FEATURE_TOP` displace vertices
+  using `_AnimationCurveLUT` and vertex colour channels; `_CoreWorldPosition` / `_ScannedBaseColor`
+  add a runtime scan highlight; `_ObjectBlend*` / `_LineBlend*` soft-blend against scene depth.
 
 ## swaying cloth
 

@@ -446,6 +446,64 @@ describe('erosion', () => {
 		assert.deepEqual(surface.flow.bottom, [4, 4, 4]);
 		assert.equal(surface.flow.scroll, 0.05);
 	});
+
+	it('describes HGRP/ErosionDynamic with HDR base colour, LUT, matcap and ripples', () => {
+		const shader = shaderEntry({
+			name: 'HGRP/ErosionDynamic',
+			family: 'erosion',
+			floats: {
+				_BaseNormalTilling: 1,
+				_DetailNormalTilling: 2,
+				_NoisePatternMapTilling: 3,
+				_DetailNormalSpeed: 0.1,
+				_FlowNormalSpeed: 0.6,
+				_RippleSpeed: 0.5,
+				_RippleWidth: 0.06,
+				_RingRatio: 0.7,
+				_MatcapNormalTilling: 35,
+				_MatcapNormalStrength: 40,
+			},
+			colors: {
+				_BaseColor: [0.9, 0.3, 0.1, 1],
+				_RippleTopColor: [2, 2, 2, 1],
+			},
+			vectors: {
+				_RippleConfig0: [1, 2, 3, 4],
+			},
+		});
+		const slot = (texture: number) => ({
+			texture,
+			uv: 1,
+			scale: [9, 9] as [number, number],
+			offset: [0, 0] as [number, number],
+		});
+		const surface = describeMaterial(
+			values({
+				slots: {
+					_ColorLUTMap: slot(1),
+					_BaseNormalMap: slot(2),
+					_MetalMixMap: slot(3),
+					_FlowRampMap: slot(4),
+					_DetailNormalMap: slot(5),
+					_NoisePatternMap: slot(6),
+					_MatcapNormalMap: slot(7),
+				},
+			}),
+			shader,
+		);
+		assert.equal(surface.kind, 'erosionDynamic');
+		if (surface.kind !== 'erosionDynamic') {
+			return;
+		}
+		assert.deepEqual(surface.baseColor, [0.9, 0.3, 0.1]);
+		assert.equal(surface.textures.colorLut?.texture, 1);
+		assert.equal(surface.textures.matcapNormal?.texture, 7);
+		assert.deepEqual(surface.textures.detailNormal?.scale, [2, 2]);
+		assert.ok(Math.abs(surface.detailNormalScroll - 0.0005) < 1e-6);
+		assert.ok(Math.abs(surface.flow.scroll - 0.03) < 1e-6);
+		assert.ok(Math.abs(surface.ripple.speed - 0.05) < 1e-6);
+		assert.deepEqual(surface.ripple.configs[0], [1, 2, 3, 4]);
+	});
 });
 
 describe('matte paintings', () => {

@@ -34,7 +34,7 @@ import {
 	type LookStencil,
 	type MaterialLook,
 } from './look.ts';
-import { ditheredLook, erosionLook, mattePaintingLook } from './special-looks.ts';
+import { ditheredLook, erosionDynamicLook, erosionLook, mattePaintingLook } from './special-looks.ts';
 
 /** {@link unsupportedLook}'s colour, linear magenta */
 const UNSUPPORTED_COLOR: [r: number, g: number, b: number] = [1, 0, 1];
@@ -196,6 +196,9 @@ const surfaceLook = (entry: ReadyMaterial): MaterialLook => {
 		}
 		case 'erosion': {
 			return erosionLook(surface, entry.cull);
+		}
+		case 'erosionDynamic': {
+			return erosionDynamicLook(surface, entry.cull);
 		}
 		case 'dithered': {
 			return ditheredLook(surface, entry.cull);

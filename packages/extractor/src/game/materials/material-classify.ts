@@ -40,7 +40,7 @@ const FAMILIES: [RegExp, ShaderFamily][] = [
 	[/terrain/i, 'terrain'],
 	[/hlod/i, 'hlod'],
 	[/^HGRP\/MattePainting$/i, 'mattePainting'],
-	[/^HGRP\/Erosion$/i, 'erosion'],
+	[/^HGRP\/Erosion(Dynamic)?$/i, 'erosion'],
 ];
 
 /**

@@ -5,7 +5,7 @@ import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 
 import { LookFlags, LookRow, UV1_SHIFT } from './look.ts';
 import { materialLooks } from './material-looks.ts';
-import { DitherFlags, DitherRow, ErosionRow } from './special-looks.ts';
+import { DitherFlags, DitherRow, ErosionDynamicRow, ErosionRow } from './special-looks.ts';
 import { described } from './test-materials.ts';
 
 test('matte paintings are unlit, cast no shadows and test the texture alpha against their threshold', () => {
@@ -333,4 +333,80 @@ test('erosion rock: its maps tile by their own scales on UV set 0, the ramp stre
 		[4, 4, 4],
 	);
 	assert.equal(look.params[ErosionRow.flow + 2], Math.fround(0.05));
+});
+
+test('dynamic erosion: packs all seven maps, streams 1D LUTs whole and marks the dynamic branch', () => {
+	const tiled = (texture: number, tiling: number): TextureSlot => ({
+		texture,
+		uv: 0,
+		scale: [tiling, tiling],
+		offset: [0, 0],
+	});
+	const entry = described({
+		kind: 'erosionDynamic',
+		textures: {
+			colorLut: tiled(1, 1),
+			baseNormal: tiled(2, 1),
+			metalMix: tiled(3, 1),
+			flowRamp: tiled(4, 1),
+			detailNormal: tiled(5, 2),
+			noisePattern: tiled(6, 3),
+			matcapNormal: tiled(7, 1),
+		},
+		baseColor: [0.9, 0.3, 0.1],
+		roughness: 0.2,
+		detailRoughnessCover: 0.7,
+		metallic: 1,
+		metallicOffset: 0.5,
+		normalScale: 2,
+		detailNormalScale: 0.4,
+		detailNormalScroll: 0.0005,
+		occlusionStrength: 0.5,
+		noise: {
+			depth: 0.5,
+			tint: [0.3, 0.4, 1.2],
+			colorMode: 0,
+			min: 1,
+			emissiveStrength: 0.2,
+			fadeDistance: 14,
+		},
+		flow: {
+			tiling: 1,
+			noiseStrength: 1.6,
+			scroll: 0.03,
+			speedOffset: 0.8,
+			colorOffset: 0.25,
+			top: [0.8, 0.8, 0.8],
+			bottom: [2, 0.3, 0],
+			colorStrength: 0.26,
+			roughness: 0.33,
+			roughnessOffset: -0.1,
+		},
+		matcap: { tiling: 35, strength: 40, areaOffset: -0.15 },
+		ripple: {
+			configs: [
+				[0.2, 5.7, 3.9, 4.9],
+				[1, 1, 1, 0.1],
+				[1, 1, 1, 0.1],
+			],
+			width: 0.06,
+			ringRatio: 0.8,
+			speed: 0.03,
+			noiseStrength: 0.26,
+			colorOffset: -0.18,
+			top: [2, 2, 2],
+			bottom: [0.5, 0.1, 0],
+		},
+	});
+	const [look] = materialLooks({ entries: [entry] });
+	assert.deepEqual(look.textures, [1, 2, 3, 4, 5, 6, 7]);
+	assert.notEqual(look.flags & LookFlags.Erosion, 0);
+	assert.equal(look.uvScales[0], 0);
+	assert.equal(look.uvScales[3], 0);
+	assert.equal(look.params[ErosionDynamicRow.mode + 3], 1);
+	assert.equal(look.params[ErosionDynamicRow.noise2 + 1], Math.fround(0.35));
+	assert.deepEqual(
+		Array.from(look.params.subarray(ErosionDynamicRow.ripple0, ErosionDynamicRow.ripple0 + 4)),
+		[Math.fround(0.2), Math.fround(5.7), Math.fround(3.9), Math.fround(4.9)],
+	);
 });

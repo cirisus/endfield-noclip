@@ -32,7 +32,7 @@ import {
 	unsupported,
 } from './material-values.ts';
 import { describeDithered } from './surfaces/dithered.ts';
-import { describeErosion } from './surfaces/erosion.ts';
+import { describeErosion, describeErosionDynamic } from './surfaces/erosion.ts';
 import { describeFoliageGlow } from './surfaces/foliage-glow.ts';
 import { describeLitDecal } from './surfaces/lit-decal.ts';
 import { swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
@@ -82,7 +82,10 @@ const DESCRIBERS: { readonly [F in ShaderFamily]?: Describer | ReadonlyMap<strin
 	hlod: describeLit,
 	terrain: describeLit,
 	mattePainting: describeMattePainting,
-	erosion: describeErosion,
+	erosion: byShader({
+		'HGRP/Erosion': describeErosion,
+		'HGRP/ErosionDynamic': describeErosionDynamic,
+	}),
 	vfxDitherAlpha: (reader) =>
 		isDitherEffect(reader) ? describeDitherEffect(reader) : describeDithered(reader),
 	decal: byShader({
