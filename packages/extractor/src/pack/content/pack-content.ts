@@ -181,7 +181,8 @@ export class PackContent {
 			submesh: draw.submesh,
 			lod: draw.lod,
 			role: (draw.flags & DrawFlags.ShadowOnly) === 0 ? DrawRole.Lit : DrawRole.ShadowOnly,
-			minSquared: draw.lodMinSquared,
+			// static chunks negate the final LOD's screen-size cull threshold (`-k²`)
+			minSquared: Math.abs(draw.lodMinSquared),
 			maxSquared: draw.lodMaxSquared,
 			flags: chainDrawFlagsOf(draw.flags),
 		});

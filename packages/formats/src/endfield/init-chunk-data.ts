@@ -82,9 +82,9 @@ export interface RendererDraw {
 	/** renderer flag word; bit {@link DrawFlags.ShadowOnly} marks shadow-caster-only draws */
 	flags: number;
 	/**
-	 * the draw is visible while `minSquared < s² <= maxSquared`, where `s` is the renderer's screen-relative
-	 * height as in Unity's LODGroup. `maxSquared` is `FLT_MAX` for the nearest LOD; a negative `minSquared`
-	 * means it's never culled by size
+	 * the draw is visible while `|minSquared| < s² <= maxSquared`, where `s` is the renderer's screen-relative
+	 * height as in Unity's LODGroup. `maxSquared` is `FLT_MAX` for the nearest LOD; the final (cull-out) LOD
+	 * stores its threshold negated (`-k²`)
 	 */
 	lodMaxSquared: number;
 	lodMinSquared: number;

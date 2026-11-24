@@ -446,10 +446,10 @@ dynamic scenes stream by `fb_main` grids, not static layers. grid id = `L << 16 
 ## LOD and HLOD
 
 - **per-entity LOD chains**: static draws carry a LOD index and `(minSquared, maxSquared]`
-  screen-relative height² range (Unity LODGroup style; `maxSquared = FLT_MAX` on nearest LOD).
-  negative `minSquared` values seen are all `−k²` with `k ∈ [0.005, 0.05]` (`−0.000225` on many
-  map02 draws, `−0.0001` on all map02 HLOD clusters, `−0.0025` on all indie_dg005 clusters,
-  `−0.0004`, `−0.000025`) — possibly ordinary cull heights stored negated.
+  screen-relative height² range (Unity LODGroup style; `maxSquared = FLT_MAX` on nearest LOD). the
+  final (cull-out) LOD stores its threshold negated as `−k²` with `k ∈ [0.005, 0.05]` (`−0.000225`
+  on many map02 draws, `−0.0001` on all map02 HLOD clusters, `−0.0025` on all indie_dg005 clusters,
+  `−0.0004`, `−0.000025`); the game culls below `|minSquared| = k²`.
 - **distance LODs**: entities with component 58 (~1250 map02 mist cards/boxes and volumetric light
   beams) store squared camera distances in metres instead (cards 20–74 m out to 180–685 m, most
   boxes out to 255 m, `(0, FLT_MAX]` never culls). all other map02 bounds are `≤ 0.7225`, so the two
@@ -619,7 +619,6 @@ other spatial data in LevelData:
 ## open
 
 - what writes the streaming centre (inferred: player character, not camera)
-- meaning of negative `minSquared` (never culled by size, or culled below `√−minSquared`)
 - size that LODGroup thresholds are authored against (object bounds, LODGroup size, …)
 - HLOD generated-material channel layout
 - where a scene's HLOD grid (cell and origin used by cluster names) is defined, why it leaves the
