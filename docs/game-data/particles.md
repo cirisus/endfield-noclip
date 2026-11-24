@@ -116,8 +116,10 @@ details:
     ±4 m/s @ 2–5% per 1/30 s, gravity 3–7.5 m/s², `s²` drag); large fish field has 0 swirl
     attraction. hemisphere, cylinder, box, vector fields, and wind zones are untraced.
 - **rotation over lifetime (`RotationModule`)**: `curve` (about `z`, plus `x`/`y` with
-  `separateAxes`) gives angular velocity at normalized age. example: accelerate mushroom wind sheets
-  (`wind01`/`wind02`) start up to ±60°/s between two curves and slow to 0.
+  `separateAxes`) gives angular velocity at normalized age. on quad billboards (regular, horizontal,
+  vertical, and freeform stretched), positive 2D Z rotation turns clockwise when viewing the quad's
+  front face. example: accelerate mushroom wind sheets (`wind01`/`wind02`) start up to ±60°/s
+  between two curves and slow to 0.
 
 ### size and pose
 

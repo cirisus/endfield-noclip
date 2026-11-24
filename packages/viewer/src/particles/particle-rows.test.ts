@@ -189,6 +189,23 @@ describe('ParticleField', () => {
 		);
 		assert.equal(new Uint32Array(flippedMesh.buffer)[RowWord.sheet], 0);
 		assert.equal(flippedMesh[RowWord.extent], 4);
+		// positive 2D Z rotation turns billboard quads clockwise on screen (x → -up, y → +right at +π/2)
+		const spunQuad = written(
+			system({
+				renderMode: ParticleRenderMode.Billboard,
+				alignment: ParticleAlignment.View,
+				looping: false,
+				startLifetime: constant(5),
+				rate: constant(0),
+				bursts: [{ time: 0, count: constant(1), cycles: 1, interval: 0.01, probability: 1 }],
+				shape: null,
+				startSize: [constant(1), constant(1), constant(1)],
+				startRotation: [constant(0), constant(0), constant(Math.PI / 2)],
+				gravityModifier: constant(0),
+			}),
+			view,
+		);
+		assert.ok(near(spunQuad, [0, -1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0]), [...spunQuad.subarray(0, 12)].join());
 	});
 
 	it('keeps a freeform stretched billboard centred on the particle and stretches it linearly along velocity', () => {

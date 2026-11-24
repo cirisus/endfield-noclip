@@ -231,8 +231,18 @@ const toWorldInto = (out: Vec3, m: Float64Array, x: number, y: number, z: number
 	return out;
 };
 
-/** quads keep their rotation, turned onto the velocity for velocity alignment, then into their frame */
+/**
+ * quads keep their rotation (clockwise about z as Unity's billboard job turns), turned onto the velocity for
+ * velocity alignment, then into their frame
+ */
 const quadShape = (row: RowGeometry, particle: Readonly<ParticleInput>, context: RowContext): void => {
+	// in Unity's billboard quad job (0x1800cc5b0), positive 2D Z rotation turns clockwise when viewing the quad's
+	// front (-z): x' = cos·right - sin·up, y' = sin·right + cos·up
+	const [ax0, ax1, ax2] = row.axes;
+	if (ax2[0] === 0 && ax2[1] === 0 && ax2[2] === 1) {
+		ax0[1] = -ax0[1];
+		ax1[0] = -ax1[0];
+	}
 	if (context.info.alignment === ParticleAlignment.Velocity) {
 		const onto = turnFromZInto(scratch.onto, particle.velocity);
 		for (const axis of row.axes) {

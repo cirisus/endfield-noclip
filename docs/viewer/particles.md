@@ -93,8 +93,9 @@ system, index):
   (`screenLimited`).
 - **rotation & alignment**: start Euler (Unity Z, X, Y) + integrated angular velocity in Local,
   World, View/Facing (camera), or Velocity (`velocityBasis` look-rotation rolled level for meshes;
-  shortest turn from +Z via `turnFromZ` for velocity billboards, untraced). emitter scale applies
-  along rotated axes.
+  shortest turn from +Z via `turnFromZ` for velocity billboards, untraced). 2D Z rotation on quad
+  billboards turns clockwise on screen (`cos·right − sin·up`, `sin·right + cos·up`), matching Unity.
+  emitter scale applies along rotated axes.
 - **quad render modes**: billboards follow render alignment; vertical faces camera heading;
   horizontal lies flat (+Y); legacy stretched extends back along `−vel` on quad X (`u = 0` at head,
   `1` at tail) with width across velocity in the view plane on quad Y (`ParticleView.eye`), face
