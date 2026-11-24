@@ -24,32 +24,41 @@ process.stdout.on('error', (error: NodeJS.ErrnoException) => {
 const rootParser = or(
 	command('audit', auditParser, {
 		brief: message`survey packed packages and debug data`,
+		description: message`query packed packages under out/<scene>/ (or --dir) without opening a game install.`,
 	}),
 	command('bundle', bundleParser, {
 		brief: message`inspect and search bundle objects; dump JSON or stream payloads`,
+		footer: message`<name> is a bundle hex id, main/<hex>.ab, a full logical path, or an asset path/hash.`,
 	}),
 	command('data', dataParser, {
 		brief: message`search asset paths, resolve hashes, and read SparkBuffer tables & level data`,
 	}),
 	command('init', initParser, {
 		brief: message`derive and validate install keys, then write the local config`,
+		description: message`derive bundle cipher keys from the install, optionally import missing keys with --keys-from, validate them against the VFS, and write the local config file.`,
 	}),
 	command('inspect', inspectParser, {
 		brief: message`inspect a prefab, material, shader, mesh, texture, or water config`,
+		footer: message`<object> is <bundle> [--path-id N] [--name re], an asset path, a unique filename/basename, or a path hash. omitting --path-id picks the unique matching object in the bundle.`,
 	}),
 	command('pack', packParser, {
 		brief: message`build a viewer package for a scene, level, or world rectangle`,
+		description: message`write a viewer package for one streaming scene (e.g. map02), or with --existing repack every package already under out/ (preserving each package's scene, --level, and --bounds from its manifest) in one install session.`,
+		footer: message`output defaults to out/<scene>[-<level>]. converted meshes, textures, and blobs are cached across packs under out/.cache and swept to what built packages hold; pass --no-cache to bypass caching.`,
 	}),
 	command('scene', sceneParser, {
 		brief: message`browse scenes, levels, controls, environments, and everything placed near a point`,
 	}),
 	command('vfs', vfsParser, {
 		brief: message`list virtual filesystem groups and files; extract logical files`,
+		footer: message`<group> is an 8-hex group hash or a VfsGroup name (e.g. JsonData, Table, Bundle).`,
 	}),
 );
 
 const parsed = run(rootParser, {
 	programName: 'endfield-extract',
+	brief: message`reads a local Endfield install and builds or inspects viewer packages`,
+	footer: message`run \`endfield-extract <command> --help\` or \`endfield-extract help <command> [subcommand]\` for detailed options.`,
 	help: 'both',
 	aboveError: 'usage',
 	showDefault: true,

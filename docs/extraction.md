@@ -30,36 +30,34 @@ usage without requiring a config or install. every install-reading command accep
 (default `endfield.local.json`) and opens the install via `withContext` (`context.ts`), which mounts
 the VFS, builds the world index, and creates the asset resolver lazily.
 
-| command   | purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`    | writes `endfield.local.json` with `Endfield_Data` path and validated keys                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `pack`    | writes a viewer package for one streaming scene, optionally filtered by `--level` or `--bounds`                                                                                                                                                                                                                                                                                                                                                                                    |
-| `scene`   | browses scenes/dungeons (`list`), `levels`, spatial placements (`find`), placed prefab lists & component scans (`prefabs`), single chunks (`chunk`: entities, HLOD stats, foliage), `env` (level or `--at`), `controls`                                                                                                                                                                                                                                                            |
-| `inspect` | decodes and summarizes batch-capable `prefab` (hierarchy + packer output + sorting + `--particles`), `material` (declared props + surface; `--name`/`--all`/`--prop`/`--pick`), `shader` (declared props, defaults, flags; by object or name regex), `mesh` (channels, submesh bounds, color/UV ranges, `--vertices <n>`/`--submesh`/`--near`), `texture` (KTX2 or DX10 DDS via `-o`, with `--layer`/`--mip`), or `water-config` (accepts unique filenames/basenames or `--stdin`) |
-| `audit`   | queries packed packages under `out/` without opening the install: `list`, `core`, `tree`, `instances`, `materials` (`--id`/`--reason`/`--packed`/`--where`/`--pick`/`all`), `geometries` (`--packed`/`--min-span`/`--stats`/`--where`/`--pick`/`all`), `textures` (`all`), `stand-ins` (`--near`/`--group`/`all`), `interactives` (`all`), `water` (`--near`/`--config`/`--packed`), `env` (`--phase`/`--post`/`--section`/`--packed`), `irradiance` (`--at`)                      |
-| `data`    | path catalog `paths`/`resolve` (batch + `--stdin`/`--json`), SparkBuffer `tables`/`table`, and MemoryPack level `scripts`/`interactives` and `view-states`                                                                                                                                                                                                                                                                                                                         |
-| `vfs`     | lists VFS groups/files and extracts one logical file (accepts group hashes or `VfsGroup` names)                                                                                                                                                                                                                                                                                                                                                                                    |
-| `bundle`  | inspects bundles: header, per-class counts, object JSONL/JSON (`dump` with batch/`--stdin`/`--join-go`/`--where`/`--pick`), stream data, container path and class search in main/initial bundles                                                                                                                                                                                                                                                                                   |
+| command   | purpose                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------ |
+| `init`    | writes `endfield.local.json` with `Endfield_Data` path and validated keys                  |
+| `pack`    | writes a viewer package for one streaming scene (or repacks existing packages)             |
+| `scene`   | browses scenes/dungeons, levels, spatial placements, chunks, placed prefabs, env, controls |
+| `inspect` | decodes and summarizes a prefab, material, shader, mesh, texture, or water config          |
+| `audit`   | queries packed packages under `out/` without opening the install                           |
+| `data`    | searches path catalogs, resolves hashes, and decodes SparkBuffer tables & level data       |
+| `vfs`     | lists VFS groups/files and extracts logical files                                          |
+| `bundle`  | inspects bundle headers, dumps objects, extracts `.resS` streams, and searches bundles     |
 
-only `init` and `pack` are needed to build packages; the rest are for research and debugging.
+only `init` and `pack` are needed to build packages; the rest are for research and debugging. run
+`pnpm extract <command> [subcommand] --help` for full flags, choices, and defaults.
 
 ### finding assets and scenery
 
 ```sh
 pnpm extract data paths 'water.*material' --limit 50 --json
-pnpm extract scene find map02 --near=-476.6,181.8,734.3 --radius 20 --max-size 50 --no-hlod
-pnpm extract scene env map02 --at=-1072.4,197.0,-1410.9
+pnpm extract scene find map02 --near -476.6,181.8,734.3 --radius 20 --max-size 50 --no-hlod
+pnpm extract scene env map02 --at -1072.4,197.0,-1410.9
 pnpm extract inspect prefab main/dcd0a8888ee70d437e1d553e.ab
 pnpm extract audit materials map02 --unsupported --group
 pnpm extract bundle find --class Shader --group initial --limit 20
 ```
 
-- **`data paths`**: regex-searches both StringPathHash catalogs (case-insensitive). prints hex hash,
-  full path, and matching manifest bundles. identical hash/path pairs deduplicate; distinct hashes
-  for the same path stay separate. an empty bundle list means no manifest asset; use `data resolve`
-  for dependency details.
-- **`scene find`**: searches all placements in a scene across every scene state and stream area,
-  reporting what gates each row. `--kind` selects sources (default all):
+`scene find` searches all placements across every scene state and stream area, reusing the packer's
+placement sources ([survey.ts](../packages/extractor/src/pack/survey.ts)) for non-static kinds and
+annotating [stand-ins](package-format.md#stand-ins) when `out/<scene>/debug/stand-ins.json` exists:
 
 | kind       | source                                                                                          | visibility from                     |
 | ---------- | ----------------------------------------------------------------------------------------------- | ----------------------------------- |
@@ -75,57 +73,8 @@ pnpm extract bundle find --class Shader --group initial --limit 20
 
 visibility prints as package scene controls under default game state: alternatives joined by `|`,
 requirements by `&`, each `control=values` (or `always` when ungated). `static` rows also show their
-[streaming layer](game-data/world.md#streaming-layers), and rect/water decals show their material
-(accepted by `inspect material`).
-
-- `--name`: matches entity names, mesh/material paths (including rect decals), prefab paths, and row
-  sources.
-- `--near x,y,z --radius n`: keeps rows whose world bounds (or pivot/placement) lie within `n` m in
-  Unity coordinates; sorted nearest first, then smallest bounds first among containing boxes.
-  `--max-size n` drops rows whose longest bound side exceeds `n` m (and global env volumes);
-  `--no-hlod` drops static `HLOD0`/`HLOD1`/`HLOD2` layers; `--hlod-links` reads `StreamingChunkData`
-  to show each static entity's HLOD parent/child link. prefab rows have positions only, no bounds.
-- **`scene chunk <scene> <chunk>`**: inspects one `InitChunkData` + `StreamingChunkData` pair (e.g.
-  `-13_-10_0_0`, `-13_-10`, or `Global_0_0`) for entities and HLOD links, `--hlod-stats` (per-layer
-  parent/cluster/no-HLOD counts, filterable with `--name`), or `--foliage` (grass/tree grids).
-- `--scene-state` and `--area`: filter static chunk files and chunk lights; other kinds are
-  unaffected.
-- if `out/<scene>/debug/stand-ins.json` exists, rows drawn as
-  [stand-ins](package-format.md#stand-ins) are annotated with their reasons (prefab renderers by
-  asset path; placed cubes by name within 2 m).
-- all kinds except `static`, `light`, `water`, and `env` come from the packer's placement sources
-  ([survey.ts](../packages/extractor/src/pack/survey.ts)), including level scripts. load failures
-  print to stderr and static rows still run.
-- text output lists distance, kind, level, position, name, size, visibility, first draw's
-  mesh/material/material bundle (or prefab path/bundle; or component ids if no renderer), and source
-  chunk/row. `--json` adds all draws, matrices, bounds, raw visibility alternatives, and prefab
-  rotation/scale.
-- both `data paths` and `scene find` default to 100 results (`--limit` must be positive). summaries
-  and limit notices go to stderr so `--json` emits one JSON array (`[]` if empty). without `--near`,
-  hitting `--limit` stops scanning early; with `--near`, all sources are scanned to keep the
-  nearest.
-- **`bundle find`**: searches `m_Container` paths (`bundle find <re>` or `--filter <re>`) and/or
-  objects of a `--class` (listing bundle, SerializedFile node, path id, class, name, and container
-  paths ready for `bundle dump` or `inspect`). `--group` takes `main` (default), `initial`, or
-  `all`; `--limit` caps output rows; `--scan` caps bundles.
-- **`bundle dump`**: dumps objects from one or more bundles (or asset paths/hashes, or `--stdin`) by
-  `--path-id`, `--class` (repeatable or comma-separated), `--name <re>`, and declarative `--where`
-  dot-path filters (`path=val`, `!=`, `~`, `!~`, `>`, `>=`, `<`, `<=`, bare truthy, `!falsy`). emits
-  valid JSONL by default, or one JSON array with `--json`; `--join-go` attaches `gameObject` names
-  (and sibling `ParticleSystemRenderer.m_RenderMode`); `--pick` projects selected dot-paths;
-  `--full` disables array truncation; `--text` prints a `TextAsset`'s `m_Script` directly.
-- **`scene prefabs <scene[,…]|all>`**: lists unique placed prefabs across one or more scenes, or
-  with `--class` / `--where` / `--pick` / `--join-go` scans their Unity objects concurrently in one
-  install session.
-- **`audit`**: reads `out/<scene>/` directly (no game install opened): `list` summarizes every
-  packed package under `out/` (filterable with `--has water-volumes|stand-ins|errors`), `core` lists
-  or dumps decoded/decompressed members of `core.czar` (accepting `CORE_PATHS` shorthands), `tree`
-  inspects `core.czar` tile nodes and distances (`--at`, `--from`, `--blob`, `--level`), `instances`
-  traces `debug/instances.jsonl` rows to their owning tile node and decoded LOD chain, `irradiance`
-  summarizes `tables/irradiance.bin` or decodes raw probes at `--at x,y,z`, and `materials` /
-  `geometries` / `textures` / `stand-ins` / `interactives` / `water` / `env` query `debug/` and
-  packed `core.czar` tables (`materials`, `geometries`, `textures`, `stand-ins`, and `interactives`
-  all accept `all`, `--where`, and `--pick`; `stand-ins` also accepts `--near x,y,z [--radius m]`).
+[streaming layer](game-data/world.md#streaming-layers), and rect/water decals show their material.
+summaries and limit notices go to stderr so `--json` emits one JSON array.
 
 ## local config and keys
 

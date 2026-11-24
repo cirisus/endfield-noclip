@@ -171,6 +171,8 @@ export const sceneParser = or(
 	}),
 	command('find', sceneFindParser, {
 		brief: message`search everything placed in a scene`,
+		description: message`search all placements in a scene (static, dynamic, model, effect, facility, cabin, light, water, env) across every scene state and stream area, reporting visibility gating and stand-in annotations from out/<scene>/debug/stand-ins.json.`,
+		footer: message`--near uses Unity world coordinates and sorts nearest then smallest bounds first. summaries go to stderr so --json emits a single JSON array.`,
 	}),
 	command('chunk', sceneChunkParser, {
 		brief: message`inspect one InitChunkData + StreamingChunkData pair`,

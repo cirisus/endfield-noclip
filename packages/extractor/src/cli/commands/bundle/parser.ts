@@ -136,6 +136,8 @@ export const bundleParser = or(
 	}),
 	command('dump', bundleDumpParser, {
 		brief: message`dump bundle objects as JSONL, JSON, or TextAsset text`,
+		description: message`dump Unity objects from one or more bundles, asset paths, or hashes (or --stdin) as JSONL by default, a JSON array (--json), or TextAsset m_Script (--text).`,
+		footer: message`--where supports path=val, !=, ~, !~, >, >=, <, <=, bare truthy path, and !falsy path (logical AND across repeated flags).`,
 	}),
 	command('stream', bundleStreamParser, {
 		brief: message`write an object's m_StreamData (.resS) payload to a file`,
