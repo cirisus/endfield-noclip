@@ -96,6 +96,19 @@ const auditCore = async (packageDir: string, member: string | undefined, json: b
 			return;
 		}
 		default: {
+			const available = pkg.coreFiles().map((file) => {
+				const alias = CORE_SHORTHANDS.get(file.path);
+				return alias === undefined ? file.path : `${file.path} (${alias})`;
+			});
+			if (!pkg.coreFiles().some((file) => file.path === resolved)) {
+				const manifestNote =
+					member === 'manifest.json' || member === 'manifest'
+						? ' (manifest.json lives at the package root, not inside core.czar)'
+						: '';
+				throw new Error(
+					`core.czar has no member ${resolved}${manifestNote}\navailable members:\n  ${available.join('\n  ')}`,
+				);
+			}
 			const bytes = await pkg.readCore(resolved);
 			if (resolved.endsWith('.json') || resolved.endsWith('.json.zst')) {
 				const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
