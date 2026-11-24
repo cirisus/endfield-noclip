@@ -1,12 +1,27 @@
 import { parseArgs } from 'node:util';
 
-import { type ObjectInfo, typeName } from '@endfield-noclip/formats/unity/serialized-file';
+import { type ObjectInfo, typeName, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { TypeTreeValue } from '@endfield-noclip/formats/unity/type-tree';
-import { streamingInfo } from '@endfield-noclip/formats/unity/values';
+import {
+	isObject,
+	numberField,
+	pptrField,
+	streamingInfo,
+	stringField,
+} from '@endfield-noclip/formats/unity/values';
 
 import { mapDefined } from '@mary-ext/array-fns';
 
-import { parseOptionalInteger, parsePathId, save, separatePositionals } from '../cli-args.ts';
+import {
+	collectTargets,
+	parseHash,
+	parseList,
+	parseOptionalInteger,
+	parsePathId,
+	save,
+	separatePositionals,
+} from '../cli-args.ts';
+import { matchesWhere, parseWhereList, pickFields, type WherePredicate } from '../cli-query.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText } from '../errors.ts';
 import { type BundleAssetFile, openAssetFiles, openBundle } from '../hg/bundles.ts';
@@ -17,25 +32,29 @@ export const summary = 'inspect and search bundle objects; dump JSON or stream p
 /** command usage, available without opening the install */
 export const usage = `usage:
   bundle info <name>                     header, nodes and per-class object counts
-  bundle dump <name> [--path-id N] [--class Mesh|43[,…]] [--name re] [--text] [--json]
-      [--limit n] [--max-array n | --full]
-                                         objects as JSON; --class is repeatable or comma-separated;
-                                         --text prints TextAsset m_Script; --json wraps in one JSON array;
-                                         --full disables array truncation
+  bundle dump <name>... [--stdin] [--path-id N] [--class Mesh|43[,…]] [--name re]
+      [--join-go] [--where expr] [--pick a,b] [--text] [--json] [--limit n] [--max-array n | --full]
+                                         dump objects as JSONL (or a JSON array with --json); accepts multiple
+                                         bundles, asset paths, or hashes (or --stdin); --join-go attaches
+                                         gameObject names to components; --where filters by dot-path;
+                                         --pick projects selected fields; --text prints TextAsset m_Script
   bundle stream <name> --path-id N -o <file>
                                          writes an object's m_StreamData (.resS) payload
   bundle find [re] [--filter re] [--class Shader|48] [--scan n] [--limit n] [--group main|initial|all]
                                          searches bundles for m_Container paths matching <re>
                                          and/or objects of a class; class results include node, path id and name
 
-<name> is a bundle hex id, main/<hex>.ab, or a full logical path.
-negative path ids need the --path-id=-N form.`;
+<name> is a bundle hex id, main/<hex>.ab, a full logical path, or an asset path/hash.`;
 
 const OPTIONS = {
 	config: { type: 'string' },
 	'path-id': { type: 'string' },
 	class: { type: 'string', multiple: true },
 	name: { type: 'string' },
+	'join-go': { type: 'boolean', default: false },
+	where: { type: 'string', multiple: true },
+	pick: { type: 'string', multiple: true },
+	stdin: { type: 'boolean', default: false },
 	text: { type: 'boolean', default: false },
 	json: { type: 'boolean', default: false },
 	full: { type: 'boolean', default: false },
@@ -53,15 +72,15 @@ export const run = async (args: string[]): Promise<void> => {
 		allowPositionals: true,
 		options: OPTIONS,
 	});
-	const [sub, name] = positionals;
+	const [sub, ...rest] = positionals;
+	const name = rest[0];
 	const limit = parseOptionalInteger(values.limit, '--limit') ?? Infinity;
 	const maxArray = values.full ? Infinity : (parseOptionalInteger(values['max-array'], '--max-array') ?? 16);
 	const scan = parseOptionalInteger(values.scan, '--scan') ?? Infinity;
 	const pathId = parsePathId(values['path-id'], '--path-id');
-	const classes =
-		values.class === undefined
-			? []
-			: values.class.flatMap((entry) => entry.split(',').map((part) => part.trim())).filter(Boolean);
+	const classes = parseList(values.class);
+	const where = parseWhereList(values.where);
+	const pick = parseList(values.pick);
 
 	await withContext(values.config, async (context) => {
 		switch (sub) {
@@ -73,21 +92,26 @@ export const run = async (args: string[]): Promise<void> => {
 				if (values.text && values.json) {
 					throw new Error('use either --text or --json, not both');
 				}
-				const files = await openAssetFilesByName(context, name, {
-					eager: pathId === undefined && classes.length === 0 && values.name === undefined,
-				});
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(usage);
+				}
 				const matches = (object: ObjectInfo): boolean => {
 					if (pathId !== undefined) {
 						return object.pathId === pathId;
 					}
 					return classes.length === 0 || classes.some((cls) => isClass(object, cls));
 				};
-				await dump(files, matches, {
+				await dumpMany(context, targets, matches, {
 					nameFilter: values.name === undefined ? undefined : new RegExp(values.name, 'i'),
+					joinGo: values['join-go'],
+					where,
+					pick,
 					text: values.text,
 					json: values.json,
 					limit,
 					maxArray,
+					eager: pathId === undefined && classes.length === 0 && values.name === undefined,
 				});
 				break;
 			}
@@ -133,6 +157,30 @@ const isClass = (object: ObjectInfo, name: string): boolean => {
 	return String(object.classId) === name || typeName(object.type) === name;
 };
 
+const resolveBundleName = async (context: Context, target: string): Promise<string> => {
+	const hash = parseHash(target);
+	if (hash !== null) {
+		const manifest = await context.world.manifest();
+		const assets = manifest.findAssets(hash);
+		if (assets.length > 0) {
+			return manifest.bundleName(assets[0].bundleIndex);
+		}
+		throw new Error(`hash ${target} has no bundle in manifest`);
+	}
+	if (/^(assets\/|data\/)/i.test(target) && !target.endsWith('.ab')) {
+		const hashes = await context.world.hashesOf(target);
+		const manifest = await context.world.manifest();
+		for (const h of hashes) {
+			const assets = manifest.findAssets(h);
+			if (assets.length > 0) {
+				return manifest.bundleName(assets[0].bundleIndex);
+			}
+		}
+		throw new Error(`asset ${target} has no bundle in manifest`);
+	}
+	return target;
+};
+
 const openAssetFilesByName = async (
 	context: Context,
 	name: string | undefined,
@@ -141,7 +189,8 @@ const openAssetFilesByName = async (
 	if (name === undefined) {
 		throw new Error(usage);
 	}
-	return openAssetFiles(await openBundle(context, name), options);
+	const resolved = await resolveBundleName(context, name);
+	return openAssetFiles(await openBundle(context, resolved), options);
 };
 
 // #region info
@@ -216,72 +265,169 @@ const info = async (files: BundleAssetFile[]): Promise<void> => {
 
 // #region dump
 
-const dump = async (
-	files: BundleAssetFile[],
+interface GoJoinIndex {
+	goNames: Map<bigint, string>;
+	particleRenderMode: Map<bigint, number>;
+}
+
+const buildGoJoinIndex = async (asset: BundleAssetFile): Promise<GoJoinIndex> => {
+	const goNames = new Map<bigint, string>();
+	const particleRenderMode = new Map<bigint, number>();
+	for (const object of asset.file.objects) {
+		if (object.classId === UnityClass.GameObject) {
+			// oxlint-disable-next-line no-await-in-loop -- lightweight name peek per GameObject
+			const name = await asset.peekName(object);
+			if (name !== undefined) {
+				goNames.set(object.pathId, name);
+			}
+		} else if (object.classId === UnityClass.ParticleSystemRenderer) {
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- few ParticleSystemRenderers per prefab
+				const data = await asset.read(object);
+				const go = pptrField(data, 'm_GameObject').pathId;
+				if (go !== 0n) {
+					particleRenderMode.set(go, numberField(data, 'm_RenderMode'));
+				}
+			} catch {
+				// ignore malformed renderers in debug dumps
+			}
+		}
+	}
+	return { goNames, particleRenderMode };
+};
+
+const dumpMany = async (
+	context: Context,
+	targets: readonly string[],
 	matches: (object: ObjectInfo) => boolean,
 	options: {
 		nameFilter: RegExp | undefined;
+		joinGo: boolean;
+		where: readonly WherePredicate[];
+		pick: readonly string[];
 		text: boolean;
 		json: boolean;
 		limit: number;
 		maxArray: number;
+		eager: boolean;
 	},
 ): Promise<void> => {
 	const jsonRows: object[] = [];
 	const textRows: { name: string; script: string }[] = [];
 	let matched = 0;
-	for (const asset of files) {
-		for (const object of asset.file.objects) {
+
+	for (const target of targets) {
+		if (matched >= options.limit) {
+			break;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- streams results in target order up to the limit
+		const bundleName = await resolveBundleName(context, target);
+		// oxlint-disable-next-line no-await-in-loop -- streams results in target order up to the limit
+		const files = await openAssetFiles(await openBundle(context, bundleName), { eager: options.eager });
+
+		for (const asset of files) {
+			let joinIndex: GoJoinIndex | undefined;
+			for (const object of asset.file.objects) {
+				if (matched >= options.limit) {
+					break;
+				}
+				if (!matches(object)) {
+					continue;
+				}
+				if (options.nameFilter !== undefined) {
+					// oxlint-disable-next-line no-await-in-loop -- peeks name before full decode, up to the limit
+					const objectName = (await asset.peekName(object)) ?? '';
+					if (!options.nameFilter.test(objectName)) {
+						continue;
+					}
+				}
+				if (options.text) {
+					// oxlint-disable-next-line no-await-in-loop -- objects print in order, up to the limit
+					const value = await asset.read(object);
+					const objectName = typeof value.m_Name === 'string' ? value.m_Name : object.pathId.toString();
+					const script = textContent(value.m_Script);
+					if (script === null) {
+						throw new Error(
+							`object ${object.pathId} (${typeName(object.type) ?? object.classId}) has no m_Script field`,
+						);
+					}
+					matched++;
+					textRows.push({ name: objectName, script });
+					continue;
+				}
+				let rawValue: TypeTreeValue | undefined;
+				let value: unknown;
+				try {
+					// oxlint-disable-next-line no-await-in-loop -- objects print in order, up to the limit
+					rawValue = await asset.read(object);
+					value = toJson(rawValue, options.maxArray);
+				} catch (error) {
+					value = { error: errorText(error) };
+				}
+				let gameObject: string | undefined;
+				let renderMode: number | undefined;
+				if (options.joinGo && rawValue !== undefined && isObject(rawValue)) {
+					if (joinIndex === undefined) {
+						// oxlint-disable-next-line no-await-in-loop -- built lazily once per SerializedFile
+						joinIndex = await buildGoJoinIndex(asset);
+					}
+					if (object.classId === UnityClass.GameObject) {
+						try {
+							gameObject = stringField(rawValue, 'm_Name');
+						} catch {
+							// no name
+						}
+					} else if ('m_GameObject' in rawValue) {
+						try {
+							const goId = pptrField(rawValue, 'm_GameObject').pathId;
+							gameObject = joinIndex.goNames.get(goId);
+							if (object.classId === UnityClass.ParticleSystem) {
+								renderMode = joinIndex.particleRenderMode.get(goId);
+							}
+						} catch {
+							// no m_GameObject PPtr
+						}
+					}
+				}
+				const header: Record<string, unknown> = {
+					...(targets.length > 1 ? { bundle: bundleName } : {}),
+					node: asset.node.path,
+					pathId: object.pathId.toString(),
+					classId: object.classId,
+					type: typeName(object.type),
+					...(gameObject === undefined ? {} : { gameObject }),
+					...(renderMode === undefined ? {} : { renderMode }),
+					byteSize: object.byteSize,
+				};
+				const row = { ...header, value };
+				// allow --where and --pick to reference either top-level header keys or fields inside `value` directly
+				const queryView =
+					value !== null && typeof value === 'object' && !Array.isArray(value)
+						? { ...Object.fromEntries(Object.entries(value)), ...header, value }
+						: row;
+				if (options.where.length > 0 && !matchesWhere(queryView, options.where)) {
+					continue;
+				}
+				matched++;
+				const outputRow =
+					options.pick.length > 0
+						? {
+								...(targets.length > 1 ? { bundle: bundleName } : {}),
+								pathId: header.pathId,
+								type: header.type,
+								...(gameObject === undefined ? {} : { gameObject }),
+								...pickFields(queryView, options.pick),
+							}
+						: row;
+				if (options.json) {
+					jsonRows.push(outputRow);
+				} else {
+					console.log(JSON.stringify(outputRow));
+				}
+			}
 			if (matched >= options.limit) {
 				break;
 			}
-			if (!matches(object)) {
-				continue;
-			}
-			if (options.nameFilter !== undefined) {
-				// oxlint-disable-next-line no-await-in-loop -- peeks name before full decode, up to the limit
-				const objectName = (await asset.peekName(object)) ?? '';
-				if (!options.nameFilter.test(objectName)) {
-					continue;
-				}
-			}
-			matched++;
-			if (options.text) {
-				// oxlint-disable-next-line no-await-in-loop -- objects print in order, up to the limit
-				const value = await asset.read(object);
-				const objectName = typeof value.m_Name === 'string' ? value.m_Name : object.pathId.toString();
-				const script = textContent(value.m_Script);
-				if (script === null) {
-					throw new Error(
-						`object ${object.pathId} (${typeName(object.type) ?? object.classId}) has no m_Script field`,
-					);
-				}
-				textRows.push({ name: objectName, script });
-				continue;
-			}
-			const header = {
-				node: asset.node.path,
-				pathId: object.pathId.toString(),
-				classId: object.classId,
-				type: typeName(object.type),
-				byteSize: object.byteSize,
-			};
-			let value: unknown;
-			try {
-				// oxlint-disable-next-line no-await-in-loop -- objects print in order, up to the limit
-				value = toJson(await asset.read(object), options.maxArray);
-			} catch (error) {
-				value = { error: errorText(error) };
-			}
-			const row = { ...header, value };
-			if (options.json) {
-				jsonRows.push(row);
-			} else {
-				console.log(JSON.stringify(row, null, '\t'));
-			}
-		}
-		if (matched >= options.limit) {
-			break;
 		}
 	}
 	if (options.json) {

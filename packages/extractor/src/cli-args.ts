@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { ParseArgsOptionsConfig } from 'node:util';
 
 import type { Rect } from '@endfield-noclip/package-format/values';
@@ -11,8 +12,8 @@ export const DEFAULT_OUT = new URL('../../../out/', import.meta.url);
 
 /**
  * moves positionals behind `--` so negative numbers (cell coordinates, path ids) aren't parsed as short
- * options. an argument is an option when it starts with `-` and isn't a negative number; a string option's
- * separate value is kept with it
+ * options, and joins `-`-prefixed values onto string options (`--near -1,2,-3` → `--near=-1,2,-3`) so
+ * `node:util` `parseArgs` doesn't reject them as ambiguous flags.
  *
  * @param args raw arguments
  * @param options the `parseArgs` options config the result is parsed with
@@ -37,15 +38,71 @@ export const separatePositionals = (args: readonly string[], options: ParseArgsO
 			break;
 		}
 		if (arg.startsWith('-') && !/^-\.?\d/.test(arg)) {
-			flags.push(arg);
 			if (valueOptions.has(arg) && i + 1 < args.length) {
-				flags.push(args[++i]);
+				const value = args[++i];
+				if (value.startsWith('-')) {
+					flags.push(`${arg}=${value}`);
+				} else {
+					flags.push(arg, value);
+				}
+			} else {
+				flags.push(arg);
 			}
 		} else {
 			positionals.push(arg);
 		}
 	}
 	return [...flags, '--', ...positionals];
+};
+
+/**
+ * splits repeatable and/or comma-separated string option values (e.g. `--pick a,b --pick c`)
+ *
+ * @param values raw option values from `parseArgs` (`multiple: true`)
+ * @returns trimmed non-empty items in order
+ */
+export const parseList = (values: readonly string[] | undefined): string[] => {
+	if (values === undefined || values.length === 0) {
+		return [];
+	}
+	return values.flatMap((entry) => entry.split(',').map((part) => part.trim())).filter(Boolean);
+};
+
+/**
+ * reads non-empty trimmed lines from stdin (used by `--stdin` batch commands)
+ *
+ * @returns non-empty lines from `process.stdin`
+ */
+export const readStdinLines = async (): Promise<string[]> => {
+	const lines: string[] = [];
+	const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+	for await (const line of rl) {
+		const trimmed = line.trim();
+		if (trimmed.length > 0) {
+			lines.push(trimmed);
+		}
+	}
+	return lines;
+};
+
+/**
+ * resolves batch targets from positional arguments and/or `--stdin`, preserving order and deduplicating
+ *
+ * @param positionals positional target arguments
+ * @param stdin whether `--stdin` was passed
+ * @returns deduplicated list of targets
+ */
+export const collectTargets = async (positionals: readonly string[], stdin: boolean): Promise<string[]> => {
+	const raw = stdin ? [...positionals, ...(await readStdinLines())] : [...positionals];
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const item of raw) {
+		if (!seen.has(item)) {
+			seen.add(item);
+			out.push(item);
+		}
+	}
+	return out;
 };
 
 /**

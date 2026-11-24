@@ -28,11 +28,13 @@ import {
 	DEFAULT_OUT,
 	need as needArg,
 	parseIntegerSet,
+	parseList,
 	parseNumber,
 	parseNumbers,
 	parseOptionalInteger,
 	separatePositionals,
 } from '../cli-args.ts';
+import { matchesWhere, parseWhereList, pickFields, type WherePredicate } from '../cli-query.ts';
 import { compareStrings } from '../compare.ts';
 import { ignoreMissing } from '../errors.ts';
 import { DEBUG_DIR, STAND_INS_FILE, type StandInReport, type UnsupportedInput } from '../pack/debug.ts';
@@ -51,19 +53,22 @@ export const usage = `usage:
                                            inspect core.czar tile tree nodes, bounds, refs and distances
   audit instances <scene> [--name re] [--id N] [--blob <hash>] [--chain N] [--from x,y,z]
       [--limit n] [--json]                 trace packed instances to their blob, tile node and LOD chain
-  audit materials <scene|all> [--id N[,…]] [--shader re] [--name re] [--unsupported] [--undrawn]
-      [--gap re] [--error] [--packed] [--group] [--limit n] [--json]
+  audit materials <scene|all> [--id N[,…]] [--shader re] [--name re] [--reason re] [--unsupported]
+      [--undrawn] [--gap re] [--error] [--packed] [--group] [--where expr] [--pick a,b] [--limit n] [--json]
                                            query debug/assets.json materials; --id is repeatable/comma-separated;
-                                           --packed includes core.czar entry; --group tallies by shader/reason
+                                           --reason matches unsupported/undrawn/error; --packed includes core.czar
+                                           entry; --group tallies by shader/reason
   audit geometries <scene|all> [--id N[,…]] [--name re] [--unanimated] [--error] [--tangent-uv]
-      [--packed] [--min-span m] [--stats] [--limit n] [--json]
+      [--packed] [--min-span m] [--stats] [--where expr] [--pick a,b] [--limit n] [--json]
                                            query debug/assets.json geometries; --packed/--min-span/--stats read
                                            core.czar geometry table (vertex counts, bounds, span)
-  audit textures <scene> [--id N[,…]] [--name re] [--error] [--limit n] [--json]
-                                           query debug/assets.json textures (by table id, name, or error)
-  audit stand-ins <scene> [--reason re] [--name re] [--group] [--limit n] [--json]
-                                           query debug/stand-ins.json; --group tallies by reason
-  audit interactives <scene> [--reason re] [--group] [--limit n] [--json]
+  audit textures <scene|all> [--id N[,…]] [--name re] [--error] [--where expr] [--pick a,b]
+      [--limit n] [--json]                 query debug/assets.json textures (by table id, name, or error)
+  audit stand-ins <scene|all> [--reason re] [--name re] [--near x,y,z [--radius m]] [--group]
+      [--where expr] [--pick a,b] [--limit n] [--json]
+                                           query debug/stand-ins.json; --group tallies by reason;
+                                           --near sorts positioned stand-ins nearest first within --radius (default 50 m)
+  audit interactives <scene|all> [--reason re] [--group] [--where expr] [--pick a,b] [--limit n] [--json]
                                            query debug/unsupported-interactives.json
   audit water <scene> [--near x,y,z] [--radius m] [--config re] [--packed] [--json]
                                            summarize debug/water.json, or query packed core.czar surfaces/configs
@@ -102,6 +107,8 @@ const OPTIONS = {
 	unanimated: { type: 'boolean', default: false },
 	'tangent-uv': { type: 'boolean', default: false },
 	group: { type: 'boolean', default: false },
+	where: { type: 'string', multiple: true },
+	pick: { type: 'string', multiple: true },
 	limit: { type: 'string' },
 	json: { type: 'boolean', default: false },
 } as const;
@@ -115,6 +122,8 @@ export const run = async (args: string[]): Promise<void> => {
 	const [sub, scene, extra] = positionals;
 	const limit = parseLimit(values.limit);
 	const ids = parseIntegerSet(values.id, '--id');
+	const where = parseWhereList(values.where);
+	const pick = parseList(values.pick);
 	const outRoot = fileURLToPath(DEFAULT_OUT);
 
 	if (sub === 'list') {
@@ -136,35 +145,84 @@ export const run = async (args: string[]): Promise<void> => {
 		return [...ids][0];
 	};
 
-	if (target === 'all' && (sub === 'materials' || sub === 'geometries')) {
+	const multiSubs = new Set(['materials', 'geometries', 'textures', 'stand-ins', 'interactives']);
+	if (target === 'all' && sub !== undefined && multiSubs.has(sub)) {
 		const packages = await listPackedDirs(values.dir ?? outRoot);
-		if (sub === 'materials') {
-			await auditMaterialsMulti(packages, {
-				ids,
-				shader: optionalRegex(values.shader),
-				name: optionalRegex(values.name),
-				gap: optionalRegex(values.gap),
-				unsupported: values.unsupported,
-				undrawn: values.undrawn,
-				error: values.error,
-				packed: values.packed,
-				group: values.group,
-				limit,
-				json: values.json,
-			});
-		} else {
-			await auditGeometriesMulti(packages, {
-				ids,
-				name: optionalRegex(values.name),
-				unanimated: values.unanimated,
-				error: values.error,
-				tangentUv: values['tangent-uv'],
-				packed: values.packed || values['min-span'] !== undefined || values.stats,
-				minSpan: values['min-span'] === undefined ? undefined : parseNumber(values['min-span'], '--min-span'),
-				stats: values.stats,
-				limit,
-				json: values.json,
-			});
+		switch (sub) {
+			case 'materials': {
+				await auditMaterialsMulti(packages, {
+					ids,
+					shader: optionalRegex(values.shader),
+					name: optionalRegex(values.name),
+					reason: optionalRegex(values.reason),
+					gap: optionalRegex(values.gap),
+					unsupported: values.unsupported,
+					undrawn: values.undrawn,
+					error: values.error,
+					packed: values.packed,
+					group: values.group,
+					where,
+					pick,
+					limit,
+					json: values.json,
+				});
+				break;
+			}
+			case 'geometries': {
+				await auditGeometriesMulti(packages, {
+					ids,
+					name: optionalRegex(values.name),
+					unanimated: values.unanimated,
+					error: values.error,
+					tangentUv: values['tangent-uv'],
+					packed: values.packed || values['min-span'] !== undefined || values.stats,
+					minSpan:
+						values['min-span'] === undefined ? undefined : parseNumber(values['min-span'], '--min-span'),
+					stats: values.stats,
+					where,
+					pick,
+					limit,
+					json: values.json,
+				});
+				break;
+			}
+			case 'textures': {
+				await auditTexturesMulti(packages, {
+					ids,
+					name: optionalRegex(values.name),
+					error: values.error,
+					where,
+					pick,
+					limit,
+					json: values.json,
+				});
+				break;
+			}
+			case 'stand-ins': {
+				await auditStandInsMulti(packages, {
+					reason: optionalRegex(values.reason),
+					name: optionalRegex(values.name),
+					near: values.near === undefined ? undefined : parseNumbers(values.near, 3, '--near'),
+					radius: values.radius === undefined ? 50 : parseNumber(values.radius, '--radius'),
+					group: values.group,
+					where,
+					pick,
+					limit,
+					json: values.json,
+				});
+				break;
+			}
+			case 'interactives': {
+				await auditInteractivesMulti(packages, {
+					reason: optionalRegex(values.reason),
+					group: values.group,
+					where,
+					pick,
+					limit,
+					json: values.json,
+				});
+				break;
+			}
 		}
 		return;
 	}
@@ -205,12 +263,15 @@ export const run = async (args: string[]): Promise<void> => {
 				ids,
 				shader: optionalRegex(values.shader),
 				name: optionalRegex(values.name),
+				reason: optionalRegex(values.reason),
 				gap: optionalRegex(values.gap),
 				unsupported: values.unsupported,
 				undrawn: values.undrawn,
 				error: values.error,
 				packed: values.packed,
 				group: values.group,
+				where,
+				pick,
 				limit,
 				json: values.json,
 			});
@@ -226,6 +287,8 @@ export const run = async (args: string[]): Promise<void> => {
 				packed: values.packed || values['min-span'] !== undefined || values.stats,
 				minSpan: values['min-span'] === undefined ? undefined : parseNumber(values['min-span'], '--min-span'),
 				stats: values.stats,
+				where,
+				pick,
 				limit,
 				json: values.json,
 			});
@@ -236,6 +299,8 @@ export const run = async (args: string[]): Promise<void> => {
 				ids,
 				name: optionalRegex(values.name),
 				error: values.error,
+				where,
+				pick,
 				limit,
 				json: values.json,
 			});
@@ -245,7 +310,11 @@ export const run = async (args: string[]): Promise<void> => {
 			await auditStandIns(debugDir, {
 				reason: optionalRegex(values.reason),
 				name: optionalRegex(values.name),
+				near: values.near === undefined ? undefined : parseNumbers(values.near, 3, '--near'),
+				radius: values.radius === undefined ? 50 : parseNumber(values.radius, '--radius'),
 				group: values.group,
+				where,
+				pick,
 				limit,
 				json: values.json,
 			});
@@ -255,6 +324,8 @@ export const run = async (args: string[]): Promise<void> => {
 			await auditInteractives(debugDir, {
 				reason: optionalRegex(values.reason),
 				group: values.group,
+				where,
+				pick,
 				limit,
 				json: values.json,
 			});
@@ -500,12 +571,15 @@ interface AuditMaterialsOptions {
 	ids: ReadonlySet<number> | undefined;
 	shader: RegExp | undefined;
 	name: RegExp | undefined;
+	reason: RegExp | undefined;
 	gap: RegExp | undefined;
 	unsupported: boolean;
 	undrawn: boolean;
 	error: boolean;
 	packed: boolean;
 	group: boolean;
+	where: readonly WherePredicate[];
+	pick: readonly string[];
 	limit: number;
 	json: boolean;
 }
@@ -529,6 +603,12 @@ const filterMaterials = (
 		) {
 			continue;
 		}
+		if (options.reason !== undefined) {
+			const hay = [row.unsupported, row.undrawn, row.error].filter(Boolean).join(' ');
+			if (!options.reason.test(hay)) {
+				continue;
+			}
+		}
 		if (options.unsupported && !row.unsupported) {
 			continue;
 		}
@@ -548,6 +628,26 @@ const filterMaterials = (
 	}
 	return matched;
 };
+
+const materialGroupKey = (row: DebugMaterialRow): string => {
+	const shader = row.shader ?? '(no shader)';
+	if (row.error) {
+		return `${shader}  [error: ${row.error}]`;
+	}
+	if (row.unsupported) {
+		return `${shader}  [unsupported: ${row.unsupported}]`;
+	}
+	if (row.undrawn) {
+		return `${shader}  [undrawn: ${row.undrawn}]`;
+	}
+	if ((row.keywordsNotDrawn?.length ?? 0) > 0) {
+		return `${shader}  [gaps: ${row.keywordsNotDrawn!.join(' ')}]`;
+	}
+	return shader;
+};
+
+const projectAuditRows = <T extends object>(rows: readonly T[], pick: readonly string[]): unknown[] =>
+	pick.length === 0 ? [...rows] : rows.map((row) => pickFields(row, pick));
 
 const formatMaterialStatus = (row: DebugMaterialRow): string => {
 	const status: string[] = [];
@@ -572,29 +672,19 @@ const auditMaterials = async (
 	options: AuditMaterialsOptions,
 ): Promise<void> => {
 	const { materials } = await readDebugJson<DebugAssetsFile>(debugDir, 'assets.json');
-	const matched = filterMaterials(materials, options);
+	let matched: (DebugMaterialRow & { id: number; packed?: unknown })[] = filterMaterials(materials, options);
+
+	if (options.packed) {
+		await using pkg = await PackedPackage.open(packageDir);
+		const table = await pkg.materials();
+		matched = matched.map((row) => ({ ...row, packed: table.entries[row.id] ?? null }));
+	}
+	if (options.where.length > 0) {
+		matched = matched.filter((row) => matchesWhere(row, options.where));
+	}
 
 	if (options.group) {
-		const groups = tallyBy(
-			matched,
-			(row) => {
-				const shader = row.shader ?? '(no shader)';
-				if (row.error) {
-					return `${shader}  [error: ${row.error}]`;
-				}
-				if (row.unsupported) {
-					return `${shader}  [unsupported: ${row.unsupported}]`;
-				}
-				if (row.undrawn) {
-					return `${shader}  [undrawn: ${row.undrawn}]`;
-				}
-				if ((row.keywordsNotDrawn?.length ?? 0) > 0) {
-					return `${shader}  [gaps: ${row.keywordsNotDrawn!.join(' ')}]`;
-				}
-				return shader;
-			},
-			(row) => row.name ?? row.path ?? row.hash,
-		);
+		const groups = tallyBy(matched, materialGroupKey, (row) => row.name ?? row.path ?? row.hash);
 		const shown = groups.slice(0, options.limit);
 		if (options.json) {
 			console.log(JSON.stringify(shown, null, '\t'));
@@ -608,19 +698,10 @@ const auditMaterials = async (
 	}
 
 	const shown = matched.slice(0, options.limit);
-	if (options.packed) {
-		await using pkg = await PackedPackage.open(packageDir);
-		const table = await pkg.materials();
-		const detailed = shown.map((row) => ({ ...row, packed: table.entries[row.id] ?? null }));
-		const single = options.ids !== undefined && options.ids.size === 1 && detailed.length === 1;
-		console.log(JSON.stringify(single ? detailed[0] : detailed, null, '\t'));
-		console.error(
-			`${shown.length} of ${matched.length} matching materials${matched.length > options.limit ? ' (raise --limit for more)' : ''}`,
-		);
-		return;
-	}
-	if (options.json) {
-		console.log(JSON.stringify(shown, null, '\t'));
+	if (options.packed || options.json || options.pick.length > 0) {
+		const out = projectAuditRows(shown, options.pick);
+		const single = options.ids !== undefined && options.ids.size === 1 && out.length === 1;
+		console.log(JSON.stringify(single ? out[0] : out, null, '\t'));
 	} else {
 		for (const row of shown) {
 			const label = row.path ?? row.object ?? row.hash;
@@ -638,7 +719,7 @@ const auditMaterialsMulti = async (
 	packages: readonly { name: string; dir: string }[],
 	options: AuditMaterialsOptions,
 ): Promise<void> => {
-	const matched: (DebugMaterialRow & { package: string; id: number; packed?: unknown })[] = [];
+	let matched: (DebugMaterialRow & { package: string; id: number; packed?: unknown })[] = [];
 	for (const { name, dir } of packages) {
 		// oxlint-disable-next-line no-await-in-loop -- reads small debug files per package
 		const assets = await readOptionalJson<DebugAssetsFile>(join(dir, DEBUG_DIR, 'assets.json'));
@@ -663,9 +744,31 @@ const auditMaterialsMulti = async (
 			}
 		}
 	}
+	if (options.where.length > 0) {
+		matched = matched.filter((row) => matchesWhere(row, options.where));
+	}
+	if (options.group) {
+		const groups = tallyBy(
+			matched,
+			materialGroupKey,
+			(row) => `${row.package}:${row.name ?? row.path ?? row.hash}`,
+		);
+		const shown = groups.slice(0, options.limit);
+		if (options.json) {
+			console.log(JSON.stringify(shown, null, '\t'));
+		} else {
+			for (const g of shown) {
+				console.log(`${String(g.count).padStart(5)}  ${g.key}  (e.g. ${g.samples.join(', ')})`);
+			}
+		}
+		console.error(
+			`${matched.length} materials in ${groups.length} groups across ${packages.length} packages`,
+		);
+		return;
+	}
 	const shown = matched.slice(0, options.limit);
-	if (options.json || options.packed) {
-		console.log(JSON.stringify(shown, null, '\t'));
+	if (options.json || options.packed || options.pick.length > 0) {
+		console.log(JSON.stringify(projectAuditRows(shown, options.pick), null, '\t'));
 	} else {
 		for (const row of shown) {
 			const label = row.path ?? row.object ?? row.hash;
@@ -692,6 +795,8 @@ interface AuditGeometriesOptions {
 	packed: boolean;
 	minSpan: number | undefined;
 	stats: boolean;
+	where: readonly WherePredicate[];
+	pick: readonly string[];
 	limit: number;
 	json: boolean;
 }
@@ -725,7 +830,8 @@ const collectGeometries = async (
 		options.tangentUv ||
 		options.packed ||
 		options.minSpan !== undefined ||
-		options.stats;
+		options.stats ||
+		options.where.length > 0;
 
 	let table: Awaited<ReturnType<PackedPackage['geometries']>> | null = null;
 	if (options.packed) {
@@ -787,6 +893,9 @@ const collectGeometries = async (
 						attributes: ready.attributes,
 					}),
 		};
+		if (options.where.length > 0 && !matchesWhere(detail, options.where)) {
+			continue;
+		}
 		matched.push(detail);
 	}
 	return { matched, totalReady, totalVerts };
@@ -841,8 +950,8 @@ const auditGeometries = async (
 		matched.sort((a, b) => (b.span ?? 0) - (a.span ?? 0));
 	}
 	const shown = matched.slice(0, options.limit);
-	if (options.json) {
-		console.log(JSON.stringify(shown, null, '\t'));
+	if (options.json || options.pick.length > 0) {
+		console.log(JSON.stringify(projectAuditRows(shown, options.pick), null, '\t'));
 	} else {
 		for (const row of shown) {
 			const notes: string[] = [];
@@ -902,8 +1011,8 @@ const auditGeometriesMulti = async (
 		matched.sort((a, b) => (b.span ?? 0) - (a.span ?? 0));
 	}
 	const shown = matched.slice(0, options.limit);
-	if (options.json) {
-		console.log(JSON.stringify(shown, null, '\t'));
+	if (options.json || options.pick.length > 0) {
+		console.log(JSON.stringify(projectAuditRows(shown, options.pick), null, '\t'));
 	} else {
 		for (const row of shown) {
 			const span = row.span === undefined ? '' : `span=${row.span.toFixed(2)}m verts=${row.vertexCount}  `;
@@ -915,18 +1024,22 @@ const auditGeometriesMulti = async (
 	console.error(`${shown.length} of ${matched.length} geometries across ${packages.length} packages`);
 };
 
-const auditTextures = async (
-	debugDir: string,
-	options: {
-		ids: ReadonlySet<number> | undefined;
-		name: RegExp | undefined;
-		error: boolean;
-		limit: number;
-		json: boolean;
-	},
-): Promise<void> => {
-	const { textures = [] } = await readDebugJson<DebugAssetsFile>(debugDir, 'assets.json');
-	const matched: (DebugTextureRow & { id: number })[] = [];
+interface AuditTexturesOptions {
+	ids: ReadonlySet<number> | undefined;
+	name: RegExp | undefined;
+	error: boolean;
+	where: readonly WherePredicate[];
+	pick: readonly string[];
+	limit: number;
+	json: boolean;
+}
+
+const filterTextures = (
+	textures: readonly DebugTextureRow[],
+	options: AuditTexturesOptions,
+	pkgName?: string,
+): (DebugTextureRow & { id: number; package?: string })[] => {
+	const matched: (DebugTextureRow & { id: number; package?: string })[] = [];
 	for (const [index, row] of textures.entries()) {
 		const id = row.id ?? index;
 		if (options.ids !== undefined && !options.ids.has(id)) {
@@ -942,12 +1055,23 @@ const auditTextures = async (
 		if (options.error && !row.error) {
 			continue;
 		}
-		matched.push({ ...row, id });
+		const item = { ...(pkgName === undefined ? {} : { package: pkgName }), ...row, id };
+		if (options.where.length > 0 && !matchesWhere(item, options.where)) {
+			continue;
+		}
+		matched.push(item);
 	}
+	return matched;
+};
+
+const auditTextures = async (debugDir: string, options: AuditTexturesOptions): Promise<void> => {
+	const { textures = [] } = await readDebugJson<DebugAssetsFile>(debugDir, 'assets.json');
+	const matched = filterTextures(textures, options);
 	const shown = matched.slice(0, options.limit);
-	if (options.json) {
-		const single = options.ids !== undefined && options.ids.size === 1 && shown.length === 1;
-		console.log(JSON.stringify(single ? shown[0] : shown, null, '\t'));
+	if (options.json || options.pick.length > 0) {
+		const out = projectAuditRows(shown, options.pick);
+		const single = options.ids !== undefined && options.ids.size === 1 && out.length === 1;
+		console.log(JSON.stringify(single ? out[0] : out, null, '\t'));
 	} else {
 		for (const row of shown) {
 			const err = row.error ? `  ERROR: ${row.error}` : '';
@@ -961,87 +1085,230 @@ const auditTextures = async (
 	);
 };
 
+const auditTexturesMulti = async (
+	packages: readonly { name: string; dir: string }[],
+	options: AuditTexturesOptions,
+): Promise<void> => {
+	const matched: (DebugTextureRow & { id: number; package?: string })[] = [];
+	for (const { name, dir } of packages) {
+		// oxlint-disable-next-line no-await-in-loop -- reads small debug files per package
+		const assets = await readOptionalJson<DebugAssetsFile>(join(dir, DEBUG_DIR, 'assets.json'));
+		if (assets === null) {
+			continue;
+		}
+		matched.push(...filterTextures(assets.textures ?? [], options, name));
+	}
+	const shown = matched.slice(0, options.limit);
+	if (options.json || options.pick.length > 0) {
+		console.log(JSON.stringify(projectAuditRows(shown, options.pick), null, '\t'));
+	} else {
+		for (const row of shown) {
+			const err = row.error ? `  ERROR: ${row.error}` : '';
+			console.log(
+				`${(row.package ?? '').padEnd(18)} ${String(row.id).padStart(6)}  ${(row.name ?? '-').padEnd(40)} ${row.object ?? '-'}${err}`,
+			);
+		}
+	}
+	console.error(
+		`${shown.length} of ${matched.length} textures across ${packages.length} packages${matched.length > options.limit ? ' (raise --limit for more)' : ''}`,
+	);
+};
+
 // #endregion
 
 // #region stand-ins & interactives
 
-const auditStandIns = async (
-	debugDir: string,
-	options: {
-		reason: RegExp | undefined;
-		name: RegExp | undefined;
-		group: boolean;
-		limit: number;
-		json: boolean;
-	},
-): Promise<void> => {
+interface AuditStandInsOptions {
+	reason: RegExp | undefined;
+	name: RegExp | undefined;
+	near: number[] | undefined;
+	radius: number;
+	group: boolean;
+	where: readonly WherePredicate[];
+	pick: readonly string[];
+	limit: number;
+	json: boolean;
+}
+
+type StandInEntry = StandInReport & { package?: string; distance?: number };
+
+const filterStandIns = (
+	rows: readonly StandInReport[],
+	options: AuditStandInsOptions,
+	pkgName?: string,
+): StandInEntry[] => {
+	const matched: StandInEntry[] = [];
+	for (const row of rows) {
+		if (options.reason !== undefined && !options.reason.test(row.reason)) {
+			continue;
+		}
+		if (options.name !== undefined && !options.name.test(row.name) && !options.name.test(row.path)) {
+			continue;
+		}
+		let distance: number | undefined;
+		if (options.near !== undefined) {
+			if (row.position === null) {
+				continue;
+			}
+			const dx = row.position[0] - options.near[0];
+			const dy = row.position[1] - options.near[1];
+			const dz = row.position[2] - options.near[2];
+			distance = Math.hypot(dx, dy, dz);
+			if (distance > options.radius) {
+				continue;
+			}
+		}
+		const item: StandInEntry = {
+			...(pkgName === undefined ? {} : { package: pkgName }),
+			...row,
+			...(distance === undefined ? {} : { distance: +distance.toFixed(2) }),
+		};
+		if (options.where.length > 0 && !matchesWhere(item, options.where)) {
+			continue;
+		}
+		matched.push(item);
+	}
+	return matched;
+};
+
+const emitStandIns = (matched: StandInEntry[], options: AuditStandInsOptions, scopeNote: string): void => {
+	if (options.near !== undefined) {
+		matched.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+	}
+	if (options.group) {
+		const groups = tallyBy(
+			matched,
+			(row) => row.reason,
+			(row) =>
+				`${row.package === undefined ? '' : `${row.package}:`}${row.name} (${row.path.split('/').pop()})`,
+		);
+		const shown = groups.slice(0, options.limit);
+		if (options.json) {
+			console.log(JSON.stringify(shown, null, '\t'));
+		} else {
+			for (const g of shown) {
+				console.log(`${String(g.count).padStart(5)}  ${g.key}  (e.g. ${g.samples.join(', ')})`);
+			}
+		}
+		console.error(`${matched.length} stand-ins in ${groups.length} reasons${scopeNote}`);
+		return;
+	}
+	const shown = matched.slice(0, options.limit);
+	if (options.json || options.pick.length > 0) {
+		console.log(JSON.stringify(projectAuditRows(shown, options.pick), null, '\t'));
+	} else {
+		for (const row of shown) {
+			const pkgCol = row.package === undefined ? '' : `${row.package.padEnd(18)} `;
+			const distCol = row.distance === undefined ? '' : `${row.distance.toFixed(1).padStart(6)} m  `;
+			const pos = row.position === null ? '-' : row.position.join(',');
+			console.log(`${pkgCol}${distCol}${pos.padEnd(20)} ${row.name.padEnd(32)} ${row.reason}  (${row.path})`);
+		}
+	}
+	console.error(`${shown.length} of ${matched.length} stand-ins${scopeNote}`);
+};
+
+const auditStandIns = async (debugDir: string, options: AuditStandInsOptions): Promise<void> => {
 	const rows = await readDebugJson<StandInReport[]>(debugDir, STAND_INS_FILE);
+	const unpositioned = options.near !== undefined ? rows.filter((r) => r.position === null).length : 0;
+	const matched = filterStandIns(rows, options);
+	const note = unpositioned > 0 ? ` (${unpositioned} unpositioned prefab stand-ins skipped by --near)` : '';
+	emitStandIns(matched, options, note);
+};
+
+const auditStandInsMulti = async (
+	packages: readonly { name: string; dir: string }[],
+	options: AuditStandInsOptions,
+): Promise<void> => {
+	const matched: StandInEntry[] = [];
+	for (const { name, dir } of packages) {
+		// oxlint-disable-next-line no-await-in-loop -- reads small debug files per package
+		const rows = await readOptionalJson<StandInReport[]>(join(dir, DEBUG_DIR, STAND_INS_FILE));
+		if (rows === null) {
+			continue;
+		}
+		matched.push(...filterStandIns(rows, options, name));
+	}
+	emitStandIns(matched, options, ` across ${packages.length} packages`);
+};
+
+interface AuditInteractivesOptions {
+	reason: RegExp | undefined;
+	group: boolean;
+	where: readonly WherePredicate[];
+	pick: readonly string[];
+	limit: number;
+	json: boolean;
+}
+
+const emitInteractives = (
+	matched: readonly (UnsupportedInput & { package?: string })[],
+	options: AuditInteractivesOptions,
+	scopeNote: string,
+): void => {
+	if (options.group) {
+		const groups = tallyBy(
+			matched,
+			(row) => row.reason,
+			(row) => (row.package === undefined ? row.path : `${row.package}:${row.path}`),
+		);
+		const shown = groups.slice(0, options.limit);
+		if (options.json) {
+			console.log(JSON.stringify(shown, null, '\t'));
+		} else {
+			for (const g of shown) {
+				console.log(`${String(g.count).padStart(5)}  ${g.key}  (e.g. ${g.samples.join(', ')})`);
+			}
+		}
+		console.error(`${matched.length} unsupported interactives in ${groups.length} reasons${scopeNote}`);
+		return;
+	}
+	const shown = matched.slice(0, options.limit);
+	if (options.json || options.pick.length > 0) {
+		console.log(JSON.stringify(projectAuditRows(shown, options.pick), null, '\t'));
+	} else {
+		for (const row of shown) {
+			const pkgCol = row.package === undefined ? '' : `${row.package.padEnd(18)} `;
+			console.log(`${pkgCol}${row.path.padEnd(44)} ${row.reason}`);
+		}
+	}
+	console.error(`${shown.length} of ${matched.length} unsupported interactives${scopeNote}`);
+};
+
+const auditInteractives = async (debugDir: string, options: AuditInteractivesOptions): Promise<void> => {
+	const rows = await readDebugJson<UnsupportedInput[]>(debugDir, 'unsupported-interactives.json');
 	const matched = rows.filter(
 		(row) =>
 			(options.reason === undefined || options.reason.test(row.reason)) &&
-			(options.name === undefined || options.name.test(row.name) || options.name.test(row.path)),
+			(options.where.length === 0 || matchesWhere(row, options.where)),
 	);
-	if (options.group) {
-		const groups = tallyBy(
-			matched,
-			(row) => row.reason,
-			(row) => `${row.name} (${row.path.split('/').pop()})`,
-		);
-		const shown = groups.slice(0, options.limit);
-		if (options.json) {
-			console.log(JSON.stringify(shown, null, '\t'));
-		} else {
-			for (const g of shown) {
-				console.log(`${String(g.count).padStart(5)}  ${g.key}  (e.g. ${g.samples.join(', ')})`);
-			}
-		}
-		console.error(`${matched.length} stand-ins in ${groups.length} reasons`);
-		return;
-	}
-	const shown = matched.slice(0, options.limit);
-	if (options.json) {
-		console.log(JSON.stringify(shown, null, '\t'));
-	} else {
-		for (const row of shown) {
-			const pos = row.position === null ? '-' : row.position.join(',');
-			console.log(`${pos.padEnd(20)} ${row.name.padEnd(32)} ${row.reason}  (${row.path})`);
-		}
-	}
-	console.error(`${shown.length} of ${matched.length} stand-ins`);
+	emitInteractives(matched, options, '');
 };
 
-const auditInteractives = async (
-	debugDir: string,
-	options: { reason: RegExp | undefined; group: boolean; limit: number; json: boolean },
+const auditInteractivesMulti = async (
+	packages: readonly { name: string; dir: string }[],
+	options: AuditInteractivesOptions,
 ): Promise<void> => {
-	const rows = await readDebugJson<UnsupportedInput[]>(debugDir, 'unsupported-interactives.json');
-	const matched = rows.filter((row) => options.reason === undefined || options.reason.test(row.reason));
-	if (options.group) {
-		const groups = tallyBy(
-			matched,
-			(row) => row.reason,
-			(row) => row.path,
+	const matched: (UnsupportedInput & { package: string })[] = [];
+	for (const { name, dir } of packages) {
+		// oxlint-disable-next-line no-await-in-loop -- reads small debug files per package
+		const rows = await readOptionalJson<UnsupportedInput[]>(
+			join(dir, DEBUG_DIR, 'unsupported-interactives.json'),
 		);
-		const shown = groups.slice(0, options.limit);
-		if (options.json) {
-			console.log(JSON.stringify(shown, null, '\t'));
-		} else {
-			for (const g of shown) {
-				console.log(`${String(g.count).padStart(5)}  ${g.key}  (e.g. ${g.samples.join(', ')})`);
+		if (rows === null) {
+			continue;
+		}
+		for (const row of rows) {
+			if (options.reason !== undefined && !options.reason.test(row.reason)) {
+				continue;
 			}
-		}
-		console.error(`${matched.length} unsupported interactives in ${groups.length} reasons`);
-		return;
-	}
-	const shown = matched.slice(0, options.limit);
-	if (options.json) {
-		console.log(JSON.stringify(shown, null, '\t'));
-	} else {
-		for (const row of shown) {
-			console.log(`${row.path.padEnd(44)} ${row.reason}`);
+			const item = { package: name, ...row };
+			if (options.where.length > 0 && !matchesWhere(item, options.where)) {
+				continue;
+			}
+			matched.push(item);
 		}
 	}
-	console.error(`${shown.length} of ${matched.length} unsupported interactives`);
+	emitInteractives(matched, options, ` across ${packages.length} packages`);
 };
 
 // #endregion

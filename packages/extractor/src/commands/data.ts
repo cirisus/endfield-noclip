@@ -9,6 +9,7 @@ import { parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 import { definite } from '@mary-ext/array-fns';
 
 import {
+	collectTargets,
 	hashText,
 	jsonReplacer,
 	need as needArg,
@@ -30,7 +31,7 @@ export const summary = 'search asset paths, resolve hashes, and read SparkBuffer
 /** command usage, available without opening the install */
 export const usage = `usage:
   data paths <re> [--limit n] [--json]               search both path catalogs, with hashes and bundles
-  data resolve <path|hash>                           path ↔ hash, then asset → bundle + dependencies
+  data resolve <path|hash>... [--stdin] [--json]     path ↔ hash, then asset → bundle + dependencies
   data tables [--filter re]                          list SparkBuffer config tables in the Table group
   data table <name> [--key k] [--filter re] [--limit n] [--json]
                                                      decode a SparkBuffer table (e.g. DungeonTable)
@@ -48,6 +49,7 @@ const OPTIONS = {
 	emissive: { type: 'string' },
 	filter: { type: 'string' },
 	limit: { type: 'string' },
+	stdin: { type: 'boolean', default: false },
 	json: { type: 'boolean', default: false },
 } as const;
 
@@ -57,7 +59,8 @@ export const run = async (args: string[]): Promise<void> => {
 		allowPositionals: true,
 		options: OPTIONS,
 	});
-	const [sub, arg] = positionals;
+	const [sub, ...rest] = positionals;
+	const arg = rest[0];
 	const limit = parseLimit(values.limit);
 	const filter = values.filter === undefined ? undefined : new RegExp(values.filter, 'i');
 
@@ -68,7 +71,11 @@ export const run = async (args: string[]): Promise<void> => {
 				break;
 			}
 			case 'resolve': {
-				await resolve(context.world, needArg(arg, 'path or hash', usage));
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(`missing path or hash\n${usage}`);
+				}
+				await resolveMany(context.world, targets, values.json);
 				break;
 			}
 			case 'tables': {
@@ -168,42 +175,97 @@ const findPaths = async (world: WorldIndex, pattern: RegExp, limit: number, json
 	);
 };
 
-const resolve = async (world: WorldIndex, query: string): Promise<void> => {
+const resolveMany = async (world: WorldIndex, queries: readonly string[], json: boolean): Promise<void> => {
 	const manifest = await world.manifest();
-	let hashes: bigint[];
-	const parsed = parseHash(query);
-	if (parsed !== null) {
-		hashes = [parsed];
-		const path = await world.pathOf(parsed);
-		console.log(`hash ${parsed} (${hashText(parsed)}) → ${path ?? '(not in StringPathHash)'}`);
-	} else {
-		hashes = await world.hashesOf(query);
-		if (hashes.length === 0) {
-			throw new Error(`${query} is not in StringPathHash`);
+	const jsonOut: unknown[] = [];
+	for (const [index, query] of queries.entries()) {
+		if (!json && index > 0) {
+			console.log('');
 		}
-		console.log(`${query} → hash ${hashes.map((hash) => `${hash} (0x${hash.toString(16)})`).join(', ')}`);
-	}
-
-	for (const hash of hashes) {
-		const assets = manifest.findAssets(hash);
-		if (assets.length === 0) {
-			console.log('  not a bundled asset (no manifest AssetInfo)');
-		}
-		const seen = new Set<number>();
-		for (const asset of assets) {
-			if (seen.has(asset.bundleIndex)) {
+		let hashes: bigint[];
+		let path: string | null = null;
+		const parsed = parseHash(query);
+		if (parsed !== null) {
+			hashes = [parsed];
+			// oxlint-disable-next-line no-await-in-loop -- preserves input order for batch output
+			path = (await world.pathOf(parsed)) ?? null;
+			if (!json) {
+				console.log(`hash ${parsed} (${hashText(parsed)}) → ${path ?? '(not in StringPathHash)'}`);
+			}
+		} else {
+			// oxlint-disable-next-line no-await-in-loop -- preserves input order for batch output
+			hashes = await world.hashesOf(query);
+			path = query;
+			if (hashes.length === 0) {
+				if (queries.length === 1) {
+					throw new Error(`${query} is not in StringPathHash`);
+				}
+				if (json) {
+					jsonOut.push({ query, error: 'not in StringPathHash' });
+				} else {
+					console.log(`${query} → (not in StringPathHash)`);
+				}
 				continue;
 			}
-			seen.add(asset.bundleIndex);
-			const bundle = manifest.bundle(asset.bundleIndex);
-			console.log(`  asset ${manifest.assetPath(asset)} (${asset.assetSize} bytes)`);
-			console.log(`  bundle #${bundle.index} ${bundle.name}`);
-			console.log(`    direct deps (${bundle.directDependencies.length}):`);
-			for (const dep of bundle.directDependencies) {
-				console.log(`      ${manifest.bundleName(dep)}`);
+			if (!json) {
+				console.log(`${query} → hash ${hashes.map((hash) => `${hash} (0x${hash.toString(16)})`).join(', ')}`);
 			}
-			console.log(`    closure: ${bundle.dependencies.length} bundles`);
 		}
+
+		const bundles: {
+			hash: string;
+			asset: string;
+			assetSize: number;
+			bundleIndex: number;
+			bundle: string;
+			directDependencies: string[];
+			closureCount: number;
+		}[] = [];
+		for (const hash of hashes) {
+			const assets = manifest.findAssets(hash);
+			if (assets.length === 0 && !json) {
+				console.log('  not a bundled asset (no manifest AssetInfo)');
+			}
+			const seen = new Set<number>();
+			for (const asset of assets) {
+				if (seen.has(asset.bundleIndex)) {
+					continue;
+				}
+				seen.add(asset.bundleIndex);
+				const bundle = manifest.bundle(asset.bundleIndex);
+				const directDeps = bundle.directDependencies.map((dep) => manifest.bundleName(dep));
+				if (json) {
+					bundles.push({
+						hash: hashText(hash),
+						asset: manifest.assetPath(asset),
+						assetSize: asset.assetSize,
+						bundleIndex: bundle.index,
+						bundle: bundle.name,
+						directDependencies: directDeps,
+						closureCount: bundle.dependencies.length,
+					});
+				} else {
+					console.log(`  asset ${manifest.assetPath(asset)} (${asset.assetSize} bytes)`);
+					console.log(`  bundle #${bundle.index} ${bundle.name}`);
+					console.log(`    direct deps (${directDeps.length}):`);
+					for (const dep of directDeps) {
+						console.log(`      ${dep}`);
+					}
+					console.log(`    closure: ${bundle.dependencies.length} bundles`);
+				}
+			}
+		}
+		if (json) {
+			jsonOut.push({
+				query,
+				path,
+				hashes: hashes.map((h) => ({ dec: h.toString(), hex: hashText(h) })),
+				bundles,
+			});
+		}
+	}
+	if (json) {
+		console.log(JSON.stringify(queries.length === 1 ? jsonOut[0] : jsonOut, null, '\t'));
 	}
 };
 
