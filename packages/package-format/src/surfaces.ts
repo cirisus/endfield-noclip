@@ -1117,6 +1117,34 @@ export interface EffectStackSurface {
 	appear: EffectAppear | null;
 	/** a VFXDecal's parallax and cracks (`_USE_PARALLAX`); `null` without */
 	parallax: DecalParallax | null;
+	/**
+	 * VFXDitherAlpha's `_USE_MAIN2` second colour texture (`docs/game-data/effects.md#solid-effects`),
+	 * multiplied into or added to the main colour before the dissolve without changing the alpha; `null` or
+	 * omitted without one (or when `_UseMainTex2AsAlpha` with `_MainTex2BlendMode` 0 folds its colour into
+	 * `tint`)
+	 */
+	main2?: EffectMain2 | null;
+}
+
+/**
+ * VFXDitherAlpha's `_USE_MAIN2` second colour texture: sampled at its own UVs (taking `disturbShare` of the
+ * distortion), multiplied by `color` (linear), and combined with the main colour as `mix(main · main2, main +
+ * main2, blendMode)`. takes a stack slot no other layer uses
+ */
+export interface EffectMain2 {
+	/** the stack slot it's drawn from, one {@link EffectStackSurface.layers} leaves empty (1–5) */
+	slot: number;
+	texture: EffectTexture;
+	/** where its UVs start (`_MainTex2UVWeights`); `null` from zero */
+	source: EffectUvSource | null;
+	/** the share of the distortion its UVs take (`_MainTex2UseDisturb`) */
+	disturbShare: number;
+	/** `_UseMainTex2AsAlpha`: colour is white times `color` without sampling the texture's RGB */
+	redAlpha: boolean;
+	/** `_MainTex2Color`, linear */
+	color: Rgb;
+	/** `_MainTex2BlendMode`: 0 multiplies the main colour, 1 adds to it, fractional values blend */
+	blendMode: Weight;
 }
 
 /**

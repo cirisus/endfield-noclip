@@ -129,13 +129,18 @@ VFXDitherAlpha and VFXWaterDitherAlpha split into two paths:
   - unlit VFXDitherAlpha with distortion, dissolve, mask, or polar/screen UVs, plus
     VFXDitherAlphaNoLighting with distortion, mask, and vertex offset.
   - alpha-blends using `alpha^_DitherAlphaExp` instead of dithering (no depth write, so effects
-    behind are not occluded; thins Very Large Rift's red sky ring `wenli_01_red` at exp 3).
+    behind are not occluded; thins Very Large Rift's red sky ring `wenli_01_red` at exp 3). when
+    nothing can lower the tested alpha below 1 (unset `_MainTex`, alpha ≥ 1, no dissolve, mask,
+    reveal, or near fade), draws as `effectOpaque` in the main pass with depth writes so transparent
+    overlays (like the water switch's foreground icon) sort over it.
   - `maskAlphaOnly` (`EffectRow.maskAlphaOnly`) scales alpha only (red under `_UseMaskTexAsAlpha`,
     else alpha). NoLighting sets `EffectRow.colorTimesAlpha` and uses G-buffer surface fog
     (unchecked). `_INK_DISTORT` draws as without it. vertex offset omits vertex-alpha weight and
-    camera pull (offset alone does not promote a material to the stack). `_USE_MAIN2` (alpha +
-    multiply) multiplies tint by `_MainTex2Color` without sampling (e.g. Wuling red-tide walls).
-  - unsupported on stack: lit variants, other dither/main2 modes, object-relative screen UVs.
+    camera pull (offset alone does not promote a material to the stack). `_USE_MAIN2` folds
+    `_MainTex2Color` into `tint` when `_UseMainTex2AsAlpha` and `_MainTex2BlendMode` 0 (e.g. Wuling
+    red-tide walls); otherwise it packs `EffectMain2` into slot 4 (`EffectRow.main2` and
+    `EffectRow.normalMap + 3`, e.g. Wuling water switch screen `M_fx_fxint_switch_water_004`).
+  - unsupported on stack: lit variants, other dither modes, object-relative screen UVs.
 
 ## waterfalls
 

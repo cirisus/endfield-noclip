@@ -180,12 +180,18 @@ export const EffectRow = {
 	 */
 	fresnelColor: 176,
 	/**
-	 * the texture stack's normal map (`EffectStackSurface.normalMap`): its slot (0 without), its scale, then 1
-	 * when the Fresnel term reverses the normal on back faces (`fresnel.facing`)
+	 * the texture stack's normal map (`EffectStackSurface.normalMap`): its slot (0 without), its scale, 1 when
+	 * the Fresnel term reverses the normal on back faces (`fresnel.facing`), then VFXDitherAlpha's `_USE_MAIN2`
+	 * slot (0 without)
 	 */
 	normalMap: 180,
 	/** the texture stack's emission (`EffectStackSurface.emission`): colour rgb (HDR), its slot (0 without) */
 	emission: 184,
+	/**
+	 * VFXDitherAlpha's `_USE_MAIN2` (`EffectStackSurface.main2`): linear colour rgb, then `_MainTex2BlendMode`
+	 * (0 multiply, 1 add)
+	 */
+	main2: 188,
 } as const;
 
 /**

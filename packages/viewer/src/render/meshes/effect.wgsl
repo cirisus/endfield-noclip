@@ -79,11 +79,13 @@ const FX_CUSTOM_SCROLL = 36u;
 const FX_APPEAR = 40u;
 const FX_APPEAR_NOISE = 41u;
 const FX_APPEAR_BRIGHT = 42u;
-// the Fresnel colour (rgb, cover); the normal map's slot, scale and 1 to reverse back faces' normals; the
-// emission's colour and slot (`EffectRow.fresnelColor`, `normalMap`, `emission`)
+// the Fresnel colour (rgb, cover); the normal map's slot, scale, 1 to reverse back faces' normals, and
+// VFXDitherAlpha's `_USE_MAIN2` slot; the emission's colour and slot; `_USE_MAIN2`'s colour and blend mode
+// (`EffectRow.fresnelColor`, `normalMap`, `emission`, `main2`)
 const FX_FRESNEL_COLOR = 44u;
 const FX_NORMAL_MAP = 45u;
 const FX_EMISSION = 46u;
+const FX_MAIN2 = 47u;
 // the texture stack's switches: the vertex alpha scales the reveal's brightening, the global radii add to the
 // reveal's, the first disturb texture holds a normal, the vertex colour scales the blend tint
 const FX_STACK_FLAGS = 43u;
@@ -519,6 +521,27 @@ fn fx_combine(
 	let blend_tint = fx_row(id, FX_BLEND_TINT) * select(vec4f(1.0), vertex_color, flags.w != 0.0);
 	var color = blend.rgb * saturate((c.a + blend.a) * blend_tint.w) * blend_tint.rgb + c.rgb;
 	var alpha = c.a;
+	// VFXDitherAlpha's `_USE_MAIN2`: a second colour texture multiplied into or added to the main colour
+	// before the dissolve, without changing the alpha
+	let main2_slot = u32(fx_row(id, FX_NORMAL_MAP).w);
+	if (main2_slot != 0u) {
+		let m2_bits = fx_slot_bits(id, main2_slot);
+		let m2_base = fx_slot_base(bases, m2_bits);
+		let m2_uv = fx_slot_coords(id, main2_slot, m2_base[0] + fx_custom_shift(id, main2_slot, custom)) +
+			offset * slot_disturb(m2_bits);
+		var m2 = fx_sample(
+			main2_slot,
+			m2_uv,
+			fx_slot_gradient(id, main2_slot, m2_base[1]) * bias,
+			fx_slot_gradient(id, main2_slot, m2_base[2]) * bias,
+		);
+		if ((m2_bits & SLOT_RED_ALPHA) != 0u) {
+			m2 = vec4f(1.0, 1.0, 1.0, m2.r);
+		}
+		let main2 = fx_row(id, FX_MAIN2);
+		let m2_rgb = m2.rgb * main2.rgb;
+		color = mix(color * m2_rgb, color + m2_rgb, main2.w);
+	}
 	if (cracked) {
 		color += fx_decal_cracks(id, bases, main_uv + parallax, main_dx, main_dy, offset, parallax);
 	}

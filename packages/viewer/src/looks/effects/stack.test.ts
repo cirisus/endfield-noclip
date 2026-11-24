@@ -147,6 +147,40 @@ test('a texture stack’s Fresnel colour, normal map and emission fill the rows 
 	assert.ok(EffectRow.emission + 4 <= LOOK_FLOATS);
 });
 
+test('a texture stack’s _USE_MAIN2 packs its texture into its slot and its colour and blend mode into row 47', () => {
+	const [look] = materialLooks({
+		entries: [
+			described(
+				stack({
+					variant: 'dither',
+					main2: {
+						slot: 4,
+						texture: texture(9, { scale: [3, 2], scroll: [0, 0.05] }),
+						source: 'uv0',
+						disturbShare: 0.5,
+						redAlpha: false,
+						color: [0.2, 0.4, 0.1],
+						blendMode: 1,
+					},
+				}),
+			),
+		],
+	});
+	assert.equal(look.textures[4], 9);
+	assert.equal(look.params[EffectRow.slotBits + 4], ROLE_NONE + 512 * 256);
+	assert.equal(look.params[EffectRow.normalMap + 3], 4);
+	assert.deepEqual(
+		[...look.params.subarray(EffectRow.main2, EffectRow.main2 + 4)],
+		[0.2, 0.4, 0.1, 1].map(Math.fround),
+	);
+	assert.deepEqual([...look.params.subarray(EffectRow.uv + 4 * 4, EffectRow.uv + 4 * 4 + 2)], [3, 2]);
+	assert.deepEqual(
+		[...look.params.subarray(EffectRow.anim + 4 * 4, EffectRow.anim + 4 * 4 + 2)],
+		[0, Math.fround(0.05)],
+	);
+	assert.ok(EffectRow.main2 + 4 <= LOOK_FLOATS);
+});
+
 test('a texture stack packs each layer’s role, red alpha, source and distortion share into its slot bits', () => {
 	const [look] = materialLooks({
 		entries: [

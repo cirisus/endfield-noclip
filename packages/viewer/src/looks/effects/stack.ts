@@ -68,12 +68,13 @@ export const NO_WATER_BLEND = -1e30;
  */
 const slotDisturb = (share: number): number => Math.round(Math.max(share, 0) * 1024) * 256;
 
+/** a slot's UV-source bits (`SlotSource` or `SLOT_NO_BASE`) */
+const sourceBits = (source: EffectUvSource | null): number =>
+	source === null ? SLOT_NO_BASE : SOURCES[source] * 32;
+
 /** a stack layer's {@link EffectRow.slotBits} */
 const layerBits = (layer: StackLayer): number =>
-	ROLES[layer.role] +
-	(layer.redAlpha ? 16 : 0) +
-	(layer.source === null ? SLOT_NO_BASE : SOURCES[layer.source] * 32) +
-	slotDisturb(layer.disturbShare);
+	ROLES[layer.role] + (layer.redAlpha ? 16 : 0) + sourceBits(layer.source) + slotDisturb(layer.disturbShare);
 
 /** {@link EffectRow.offsetDir}'s last float by {@link EffectVertexOffset.space} */
 const OFFSET_SPACES: Record<EffectVertexOffset['space'], number> = { object: 0, world: 1, normal: 2 };
@@ -185,17 +186,24 @@ export const stackLook = (stack: EffectStackSurface): EffectLook => {
 		params.set(fresnel.color, EffectRow.fresnelColor);
 		params[EffectRow.normalMap + 2] = fresnel.facing ? 1 : 0;
 	}
-	// both slots have no role, so the stack's loop skips them; the normal map's source bits place its UVs
+	// these slots have no role, so the stack's loop skips them; the normal map and main2 keep their UV sources
 	if (stack.normalMap !== null) {
 		const { normalMap } = stack;
-		const source = normalMap.source === null ? SLOT_NO_BASE : SOURCES[normalMap.source] * 32;
-		setSlot(look, normalMap.slot, normalMap.texture, ROLE_NONE + source);
+		setSlot(look, normalMap.slot, normalMap.texture, ROLE_NONE + sourceBits(normalMap.source));
 		params.set([normalMap.slot, normalMap.scale], EffectRow.normalMap);
 	}
 	if (stack.emission !== null) {
 		const { emission } = stack;
 		setSlot(look, emission.slot, emission.texture, ROLE_NONE);
 		params.set([...emission.color, emission.slot], EffectRow.emission);
+	}
+	const main2 = stack.main2 ?? null;
+	if (main2 !== null) {
+		const bits =
+			ROLE_NONE + (main2.redAlpha ? 16 : 0) + sourceBits(main2.source) + slotDisturb(main2.disturbShare);
+		setSlot(look, main2.slot, main2.texture, bits);
+		params[EffectRow.normalMap + 3] = main2.slot;
+		params.set([...main2.color, main2.blendMode], EffectRow.main2);
 	}
 	params.set(
 		[stack.soft?.distance ?? 0, stack.soft?.bias ?? 0, stack.ignorePostExposure, stack.vertexColor ? 1 : 0],

@@ -1127,28 +1127,76 @@ describe('VFXDitherAlpha effect variants', () => {
 		assert.deepEqual([raised.alphaPower, raised.colorTimesAlpha], [3, false]);
 	});
 
-	it('multiply the colour by _MainTex2Color when _USE_MAIN2 takes the second texture as alpha', () => {
-		// the red tide's walls in Wuling City (`M_fxmap_chichao_06_05`)
+	it('combine _USE_MAIN2 into tint when as-alpha multiplying, and as main2 when colouring or adding', () => {
+		// the red tide's walls (`M_fxmap_chichao_06_05`) and Wuling's water switch screen
+		// (`M_fx_fxint_switch_water_004`)
 		const entry = dither(
-			{ _UseMainTexAsAlpha: 1, _UseMainTex2AsAlpha: 0, _MainTex2BlendMode: 0 },
+			{ _UseMainTexAsAlpha: 1, _UseMainTex2AsAlpha: 1, _MainTex2UseDisturb: 1, _MainTex2BlendMode: 0 },
 			{ _MainTex: 'white', _MainTex2: 'white', _DisturbTex1: 'white', _DissolveTex: 'white' },
 		);
-		const tide = (floats: Record<string, number>) =>
+		const withMain2 = (floats: Record<string, number>, keywords = ['_USE_DISTURB', '_USE_MAIN2']) =>
+			ofKind(
+				describeMaterial(
+					material({
+						blend: 'alphaTest',
+						blendFactors: null,
+						keywords,
+						slots: { _MainTex: slot(1), _DisturbTex1: slot(3), _MainTex2: slot(2, [3, 2]) },
+						floats,
+						colors: { _TintColor: [1, 1, 1, 1], _MainTex2Color: [1, 0, 1, 1] },
+						vectors: { _MainTex2UVSpeed: [0, 0.05, 0, 0] },
+					}),
+					entry,
+				),
+				'effectStack',
+			);
+		// as-alpha multiply folds straight into tint with no main2 slot
+		const folded = withMain2({ _UseMainTex2AsAlpha: 1, _MainTex2BlendMode: 0 });
+		assert.deepEqual(folded.tint, [1, 0, 1, 1]);
+		assert.equal(folded.main2, undefined);
+		// colouring or adding emits main2 on slot 4 with its own texture, scroll, disturb share and blend mode
+		const added = withMain2({ _UseMainTex2AsAlpha: 0, _MainTex2BlendMode: 1 });
+		assert.deepEqual(added.tint, [1, 1, 1, 1]);
+		assert.deepEqual(added.main2, {
+			slot: 4,
+			texture: {
+				texture: 2,
+				scale: [3, 2],
+				offset: [0, 0],
+				scroll: [0, 0.05],
+				rotation: [1, 0],
+				customScroll: [0, 0],
+			},
+			source: 'uv0',
+			disturbShare: 1,
+			redAlpha: false,
+			color: [1, 0, 1],
+			blendMode: 1,
+		});
+		// multiplying by the second texture's RGB also emits main2, even without another effect keyword
+		const multiplied = withMain2({ _UseMainTex2AsAlpha: 0, _MainTex2BlendMode: 0 }, ['_USE_MAIN2']);
+		assert.equal(multiplied.main2?.blendMode, 0);
+		assert.equal(multiplied.main2?.texture.texture, 2);
+		// adding with _UseMainTex2AsAlpha skips the texture (white) and adds _MainTex2Color
+		const addedColor = withMain2({ _UseMainTex2AsAlpha: 1, _MainTex2BlendMode: 1 });
+		assert.deepEqual([addedColor.main2?.redAlpha, addedColor.main2?.texture.texture], [true, null]);
+		// when nothing lowers the tested alpha below 1 (unset _MainTex, no dissolve/mask/near/appear), the
+		// dithered effect draws in the opaque main pass (writing depth before transparent overlays)
+		const solid = ofKind(
 			describeMaterial(
 				material({
 					blend: 'alphaTest',
 					blendFactors: null,
-					keywords: ['_USE_DISSOLVE', '_USE_DISTURB', '_USE_MAIN2'],
-					slots: { _MainTex: slot(1), _MainTex2: slot(2) },
-					floats: { _UseMainTex2AsAlpha: 1, ...floats },
-					colors: { _TintColor: [1, 1, 1, 1], _MainTex2Color: [1, 0, 1, 1] },
+					keywords: ['_USE_DISTURB', '_USE_MAIN2'],
+					slots: { _DisturbTex1: slot(3), _MainTex2: slot(2) },
+					floats: { _UseMainTex2AsAlpha: 0, _MainTex2BlendMode: 1 },
+					colors: { _TintColor: [0.6, 0.8, 0.6, 1], _MainTex2Color: [0.4, 0.6, 0.2, 1] },
 				}),
 				entry,
-			);
-		assert.deepEqual(ofKind(tide({}), 'effectStack').tint, [1, 0, 1, 1]);
-		// colouring or adding the second texture isn't drawn
-		assert.equal(tide({ _UseMainTex2AsAlpha: 0 }).kind, 'unsupported');
-		assert.equal(tide({ _MainTex2BlendMode: 1 }).kind, 'unsupported');
+			),
+			'effectStack',
+		);
+		assert.deepEqual([solid.opaque, added.opaque], [true, false]);
 	});
 
 	it('move their vertices by the offset texture outside particle mode, without VFXBaseV2-only terms', () => {

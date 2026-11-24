@@ -325,9 +325,13 @@ three dithered-alpha shaders draw solid effect meshes using interleaved gradient
 | `HGRP/Effect/VFXDitherAlphaNoLighting` | forward | no `_UseLighting`, no fog; draws only where depth pass survived (`ZTest Equal`, `One Zero`); colour × saturated alpha (without mask, before dither power)                                                                                        |
 
 - **base colour**: `_TintColor · _TintColorIntensity` × vertex colour (unless `_DisableVertColor`) ×
-  `_MainTex` (omitted under `_UseMainTexAsAlpha`). in VFXDitherAlpha, `_USE_MAIN2` with
-  `_UseMainTex2AsAlpha` and `_MainTex2BlendMode` 0 multiplies by `_MainTex2Color` without sampling
-  `_MainTex2` (depth pass has no `_USE_MAIN2`).
+  `_MainTex` (omitted under `_UseMainTexAsAlpha`). in VFXDitherAlpha, `_USE_MAIN2` combines a second
+  layer `main2 = mix(_MainTex2, 1, _UseMainTex2AsAlpha) · _MainTex2Color` (LDR, own `_MainTex2*`
+  UVs/scroll/rotation and `_MainTex2UseDisturb`) with the main colour as
+  `mix(main · main2, main + main2, _MainTex2BlendMode)` before dissolve and post-exposure scaling
+  (depth pass has no `_USE_MAIN2`, so alpha is unchanged). e.g. Wuling water switch screen
+  (`M_fx_fxint_switch_water_004` in `int_waterswitch_postmodel`, `_UseMainTex2AsAlpha` 0,
+  `_MainTex2BlendMode` 1).
 - **dithered depth pass**: keeps pixel when alpha exceeds interleaved gradient noise at
   `pixelPos · _DitherTilling`, offset by `_TaaFrameInfo.z` (TAA cycle index, unread in game code,
   resolved by TAA). tested alpha =

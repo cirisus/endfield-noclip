@@ -105,7 +105,7 @@ export const describeDithered = (reader: MaterialReader): DitheredSurface | Unsu
 	}
 	let second: Rgb = [1, 1, 1];
 	if (has('_USE_MAIN2')) {
-		if (float('_UseMainTex2AsAlpha', 0) === 0 || float('_MainTex2BlendMode', 0) !== 0) {
+		if (float('_UseMainTex2AsAlpha', 1) === 0 || float('_MainTex2BlendMode', 0) !== 0) {
 			return unsupported('a second texture that colours or blends rather than masks');
 		}
 		second = linearRgb(color('_MainTex2Color') ?? [1, 1, 1, 1]);

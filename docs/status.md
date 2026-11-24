@@ -293,11 +293,12 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     sampled per-pixel, not per-renderer). VFXBaseV2 breathing pulses in sync across placements;
     Dijiang clue board and aisle-guide edge colour unchecked.
   - **VFXDitherAlpha**:
-    - effect variants blend without dithering/depth and support only distortion, mask, and vertex
-      offset (unsupported: lit, other dither modes, object-relative screen UVs, lone vertex offset,
-      `_INK_COLOR_DISTORT`, dissolve, polar/screen UVs, `_USE_MAIN2` — e.g. Si's Painting
-      `…_inkpattern_huge_01_fj_12`; G-buffer path draws still textures only, leaving Marker Stone
-      Interiors `p_fxmap_map02_lv004_inkpattern_801`/`_802` unsupported).
+    - effect variants blend without dithering/depth and support distortion, mask, dissolve,
+      polar/screen UVs, vertex offset, and `_USE_MAIN2` (unsupported: lit, other dither modes,
+      object-relative screen UVs, lone vertex offset, `_INK_COLOR_DISTORT`; on NoLighting, dissolve,
+      polar/screen UVs, `_USE_MAIN2` — e.g. Si's Painting `…_inkpattern_huge_01_fj_12`; G-buffer
+      path draws still textures only, leaving Marker Stone Interiors
+      `p_fxmap_map02_lv004_inkpattern_801`/`_802` unsupported).
     - lit still-mask surfaces draw (Qingbo reeds/leaves, Yinglung Pass camphor leaves, unchecked)
       without `_IgnorePostExposure` scaling.
     - plain variant ignores mesh vertex alpha (uses particle alpha), steps dither by viewer jitter,
