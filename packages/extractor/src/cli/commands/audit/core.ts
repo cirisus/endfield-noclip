@@ -1,6 +1,7 @@
 import { CORE_PATHS } from '@endfield-noclip/package-format/manifest';
 
 import { PackedPackage, resolveCorePath } from '../../../pack/read-package.ts';
+import { jsonReplacer } from '../../helpers.ts';
 
 import type { AuditSubArgs } from './parser.ts';
 import { packageDirsOf } from './shared.ts';
@@ -42,23 +43,23 @@ const auditCore = async (packageDir: string, member: string | undefined, json: b
 		case CORE_PATHS.geometries: {
 			const table = await pkg.geometries();
 			const entries = Array.from({ length: table.count }, (_, id) => ({ id, ...table.entry(id) }));
-			console.log(JSON.stringify(entries, null, '\t'));
+			console.log(JSON.stringify(entries, jsonReplacer, '\t'));
 			return;
 		}
 		case CORE_PATHS.blobs: {
-			console.log(JSON.stringify(await pkg.blobs(), null, '\t'));
+			console.log(JSON.stringify(await pkg.blobs(), jsonReplacer, '\t'));
 			return;
 		}
 		case CORE_PATHS.chains: {
-			console.log(JSON.stringify(await pkg.chains(), null, '\t'));
+			console.log(JSON.stringify(await pkg.chains(), jsonReplacer, '\t'));
 			return;
 		}
 		case CORE_PATHS.tree: {
-			console.log(JSON.stringify(await pkg.tree(), null, '\t'));
+			console.log(JSON.stringify(await pkg.tree(), jsonReplacer, '\t'));
 			return;
 		}
 		case CORE_PATHS.lights: {
-			console.log(JSON.stringify(await pkg.lights(), null, '\t'));
+			console.log(JSON.stringify(await pkg.lights(), jsonReplacer, '\t'));
 			return;
 		}
 		case CORE_PATHS.luts: {
@@ -119,5 +120,3 @@ const auditCore = async (packageDir: string, member: string | undefined, json: b
 		}
 	}
 };
-
-// #endregion
