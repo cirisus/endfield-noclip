@@ -55,8 +55,8 @@ export interface InteractiveStandIn {
 
 /**
  * places the models of the interactives that referenced LevelData places. each row is drawn by the first kind
- * that claims it, else as its plain model or graded doodad forms (with any doodad-group forms) or its
- * facility forms; each kind's class says what it draws and under which control, and
+ * that claims it, else as its graded doodad forms, doodad-group forms, plain model, or facility forms; each
+ * kind's class says what it draws and under which control, and
  * docs/extraction/prefabs-and-interactives.md#interactives lists the steps
  *
  * @param context install readers and the bundle resolver
@@ -234,10 +234,9 @@ export const loadInteractiveFacilities = async (
 			continue;
 		}
 		if (template.name === null) {
-			if (!grades.place(placer)) {
+			if (!grades.place(placer) && !doodads.place(placer)) {
 				placer.place(template.forms[0], { alternatives: [[]] }, null);
 			}
-			doodads.place(placer);
 		} else {
 			facilities.place(placer);
 		}

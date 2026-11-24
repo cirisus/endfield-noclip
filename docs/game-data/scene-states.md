@@ -412,10 +412,14 @@ map01 places about ten, half in The Hub.
 ## doodad groups
 
 resource nodes (ore outcrops, rabbit-hole plant mounds, special stones) are `int_doodad_core_*`
-interactives whose model is an empty shell. a root script names one ModelTable id per group level
-1–4 and lists one slot GameObject per level (slot 0 empty) where the form attaches. all shipped
-shells have identity slots; which slots are saved active varies (level 4 only or all four) and does
-not indicate the shown level. form postmodels carry the same script with all forms empty.
+interactives whose model is a shell (`InteractiveDoodadCorePostmodelMono`). a root script names one
+ModelTable id per group level 1–4 and lists one slot GameObject per level (slot 0 empty) where the
+form attaches. all shipped shells have identity slots; most shells have empty slots, while two
+special-stone shells (`int_doodad_core_spcstone_shell2_postmodel`,
+`int_doodad_core_spcstone_2_shell_postmodel`) also embed copies of the level 1–4 form prefabs inside
+those slots. at runtime `SetModelByLevel` activates only the chosen slot (`SetView`) and loads the
+named form into it. which slots are saved active varies (level 4 only or all four) and does not
+indicate the shown level. form postmodels carry the same script with all forms empty.
 
 group levels come from unrecovered runtime progression.
 

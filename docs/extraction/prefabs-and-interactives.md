@@ -71,10 +71,11 @@ the top of the 27-bit id space.
 ## interactives
 
 interactive rows are claimed in fixed precedence: bridges → doors → rest looks (incl. lifts) →
-animator starts → region walls → crane towers, falling back to plain models or
-[graded doodad forms](scene-controls.md#graded-doodads) (plus doodad-group forms), then facility
-forms. switches, blight core, model scale, ride, crane hang, and lock apply to emitted models;
-resting effects place last.
+animator starts → region walls → crane towers, falling back to
+[graded doodad forms](scene-controls.md#graded-doodads),
+[doodad-group forms](scene-controls.md#doodad-groups), plain models, or facility forms. switches,
+blight core, model scale, ride, crane hang, and lock apply to emitted models; resting effects place
+last.
 
 ### templates and models
 

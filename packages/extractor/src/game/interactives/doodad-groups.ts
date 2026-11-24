@@ -14,8 +14,8 @@ import type { AuthoredTemplate } from './template-models.ts';
 const SHELL_CONCURRENCY = 16;
 
 /**
- * doodad-group centres, which draw an empty shell: their visible model is one form per group level, each
- * under its level's bit of a per-level `doodadGroups:<level id>` progression
+ * doodad-group centres, whose shell loads one form per group level into its slots: each form is placed under
+ * its level's bit of a per-level `doodadGroups:<level id>` progression instead of the shell prefab itself
  */
 export class DoodadGroups {
 	readonly #sources: FacilitySources;
@@ -118,11 +118,12 @@ export class DoodadGroups {
 	 * places a shell's forms, if the row is one
 	 *
 	 * @param placed a placed single-model row
+	 * @returns whether the row is a doodad-group shell and was placed
 	 */
-	place(placed: InteractiveRow): void {
+	place(placed: InteractiveRow): boolean {
 		const group = this.#groups.get(placed.row.template);
 		if (group === undefined || group.length === 0) {
-			return;
+			return false;
 		}
 		const id = `doodadGroups:${placed.placed.levelId}`;
 		const levels = this.#levels.getOrInsertComputed(id, () => new Set<number>());
@@ -130,6 +131,7 @@ export class DoodadGroups {
 			levels.add(groupLevel);
 			placed.place(form, { alternatives: [[{ control: id, mask: (1 << groupLevel) >>> 0 }]] }, null);
 		}
+		return true;
 	}
 
 	/** @returns one progression per level with doodad groups, defaulting to the fully grown form */

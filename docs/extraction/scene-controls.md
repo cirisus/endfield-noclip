@@ -233,8 +233,10 @@ for a DynamicStreaming entity whose current-version view-state controller reads 
 
 ## doodad groups
 
-for [doodad groups](../game-data/scene-states.md#doodad-groups), shells without identity slots are
-reported and keep only their own renderers. each level with doodad groups gets
+for [doodad groups](../game-data/scene-states.md#doodad-groups), shells with resolved forms emit
+only their forms (omitting the shell prefab itself, which in two special-stone shells embeds
+inactive copies of the level 1–3 forms alongside an active level 4); shells without identity slots
+are reported and fall back to their own renderers. each level with doodad groups gets
 `doodadGroups:<level id>` ("Resource nodes") over all named group levels, defaulting to the highest;
 each form places at the interactive's transform under `1 << level`.
 
