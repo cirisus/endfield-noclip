@@ -32,6 +32,7 @@ export const MonoComponentType = {
 	BoxCollider: 0x10,
 	HGEnvironmentVolume: 0x4000,
 	Volume: 0x8000,
+	ReflectionProbe: 0x10000,
 } as const;
 
 /** a decoded component value */
