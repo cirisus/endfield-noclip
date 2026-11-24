@@ -419,9 +419,39 @@ export const planWater = async (
 	/** per table volume, the game id of the volume it follows */
 	const parents: (string | null)[] = [];
 	for (const volume of volumes) {
-		const config = configIndex.get(volume.configHash ?? volume.itemType);
+		let config = configIndex.get(volume.configHash ?? volume.itemType);
 		if (config === undefined) {
 			continue;
+		}
+		const loadedSurface = liquidSurfaces.get(volume.itemType);
+		// non-default flowSpeed or flowDirection gets a dedicated config with `UpdateWaterFlowParams` applied
+		if (
+			volume.configHash === null &&
+			loadedSurface !== undefined &&
+			!(loadedSurface instanceof Error) &&
+			hasCustomFlow(volume)
+		) {
+			const flowKey = `${volume.itemType}|${volume.flowSpeed}|${volume.flowDirection}`;
+			let flowConfig = configIndex.get(flowKey);
+			if (flowConfig === undefined) {
+				const base = plan.table.configs[config];
+				const rad = (volume.flowDirection * Math.PI) / 180;
+				const f = Math.max(0, volume.flowSpeed);
+				const m = loadedSurface.flowMultipliers;
+				flowConfig = plan.table.configs.length;
+				plan.table.configs.push({
+					name: base.name,
+					values: {
+						...base.values,
+						flowDirectionVector2: [Math.cos(rad) * 0.5 + 0.5, Math.sin(rad) * 0.5 + 0.5],
+						flowFullCycle: base.values.flowFullCycle + f * m.flowFullCycle,
+						flowFullCycleLarge: base.values.flowFullCycleLarge + f * m.flowFullCycleLarge,
+						largeWaveNormalScale: base.values.largeWaveNormalScale + f * m.largeWaveNormalScale,
+					},
+				});
+				configIndex.set(flowKey, flowConfig);
+			}
+			config = flowConfig;
 		}
 		let geometry: number;
 		try {
@@ -438,7 +468,6 @@ export const planWater = async (
 		const surface = volumeSurface(volume, geometry, config, index);
 		plan.table.surfaces.push(surface);
 		plan.surfaceOwners.push({ levelTag: volume.levelTag, sources: null });
-		const loadedSurface = liquidSurfaces.get(volume.itemType);
 		if (
 			volume.id !== '0' &&
 			loadedSurface !== undefined &&
@@ -715,6 +744,20 @@ export const configEntry = ({ name, values }: WaterSurfaceConfig): WaterConfigEn
 		flowFullCycleLarge: number('flowFullCycleLarge'),
 	};
 	return { name, values: config };
+};
+
+/** whether a water volume has non-default flow (`InitMeshMono`: `flowSpeed > 0` or `flowDirection != 0`) */
+const hasCustomFlow = ({
+	flowSpeed,
+	flowDirection,
+}: Pick<LevelWaterVolume, 'flowSpeed' | 'flowDirection'>): boolean => {
+	if (flowSpeed > 0) {
+		return true;
+	}
+	const rad = (flowDirection * Math.PI) / 180;
+	const dx = Math.cos(rad) - 1;
+	const dy = Math.sin(rad);
+	return dx * dx + dy * dy >= 1e-10;
 };
 
 /** @returns the centre of a polygon's x, z bounding box */

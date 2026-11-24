@@ -251,11 +251,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     types.
 - **water volumes** ([viewer](viewer/water.md#water-volumes),
   [game-data](game-data/water.md#water-volumes)):
-  - volumes without their own `WaterConfig` use the type's prefab config (and its surface decal
-    prefab when set) without per-level multipliers.
-  - moves are linear; floaters keep authored height with no lag; `ground_distance`, flow, and
-    inter-volume transfers unread; no shoreline wetness; coinciding placed surfaces draw twice
-    (unchecked).
+  - moves are linear; floaters keep authored height with no lag; `ground_distance` and inter-volume
+    transfers unread; no shoreline wetness; coinciding placed surfaces draw twice (unchecked).
   - [pumped pools](game-data/water.md#depletable-pools) offer only empty/authored/full (server start
     amount and empty-surface visibility unchecked).
   - unverified in game: Suiming lily pads (0.9 m under pit surface at stage 1 per data) and Test

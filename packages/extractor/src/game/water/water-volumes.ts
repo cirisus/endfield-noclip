@@ -27,6 +27,10 @@ export interface LevelWaterVolume {
 	amountMax: number;
 	/** metres per second the surface moves at when scripts move it at a fixed speed */
 	fillSpeed: number;
+	/** surface flow speed level (`UpdateWaterFlowParams`) */
+	flowSpeed: number;
+	/** surface flow direction, degrees (`UpdateWaterFlowParams`) */
+	flowDirection: number;
 	/** the liquid's factory item id, e.g. `item_liquid_acid`, which picks its surface when it names no config */
 	itemType: string;
 	/** the surface `WaterConfig` the volume draws with, or `null` when it names none */
@@ -180,6 +184,9 @@ const toVolume = (
 		fraction: amountMax > 0 ? numberOf(row, 'amountCurrent') / amountMax : 0,
 		amountMax,
 		fillSpeed: numberOf(row, 'fillSpeed'),
+		flowSpeed: typeof row.flowSpeed === 'number' && Number.isFinite(row.flowSpeed) ? row.flowSpeed : 0,
+		flowDirection:
+			typeof row.flowDirection === 'number' && Number.isFinite(row.flowDirection) ? row.flowDirection : 0,
 		itemType: idOf(row, 'waterItemType'),
 		configHash: configHash === 0n ? null : configHash,
 		factory: !booleanOf(row, 'isPrototype'),

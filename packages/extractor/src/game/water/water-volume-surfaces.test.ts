@@ -10,7 +10,15 @@ describe('volumeSurfaceSetting', () => {
 	const setting = (fileId: number, pathId: bigint, decal: [number, bigint] | null = null) => ({
 		surfacePrefab: pptr(fileId, pathId),
 		decalPrefab: decal === null ? pptr(0, 0n) : pptr(decal[0], decal[1]),
+		flowFullCycleMultiplierPerLevel: 0.005,
+		flowFullCycleLargeMultiplierPerLevel: 0.005,
+		largeWaveNormalScaleMultiplierPerLevel: 0.05,
 	});
+	const flowMultipliers = {
+		flowFullCycle: 0.005,
+		flowFullCycleLarge: 0.005,
+		largeWaveNormalScale: 0.05,
+	};
 	const settings = readWaterSurfaceSettings({
 		waterSurfaceMissingFallback: pptr(2, 5557907107807535942n),
 		waterSurfaceSettingDict: {
@@ -30,14 +38,17 @@ describe('volumeSurfaceSetting', () => {
 		assert.deepEqual(volumeSurfaceSetting(settings, 0), {
 			surface: { fileId: 7, pathId: -9025014995019472712n },
 			decal: { fileId: 8, pathId: -1858169792479765363n },
+			flowMultipliers,
 		});
 		assert.deepEqual(volumeSurfaceSetting(settings, 3), {
 			surface: { fileId: 3, pathId: 6920472490029536733n },
 			decal: { fileId: 4, pathId: -5287424573948146867n },
+			flowMultipliers,
 		});
 		assert.deepEqual(volumeSurfaceSetting(settings, 4), {
 			surface: { fileId: 2, pathId: 5557907107807535942n },
 			decal: null,
+			flowMultipliers,
 		});
 	});
 
@@ -45,13 +56,21 @@ describe('volumeSurfaceSetting', () => {
 		assert.deepEqual(volumeSurfaceSetting(settings, 13), {
 			surface: { fileId: 5, pathId: -1580087855884082448n },
 			decal: { fileId: 6, pathId: 2924707574540912839n },
+			flowMultipliers,
 		});
 	});
 
 	it('falls back for an unlisted type or a null entry', () => {
-		const fallback = { surface: { fileId: 2, pathId: 5557907107807535942n }, decal: null };
-		assert.deepEqual(volumeSurfaceSetting(settings, 11), fallback);
-		assert.deepEqual(volumeSurfaceSetting(settings, 7), fallback);
+		assert.deepEqual(volumeSurfaceSetting(settings, 11), {
+			surface: { fileId: 2, pathId: 5557907107807535942n },
+			decal: null,
+			flowMultipliers: { flowFullCycle: 0, flowFullCycleLarge: 0, largeWaveNormalScale: 0 },
+		});
+		assert.deepEqual(volumeSurfaceSetting(settings, 7), {
+			surface: { fileId: 2, pathId: 5557907107807535942n },
+			decal: null,
+			flowMultipliers,
+		});
 	});
 
 	it('rejects mismatched dictionary arrays', () => {

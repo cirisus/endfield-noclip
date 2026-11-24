@@ -125,6 +125,8 @@ describe('volumeEntry', () => {
 		fraction: 0.5,
 		amountMax: 100,
 		fillSpeed: 0.11,
+		flowSpeed: 0,
+		flowDirection: 0,
 		itemType: 'item_liquid_water',
 		configHash: 1n,
 		factory: false,

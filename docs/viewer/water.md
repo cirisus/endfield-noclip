@@ -90,15 +90,17 @@ divergences from the game:
   when the type names a `decalPrefab`, the packer emits a resident global floating instance sharing
   the volume's polygon mesh 1 cm above the surface
   (`WaterVolumeManager.m_waterDecalPositionOffset`), so it rises and falls with the volume and
-  shades through `fs_water_foam`. per-level multipliers are omitted, and outlines are always
-  triangulated instead of loading `_WaterSurface` meshes.
+  shades through `fs_water_foam`. volumes with non-default `flowSpeed`/`flowDirection` get a
+  dedicated config with `UpdateWaterFlowParams` applied (`flowDirectionVector2` and per-level
+  `flowFullCycle*` / `largeWaveNormalScale` multipliers). outlines are always triangulated instead
+  of loading `_WaterSurface` meshes.
 - moves are linear (no end-of-move easing; scripts without a fixed speed use fill speed as m/s).
 - floaters keep authored height above water without settling to `surface_offset` or lagging.
 - switches, clocks, and quests are listed by script ID in labels, not executed.
 - [pumped pools](../game-data/water.md#depletable-pools) offer only empty, authored, and full
   (quest-drained pools default to empty, others to authored).
-- `ground_distance`, volume flow speed/direction, and inter-volume transfers
-  (`WaterVolumeTransfer(All)`, transferers, switch interactives) are unread.
+- `ground_distance` and inter-volume transfers (`WaterVolumeTransfer(All)`, transferers, switch
+  interactives) are unread.
 - volumes coinciding with placed surfaces (some map02 lv006, lv010 `37900010002`, several
   lv002/lv003 pools) draw twice (game behaviour unchecked).
 - volume surfaces leave no shore wetness.

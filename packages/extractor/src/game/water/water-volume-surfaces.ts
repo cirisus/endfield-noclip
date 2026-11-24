@@ -24,11 +24,25 @@ import type { LoadedWaterConfig } from './water-source.ts';
 
 const MANAGER_CONFIG = 'assets/beyond/dynamicassets/gameplay/gamemech/watervolumemanagerconfig.prefab';
 
-/** a liquid's prefabs from `WaterVolumeManagerConfig` */
+/** per-level flow multipliers from `WaterVolumeManagerConfig` (`UpdateWaterFlowParams`) */
+export interface WaterFlowMultipliers {
+	flowFullCycle: number;
+	flowFullCycleLarge: number;
+	largeWaveNormalScale: number;
+}
+
+/** a liquid's prefabs and flow multipliers from `WaterVolumeManagerConfig` */
 export interface WaterSurfaceSetting {
 	surface: PPtr;
 	decal: PPtr | null;
+	flowMultipliers: WaterFlowMultipliers;
 }
+
+const ZERO_FLOW_MULTIPLIERS: WaterFlowMultipliers = {
+	flowFullCycle: 0,
+	flowFullCycleLarge: 0,
+	largeWaveNormalScale: 0,
+};
 
 /** a `WaterVolumeManagerConfig`'s surface choice, as {@link volumeSurfaceSetting} reads it */
 export interface WaterSurfaceSettings {
@@ -40,10 +54,11 @@ export interface WaterSurfaceSettings {
 	fallback: PPtr;
 }
 
-/** a liquid's resolved surface config and optional surface decal material */
+/** a liquid's resolved surface config, optional surface decal material, and flow multipliers */
 export interface LoadedVolumeSurface {
 	config: LoadedWaterConfig<WaterSurfaceConfig>;
 	decalMaterial: ObjectRef | null;
+	flowMultipliers: WaterFlowMultipliers;
 }
 
 /**
@@ -58,12 +73,18 @@ export const volumeSurfaceSetting = (
 ): WaterSurfaceSetting => {
 	const entry = settings.surfaces.get(settings.remap.get(waterType) ?? waterType);
 	if (entry === undefined) {
-		return { surface: settings.fallback, decal: null };
+		return { surface: settings.fallback, decal: null, flowMultipliers: ZERO_FLOW_MULTIPLIERS };
 	}
 	return {
 		surface: entry.surface.pathId === 0n ? settings.fallback : entry.surface,
 		decal: entry.decal,
+		flowMultipliers: entry.flowMultipliers,
 	};
+};
+
+const optionalNumber = (object: TypeTreeObject, field: string): number => {
+	const value = object[field];
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 };
 
 /**
@@ -81,6 +102,11 @@ export const readWaterSurfaceSettings = (data: TypeTreeObject): WaterSurfaceSett
 		surfaces.set(key, {
 			surface: pptrField(value, 'surfacePrefab'),
 			decal: decal !== null && decal.pathId !== 0n ? decal : null,
+			flowMultipliers: {
+				flowFullCycle: optionalNumber(value, 'flowFullCycleMultiplierPerLevel'),
+				flowFullCycleLarge: optionalNumber(value, 'flowFullCycleLargeMultiplierPerLevel'),
+				largeWaveNormalScale: optionalNumber(value, 'largeWaveNormalScaleMultiplierPerLevel'),
+			},
 		});
 	}
 	const remap = new Map<number, number>();
@@ -192,7 +218,11 @@ export const loadVolumeSurfaces = async (
 					}
 				}
 			}
-			results.set(itemType, { config: { ref, config }, decalMaterial });
+			results.set(itemType, {
+				config: { ref, config },
+				decalMaterial,
+				flowMultipliers: setting.flowMultipliers,
+			});
 		} catch (error) {
 			results.set(itemType, error instanceof Error ? error : new Error(String(error)));
 		}
