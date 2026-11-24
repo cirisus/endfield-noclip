@@ -4,17 +4,22 @@ import { type DecodedMesh, MeshTopology, VertexAttributeFormat } from '@endfield
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
 
 /**
- * meshes the packer makes itself rather than reads from the install: the stand-in `cube`, or a flat `polygon`
- * at y = 0 from an outline in x, z (a water volume's surface)
+ * meshes the packer makes itself rather than reads from the install: the stand-in `cube`, a flat `polygon` at
+ * y = 0 from an outline in x, z (a water volume's surface), or a subdivided unit `grid` in `[0, 1]`
+ * (heightfield-displaced sludge patches)
  */
 export type SyntheticMesh =
 	| 'cube'
-	| { kind: 'polygon'; points: readonly (readonly [x: number, z: number])[] };
+	| { kind: 'polygon'; points: readonly (readonly [x: number, z: number])[] }
+	| { kind: 'grid'; cells: number };
 
 /** the object key of a synthetic mesh, standing in for a mesh's `CAB-<hex>:<path id>` */
 export const syntheticMeshKey = (mesh: SyntheticMesh): string => {
 	if (mesh === 'cube') {
 		return 'synthetic:cube';
+	}
+	if (mesh.kind === 'grid') {
+		return `synthetic:grid:${mesh.cells}`;
 	}
 	const digest = createHash('sha256');
 	for (const [x, z] of mesh.points) {
@@ -31,6 +36,9 @@ export const syntheticMeshKey = (mesh: SyntheticMesh): string => {
 export const syntheticMesh = (mesh: SyntheticMesh): DecodedMesh => {
 	if (mesh === 'cube') {
 		return unitCube();
+	}
+	if (mesh.kind === 'grid') {
+		return unitGrid(mesh.cells);
 	}
 	return flatPolygon(mesh.points);
 };
@@ -161,6 +169,83 @@ const flatPolygon = (points: readonly (readonly [number, number])[]): DecodedMes
 				baseVertex: 0,
 				firstVertex: 0,
 				vertexCount: points.length,
+				bounds,
+			},
+		],
+		bounds,
+		skin: null,
+	};
+};
+
+/**
+ * a flat `cells × cells` subdivided grid over `[0, 1] × {0} × [0, 1]` facing `+y`, with `uv0 = (x, z)` and
+ * bounds covering `[0, 1]³` so frustum culling holds heightfield displacement up to `y = 1`
+ */
+const unitGrid = (cells: number): DecodedMesh => {
+	const side = cells + 1;
+	const vertexCount = side * side;
+	const positions = new Float32Array(vertexCount * 3);
+	const normals = new Float32Array(vertexCount * 3);
+	const uvs = new Float32Array(vertexCount * 2);
+	for (let z = 0; z < side; z++) {
+		const v = z / cells;
+		for (let x = 0; x < side; x++) {
+			const u = x / cells;
+			const i = z * side + x;
+			positions[i * 3] = u;
+			positions[i * 3 + 2] = v;
+			normals[i * 3 + 1] = 1;
+			uvs[i * 2] = u;
+			uvs[i * 2 + 1] = v;
+		}
+	}
+	const indexCount = cells * cells * 6;
+	const indices = vertexCount > 0xffff ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
+	let at = 0;
+	for (let z = 0; z < cells; z++) {
+		for (let x = 0; x < cells; x++) {
+			const i00 = z * side + x;
+			const i10 = i00 + 1;
+			const i01 = i00 + side;
+			const i11 = i01 + 1;
+			// clockwise seen from +y (front face in Unity's left-handed frame)
+			indices[at++] = i00;
+			indices[at++] = i01;
+			indices[at++] = i11;
+			indices[at++] = i00;
+			indices[at++] = i11;
+			indices[at++] = i10;
+		}
+	}
+	const bounds: Aabb = { center: [0.5, 0.5, 0.5], extents: [0.5, 0.5, 0.5] };
+	return {
+		name: `unit grid ${cells}x${cells}`,
+		vertexCount,
+		channels: [],
+		positions,
+		normals,
+		packedNormals: null,
+		tangents: null,
+		colors: null,
+		uvs: [
+			{ dimension: 2, format: VertexAttributeFormat.Float32, data: uvs },
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+			null,
+		],
+		indices,
+		submeshes: [
+			{
+				firstIndex: 0,
+				indexCount,
+				topology: MeshTopology.Triangles,
+				baseVertex: 0,
+				firstVertex: 0,
+				vertexCount,
 				bounds,
 			},
 		],

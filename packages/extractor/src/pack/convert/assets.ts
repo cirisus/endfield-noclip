@@ -1,5 +1,6 @@
 import type { WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import type { MaterialRecord, ShaderSummary } from '@endfield-noclip/formats/unity/material';
+import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { BlobKind } from '@endfield-noclip/package-format/blobs';
 import type { GeometryEntry } from '@endfield-noclip/package-format/geometry';
 import type { Chain } from '@endfield-noclip/package-format/instances';
@@ -31,6 +32,11 @@ import {
 } from '../../game/materials/material-describe.ts';
 import { type LocatedMaterial, locateMaterial } from '../../game/materials/material-load.ts';
 import { type MaterialValues as ConvertedMaterial, readerOf } from '../../game/materials/material-values.ts';
+import {
+	placedSludge,
+	SLUDGE_HEIGHTMAP_SLOT,
+	type SludgePatchParams,
+} from '../../game/materials/surfaces/sludge.ts';
 import { keywordsNotDrawn, surfaceGaps } from '../../game/materials/surfaces/surface-keywords.ts';
 import type { MaterialValues } from '../../game/prefabs/prefab.ts';
 import { orderedPool } from '../../pool.ts';
@@ -61,12 +67,20 @@ import type { VatBake } from './vat-skin.ts';
 
 // #region types
 
+/** a sludge patch's per-placement heightmap and dimensions, folded into its material variant */
+export interface SludgeMaterialOverride extends SludgePatchParams {
+	/** heightmap texture asset ref (`Slu__<level>__<id>.png`) */
+	heightmap: AssetRef;
+}
+
 /** what a material variant (`AssetIds.internObjectVariant`, `internVariant`) changes */
 export interface MaterialOverrides {
 	/** saved values replaced before conversion, as a pose's clips set them, or `null` */
 	saved: MaterialValues | null;
 	/** a static WaterDecal box's renderer values, folded into its foam once described, or `null` */
 	waterDecal: WaterDecal | null;
+	/** a sprayable sludge patch's heightmap and dimensions, folded in once described, or `null` */
+	sludge?: SludgeMaterialOverride | null;
 }
 
 /** what {@link convertAssets} needs */
@@ -510,10 +524,28 @@ const loadMaterials = async (
 	};
 	// variants of one material share its load
 	const loads = new Map<bigint, Promise<LocatedMaterial>>();
+	const heightmapLoads = new Map<bigint, Promise<LocatedMaterial['textures'][string]>>();
+	const loadHeightmap = (ref: AssetRef): Promise<LocatedMaterial['textures'][string]> =>
+		heightmapLoads.getOrInsertComputed(ref.hash, async () => {
+			try {
+				const found = await input.resolver.findUnique(ref, UnityClass.Texture2D);
+				return { texture: locatedObject(found) };
+			} catch (error) {
+				return { texture: null, error: errorText(error) };
+			}
+		});
 	await orderedPool(
 		input.materials,
 		input.materialConcurrency,
-		(asset) => loads.getOrInsertComputed(asset.hash, () => jobs.material(asset)),
+		async (asset, id) => {
+			const loaded = await loads.getOrInsertComputed(asset.hash, () => jobs.material(asset));
+			const sludge = input.materialOverrides.get(id)?.sludge ?? null;
+			if (sludge === null) {
+				return loaded;
+			}
+			const heightmap = await loadHeightmap(sludge.heightmap);
+			return { ...loaded, textures: { ...loaded.textures, [SLUDGE_HEIGHTMAP_SLOT]: heightmap } };
+		},
 		(result, _asset, id) => {
 			if (result instanceof Error) {
 				out.converted.push(null);
@@ -551,6 +583,20 @@ const loadMaterials = async (
 					return textures.use(resolved.texture, place);
 				},
 			);
+			const heightmap = loaded.textures[SLUDGE_HEIGHTMAP_SLOT];
+			if (heightmap !== undefined) {
+				if (heightmap.error !== undefined) {
+					slotErrors[SLUDGE_HEIGHTMAP_SLOT] = heightmap.error;
+					jobs.fail('texture slot', new Error(heightmap.error));
+				} else if (heightmap.texture !== null) {
+					converted.material.slots[SLUDGE_HEIGHTMAP_SLOT] = {
+						texture: textures.use(heightmap.texture, place),
+						uv: 0,
+						scale: [1, 1],
+						offset: [0, 0],
+					};
+				}
+			}
 			const notDrawn = keywordsNotDrawn(loaded.shader.name, converted.material.keywords);
 			for (const keyword of notDrawn) {
 				const key = `${loaded.shader.name} ${keyword}`;
@@ -595,6 +641,10 @@ const describeSurfaces = (
 		const placement = overrides.get(id)?.waterDecal ?? null;
 		if (placement !== null && surface.kind === 'waterFoam') {
 			surface = placedWaterFoam(surface, placement);
+		}
+		const sludge = overrides.get(id)?.sludge ?? null;
+		if (sludge !== null && surface.kind === 'sludge') {
+			surface = placedSludge(surface, sludge);
 		}
 		if (surface.kind === 'unsupported') {
 			const key = `${shader.name}: ${surface.reason}`;

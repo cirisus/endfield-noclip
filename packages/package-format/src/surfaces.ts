@@ -45,6 +45,7 @@ export type MaterialSurface =
 	| MattePaintingSurface
 	| ErosionSurface
 	| ErosionDynamicSurface
+	| SludgeSurface
 	| DitheredSurface
 	| MistCardSurface
 	| MistVolumeSurface
@@ -765,6 +766,60 @@ export interface ErosionDynamicSurface {
 		colorOffset: number;
 		top: Rgb;
 		bottom: Rgb;
+	};
+}
+
+/**
+ * `HGRP/SludgeV2`, spray-clearable sludge patches (`docs/game-data/scene-states.md#sludge-and-miasma`).
+ * colours are linear (all `[HDR][Gamma]` colours linearized at extraction)
+ */
+export interface SludgeSurface {
+	kind: 'sludge';
+	textures: {
+		main: TextureSlot | null;
+		main2: TextureSlot | null;
+		main3: TextureSlot | null;
+		line: TextureSlot | null;
+		edge: TextureSlot | null;
+		/** per-patch baked heightmap (RG octahedral normal, B height, A coverage) */
+		heightmap: TextureSlot | null;
+	};
+	/** grid side length in metres (`SludgeComp.sludgeSize`) */
+	sludgeSize: number;
+	/** height scale in metres (`SludgeComp.sizeY`) */
+	sizeY: number;
+	/** packed clip planes (`SludgeComp.encodedClipPlane0/1`) */
+	clipPlane0: number;
+	clipPlane1: number;
+	baseColor: Rgb;
+	baseColor2: Rgb;
+	emissiveColor: Rgb;
+	lineColor: Color;
+	edgeColor: Color;
+	colorAlbedoPercent: number;
+	colorEmissivePercent: number;
+	metallic: number;
+	roughnessMin: number;
+	roughnessMax: number;
+	occlusionStrength: number;
+	vertNormalOffset: number;
+	main3UseDisturb: number;
+	lineRange: number;
+	lineRangeOut: number;
+	lineRangeIn: number;
+	edgeRange: number;
+	edgeAlpha: number;
+	speeds: {
+		main: Vec2;
+		main2: Vec2;
+		main3: Vec2;
+		line: Vec2;
+		edge: Vec2;
+	};
+	wave: {
+		intensity: Vec4;
+		length: Vec4;
+		speed: Vec4;
 	};
 }
 

@@ -5,7 +5,7 @@ import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 
 import { LookFlags, LookRow, UV1_SHIFT } from './look.ts';
 import { materialLooks } from './material-looks.ts';
-import { DitherFlags, DitherRow, ErosionDynamicRow, ErosionRow } from './special-looks.ts';
+import { DitherFlags, DitherRow, ErosionDynamicRow, ErosionRow, SludgeRow } from './special-looks.ts';
 import { described } from './test-materials.ts';
 
 test('matte paintings are unlit, cast no shadows and test the texture alpha against their threshold', () => {
@@ -409,4 +409,64 @@ test('dynamic erosion: packs all seven maps, streams 1D LUTs whole and marks the
 		Array.from(look.params.subarray(ErosionDynamicRow.ripple0, ErosionDynamicRow.ripple0 + 4)),
 		[Math.fround(0.2), Math.fround(5.7), Math.fround(3.9), Math.fround(4.9)],
 	);
+});
+
+test('sludge: uses cutout queue, streams heightmap whole and unpacks clip planes', () => {
+	const slot = (texture: number): TextureSlot => ({
+		texture,
+		uv: 0,
+		scale: [1, 1],
+		offset: [0, 0],
+	});
+	const entry = described({
+		kind: 'sludge',
+		textures: {
+			main: slot(1),
+			main2: slot(2),
+			main3: slot(3),
+			line: slot(4),
+			edge: slot(5),
+			heightmap: slot(6),
+		},
+		sludgeSize: 32,
+		sizeY: 4.25,
+		clipPlane0: 1 << 19,
+		clipPlane1: 1 << 19,
+		baseColor: [0.4, 0.03, 0.02],
+		baseColor2: [0.9, 0.1, 0.3],
+		emissiveColor: [2, 0.4, 0.7],
+		lineColor: [1, 2, 4, 1],
+		edgeColor: [1, 0.5, 0.3, 1],
+		colorAlbedoPercent: 0.9,
+		colorEmissivePercent: 0.2,
+		metallic: 0,
+		roughnessMin: 0.1,
+		roughnessMax: 0.9,
+		occlusionStrength: 0.6,
+		vertNormalOffset: 0.1,
+		main3UseDisturb: 1,
+		lineRange: 0.8,
+		lineRangeOut: 0.08,
+		lineRangeIn: 0,
+		edgeRange: 0.25,
+		edgeAlpha: 18,
+		speeds: {
+			main: [0.006, 0.003],
+			main2: [0.006, -0.005],
+			main3: [0, 0],
+			line: [0, 0.05],
+			edge: [0, -0.01],
+		},
+		wave: {
+			intensity: [0.4, 0, 0.53, 0],
+			length: [5, 1.5, 2, 0],
+			speed: [3, 2, 5, 0],
+		},
+	});
+	const [look] = materialLooks({ entries: [entry] });
+	assert.equal(look.queue, 'cutout');
+	assert.deepEqual(look.textures, [1, 2, 3, 4, 5, null, 6]);
+	assert.equal(look.uvScales[6], 0);
+	assert.equal(look.params[SludgeRow.mode + 3], 2);
+	assert.deepEqual(Array.from(look.params.subarray(SludgeRow.clip0, SludgeRow.clip0 + 4)), [0, 0, 0, 1]);
 });

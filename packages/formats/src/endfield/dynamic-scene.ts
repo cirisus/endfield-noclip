@@ -216,12 +216,28 @@ export interface ErosionCoreLink {
 	position: [number, number, number];
 }
 
-/** the erosion sludge core a sludge patch belongs to */
+/** the erosion sludge core and heightfield geometry of a sludge patch (`FBDynamicSceneSludgeComp`) */
 export interface SludgeCoreLink {
 	/** the core's logic id in level data */
 	id: bigint;
 	/** the patch's position */
 	position: [number, number, number];
+	/** grid side length in metres */
+	sludgeSize: number;
+	/** height scale in metres */
+	sizeY: number;
+	/** world-space origin of the patch's local `(0, 0, 0)` corner */
+	origin: [number, number, number];
+	up: [number, number, number];
+	right: [number, number, number];
+	forward: [number, number, number];
+	/** StringPathHash of the sludge material (`M_sludgeV2` / `M_sludgeV2_high`) */
+	materialHash: bigint;
+	/** StringPathHash of the baked heightmap texture (`Slu__<level>__<id>.png`) */
+	textureHash: bigint;
+	/** packed clip planes (`EncodedClipPlane0/1`) */
+	clipPlane0: number;
+	clipPlane1: number;
 }
 
 /** a slot for a separately stored scene, in world space */
@@ -621,6 +637,16 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 						entity.sludgeCore = {
 							id: fb.u64(s + 248),
 							position: fb.vec3(s + 96),
+							sludgeSize: fb.u32(s),
+							sizeY: fb.f32(s + 4),
+							origin: fb.vec3(s + 48),
+							up: fb.vec3(s + 60),
+							right: fb.vec3(s + 72),
+							forward: fb.vec3(s + 84),
+							materialHash: fb.u64(s + 112),
+							textureHash: fb.u64(s + 120),
+							clipPlane0: fb.u32(s + 216),
+							clipPlane1: fb.u32(s + 220),
 						};
 						break;
 					}

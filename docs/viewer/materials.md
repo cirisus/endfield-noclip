@@ -208,11 +208,14 @@ instead of its `_CUSTOM_IBL` cubemap, making metal darker than in-game.
 
 ## erosion
 
-[`erosionLook`](../../packages/viewer/src/looks/special-looks.ts) / `erosion_surface` and
-`erosionDynamicLook` / `erosion_dynamic_surface` in `mesh.wgsl` draw
-[erosion rock and clearable blight patches](../game-data/materials.md#erosion), reusing Lit texture
-slots and omitting `_ObjectBlend*` / `_LineBlend*` soft blending and `HGRP/ErosionDynamic`'s
-`_ANIMATION_FEATURE_*` vertex displacement.
+[`erosionLook`](../../packages/viewer/src/looks/special-looks.ts) / `erosion_surface`,
+`erosionDynamicLook` / `erosion_dynamic_surface`, and `sludgeLook` / `sludge_vertex` +
+`sludge_surface` in `mesh.wgsl` draw
+[erosion rock and clearable blight patches](../game-data/materials.md#erosion) plus map02's
+[sprayable sludge](../game-data/scene-states.md#sludge-and-miasma), reusing Lit texture slots and
+omitting `_ObjectBlend*` / `_LineBlend*` soft blending, `HGRP/ErosionDynamic`'s
+`_ANIMATION_FEATURE_*` vertex displacement, and `HGRP/SludgeV2`'s `SludgeDecal` / `SludgeBlend`
+passes.
 
 ## unsupported materials
 

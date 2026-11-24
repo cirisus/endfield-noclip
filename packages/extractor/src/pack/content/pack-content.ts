@@ -1,4 +1,5 @@
 import type { ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
+import type { SludgeCoreLink } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	DrawFlags,
 	type RectDecal,
@@ -223,6 +224,37 @@ export class PackContent {
 			this.materialOverrides.set(id, { saved: null, waterDecal: placement });
 		}
 		return chainDraw({ geometry: this.geometries.intern(mesh, pathOf), material: id, minSquared: 0 });
+	}
+
+	/**
+	 * a spray-clearable sludge patch draws a shared 64×64 unit grid with a variant of its `HGRP/SludgeV2`
+	 * material carrying its baked heightmap, dimensions and clip planes
+	 *
+	 * @param patch the sludge patch's component data
+	 * @returns its draw
+	 */
+	sludgeDraw(patch: SludgeCoreLink): ChainDraw {
+		const { pathOf } = this.scene;
+		const variant = `sludge:${patch.textureHash.toString(16)}:${patch.sludgeSize}:${patch.sizeY}:${patch.clipPlane0}:${patch.clipPlane1}`;
+		const material = this.materials.internVariant(patch.materialHash, pathOf, variant);
+		if (!this.materialOverrides.has(material)) {
+			this.materialOverrides.set(material, {
+				saved: null,
+				waterDecal: null,
+				sludge: {
+					heightmap: { hash: patch.textureHash, path: pathOf(patch.textureHash) ?? null },
+					sludgeSize: patch.sludgeSize,
+					sizeY: patch.sizeY,
+					clipPlane0: patch.clipPlane0,
+					clipPlane1: patch.clipPlane1,
+				},
+			});
+		}
+		return chainDraw({
+			geometry: this.geometries.internSynthetic({ kind: 'grid', cells: 64 }),
+			material,
+			minSquared: 0,
+		});
 	}
 
 	/** @returns the decal cube's StringPathHash key, or `undefined` if absent */

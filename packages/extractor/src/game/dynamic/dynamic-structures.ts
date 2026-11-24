@@ -12,13 +12,14 @@ import {
 	type DynamicModel,
 	type DynamicVariable,
 	type ExtraSceneSlot,
+	type SludgeCoreLink,
 } from '@endfield-noclip/formats/endfield/dynamic-scene';
 import {
 	parseDynamicChunk,
 	readChunkEntitiesByGroup,
 	type ChunkEntity,
 } from '@endfield-noclip/formats/endfield/init-chunk-data';
-import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
+import { cellOf, levelOfCell, type LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
 import {
 	parseStreamingChunk,
 	DECAL_MATERIAL_KEY,
@@ -115,11 +116,22 @@ export interface DynamicEntity {
 	grid: number;
 }
 
+/** a spray-clearable sludge patch (`SludgeComp`) and its visibility */
+export interface DynamicSludge {
+	patch: SludgeCoreLink;
+	tag: number;
+	visibility: Visibility;
+	/** the owner's `fb_main` grid id */
+	grid: number;
+}
+
 /** structures and their visibility decoded from dynamic resources */
 export interface DynamicStructures {
 	entities: DynamicEntity[];
 	/** local lights in the ECS groups, under their structure's visibility */
 	lights: { light: ChunkLight; visibility: Visibility }[];
+	/** spray-clearable sludge patches (`SludgeComp`), under their blight core's visibility */
+	sludges: DynamicSludge[];
 	/** script, logic, harvest and blight controls; other load gates read controls of the game state instead */
 	controls: DraftControl[];
 	/** MapConfig scene state indices the visibility expressions require, as `sceneStateControl` controls */
@@ -633,6 +645,7 @@ class OwnerPass {
 	readonly result: DynamicStructures = {
 		entities: [],
 		lights: [],
+		sludges: [],
 		models: [],
 		controls: [],
 		sceneStates: new Set(),
@@ -687,6 +700,41 @@ class OwnerPass {
 			this.#controls.set(blight.control.id, blight.control);
 			gates = allOf(gates, [[{ control: blight.control.id, mask: 1 << BLIGHT_PRESENT }]]);
 			this.result.erosionCores.set(String(blight.link.core), gates);
+		}
+		if (
+			entity.sludgeCore !== null &&
+			entity.sludgeCore.sludgeSize > 0 &&
+			entity.sludgeCore.materialHash !== 0n &&
+			entity.sludgeCore.textureHash !== 0n
+		) {
+			const patch = entity.sludgeCore;
+			const cell = cellOf(patch.position[0], patch.position[2]);
+			const tag = partition === undefined ? 0 : (levelOfCell(partition, cell.x, cell.z)?.tag ?? 0);
+			let alternatives = gates;
+			if (entity.states.length > 0) {
+				for (const index of entity.states) {
+					this.result.sceneStates.add(index);
+				}
+				alternatives = allOf(
+					alternatives,
+					entity.states.map((index) => [{ control: sceneStateControl(index), mask: 2 }]),
+				);
+			}
+			if (entity.areas.length > 0 && !entity.areas.includes(0)) {
+				for (const area of entity.areas) {
+					this.result.areas.add(area);
+				}
+				alternatives = allOf(
+					alternatives,
+					entity.areas.map((area) => [{ control: streamAreaControl(area), mask: 2 }]),
+				);
+			}
+			this.result.sludges.push({
+				patch,
+				tag,
+				visibility: { alternatives },
+				grid: entity.grid,
+			});
 		}
 		for (const group of entity.resourceGroups) {
 			const ref = group.resources;

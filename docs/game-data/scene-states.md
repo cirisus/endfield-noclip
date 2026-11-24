@@ -333,10 +333,13 @@ destroyed), published to AutoNameMapVarTable for every patch on map02 and indie_
 unloads once its core is activated (before destruction). two map02 cores (#30, #35) start a fresh
 world at 1 (sludge hidden). active core visuals in game aren't checked.
 
-sludge is not a mesh: each patch references a baked height map (`Slu__<level>__<local id>[__n]`,
-128² BC4 `.png` + `.json` under `Assets/Beyond/DynamicAssets/Gameplay/Sludge/`) built into a voxel
-heightfield over a `sludgeSize`² grid and rendered with `M_sludgeV2` or `M_sludgeV2_high`. sprayed
-sludge regrows (`rebornTime`) until its core is cleared.
+sludge is not a mesh: each `SludgeComp` carries a 64×64 BC7 heightmap (`texGuidHash` →
+`Slu__<level>__<local id>.png`: RG octahedral normal, B normalised height `0..1`, A coverage),
+`sludgeSize` / `sizeY`, a local-to-world frame (`originW`, `up`, `right`, `forward`), two packed
+clip planes (`encodedClipPlane0/1`), and a material (`matGuidHash` → `M_sludgeV2` or
+`M_sludgeV2_high`, shader `HGRP/SludgeV2`). the vertex stage displaces a grid over that heightfield
+with radial wave motion, and the fragment stage blends scrolling textures, pulsing polar veins, edge
+highlights, and emissive cores. sprayed sludge regrows (`rebornTime`) until its core is cleared.
 
 North Wuling Exclusion Zone's blight miasma (map02_lv008) is five type-51 entities whose resource
 groups hold smoke, dust, fog walls, and small fires, each loading while its map variable (#191–195)

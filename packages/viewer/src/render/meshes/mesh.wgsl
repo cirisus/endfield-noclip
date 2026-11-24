@@ -218,6 +218,27 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	let mirrored = determinant(m) < 0.0;
 	let flags = bitcast<u32>(draw.offset.w);
 	let uv = vec4f(v.uv0 * draw.uv0.xy + draw.uv0.zw, v.uv1 * draw.uv1.xy + draw.uv1.zw);
+	if ((flags & EROSION) != 0u && look.emissive2.w > 1.5) {
+		let sv = sludge_vertex(uv.xy, origin, m, look);
+		var out: VertexOut;
+		if (sv.discarded) {
+			out.position = vec4f(0.0, 0.0, 0.0, 0.0);
+			return out;
+		}
+		out.position = frame.view_proj * vec4f(sv.rel, 1.0);
+		out.rel = sv.rel;
+		out.normal = sv.normal;
+		out.tangent = sv.tangent;
+		out.uv = uv;
+		out.draw = draw_id;
+		out.phase = 0.0;
+		out.object_pos = p;
+		out.color = sv.color;
+		out.origin = origin;
+		out.fade = list_fade(entry);
+		out.mirrored = select(0u, 1u, mirrored);
+		return out;
+	}
 	// as vs_cutout_depth computes it, so alpha-tested depth matches exactly where they're shaded
 	let rel = instance_rel(v.position, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
 	// no normals in the mesh: zero here, faceted in the fragment shader
@@ -431,6 +452,17 @@ fn vs_cutout_depth(v: CutoutDepthIn, @builtin(instance_index) ii: u32) -> Cutout
 	let m = row_basis(row.t0, row.t1, row.t2, row.info);
 	let flags = bitcast<u32>(draw.offset.w);
 	let uv = vec4f(v.uv0 * draw.uv0.xy + draw.uv0.zw, v.uv1 * draw.uv1.xy + draw.uv1.zw);
+	if ((flags & EROSION) != 0u && look.emissive2.w > 1.5) {
+		let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
+		let sv = sludge_vertex(uv.xy, origin, m, look);
+		var out: CutoutDepthOut;
+		out.position = select(frame.view_proj * vec4f(sv.rel, 1.0), vec4f(0.0, 0.0, 0.0, 0.0), sv.discarded);
+		out.uv = uv;
+		out.draw = draw_id;
+		out.color = vec4f(1.0);
+		out.fade = list_fade(entry);
+		return out;
+	}
 	// as vs_main computes it
 	let rel = instance_rel(v.position, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
 	var out: CutoutDepthOut;
@@ -831,7 +863,9 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 	}
 	if ((flags & EROSION) != 0u) {
 		var s: Surface;
-		if (look.emissive2.w > 0.5) {
+		if (look.emissive2.w > 1.5) {
+			s = sludge_surface(look, in, flags, faceted, front, uv0_dx, uv0_dy);
+		} else if (look.emissive2.w > 0.5) {
 			s = erosion_dynamic_surface(look, in, flags, faceted, front, packed, mask, uv0_dx, uv0_dy);
 		} else {
 			s = erosion_surface(look, in, flags, faceted, front, packed, mask, detail, uv0_dx, uv0_dy);
@@ -1711,6 +1745,170 @@ fn erosion_dynamic_surface(
 	return s;
 }
 
+struct SludgeVertex {
+	rel: vec3f,
+	normal: vec3f,
+	tangent: vec4f,
+	color: vec4f,
+	discarded: bool,
+}
+
+// `HGRP/SludgeV2` vertex displacement (`SludgeRow` in special-looks.ts): samples the patch's 64×64 BC7
+// heightmap (rg octahedral normal, b height, a coverage), clips empty/outside cells, and adds animated waves
+fn sludge_vertex(uv: vec2f, origin: vec3f, m: mat3x3f, look: Look) -> SludgeVertex {
+	var out: SludgeVertex;
+	out.discarded = true;
+	let hm = textureSampleLevel(parallax_noise_map, noise_sampler, uv, 0.0);
+	let h = hm.z;
+	if (h < 1e-6) {
+		return out;
+	}
+	let sludge_size = max(look.emissive2.x, 1e-4);
+	let size_y = max(look.emissive2.y, 1e-4);
+	var local = vec3f(uv.x * sludge_size, h * size_y, uv.y * sludge_size);
+	let clip0 = look.mask_scale;
+	let clip1 = look.mask_offset;
+	if (dot(clip0, vec4f(local, 1.0)) < 0.0 || dot(clip1, vec4f(local, 1.0)) < 0.0) {
+		return out;
+	}
+	// octahedral normal decode matching `HGRP/SludgeV2`
+	let e = hm.xy * 2.0 - 1.0;
+	let ny = 1.0 - abs(e.x) - abs(e.y);
+	var ln = vec3f(e.x, ny, e.y);
+	if (ny < 0.0) {
+		let folded = (1.0 - abs(ln.zx)) * select(vec2f(-1.0), vec2f(1.0), ln.xz >= vec2f(0.0));
+		ln = vec3f(folded.x, ny, folded.y);
+	}
+	ln = normalize(ln);
+
+	let coverage = hm.w;
+	let center = vec3f(sludge_size * 0.5, size_y * 0.5, sludge_size * 0.5);
+	let cov2 = coverage * 2.0;
+	let wave_phase = look.parallax2 * distance(local, center) - look.parallax_color * frame.eye.w;
+	let wave_amp = look.parallax * vec4f(saturate(cov2 - 1.0), saturate(cov2), 0.1, 0.0);
+	let wave_y = dot(sin(wave_phase) + vec4f(1.0), wave_amp);
+	var wave_xz = normalize(local - center + vec3f(1e-6)) * dot(cos(wave_phase) + vec4f(1.0), wave_amp);
+	wave_xz.y = 0.0;
+	local.y += wave_y;
+	let anim_n = ln + wave_xz;
+	local += anim_n * look.surface2.z;
+	local += clip0.xyz * max(-dot(clip0, vec4f(local, 1.0)), 0.0);
+	local += clip1.xyz * max(-dot(clip1, vec4f(local, 1.0)), 0.0);
+
+	let right_u = m[0] / sludge_size;
+	let up_u = m[1] / size_y;
+	let fwd_u = m[2] / sludge_size;
+	let world_n = normalize(right_u * anim_n.x + up_u * anim_n.y + fwd_u * anim_n.z);
+	out.rel = origin + right_u * local.x + up_u * local.y + fwd_u * local.z;
+	out.normal = world_n;
+	out.tangent = vec4f(normalize(cross(world_n, fwd_u) + vec3f(1e-6)), 1.0);
+	out.color = vec4f(coverage, 1.0 - wave_y, 0.0, 1.0);
+	out.discarded = false;
+	return out;
+}
+
+// `HGRP/SludgeV2` fragment shading (`sludgeLook` in special-looks.ts, parameters by `SludgeRow`)
+fn sludge_surface(
+	look: Look,
+	in: VertexOut,
+	flags: u32,
+	faceted: vec3f,
+	front: bool,
+	uv0_dx: vec2f,
+	uv0_dy: vec2f,
+) -> Surface {
+	let time = frame.eye.w;
+	let uv = in.uv.xy;
+	let delta = uv - vec2f(0.5);
+	let rad = length(delta) * 2.0;
+	let ang = atan2(delta.x, delta.y) + 3.14159265;
+	let polar_uv = vec2f(ang * 0.15915494, rad);
+
+	let cov2 = in.color.r * 2.0;
+	let t1 = saturate(cov2);
+	let t2 = saturate(cov2 - 1.0);
+	let wave_ao = in.color.g;
+
+	let st0 = look.slot_uv[BASE_SLOT];
+	let st1 = look.slot_uv[NORMAL_SLOT];
+	let st2 = look.slot_uv[MASK_SLOT];
+	let st3 = look.slot_uv[EMISSIVE_SLOT];
+	let st4 = look.slot_uv[DETAIL_SLOT];
+	let sp0 = look.detail.xy;
+	let sp1 = look.detail.zw;
+	let sp2 = look.detail2.xy;
+	let sp3 = look.detail2.zw;
+	let sp4 = look.detail_overlay.xy;
+
+	let uv_m1 = (uv + sp0 * time) * st0.xy + st0.zw;
+	let uv_m2 = (uv + sp1 * time) * st1.xy + st1.zw;
+	let m1 = select(
+		vec4f(1.0),
+		textureSampleGrad(base_map, base_sampler, uv_m1, uv0_dx * st0.xy, uv0_dy * st0.xy),
+		(flags & BASE_MAP) != 0u,
+	);
+	let m2 = select(
+		vec4f(1.0),
+		textureSampleGrad(normal_map, detail_sampler, uv_m2, uv0_dx * st1.xy, uv0_dy * st1.xy),
+		(flags & NORMAL_MAP) != 0u,
+	);
+	let uv_m3 = (uv + sp2 * time) * st2.xy + st2.zw + m1.xy * 0.1 * look.surface2.w;
+	let m3 = select(
+		vec4f(1.0),
+		textureSampleGrad(mask_map, detail_sampler, uv_m3, uv0_dx * st2.xy, uv0_dy * st2.xy),
+		(flags & MASK_MAP) != 0u,
+	);
+	let uv_line = (polar_uv + sp3 * time) * st3.xy + st3.zw + m1.xx * 0.1;
+	let line_tex = select(
+		vec4f(1.0),
+		textureSampleLevel(emissive_map, base_sampler, uv_line, 0.0),
+		(flags & EMISSIVE_MAP) != 0u,
+	);
+	let uv_edge = (polar_uv + sp4 * time) * st4.xy + st4.zw + m3.xy * 0.1;
+	let edge_tex = select(
+		vec4f(1.0),
+		textureSampleLevel(detail_map, detail_sampler, uv_edge, 0.0),
+		(flags & DETAIL_MAP) != 0u,
+	);
+
+	let base_c = mix(look.tint.rgb, look.mask_albedo[0].rgb, t1);
+	let line_col = look.mask_albedo[1];
+	let edge_col = look.mask_albedo[2];
+	let line_range = look.mask_roughness.x * (sin(ang * 4.7746482 + time) * 0.2 + 0.8);
+	let ld = saturate(line_range - t1) / max(line_range, 1e-4);
+	let ld2 = ld * ld;
+	let line_out = look.mask_roughness.y * (sin(ang * 19.098593 + time * 1.5) * 0.11 + 0.9);
+	let line_w = (line_tex.a * line_col.a) * (ld2 * ld2 * saturate(t1 - line_out) * saturate((rad - look.mask_roughness.z) * 5.0) * 5.0);
+	let c1 = mix(base_c * m3.rgb, line_tex.rgb * line_col.rgb * m3.rgb, line_w);
+
+	let edge_range = max(look.mask_roughness.w, 1e-4);
+	let ed = saturate(edge_range - t1) / edge_range;
+	let ew = t1 * ed * ed * look.mask_metallic.x;
+	let edge_c = saturate(edge_col.rgb * (m2.r + 0.3) * edge_tex.rgb * ew * (m2.r + 0.1));
+	let c2 = mix(c1, edge_c, saturate(ew * edge_col.a));
+	let c3 = mix(c2, look.emissive.rgb * m3.rgb * wave_ao, t2 * t2);
+
+	var n = surface_normal(in.normal, faceted, !front);
+	if (in.tangent.w != 0.0) {
+		let tn_xy = m1.xy * 0.2 + m2.xy * 0.2 - m3.xy * 0.4 + line_tex.xy * 0.1;
+		let tn = normalize(vec3f(tn_xy, 1.0));
+		let t = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
+		var b = cross(in.normal, in.tangent.xyz) * in.tangent.w;
+		b = select(-b, b, front);
+		b = normalize(b - n * dot(b, n));
+		n = normalize(t * tn.x + b * tn.y + n * tn.z);
+	}
+
+	let rough = mix(look.surface.x, look.surface.y, m3.r);
+	var s = default_surface(clamp(c3 * look.surface2.x, vec3f(0.0), vec3f(1.0)), n);
+	s.roughness = rough;
+	s.metallic = saturate(rough + look.surface.z);
+	s.f0 = 0.04;
+	s.occlusion = look.surface.w;
+	s.emission = c3 * look.surface2.y;
+	return s;
+}
+
 // the depth of alpha-tested materials, in the main pass and the shadow passes (opaque ones have no fragment
 // stage there). only drawn for materials with an alpha-test threshold whose alpha texture is bound (`cutout`
 // in look.ts and MeshRenderer.prepare). a negative threshold marks VFXDitherAlpha's dithered test
@@ -1729,6 +1927,9 @@ fn fs_cutout_depth(in: CutoutDepthVaryings) {
 	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
 	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
 	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
+	if ((flags & EROSION) != 0u && look.emissive2.w > 1.5) {
+		return;
+	}
 	var texel: vec4f;
 	if ((flags & ALPHA_NORMAL) != 0u) {
 		texel = sample_slot(normal_map, detail_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, NORMAL_SLOT);

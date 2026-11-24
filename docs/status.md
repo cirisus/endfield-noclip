@@ -199,9 +199,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   scene instead of `_CUSTOM_IBL`; other variants undecoded.
 - **matte paintings** ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` unread
   (unused on map01).
-- **erosion rock & dynamic blight** ([viewer](viewer/materials.md#erosion)): `_ObjectBlend*` /
-  `_LineBlend*` soft blend, fake translucency, and `HGRP/ErosionDynamic` `_ANIMATION_FEATURE_*`
-  vertex animation are not drawn (clearable patches unverified in game).
+- **erosion rock, dynamic blight & sludge** ([viewer](viewer/materials.md#erosion)): `_ObjectBlend*`
+  / `_LineBlend*` soft blend, fake translucency, `HGRP/ErosionDynamic` `_ANIMATION_FEATURE_*` vertex
+  animation, and `HGRP/SludgeV2`'s `SludgeDecal` / `SludgeBlend` passes are not drawn (clearable
+  patches and sludge unverified in game).
 - **decals** ([viewer](viewer/materials.md#decals), [game-data](game-data/materials.md#decals)):
   - unsupported: `HGRP/DecalLit` footprint/UV-noise/arc variants, placements without colour/UV,
     non-box prefab `HGDecalProjector`s, and `HGRP/DecalUnlit`. terrain decals (InitChunkData
@@ -513,10 +514,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **outpost upgrades** ([game-data](game-data/scene-states.md#outpost-upgrade-missions)): whether
   `upgradeMissionId` raises the level immediately or only unlocks it is unverified (treated as one).
 - **scripted state & water**:
-  - unrepresented: `SetOverrideSceneState`, map02 sprayable sludge surface (only cores draw,
-    active/inactive indistinguishable;
-    [sludge and miasma](game-data/scene-states.md#sludge-and-miasma)), runtime-computed water fills
-    (`waterScriptActionsComputed`), and shop/depot/terminal/doodad form-to-level mappings.
+  - unrepresented: `SetOverrideSceneState`, runtime-computed water fills
+    (`waterScriptActionsComputed`), and shop/depot/terminal/doodad form-to-level mappings; map02
+    sludge cores hide active vs inactive (`1` vs `0`) under one present/cleansed toggle
+    ([sludge and miasma](game-data/scene-states.md#sludge-and-miasma)).
   - manual only: script-driven water levels (don't follow drivers; set amounts assumed to animate,
     not snap) and scripted environment volumes (blend mode 3, default off, preview at full
     strength).

@@ -38,6 +38,7 @@ import { describeLitDecal } from './surfaces/lit-decal.ts';
 import { swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
 import { describeLit } from './surfaces/lit.ts';
 import { describeMattePainting } from './surfaces/matte-painting.ts';
+import { describeSludge } from './surfaces/sludge.ts';
 import { type VatAnimation, vatOf } from './surfaces/vat-animation.ts';
 import { describeWetnessDecal } from './surfaces/wetness-decal.ts';
 
@@ -85,6 +86,7 @@ const DESCRIBERS: { readonly [F in ShaderFamily]?: Describer | ReadonlyMap<strin
 	erosion: byShader({
 		'HGRP/Erosion': describeErosion,
 		'HGRP/ErosionDynamic': describeErosionDynamic,
+		'HGRP/SludgeV2': describeSludge,
 	}),
 	vfxDitherAlpha: (reader) =>
 		isDitherEffect(reader) ? describeDitherEffect(reader) : describeDithered(reader),

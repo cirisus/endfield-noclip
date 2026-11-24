@@ -5,7 +5,7 @@
  * @module
  */
 
-import { GAPS_FLOAT, LookFlags, LookRow, type MaterialLook } from '../../looks/look.ts';
+import { GAPS_FLOAT, LookFlags, LookRow, Slot, type MaterialLook } from '../../looks/look.ts';
 import type { MeshBucket } from '../../streaming/mesh-buckets.ts';
 import type { ListedSpan } from '../instances/instance-renderer.ts';
 
@@ -79,8 +79,12 @@ export const drawRangeOf = (
 		case 'transparent': {
 			return queue;
 		}
-		// without the texture holding its alpha there's nothing to test yet, so it draws opaque
+		// without the texture holding its alpha there's nothing to test yet, so it draws opaque.
+		// sludge heightfields wait for their heightmap (slot 6) rather than flashing a flat square
 		case 'cutout': {
+			if ((look.flags & LookFlags.Erosion) !== 0 && look.params[LookRow.emissive2 + 3] > 1.5) {
+				return state.slots[Slot.ParallaxNoise] !== null ? queue : null;
+			}
 			return state.alphaReady ? queue : 'opaque';
 		}
 		// mesh decals without depth write wait for their alpha texture rather than covering the floor as solids

@@ -363,7 +363,20 @@ test('reads the sludge core a sludge patch belongs to', () => {
 	const entities = readDynamicScene(build({ sludge: true })).entities;
 	assert.equal(entities.length, 3);
 	const position = [-930.25, 247.2, 94.2].map(Math.fround);
-	assert.deepEqual(entities[2].sludgeCore, { id: 22800030023n, position });
+	assert.deepEqual(entities[2].sludgeCore, {
+		id: 22800030023n,
+		position,
+		sludgeSize: 0,
+		sizeY: 0,
+		origin: [0, 0, 0],
+		up: [0, 0, 0],
+		right: [0, 0, 0],
+		forward: [0, 0, 0],
+		materialHash: 0n,
+		textureHash: 0n,
+		clipPlane0: 0,
+		clipPlane1: 0,
+	});
 	assert.equal(entities[2].erosionCore, null);
 	assert.equal(entities[0].sludgeCore, null);
 });

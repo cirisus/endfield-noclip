@@ -11,6 +11,7 @@ import type {
 	ErosionDynamicSurface,
 	ErosionSurface,
 	MattePaintingSurface,
+	SludgeSurface,
 } from '@endfield-noclip/package-format/surfaces';
 import type { Rgb } from '@endfield-noclip/package-format/values';
 
@@ -202,6 +203,142 @@ export const erosionDynamicLook = (surface: ErosionDynamicSurface, cull: Materia
 	params.set([...ripple.top, ripple.width], ErosionDynamicRow.rippleTop);
 	params.set([...ripple.bottom, ripple.ringRatio], ErosionDynamicRow.rippleBottom);
 	params.set([ripple.speed, ripple.noiseStrength, ripple.colorOffset, 0], ErosionDynamicRow.rippleParams);
+	return look;
+};
+
+/**
+ * float offsets of a {@link sludgeLook}'s parameters (`HGRP/SludgeV2`). distinguished from {@link erosionLook}
+ * (0) and {@link erosionDynamicLook} (1) by `mode[3] === 2` (`look.emissive2.w`)
+ */
+export const SludgeRow = {
+	/** linear `_BaseColor`, no alpha test */
+	base: LookRow.tint,
+	/** `_RoughnessMin`, `_RoughnessMax`, `_Metallic`, `_OcclusionStrength` */
+	surface: LookRow.surface,
+	/** `_ColorAlbedoPercent`, `_ColorEmissivePercent`, `_VertNormalOffset`, `_MainTex3UseDisturb` */
+	surface2: LookRow.surface2,
+	/** linear `_EmissiveColor` */
+	emissive: LookRow.emissive,
+	/** `sludgeSize`, `sizeY`, 0, 2 (sludge discriminant) */
+	mode: LookRow.emissive2,
+	/** linear `_BaseColor2` */
+	base2: LookRow.maskAlbedo,
+	/** linear `_LineColor` (rgba) */
+	lineColor: LookRow.maskAlbedo + 4,
+	/** linear `_EdgeColor` (rgba) */
+	edgeColor: LookRow.maskAlbedo + 8,
+	/** `_LineRange`, `_LineRangeOut`, `_LineRangeIn`, `_EdgeRange` */
+	ranges: LookRow.maskRoughness,
+	/** `_EdgeAlpha` */
+	edgeParams: LookRow.maskMetallic,
+	/** unpacked clip plane 0 (`nx, ny, nz, d`; `0, 0, 0, 1` when disabled) */
+	clip0: LookRow.maskScale,
+	/** unpacked clip plane 1 (`nx, ny, nz, d`; `0, 0, 0, 1` when disabled) */
+	clip1: LookRow.maskOffset,
+	/** `_MainTexUVSpeed.xy`, `_MainTex2UVSpeed.xy` */
+	speed01: LookRow.detail,
+	/** `_MainTex3UVSpeed.xy`, `_LineTexUVSpeed.xy` */
+	speed23: LookRow.detail2,
+	/** `_EdgeTexUVSpeed.xy` */
+	speed4: LookRow.detailOverlay,
+	/** `_WaveIntensity` */
+	waveIntensity: LookRow.parallax,
+	/** `_WaveLength` */
+	waveLength: LookRow.parallax2,
+	/** `_WaveSpeed` */
+	waveSpeed: LookRow.parallaxColor,
+} as const;
+
+const decodeHalf = (bits: number): number => {
+	const sign = (bits & 0x8000) !== 0 ? -1 : 1;
+	const exp = (bits >> 10) & 0x1f;
+	const mant = bits & 0x3ff;
+	if (exp === 0) {
+		return sign * 2 ** -14 * (mant / 1024);
+	}
+	if (exp === 31) {
+		return mant === 0 ? sign * Infinity : Number.NaN;
+	}
+	return sign * 2 ** (exp - 15) * (1 + mant / 1024);
+};
+
+/** decodes `FBDynamicSceneSludgeComp.EncodedClipPlane*` into a local-space plane `(nx, ny, nz, d)` */
+const unpackSludgeClipPlane = (encoded: number): [number, number, number, number] => {
+	if (((encoded >>> 19) & 1) !== 0) {
+		return [0, 0, 0, 1];
+	}
+	const axis = (encoded >>> 16) & 3;
+	const sign = ((encoded >>> 18) & 1) !== 0 ? -1 : 1;
+	const raw = decodeHalf(encoded & 0xffff);
+	const d = Number.isNaN(raw) ? 1000 : raw;
+	return [axis === 0 ? sign : 0, axis === 1 ? sign : 0, axis === 2 ? sign : 0, d * sign];
+};
+
+/**
+ * spray-clearable sludge ({@link SludgeSurface}). its five shading maps fill slots 0–4 and its per-patch
+ * heightmap fills slot 6 (`ParallaxNoise`), drawn in the `cutout` queue so the depth and shadow passes bind
+ * the heightmap and UVs for vertex displacement
+ *
+ * @param surface the surface
+ * @param cull the faces the material culls
+ * @returns a new look
+ */
+export const sludgeLook = (surface: SludgeSurface, cull: MaterialCull): MaterialLook => {
+	const look = emptyLook({ drawn: true });
+	look.cull = cull;
+	look.queue = 'cutout';
+	look.flags |= LookFlags.Erosion;
+	const params = look.params;
+	const { textures, speeds, wave } = surface;
+	const slots: [number, TextureSlot | null][] = [
+		[Slot.Base, textures.main],
+		[Slot.Normal, textures.main2],
+		[Slot.Mask, textures.main3],
+		[Slot.Emissive, textures.line],
+		[Slot.Detail, textures.edge],
+		[Slot.ParallaxNoise, textures.heightmap],
+	];
+	for (const [i, slot] of slots) {
+		if (slot !== null) {
+			setTexture(look, i, slot);
+		}
+	}
+	// the 64×64 heightmap streams at mip 0 regardless of screen size
+	if (textures.heightmap !== null) {
+		look.uvScales[Slot.ParallaxNoise] = 0;
+	}
+	params.set([...surface.baseColor, -1], SludgeRow.base);
+	params.set(
+		[surface.roughnessMin, surface.roughnessMax, surface.metallic, surface.occlusionStrength],
+		SludgeRow.surface,
+	);
+	params.set(
+		[
+			surface.colorAlbedoPercent,
+			surface.colorEmissivePercent,
+			surface.vertNormalOffset,
+			surface.main3UseDisturb,
+		],
+		SludgeRow.surface2,
+	);
+	params.set([...surface.emissiveColor, 0], SludgeRow.emissive);
+	params.set([surface.sludgeSize, surface.sizeY, 0, 2], SludgeRow.mode);
+	params.set([...surface.baseColor2, 0], SludgeRow.base2);
+	params.set(surface.lineColor, SludgeRow.lineColor);
+	params.set(surface.edgeColor, SludgeRow.edgeColor);
+	params.set(
+		[surface.lineRange, surface.lineRangeOut, surface.lineRangeIn, surface.edgeRange],
+		SludgeRow.ranges,
+	);
+	params.set([surface.edgeAlpha, 0, 0, 0], SludgeRow.edgeParams);
+	params.set(unpackSludgeClipPlane(surface.clipPlane0), SludgeRow.clip0);
+	params.set(unpackSludgeClipPlane(surface.clipPlane1), SludgeRow.clip1);
+	params.set([...speeds.main, ...speeds.main2], SludgeRow.speed01);
+	params.set([...speeds.main3, ...speeds.line], SludgeRow.speed23);
+	params.set([...speeds.edge, 0, 0], SludgeRow.speed4);
+	params.set(wave.intensity, SludgeRow.waveIntensity);
+	params.set(wave.length, SludgeRow.waveLength);
+	params.set(wave.speed, SludgeRow.waveSpeed);
 	return look;
 };
 

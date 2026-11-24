@@ -504,6 +504,53 @@ describe('erosion', () => {
 		assert.ok(Math.abs(surface.ripple.speed - 0.05) < 1e-6);
 		assert.deepEqual(surface.ripple.configs[0], [1, 2, 3, 4]);
 	});
+
+	it('describes HGRP/SludgeV2 with linearized gamma-HDR colours, scrolling speeds and waves', () => {
+		const shader = shaderEntry({
+			name: 'HGRP/SludgeV2',
+			family: 'erosion',
+			floats: {
+				_ColorAlbedoPercent: 0.9,
+				_ColorEmissivePercent: 0.2,
+				_VertNormalOffset: 0.1,
+				_RoughnessMin: 0.1,
+				_RoughnessMax: 0.8,
+			},
+			colors: { _BaseColor: [0.5, 0.5, 0.5, 1] },
+			vectors: {
+				_MainTexUVSpeed: [0.006, 0.003, 0, 0],
+				_WaveIntensity: [0.4, 0, 0.53, 0],
+			},
+			gammaColors: ['_BaseColor'],
+		});
+		const slot = (texture: number) => ({
+			texture,
+			uv: 0,
+			scale: [3, 3] as [number, number],
+			offset: [0, 0] as [number, number],
+		});
+		const surface = describeMaterial(
+			values({
+				slots: {
+					_MainTex: slot(1),
+					_MainTex2: slot(2),
+					_MainTex3: slot(3),
+					_LineTex: slot(4),
+					_EdgeTex: slot(5),
+					_SludgeHeightmap: slot(6),
+				},
+			}),
+			shader,
+		);
+		assert.equal(surface.kind, 'sludge');
+		if (surface.kind !== 'sludge') {
+			return;
+		}
+		assert.ok(Math.abs(surface.baseColor[0] - 0.214) < 1e-3);
+		assert.equal(surface.textures.heightmap?.texture, 6);
+		assert.deepEqual(surface.speeds.main, [0.006, 0.003]);
+		assert.deepEqual(surface.wave.intensity, [0.4, 0, 0.53, 0]);
+	});
 });
 
 describe('matte paintings', () => {
