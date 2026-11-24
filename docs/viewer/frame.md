@@ -57,12 +57,14 @@ for pass details.
 - **transparent pass.** matches the game's
   [transparent draw order](../game-data/materials.md#transparent-draw-order) and
   [blending](../game-data/effects.md#blending): glass and alpha-blended effects draw after water,
-  far to near, testing main-pass depth without writing it (stencil remains writable). each fogs
-  itself and blends premultiplied (additive = opacity 0; [blending](effects.md#blending)). sorted
-  per instance by `(sortBand, far-to-near)` where `sortBand` =
-  `(sortingLayer, sortingOrder, renderQueue)` (0 for static scenery), merging adjacent identical
-  draws into shared draw calls. stencil-writing draws go first so stencil-testing effects see the
-  full mask.
+  far to near, testing main-pass depth (stencil remains writable). when any draw writes depth
+  (`transparentDepthWrite`, `_Zwrite` on `HGRP/LitTransparent`), main-pass depth copies first so
+  effects keep sampling opaque depth while depth-writing transparents write into the live depth
+  attachment; otherwise depth attaches read-only. each fogs itself and blends premultiplied
+  (additive = opacity 0; [blending](effects.md#blending)). sorted per instance by
+  `(sortBand, far-to-near)` where `sortBand` = `(sortingLayer, sortingOrder, renderQueue)` (0 for
+  static scenery), merging adjacent identical draws into shared draw calls. stencil-writing draws go
+  first so stencil-testing effects see the full mask.
 - **antialiasing.** temporal with upsampling (no MSAA, matching the game). Halton (2, 3) subpixel
   jitter (8 positions/cycle, more when upsampling) offsets the main projection; post passes undo it
   when reconstructing rays. `taa` reconstructs from a 3×3 render-size Gaussian fit to

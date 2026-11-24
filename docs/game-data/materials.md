@@ -335,15 +335,25 @@ the local-light pass, and other writers (`HGRP/Lit` has `_SUBSURFACE*` keywords)
 Park offices).
 
 - **state & layout**: alpha-blended (`_EnableAlphaBlend`, `SrcAlpha OneMinusSrcAlpha`, queue 3000,
-  no depth write), Lit texture layouts. some materials set `SrcBlend = One` (suggests premultiplied
-  colour; unchecked). Fresnel opacity (`_UseFresnel`, `_FresnelAffectOpacity`) is off on all map01
-  materials. screen refraction (`_IoR`, `_RefractionIntensity`, `_RefractThickness`, `_RefractTint`,
-  `_RefractTex`, `_UseProbeRefraction`) and planar reflection (`_EnabledPlanarReflection`) are not
-  decompiled.
+  depth write from `_Zwrite`, default 0), Lit texture layouts. some materials set `SrcBlend = One`
+  (suggests premultiplied colour; unchecked).
+- **`_USE_FRESNEL`**: adds `mix(albedo, _FresnelColor.rgb, _FresnelColor.a · fresnel) · mask`
+  (multiplied by vertex colour G when `_Use_VerexGAsFresnelOpacity` is set; `_FresnelColor` is
+  `[HDR][Gamma]`) to radiance without exposure division, where
+  `fresnel = mix(1 − raw, raw, _FresnelFlip)`, `raw = clamp(N·V + _FresnelBias, 0, 1)^_FresnelPower`
+  (`N` blended toward mesh normal by `_FresnelUseMeshNormal`), and
+  `mask = clamp(1 − ch + _FresnelMaskOffset, 0, 1)` (`ch` from `_FresnelMapChannel`: 0 base alpha, 1
+  normal B, 2 normal A). scales opacity by `mix(1, fresnel, _FresnelAffectOpacity)`.
+- **`_SUBSURFACE`**: forces dielectric shading (ignores `_Metallic`, F0 = `0.08 · _Specular`) and
+  evaluates the [subsurface](#subsurface) model with `_SubsurfaceHue/Saturation/Value/Indirect`
+  (scaled by opacity).
 - **base variant (no keywords)**: Lit shading + fog at glass depth (height, atmosphere, volumetric)
   - scene-effect grade (`_VFXParams1`). opacity = `_BaseColorMap.a · _BaseColor.a` (× vertex R with
-    `_Use_VerexTexColorAsOpacity`). alpha channel blends `One, OneMinusSrcAlpha`. Dijiang deck glass
-    (`M_common_glass+1_001_03b`) is 180/255 opaque (29% see-through).
+    `_Use_VerexTexColorAsOpacity`; fragments below 0.01 discard under `_USE_DISSOLVE`). alpha
+    channel blends `One, OneMinusSrcAlpha`. Dijiang deck glass (`M_common_glass+1_001_03b`) is
+    180/255 opaque (29% see-through). screen refraction (`_GLASS_REFRACTION_SCENECOLOR`, `_IoR`,
+    `_RefractionIntensity`, `_RefractThickness`, `_RefractTint`, `_RefractTex`,
+    `_UseProbeRefraction`) and planar reflection (`_EnabledPlanarReflection`) are not drawn.
 
 ### transparent draw order
 

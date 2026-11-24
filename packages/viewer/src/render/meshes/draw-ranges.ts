@@ -36,6 +36,7 @@ export const DRAW_RANGES: readonly DrawRangeInfo[] = [
 	{ range: 'effectOpaque', order: 'bindings', effect: true },
 	{ range: 'stencilMask', order: 'bindings', effect: false },
 	{ range: 'transparent', order: 'bindings', effect: false },
+	{ range: 'transparentDepthWrite', order: 'bindings', effect: false },
 	// effects that write the stencil first, so the effects testing it see the whole mask
 	{ range: 'effect', order: 'stencilWritesThenBindings', effect: true },
 	{ range: 'effectDecal', order: 'bindings', effect: true },
@@ -107,6 +108,7 @@ export const PHASES = {
 		streams: 'position',
 	},
 	transparent: shading('mesh/transparent', 'transparent'),
+	transparentDepthWrite: shading('mesh/transparent-depth-write', 'transparentDepthWrite'),
 	effectOpaque: shading('mesh/effect-opaque', 'effectOpaque'),
 	effect: shading('mesh/effect', 'effect'),
 	effectDecal: shading('mesh/effect-decal', 'effectDecal'),
@@ -193,7 +195,14 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// lit decals laid over their surface, drawn over the composited scene before the water: the game writes them
 	// into its GBuffer, so they lie under the water and everything transparent
 	decals: [PHASES.litDecal],
-	transparent: [PHASES.transparent, PHASES.effect, PHASES.effectDecal, PHASES.mist, PHASES.mistVolume],
+	transparent: [
+		PHASES.transparent,
+		PHASES.transparentDepthWrite,
+		PHASES.effect,
+		PHASES.effectDecal,
+		PHASES.mist,
+		PHASES.mistVolume,
+	],
 	// effects that multiply the composited scene, drawn over it
 	multiply: [PHASES.screenMultiply],
 	// effects that sample a copy of the composited scene, drawn over it after the multiplies: those that replace

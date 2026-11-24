@@ -256,6 +256,10 @@ export const prepareMeshPipelines = (
 		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 		depthStencil: depthTest,
 	});
+	describeMesh(PHASES.transparentDepthWrite, {
+		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
+		depthStencil: depthWrite,
+	});
 	const sunShadowDepth = shadowDepthState(shadow.format);
 	describeMesh(PHASES.shadowOpaque, { depthStencil: sunShadowDepth }, shadow.unclippedDepth);
 	describeMesh(

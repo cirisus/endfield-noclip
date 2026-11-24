@@ -25,10 +25,39 @@ import { materialLooks } from './material-looks.ts';
 import { described } from './test-materials.ts';
 
 test('glass is transparent and shadowless with its blending flag', () => {
-	const [blended, premultiplied] = materialLooks({
+	const [blended, premultiplied, depthWriting] = materialLooks({
 		entries: [
-			described(litSurface({ blend: 'alphaBlend', opacity: 0.5, alphaClip: 0.5, alphaFromNormal: true })),
-			described(litSurface({ blend: 'premultiplied' })),
+			described(
+				litSurface({
+					blend: 'alphaBlend',
+					opacity: 0.5,
+					alphaClip: 0.5,
+					alphaFromNormal: true,
+					writesDepth: false,
+				}),
+			),
+			described(litSurface({ blend: 'premultiplied', writesDepth: false })),
+			described(
+				litSurface({
+					blend: 'alphaBlend',
+					opacity: 0.9,
+					metallic: 1,
+					writesDepth: true,
+					vertexRedOpacity: true,
+					subsurface: [1 / 3, 0.5, 0.2, 0.75],
+					fresnel: {
+						color: [1.2, 2.4, 1.3, 1],
+						bias: 2,
+						power: 1,
+						flip: 1,
+						affectOpacity: 0.3,
+						mapChannel: 1,
+						maskOffset: 1,
+						vertexGreen: true,
+						useMeshNormal: true,
+					},
+				}),
+			),
 		],
 	});
 	assert.deepEqual(
@@ -38,6 +67,20 @@ test('glass is transparent and shadowless with its blending flag', () => {
 	assert.equal(blended.params[LookRow.emissive2 + 3], 0.5);
 	assert.notEqual(blended.flags & LookFlags.AlphaNormal, 0);
 	assert.deepEqual([premultiplied.queue, premultiplied.params[LookRow.detail2 + 2]], ['transparent', 1]);
+	assert.equal(depthWriting.queue, 'transparentDepthWrite');
+	// `_SUBSURFACE` forces dielectric shading and populates `LookRow.foliage` / `LookRow.foliageAo`
+	assert.equal(depthWriting.params[LookRow.surface + 2], 0);
+	assert.ok(depthWriting.params[LookRow.foliage + 3] > 0);
+	assert.equal(depthWriting.params[LookRow.foliageAo], 0.75);
+	// `_USE_FRESNEL` and `_Use_VerexTexColorAsOpacity`
+	assert.equal(depthWriting.params[LookRow.parallaxBright], 1);
+	assert.equal(depthWriting.params[LookRow.parallaxBright + 1], 1);
+	assert.deepEqual(
+		Array.from(depthWriting.params.subarray(LookRow.parallaxColor, LookRow.parallaxColor + 4)).map(
+			(v) => Math.round(v * 10) / 10,
+		),
+		[1.2, 2.4, 1.3, 1],
+	);
 });
 
 test('a flowing glow takes the noise slot on its UV set and the parallax rows the pulse leaves', () => {

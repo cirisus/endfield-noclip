@@ -185,7 +185,9 @@ export const GAPS_FLOAT = 144;
  * - `stencilMask`: writes only the stencil where its surface passes the depth test, at the end of the main pass
  *   (a portal's mask, with a {@link MaterialLook.stencil})
  * - `transparent`: alpha-blended in the transparent pass with the opacity `fs_transparent` in mesh.wgsl
- *   computes; never shadow-casting
+ *   computes, testing depth without writing it; never shadow-casting
+ * - `transparentDepthWrite`: like `transparent`, writing depth (`_Zwrite` on `HGRP/LitTransparent`) so
+ *   self-overlapping meshes and later transparent draws occlude against it
  *
  * and scene effects ({@link LookFlags.Effect}), drawn by effect.wgsl once all their textures are bound:
  *
@@ -211,6 +213,7 @@ export type LookQueue =
 	| 'cutoutOverlay'
 	| 'stencilMask'
 	| 'transparent'
+	| 'transparentDepthWrite'
 	| 'effect'
 	| 'effectOpaque'
 	| 'effectDecal'

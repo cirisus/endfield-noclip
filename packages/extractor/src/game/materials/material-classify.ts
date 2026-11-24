@@ -168,7 +168,7 @@ export const classifyHgrpMaterial = (
 		baseTextureMapCount = float('_BaseTextureMapCount') ?? (keywords.includes('_TWO_BASEMAP') ? 2 : 0);
 	}
 
-	const zWriteFloat = float('_ZWrite') ?? float('_ZWriteGBuffer');
+	const zWriteFloat = float('_ZWrite') ?? float('_Zwrite') ?? float('_ZWriteGBuffer');
 	const zWrite =
 		!keywords.includes('_ZWRITE_OFF') && (zWriteFloat === undefined ? !blended : zWriteFloat !== 0);
 

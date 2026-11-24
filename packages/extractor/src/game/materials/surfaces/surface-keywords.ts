@@ -53,7 +53,7 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 		],
 		'HGRP/LitEffect': LIT_KEYWORDS,
 		'Hidden/HGRP/LitEffectBlend': LIT_KEYWORDS,
-		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
+		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP', '_USE_FRESNEL', '_SUBSURFACE'],
 		// its own cubemap reflection (`_CUSTOM_IBL`) isn't drawn: the viewer lights Lit surfaces deferred
 		'HGRP/LitForward': [...SURFACE_KEYWORDS, '_TWO_BASEMAP'],
 		'HGRP/Foliage/Trunk': [...SURFACE_KEYWORDS, '_TWO_BASEMAP', '_FOLIAGE_TRUNK'],

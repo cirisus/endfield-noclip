@@ -424,16 +424,26 @@ export const encodeFrame = (
 			if (meshes.transparentReadsBackground) {
 				post.copyComposite(encoder, scene);
 			}
+			const writesDepth = meshes.transparentWritesDepth;
+			const depth = writesDepth ? targets.copyDepth(encoder) : scene.depth;
 			const pass = beginPass(
 				encoder,
 				{
 					label: 'transparent',
 					colorAttachments: [{ view: composited.target, loadOp: 'load', storeOp: 'store' }],
-					depthStencilAttachment: targets.transparentDepthAttachment(),
+					depthStencilAttachment: writesDepth
+						? targets.writableTransparentDepthAttachment()
+						: targets.transparentDepthAttachment(),
 				},
 				sceneFrame,
 			);
-			draws += meshes.encodeEffectPass('transparent', pass, { ...scene, background: scene.radiance });
+			draws += meshes.encodeEffectPass('transparent', pass, {
+				...scene,
+				depth,
+				background: scene.radiance,
+				// distinct cache key from `scene.depth` so effect bind groups don't reuse the live depth view
+				version: writesDepth ? -scene.version : scene.version,
+			});
 			pass.end();
 		}
 		if (meshes.has('multiply')) {

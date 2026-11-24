@@ -746,9 +746,32 @@ fn fs_opaque_lit(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Sh
 	return out;
 }
 
-// alpha-blended materials (`transparent` in look.ts), shaded like opaque ones and fogged at their own depth,
-// drawn far to near over the composited scene (`TRANSPARENT_TARGETS` in render-targets.ts): premultiplied
-// colour and the opacity, the alpha the alpha test would read times `_BaseColor.a`
+// `HGRP/LitTransparent`'s `_USE_FRESNEL` (`fresnelParams` in lit-look.ts): returns `(fresnel, mask)` where
+// `fresnel` is the flipped view-angle power and `mask` is the channel mask (before vertex-G scaling)
+fn transparent_fresnel(
+	look: Look,
+	in: VertexOut,
+	front: bool,
+	faceted: vec3f,
+	shading_n: vec3f,
+	base_a: f32,
+	packed: vec4f,
+) -> vec2f {
+	let ch = look.parallax2.x;
+	let sample_ch = mix(mix(base_a, packed.b, saturate(ch)), packed.a, saturate(ch - 1.0));
+	let mask = saturate((1.0 - sample_ch) + look.parallax2.y);
+	let mesh_n = surface_normal(in.normal, faceted, !front);
+	let fn_n = normalize(mix(shading_n, mesh_n, look.parallax2.w));
+	let v = normalize(-in.rel);
+	let raw = pow(saturate(dot(v, fn_n) + look.parallax.x), look.parallax.y);
+	let fresnel = mix(1.0 - raw, raw, look.parallax.z);
+	return vec2f(fresnel, mask);
+}
+
+// alpha-blended materials (`transparent` / `transparentDepthWrite` in look.ts), shaded like opaque ones and
+// fogged at their own depth, drawn far to near over the composited scene (`TRANSPARENT_TARGETS` in
+// render-targets.ts): premultiplied colour and the opacity, the alpha the alpha test would read times
+// `_BaseColor.a` (and optional vertex colour R / Fresnel opacity modulation)
 @fragment
 fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4f {
 	let draw = draws[in.draw];
@@ -760,7 +783,10 @@ fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @
 	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
 	let uv1_dx = dpdx(in.uv.zw) * gradient_scale;
 	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
-	let shaded = shade(in, false, is_front_face(front_facing, in.mirrored));
+	let front = is_front_face(front_facing, in.mirrored);
+	let faceted = cross(dpdx(in.rel), dpdy(in.rel));
+	// shade before any conditional discard so implicit-LOD samples stay in uniform control flow
+	let shaded = shade(in, false, front);
 	// a map still streaming leaves the tint's alpha alone
 	var alpha = 1.0;
 	if ((flags & ALPHA_NORMAL) != 0u) {
@@ -770,9 +796,23 @@ fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @
 	} else if ((flags & BASE_MAP) != 0u) {
 		alpha = sample_slot(base_map, base_sampler, id, in.uv, uv0_dx, uv0_dy, uv1_dx, uv1_dy, flags, BASE_SLOT).a;
 	}
-	alpha = saturate(alpha * look.emissive2.w) * fade_opacity(in.fade);
+	alpha = saturate(alpha * look.emissive2.w);
+	if (look.parallax_bright.y > 0.5 && (flags & HAS_COLORS) != 0u) {
+		alpha *= in.color.r;
+	}
+	let premul = look.detail2.z > 0.5;
+	// discard zero-opacity fragments so depth-writing transparents (`_Zwrite`) don't leave invisible occluders
+	if (!premul && alpha < 0.01) {
+		discard;
+	}
+	if (look.parallax_bright.x > 0.5) {
+		let mesh_n = surface_normal(in.normal, faceted, !front);
+		let f = transparent_fresnel(look, in, front, faceted, mesh_n, 1.0, vec4f(0.0));
+		alpha *= (1.0 - look.parallax.w) + f.x * look.parallax.w;
+	}
+	alpha *= fade_opacity(in.fade);
 	// premultiplied glass (detail2.z) adds its whole radiance and lets its opacity only dim what's behind
-	let color = shaded.radiance.rgb * select(alpha, 1.0, look.detail2.z > 0.5);
+	let color = shaded.radiance.rgb * select(alpha, 1.0, premul);
 	let uv = in.position.xy / frame.render_size.xy;
 	return vec4f(fog_premultiplied(color, alpha, in.rel, uv), alpha);
 }
@@ -1136,9 +1176,24 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 	} else if ((flags & TRUNK) != 0u) {
 		s = trunk_surface(s, look, in, base_a);
 	} else if ((flags & LAYER_BLEND) == 0u) {
-		// VFXWaterDitherAlpha's `_SUBSURFACE` (`DitherRow` in special-looks.ts); zero on other looks
+		// VFXWaterDitherAlpha's and LitTransparent's `_SUBSURFACE`; zero on other looks
 		s.scatter = look.foliage;
 		s.scatter_indirect = look.foliage_ao.x;
+	}
+	// `HGRP/LitTransparent`'s `_USE_FRESNEL` (`wet` is false only in `fs_transparent`)
+	if (!wet && look.parallax_bright.x > 0.5) {
+		let f = transparent_fresnel(
+			look,
+			in,
+			front,
+			faceted,
+			s.normal,
+			select(1.0, base.a, (flags & BASE_MAP) != 0u),
+			packed,
+		);
+		let vg = select(1.0, in.color.g, (flags & HAS_COLORS) != 0u);
+		let fresnel_mask = f.y * mix(1.0, vg, look.parallax2.z);
+		s.emission += mix(s.albedo, look.parallax_color.rgb, look.parallax_color.a * f.x) * fresnel_mask;
 	}
 	// the game wets what its deferred lighting shades, so not the forward-shaded glass
 	if (wet) {

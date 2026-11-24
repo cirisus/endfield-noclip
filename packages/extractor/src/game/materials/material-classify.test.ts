@@ -86,6 +86,16 @@ describe('classifyHgrpMaterial', () => {
 		assert.equal(glass.blend, 'alphaBlend');
 		assert.deepEqual(glass.blendFactors, [5, 10]);
 		assert.equal(glass.baseTextureMapCount, 1);
+		assert.equal(glass.zWrite, false);
+
+		const glassDepthWrite = classifyHgrpMaterial(
+			material({
+				queue: 3000,
+				floats: { _SrcBlend: 5, _DstBlend: 10, _Zwrite: 1 },
+			}),
+			shader('HGRP/LitTransparent'),
+		);
+		assert.equal(glassDepthWrite.zWrite, true);
 
 		const premultiplied = classifyHgrpMaterial(
 			material({ floats: { _SrcBlend: 1, _DstBlend: 10 } }),

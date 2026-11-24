@@ -141,6 +141,8 @@ export class MeshRenderer {
 	texturedDraws = 0;
 	/** whether any prepared draw in the transparent pass reads `fx_background` (`MaterialLook.readsBackground`) */
 	transparentReadsBackground = false;
+	/** whether any prepared draw in the transparent pass writes depth (`transparentDepthWrite`) */
+	transparentWritesDepth = false;
 
 	#device: GPUDevice;
 	#pipelines: PipelineCache;
@@ -508,6 +510,7 @@ export class MeshRenderer {
 		this.triangles = 0;
 		this.texturedDraws = 0;
 		this.transparentReadsBackground = false;
+		this.transparentWritesDepth = false;
 		this.#drawnSkins.clear();
 		this.#movingLooks.clear();
 	}
@@ -745,6 +748,9 @@ export class MeshRenderer {
 		}
 		if (look.readsBackground && SORTED_RANGES.has(info.range)) {
 			this.transparentReadsBackground = true;
+		}
+		if (info.range === 'transparentDepthWrite') {
+			this.transparentWritesDepth = true;
 		}
 		if (resident.skin !== null) {
 			this.#drawnSkins.add(resident.skin);

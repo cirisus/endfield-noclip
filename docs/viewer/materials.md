@@ -119,8 +119,11 @@ them.
 ## glass
 
 [glass](../game-data/materials.md#glass) shades like Lit, with opacity from `_AlphaMaskChannel`
-times `_BaseColor.a` (tint alpha alone while streaming), no shadows. premultiplied glass (src
-factor 1) adds full radiance and dims behind by opacity.
+times `_BaseColor.a` (tint alpha alone while streaming; × vertex R with
+`_Use_VerexTexColorAsOpacity`, discarding below 0.01 on non-premultiplied glass), no shadows.
+premultiplied glass (src factor 1) adds full radiance and dims behind by opacity. `_USE_FRESNEL`
+adds Fresnel emission and modulates opacity; `_SUBSURFACE` forces dielectric shading and scatters
+through the subsurface model; `_Zwrite` routes to `transparentDepthWrite`.
 
 draws in the [transparent pass](frame.md) far-to-near with effects over the composited scene, fogged
 at its own distance before blending (so distant effects behind glass, like the corroded planet's

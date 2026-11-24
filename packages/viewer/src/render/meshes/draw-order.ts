@@ -76,7 +76,8 @@ export const drawRangeOf = (
 		case 'opaque': {
 			return isSimpleOpaqueLit(look) ? 'opaqueLit' : 'opaque';
 		}
-		case 'transparent': {
+		case 'transparent':
+		case 'transparentDepthWrite': {
 			return queue;
 		}
 		// without the texture holding its alpha there's nothing to test yet, so it draws opaque.

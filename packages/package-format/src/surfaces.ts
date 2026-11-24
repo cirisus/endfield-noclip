@@ -109,6 +109,15 @@ export interface LitSurface {
 	blend: 'opaque' | 'alphaBlend' | 'premultiplied';
 	/** glass: the opacity before the texture's alpha (`_BaseColor.a`) */
 	opacity: number;
+	/** glass: multiply opacity by vertex colour R (`_Use_VerexTexColorAsOpacity`) */
+	vertexRedOpacity?: boolean;
+	/** glass: `_USE_FRESNEL` Fresnel glow and opacity modulation, `null` without */
+	fresnel?: LitFresnel | null;
+	/**
+	 * glass: `_SUBSURFACE` scattering (`[hue, saturation, value, indirect]`), `null` without. forces dielectric
+	 * shading (`metallic = 0`)
+	 */
+	subsurface?: [hue: number, saturation: number, value: number, indirect: number] | null;
 	/** the base colour's tint, linear (white for `HGRP/LitHLOD`, which ignores it) */
 	tint: Rgb;
 	/** how much the tint covers the base colour (1 untextured) */
@@ -139,8 +148,37 @@ export interface LitSurface {
 	vertexOffset: LitVertexOffset | null;
 	/** the surface keeps `HGRP/DecalLit` decals off (`docs/game-data/materials.md#decals`) */
 	keepsLitDecalsOff: boolean;
-	/** whether the surface writes depth (`_ZWriteGBuffer` / `_ZWRITE_OFF` on `HGRP/Lit`) */
+	/**
+	 * whether the surface writes depth (`_ZWriteGBuffer` / `_ZWRITE_OFF` on `HGRP/Lit`, `_Zwrite` on
+	 * `HGRP/LitTransparent`)
+	 */
 	writesDepth: boolean;
+}
+
+/**
+ * `HGRP/LitTransparent`'s `_USE_FRESNEL`: adds a view-angle-blended emission (`mix(albedo, color.rgb, color.a
+ * · fresnel)`) masked by a texture channel and optional vertex colour G, and scales opacity by
+ * `affectOpacity`
+ */
+export interface LitFresnel {
+	/** `_FresnelColor`, linear HDR RGB and alpha */
+	color: [r: number, g: number, b: number, a: number];
+	/** `_FresnelBias` */
+	bias: number;
+	/** `_FresnelPower` */
+	power: number;
+	/** `_FresnelFlip` (0 = rim, 1 = facing camera) */
+	flip: number;
+	/** `_FresnelAffectOpacity` */
+	affectOpacity: number;
+	/** `_FresnelMapChannel`: 0 base alpha, 1 normal B, 2 normal A */
+	mapChannel: number;
+	/** `_FresnelMaskOffset` */
+	maskOffset: number;
+	/** `_Use_VerexGAsFresnelOpacity`: multiply Fresnel emission by vertex colour G */
+	vertexGreen: boolean;
+	/** `_FresnelUseMeshNormal`: evaluate Fresnel with mesh normal rather than normal-mapped normal */
+	useMeshNormal: boolean;
 }
 
 /**

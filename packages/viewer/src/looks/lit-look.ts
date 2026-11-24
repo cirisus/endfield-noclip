@@ -5,6 +5,7 @@ import type {
 	LeafInputs,
 	FlowGlow,
 	LitEmission,
+	LitFresnel,
 	LitLayer,
 	LitSurface,
 	LitSway,
@@ -12,6 +13,7 @@ import type {
 	ParallaxGlow,
 	TrunkInputs,
 } from '@endfield-noclip/package-format/surfaces';
+import type { Rgb } from '@endfield-noclip/package-format/values';
 
 import {
 	alphaTextureOf,
@@ -112,10 +114,16 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 	// glass: the opacity is the alpha the alpha test would read, times its own. glass casting a solid shadow
 	// would darken what lies behind it, so it casts none
 	if (surface.blend !== 'opaque') {
-		look.queue = 'transparent';
+		look.queue = surface.writesDepth ? 'transparentDepthWrite' : 'transparent';
 		look.castsShadows = false;
 		params[LookRow.emissive2 + 3] = surface.opacity;
 		params[LookRow.detail2 + 2] = surface.blend === 'premultiplied' ? 1 : 0;
+		if (surface.vertexRedOpacity) {
+			params[LookRow.parallaxBright + 1] = 1;
+		}
+		if (surface.fresnel != null) {
+			fresnelParams(params, surface.fresnel);
+		}
 	} else if (surface.alphaClip !== null && surface.alphaClip >= 0 && alphaTextureOf(look) !== null) {
 		if (surface.writesDepth) {
 			look.queue = 'cutout';
@@ -125,10 +133,18 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		}
 	}
 	params[LookRow.emissive + 3] = surface.tintCover;
-	params.set(
-		[surface.roughness[0], surface.roughness[1], surface.metallic, surface.normalScale],
-		LookRow.surface,
-	);
+	// `_SUBSURFACE` on `HGRP/LitTransparent` forces dielectric shading (`metallic = 0`) and scatters through the
+	// same `LookRow.foliage` / `LookRow.foliageAo` slots as `VFXWaterDitherAlpha`
+	const subsurface = surface.subsurface ?? null;
+	const metallic = subsurface === null ? surface.metallic : 0;
+	params.set([surface.roughness[0], surface.roughness[1], metallic, surface.normalScale], LookRow.surface);
+	if (subsurface !== null) {
+		const [hue, saturation, value, indirect] = subsurface;
+		const amount = value * surface.opacity;
+		const scattered = hueRgb(hue).map((c) => (1 + (c - 1) * saturation) * amount);
+		params.set([...scattered, amount], LookRow.foliage);
+		params[LookRow.foliageAo] = indirect;
+	}
 	params.set(
 		[surface.occlusionStrength, surface.f0, surface.transmission, surface.brighterScale],
 		LookRow.surface2,
@@ -241,6 +257,30 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		}
 	}
 	return look;
+};
+
+/** a hue (0–1) as a fully saturated colour */
+const hueRgb = (hue: number): Rgb => {
+	const channel = (shift: number): number => {
+		const turn = (((hue + shift) % 1) + 1) % 1;
+		return Math.min(Math.max(Math.abs(turn * 6 - 3) - 1, 0), 1);
+	};
+	return [channel(0), channel(2 / 3), channel(1 / 3)];
+};
+
+/**
+ * packs `HGRP/LitTransparent`'s `_USE_FRESNEL` into the parallax rows (unused on transparent looks):
+ * `parallax` = `(bias, power, flip, affectOpacity)`, `parallax2` = `(mapChannel, maskOffset, vertexGreen,
+ * useMeshNormal)`, `parallaxColor` = linear HDR `_FresnelColor`, `parallaxBright.x` = 1
+ */
+const fresnelParams = (params: Float32Array, fresnel: LitFresnel): void => {
+	params.set([fresnel.bias, fresnel.power, fresnel.flip, fresnel.affectOpacity], LookRow.parallax);
+	params.set(
+		[fresnel.mapChannel, fresnel.maskOffset, fresnel.vertexGreen ? 1 : 0, fresnel.useMeshNormal ? 1 : 0],
+		LookRow.parallax2,
+	);
+	params.set(fresnel.color, LookRow.parallaxColor);
+	params[LookRow.parallaxBright] = 1;
 };
 
 // #region vertex animation and pulse

@@ -7,6 +7,7 @@ import type { TextureSlot } from '@endfield-noclip/package-format/materials';
 import type {
 	LitDetail,
 	LitEmission,
+	LitFresnel,
 	LitSurface,
 	MaskChannel,
 	UnsupportedSurface,
@@ -275,6 +276,32 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 		foliageInputs = { kind: 'card' };
 	}
 
+	const transparent = family === 'litTransparent';
+	let fresnel: LitFresnel | null = null;
+	if (transparent && has('_USE_FRESNEL')) {
+		const fresnelColor = reader.hdrColor('_FresnelColor') ?? [1, 1, 1, 1];
+		fresnel = {
+			color: [fresnelColor[0], fresnelColor[1], fresnelColor[2], fresnelColor[3]],
+			bias: float('_FresnelBias', 0),
+			power: float('_FresnelPower', 1),
+			flip: float('_FresnelFlip', 0),
+			affectOpacity: float('_FresnelAffectOpacity', 1),
+			mapChannel: float('_FresnelMapChannel', 0),
+			maskOffset: float('_FresnelMaskOffset', 0),
+			vertexGreen: float('_Use_VerexGAsFresnelOpacity', 0) !== 0,
+			useMeshNormal: float('_FresnelUseMeshNormal', 0) !== 0,
+		};
+	}
+	const subsurface: LitSurface['subsurface'] =
+		transparent && has('_SUBSURFACE')
+			? [
+					float('_SubsurfaceHue', 1),
+					float('_SubsurfaceSaturation', 1),
+					float('_SubsurfaceValue', 1),
+					float('_SubsurfaceIndirect', 1),
+				]
+			: null;
+
 	return {
 		kind: 'lit',
 		layout,
@@ -285,6 +312,9 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 		alphaFromNormal: count !== null && float('_AlphaMaskChannel', 0) === 1,
 		blend,
 		opacity: tint?.[3] ?? 1,
+		...(transparent && float('_Use_VerexTexColorAsOpacity', 0) !== 0 ? { vertexRedOpacity: true } : {}),
+		...(fresnel !== null ? { fresnel } : {}),
+		...(subsurface !== null ? { subsurface } : {}),
 		// the HLOD shader ignores the tint
 		tint: tint === undefined || family === 'hlod' ? [1, 1, 1] : linearRgb(tint),
 		// untextured: the tint alone

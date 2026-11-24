@@ -130,6 +130,8 @@ export class RenderTargets {
 	#devicePixelSize: [width: number, height: number] | null = null;
 	#textures: GPUTexture[] = [];
 	#depth: GPUTexture | null = null;
+	#depthCopy: GPUTexture | null = null;
+	#depthCopyView: GPUTextureView | null = null;
 	#colors: GPUTexture[] | null = null;
 	#waterDepth: GPUTexture | null = null;
 	#decalSurface: GPUTexture | null = null;
@@ -137,6 +139,7 @@ export class RenderTargets {
 	/** the passes' attachments, built on first use after each resize */
 	#mainAttachments: PassAttachments | null = null;
 	#transparentDepth: GPURenderPassDepthStencilAttachment | null = null;
+	#writableTransparentDepth: GPURenderPassDepthStencilAttachment | null = null;
 	#readOnlyDepth: GPURenderPassDepthStencilAttachment | null = null;
 	#readOnlyWaterDepth: GPURenderPassDepthStencilAttachment | null = null;
 	#writableDepth: GPURenderPassDepthStencilAttachment | null = null;
@@ -230,7 +233,14 @@ export class RenderTargets {
 			return texture;
 		};
 		const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
-		this.#depth = create({ label: 'depth', size: [width, height], format: this.format.depth, usage });
+		this.#depth = create({
+			label: 'depth',
+			size: [width, height],
+			format: this.format.depth,
+			usage: usage | GPUTextureUsage.COPY_SRC,
+		});
+		this.#depthCopy = null;
+		this.#depthCopyView = null;
 		this.#colors = [
 			create({
 				label: 'radiance',
@@ -267,6 +277,7 @@ export class RenderTargets {
 		this.#version++;
 		this.#mainAttachments = null;
 		this.#transparentDepth = null;
+		this.#writableTransparentDepth = null;
 		this.#readOnlyDepth = null;
 		this.#readOnlyWaterDepth = null;
 		this.#writableDepth = null;
@@ -355,6 +366,58 @@ export class RenderTargets {
 			depth.stencilStoreOp = 'discard';
 		}
 		this.#transparentDepth = depth;
+		return depth;
+	}
+
+	/**
+	 * copies the main pass's depth into a scratch texture so effects in a depth-writing transparent pass can
+	 * sample opaque scene depth without conflicting with the writable depth attachment
+	 *
+	 * @param encoder command encoder to record the copy into
+	 * @returns a depth-only view of the copy
+	 */
+	copyDepth(encoder: GPUCommandEncoder): GPUTextureView {
+		if (this.#depth === null) {
+			throw new Error('render targets used before update()');
+		}
+		if (this.#depthCopy === null || this.#depthCopyView === null) {
+			this.#depthCopy = this.#device.createTexture({
+				label: 'depth copy',
+				size: [this.width, this.height],
+				format: this.format.depth,
+				usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+			});
+			this.#textures.push(this.#depthCopy);
+			this.#depthCopyView = this.#depthCopy.createView({ aspect: 'depth-only' });
+		}
+		encoder.copyTextureToTexture({ texture: this.#depth }, { texture: this.#depthCopy }, [
+			this.width,
+			this.height,
+		]);
+		return this.#depthCopyView;
+	}
+
+	/**
+	 * @returns the depth attachment of a transparent pass that has depth-writing draws (`_Zwrite`): both depth
+	 *   and stencil stay writable, keeping main-pass depth loaded; the same object until the next resize
+	 */
+	writableTransparentDepthAttachment(): Readonly<GPURenderPassDepthStencilAttachment> {
+		if (this.#depth === null) {
+			throw new Error('render targets used before update()');
+		}
+		if (this.#writableTransparentDepth !== null) {
+			return this.#writableTransparentDepth;
+		}
+		const depth: GPURenderPassDepthStencilAttachment = {
+			view: this.#depth.createView(),
+			depthLoadOp: 'load',
+			depthStoreOp: 'store',
+		};
+		if (this.format.stencil) {
+			depth.stencilLoadOp = 'load';
+			depth.stencilStoreOp = 'discard';
+		}
+		this.#writableTransparentDepth = depth;
 		return depth;
 	}
 
