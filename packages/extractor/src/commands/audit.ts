@@ -646,7 +646,7 @@ const materialGroupKey = (row: DebugMaterialRow): string => {
 	return shader;
 };
 
-const projectAuditRows = <T extends object>(rows: readonly T[], pick: readonly string[]): unknown[] =>
+const projectAuditRows = (rows: readonly object[], pick: readonly string[]): unknown[] =>
 	pick.length === 0 ? [...rows] : rows.map((row) => pickFields(row, pick));
 
 const formatMaterialStatus = (row: DebugMaterialRow): string => {

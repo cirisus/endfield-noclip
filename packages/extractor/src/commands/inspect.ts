@@ -18,15 +18,26 @@ import type { DecodedMesh } from '@endfield-noclip/formats/unity/mesh';
 import { isTextureClass, typeName, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import { type DecodedTexture, toKtx2Texture } from '@endfield-noclip/formats/unity/texture';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { asPPtr, type PPtr } from '@endfield-noclip/formats/unity/values';
+import {
+	asPPtr,
+	arrayField,
+	booleanField,
+	isObject,
+	numberField,
+	objectField,
+	pptrField,
+	type PPtr,
+} from '@endfield-noclip/formats/unity/values';
 
 import { definite, mapDefined } from '@mary-ext/array-fns';
 
 import {
+	collectTargets,
 	hashText,
 	jsonReplacer,
 	need as needArg,
 	parseHash,
+	parseList,
 	parseNumber,
 	parseNumbers,
 	parseOptionalInteger,
@@ -34,6 +45,7 @@ import {
 	save as saveFile,
 	separatePositionals,
 } from '../cli-args.ts';
+import { pickFields } from '../cli-query.ts';
 import { compareStrings } from '../compare.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText } from '../errors.ts';
@@ -59,21 +71,23 @@ export const summary = 'inspect a prefab, material, shader, mesh, texture, or wa
 
 /** command usage, available without opening the install */
 export const usage = `usage:
-  inspect prefab <object> [--effect-lod camera|proxy] [--json]
-                                                      hierarchy, components, renderers, particles, lights & env volumes
-  inspect material <object> [--name re] [--all] [--prop re] [--all-props]
+  inspect prefab <object>... [--stdin] [--effect-lod camera|proxy] [--particles] [--json]
+                                                      hierarchy, components, renderers (with sorting & queues),
+                                                      particles (--particles adds raw module details), lights & env volumes
+  inspect material <object>... [--stdin] [--name re] [--all] [--prop re] [--all-props] [--pick a,b]
                                                       shader-declared properties, textures and packed surface description
   inspect shader <object|name-re> [--prop re] [--type t,…] [--flag f,…] [--group initial|main|all] [--json]
                                                       shader tags and declared properties (defaults and flags)
-  inspect mesh <object> [--name re] [--vertices [n]] [--submesh n] [--near x,y,z] [--radius m]
+  inspect mesh <object>... [--stdin] [--name re] [--vertices [n]] [--submesh n] [--near x,y,z] [--radius m]
                                                       vertex channels, submesh bounds, color/UV ranges, skinning, vertex samples
-  inspect texture <object> [--name re] [-o file.ktx2|file.dds] [--layer n] [--mip n] [--zstd n]
+  inspect texture <object>... [--stdin] [--name re] [-o file.ktx2|file.dds] [--layer n] [--mip n] [--zstd n]
                                                       format, dimensions, mips, sampler; -o writes KTX2 or DX10 DDS
-  inspect water-config <object> [--name re]           surface WaterConfig or Global_Water_Config as JSON
+  inspect water-config <object>... [--stdin] [--name re]
+                                                      surface WaterConfig or Global_Water_Config as JSON
 
 <object> is <bundle> [--path-id=N] [--name re], an asset path, a unique filename/basename, or a path hash
 (as \`scene find\` prints them). <bundle> is a hex id, main/<hex>.ab or initial/<hex>.ab; omitting --path-id
-picks the unique matching object in the bundle. negative path ids need --path-id=-N.`;
+picks the unique matching object in the bundle.`;
 
 const OPTIONS = {
 	config: { type: 'string' },
@@ -86,6 +100,9 @@ const OPTIONS = {
 	group: { type: 'string', default: 'initial' },
 	'all-props': { type: 'boolean', default: false },
 	'effect-lod': { type: 'string', default: 'camera' },
+	particles: { type: 'boolean', default: false },
+	pick: { type: 'string', multiple: true },
+	stdin: { type: 'boolean', default: false },
 	json: { type: 'boolean', default: false },
 	output: { type: 'string', short: 'o' },
 	layer: { type: 'string' },
@@ -122,18 +139,17 @@ export const run = async (args: string[]): Promise<void> => {
 		allowPositionals: true,
 		options: OPTIONS,
 	});
-	const [sub, target] = positionals;
+	const [sub, ...rest] = positionals;
+	const target = rest[0];
 	const pathId = parsePathId(values['path-id'], '--path-id');
 	const nameFilter = values.name === undefined ? undefined : new RegExp(values.name, 'i');
 	const propFilter = values.prop === undefined ? undefined : new RegExp(values.prop, 'i');
+	const pick = parseList(values.pick);
 
 	await withContext(values.config, async (context) => {
 		const resolver = await context.resolver();
-		const resolveTarget = (classId: number) =>
-			resolveObjectArg(context, resolver, needArg(target, 'object', usage), classId, {
-				pathId,
-				nameFilter,
-			});
+		const resolveOne = (raw: string, classId: number) =>
+			resolveObjectArg(context, resolver, raw, classId, { pathId, nameFilter });
 
 		switch (sub) {
 			case 'prefab': {
@@ -141,28 +157,63 @@ export const run = async (args: string[]): Promise<void> => {
 				if (effectLod !== 'camera' && effectLod !== 'proxy') {
 					throw new Error('--effect-lod must be camera or proxy');
 				}
-				const ref = await resolveTarget(UnityClass.GameObject);
-				await inspectPrefab(context, resolver, ref, { effectLod, json: values.json });
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(`missing object\n${usage}`);
+				}
+				const jsonOut: unknown[] = [];
+				for (const [index, raw] of targets.entries()) {
+					if (!values.json && index > 0) {
+						console.log('\n' + '─'.repeat(72) + '\n');
+					}
+					// oxlint-disable-next-line no-await-in-loop -- prints prefabs in target order
+					const ref = await resolveOne(raw, UnityClass.GameObject);
+					// oxlint-disable-next-line no-await-in-loop -- prints prefabs in target order
+					const result = await inspectPrefab(context, resolver, ref, {
+						effectLod,
+						particles: values.particles,
+						json: values.json,
+					});
+					if (values.json) {
+						jsonOut.push(result);
+					}
+				}
+				if (values.json) {
+					console.log(JSON.stringify(targets.length === 1 ? jsonOut[0] : jsonOut, jsonReplacer, '\t'));
+				}
 				break;
 			}
 			case 'material': {
-				const rawTarget = needArg(target, 'object', usage);
-				const refs = await resolveMaterialTargets(context, resolver, rawTarget, {
-					pathId,
-					nameFilter,
-					all: values.all,
-				});
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(`missing object\n${usage}`);
+				}
+				const refs: ObjectRef[] = [];
+				for (const raw of targets) {
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					const resolved = await resolveMaterialTargets(context, resolver, raw, {
+						pathId,
+						nameFilter,
+						all: values.all,
+					});
+					refs.push(...resolved);
+				}
 				const results = await Promise.all(
 					refs.map(async (ref) => {
 						const material = await loadMaterial(resolver, ref);
-						return materialJson(resolver, ref, material, {
+						const data = materialJson(resolver, ref, material, {
 							allProps: values['all-props'],
 							propFilter,
 						});
+						return pick.length === 0 ? data : pickFields(data, pick);
 					}),
 				);
 				console.log(
-					JSON.stringify(results.length === 1 && !values.all ? results[0] : results, jsonReplacer, '\t'),
+					JSON.stringify(
+						results.length === 1 && !values.all && targets.length === 1 ? results[0] : results,
+						jsonReplacer,
+						'\t',
+					),
 				);
 				break;
 			}
@@ -179,56 +230,82 @@ export const run = async (args: string[]): Promise<void> => {
 				break;
 			}
 			case 'mesh': {
-				const ref = await resolveTarget(UnityClass.Mesh);
-				const mesh = await loadMesh(resolver, ref);
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(`missing object\n${usage}`);
+				}
 				const vertexCount = parseOptionalInteger(values.vertices, '--vertices');
 				if (vertexCount !== undefined && vertexCount < 0) {
 					throw new Error('--vertices must be a non-negative integer');
 				}
-				const submesh = parseOptionalInteger(values.submesh, '--submesh');
-				if (submesh !== undefined && (submesh < 0 || submesh >= mesh.submeshes.length)) {
-					throw new Error(`--submesh must be 0..${mesh.submeshes.length - 1}, got ${submesh}`);
-				}
 				const near = values.near === undefined ? undefined : parseNumbers(values.near, 3, '--near');
 				const radius = values.radius === undefined ? 2 : parseNumber(values.radius, '--radius');
-				const sampleLimit = vertexCount ?? (near !== undefined || submesh !== undefined ? 20 : undefined);
-				console.log(
-					JSON.stringify(
-						{
-							object: objectKey(ref),
-							...meshSummary(mesh),
-							...(sampleLimit === undefined
-								? {}
-								: { vertices: sampleMeshVertices(mesh, sampleLimit, { submesh, near, radius }) }),
-						},
-						null,
-						'\t',
-					),
-				);
+				const submesh = parseOptionalInteger(values.submesh, '--submesh');
+				const results = [];
+				for (const raw of targets) {
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					const ref = await resolveOne(raw, UnityClass.Mesh);
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					const mesh = await loadMesh(resolver, ref);
+					if (submesh !== undefined && (submesh < 0 || submesh >= mesh.submeshes.length)) {
+						throw new Error(`--submesh must be 0..${mesh.submeshes.length - 1}, got ${submesh}`);
+					}
+					const sampleLimit = vertexCount ?? (near !== undefined || submesh !== undefined ? 20 : undefined);
+					results.push({
+						object: objectKey(ref),
+						...meshSummary(mesh),
+						...(sampleLimit === undefined
+							? {}
+							: { vertices: sampleMeshVertices(mesh, sampleLimit, { submesh, near, radius }) }),
+					});
+				}
+				console.log(JSON.stringify(results.length === 1 ? results[0] : results, null, '\t'));
 				break;
 			}
 			case 'texture': {
-				const ref = await resolveTarget(UnityClass.Texture2D);
-				const texture = await loadTexture(resolver, ref);
-				console.log(JSON.stringify({ object: objectKey(ref), ...textureSummary(texture) }, null, '\t'));
-				if (values.output !== undefined) {
-					const layer = parseOptionalInteger(values.layer, '--layer');
-					const mip = parseOptionalInteger(values.mip, '--mip');
-					const isDds = values.output.toLowerCase().endsWith('.dds');
-					if (!isDds && (layer !== undefined || mip !== undefined)) {
-						throw new Error('--layer and --mip are only supported with .dds output');
-					}
-					const bytes = isDds
-						? writeDds(texture, { layer, mip })
-						: encodeKtx2(texture, parseOptionalInteger(values.zstd, '--zstd'));
-					await saveFile(values.output, bytes);
-					console.error(`wrote ${bytes.length} bytes to ${values.output}`);
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(`missing object\n${usage}`);
 				}
+				if (values.output !== undefined && targets.length > 1) {
+					throw new Error('-o cannot be used with multiple texture targets');
+				}
+				const results = [];
+				for (const raw of targets) {
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					const ref = await resolveOne(raw, UnityClass.Texture2D);
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					const texture = await loadTexture(resolver, ref);
+					results.push({ object: objectKey(ref), ...textureSummary(texture) });
+					if (values.output !== undefined) {
+						const layer = parseOptionalInteger(values.layer, '--layer');
+						const mip = parseOptionalInteger(values.mip, '--mip');
+						const isDds = values.output.toLowerCase().endsWith('.dds');
+						if (!isDds && (layer !== undefined || mip !== undefined)) {
+							throw new Error('--layer and --mip are only supported with .dds output');
+						}
+						const bytes = isDds
+							? writeDds(texture, { layer, mip })
+							: encodeKtx2(texture, parseOptionalInteger(values.zstd, '--zstd'));
+						// oxlint-disable-next-line no-await-in-loop -- single target when -o is set
+						await saveFile(values.output, bytes);
+						console.error(`wrote ${bytes.length} bytes to ${values.output}`);
+					}
+				}
+				console.log(JSON.stringify(results.length === 1 ? results[0] : results, null, '\t'));
 				break;
 			}
 			case 'water-config': {
-				const ref = await resolveTarget(UnityClass.MonoBehaviour);
-				await inspectWaterConfig(resolver, ref);
+				const targets = await collectTargets(rest, values.stdin);
+				if (targets.length === 0) {
+					throw new Error(`missing object\n${usage}`);
+				}
+				for (const raw of targets) {
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					const ref = await resolveOne(raw, UnityClass.MonoBehaviour);
+					// oxlint-disable-next-line no-await-in-loop -- preserves target order
+					await inspectWaterConfig(resolver, ref);
+				}
 				break;
 			}
 			default: {
@@ -442,12 +519,113 @@ const scriptName = async (resolver: AssetResolver, ref: ObjectRef): Promise<stri
 	}
 };
 
+interface RawParticleSummary {
+	name: string;
+	pathId: string;
+	renderMode: number | null;
+	simSpace: number;
+	scalingMode: number;
+	lengthInSec: number;
+	looping: boolean;
+	playOnAwake: boolean;
+	maxParticles: number;
+	rateOverTime: number;
+	bursts: string[];
+	subEmitters: { target: string; type: number; properties: number; prob: number }[];
+	lights: { ratio: number; maxLights: number } | null;
+	trails: boolean;
+	enabledModules: string[];
+}
+
+const summarizePrefabParticles = async (
+	resolver: AssetResolver,
+	root: ObjectRef,
+): Promise<RawParticleSummary[]> => {
+	const goNames = new Map<bigint, string>();
+	const renderModes = new Map<bigint, number>();
+	const psById = new Map<bigint, { pathId: bigint; data: TypeTreeObject }>();
+	for (const obj of root.file.file.objects) {
+		if (obj.classId === UnityClass.GameObject) {
+			// oxlint-disable-next-line no-await-in-loop -- peeks GameObject names in prefab file
+			const name = await root.file.peekName(obj);
+			if (name !== undefined) {
+				goNames.set(obj.pathId, name);
+			}
+		} else if (obj.classId === UnityClass.ParticleSystemRenderer) {
+			// oxlint-disable-next-line no-await-in-loop -- reads render mode per ParticleSystemRenderer
+			const data = await resolver.read({ ...root, info: obj });
+			renderModes.set(pptrField(data, 'm_GameObject').pathId, numberField(data, 'm_RenderMode'));
+		} else if (obj.classId === UnityClass.ParticleSystem) {
+			// oxlint-disable-next-line no-await-in-loop -- reads ParticleSystem modules
+			const data = await resolver.read({ ...root, info: obj });
+			psById.set(obj.pathId, { pathId: obj.pathId, data });
+		}
+	}
+	const out: RawParticleSummary[] = [];
+	for (const { pathId, data } of psById.values()) {
+		const go = pptrField(data, 'm_GameObject').pathId;
+		const init = objectField(data, 'InitialModule');
+		const emission = objectField(data, 'EmissionModule');
+		const rate = objectField(emission, 'rateOverTime');
+		const bursts = arrayField(emission, 'm_Bursts')
+			.filter(isObject)
+			.map((b) => `${numberField(b, 'time')}@${numberField(objectField(b, 'countCurve'), 'scalar')}`);
+		const sub = objectField(data, 'SubModule');
+		const subEmitters = booleanField(sub, 'enabled')
+			? arrayField(sub, 'subEmitters')
+					.filter(isObject)
+					.map((e) => {
+						const targetId = pptrField(e, 'emitter').pathId;
+						const targetPs = psById.get(targetId);
+						const targetName =
+							targetPs === undefined
+								? targetId.toString()
+								: (goNames.get(pptrField(targetPs.data, 'm_GameObject').pathId) ?? targetId.toString());
+						return {
+							target: targetName,
+							type: numberField(e, 'type'),
+							properties: numberField(e, 'properties'),
+							prob: numberField(e, 'emitProbability'),
+						};
+					})
+					.filter((e) => e.target !== '0' && e.prob > 0)
+			: [];
+		const lm = objectField(data, 'LightsModule');
+		const lights =
+			booleanField(lm, 'enabled') && pptrField(lm, 'light').pathId !== 0n
+				? { ratio: numberField(lm, 'ratio'), maxLights: numberField(lm, 'maxLights') }
+				: null;
+		const tm = isObject(data.TrailModule) ? data.TrailModule : null;
+		const enabledModules = Object.entries(data)
+			.filter(([k, v]) => k.endsWith('Module') && isObject(v) && v.enabled === true)
+			.map(([k]) => k.replace(/Module$/, ''));
+		out.push({
+			name: goNames.get(go) ?? go.toString(),
+			pathId: pathId.toString(),
+			renderMode: renderModes.get(go) ?? null,
+			simSpace: numberField(data, 'moveWithTransform'),
+			scalingMode: numberField(data, 'scalingMode'),
+			lengthInSec: numberField(data, 'lengthInSec'),
+			looping: booleanField(data, 'looping'),
+			playOnAwake: booleanField(data, 'playOnAwake'),
+			maxParticles: numberField(init, 'maxNumParticles'),
+			rateOverTime: numberField(rate, 'scalar'),
+			bursts,
+			subEmitters,
+			lights,
+			trails: tm !== null && tm.enabled === true,
+			enabledModules,
+		});
+	}
+	return out;
+};
+
 const inspectPrefab = async (
 	context: Context,
 	resolver: AssetResolver,
 	root: ObjectRef,
-	options: { effectLod: 'camera' | 'proxy'; json: boolean },
-): Promise<void> => {
+	options: { effectLod: 'camera' | 'proxy'; particles: boolean; json: boolean },
+): Promise<object> => {
 	const bundleName = resolver.manifest.bundleName(root.bundleIndex);
 	const rootName = (await root.file.peekName(root.info)) ?? '?';
 
@@ -620,19 +798,21 @@ const inspectPrefab = async (
 					})),
 				);
 
+	const rawParticles = options.particles ? await summarizePrefabParticles(resolver, root) : undefined;
+
 	const output = {
 		name: rootName,
 		object: objectKey(root),
 		bundle: bundleName,
 		hierarchy,
 		renderers: rendererSummaries,
+		...(rawParticles === undefined ? {} : { particleSystems: rawParticles }),
 		lights: lightsSummary,
 		environmentVolumes: volumesSummary,
 	};
 
 	if (options.json) {
-		console.log(JSON.stringify(output, jsonReplacer, '\t'));
-		return;
+		return output;
 	}
 
 	console.log(`prefab ${rootName}  (${bundleName}  ${objectKey(root)})`);
@@ -656,6 +836,9 @@ const inspectPrefab = async (
 			const tags: string[] = [r.kind];
 			if (r.shadowOnly) {
 				tags.push('shadow-only');
+			}
+			if (r.sorting.layer !== 0 || r.sorting.order !== 0) {
+				tags.push(`sort=${r.sorting.layer}/${r.sorting.order}`);
 			}
 			if (r.motion !== null) {
 				tags.push(`motion:${r.motion.kind}(${r.motion.duration.toFixed(2)}s)`);
@@ -713,6 +896,37 @@ const inspectPrefab = async (
 		}
 	}
 
+	if (rawParticles !== undefined && rawParticles.length > 0) {
+		console.log(`\nparticle systems (${rawParticles.length}):`);
+		for (const ps of rawParticles) {
+			const parts = [
+				`rm=${ps.renderMode ?? '-'}`,
+				`sim=${ps.simSpace}`,
+				`scale=${ps.scalingMode}`,
+				`len=${ps.lengthInSec}`,
+				`loop=${ps.looping}`,
+				`awake=${ps.playOnAwake}`,
+				`max=${ps.maxParticles}`,
+				`rate=${ps.rateOverTime}`,
+			];
+			if (ps.bursts.length > 0) {
+				parts.push(`bursts=${ps.bursts.join(',')}`);
+			}
+			if (ps.subEmitters.length > 0) {
+				parts.push(
+					`subs=[${ps.subEmitters.map((s) => `${s.target}:t${s.type}/p${s.properties}`).join(',')}]`,
+				);
+			}
+			if (ps.lights !== null) {
+				parts.push(`lights=${ps.lights.ratio}x${ps.lights.maxLights}`);
+			}
+			if (ps.trails) {
+				parts.push('trails');
+			}
+			console.log(`  ${ps.name}  (${parts.join(', ')})  mods=[${ps.enabledModules.join(',')}]`);
+		}
+	}
+
 	if ('error' in lightsSummary) {
 		console.log(`\nlights: error: ${lightsSummary.error}`);
 	} else if (lightsSummary.length > 0) {
@@ -730,6 +944,7 @@ const inspectPrefab = async (
 			console.log(`  ${v.name}  priority=${v.priority}  type=${v.volumeType}  phase=${v.phase ?? '(none)'}`);
 		}
 	}
+	return output;
 };
 
 // #endregion

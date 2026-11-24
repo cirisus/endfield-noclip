@@ -27,7 +27,15 @@ import {
 	WATER_DECAL_MESH_KEY,
 	type HlodLink,
 } from '@endfield-noclip/formats/endfield/streaming-chunk-data';
-import type { Aabb } from '@endfield-noclip/formats/unity/values';
+import { type ObjectInfo, typeName, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
+import type { TypeTreeValue } from '@endfield-noclip/formats/unity/type-tree';
+import {
+	isObject,
+	numberField,
+	pptrField,
+	stringField,
+	type Aabb,
+} from '@endfield-noclip/formats/unity/values';
 import { ruleText } from '@endfield-noclip/package-format/conditions';
 import { compareVolumes, distanceInsideVolume } from '@endfield-noclip/package-format/environment-volumes';
 
@@ -38,10 +46,12 @@ import {
 	hashText,
 	jsonReplacer,
 	need as needArg,
+	parseList,
 	parseNumbers,
 	parseOptionalInteger,
 	separatePositionals,
 } from '../cli-args.ts';
+import { matchesWhere, parseWhereList, pickFields, type WherePredicate } from '../cli-query.ts';
 import { compareNatural, compareStrings } from '../compare.ts';
 import { type Context, withContext } from '../context.ts';
 import { errorText, ignoreMissing } from '../errors.ts';
@@ -101,6 +111,9 @@ export const usage = `usage:
   scene chunk <scene> <chunk> [--name re] [--hlod-stats] [--foliage] [--limit n] [--json]
                                            inspect one InitChunkData + StreamingChunkData pair
                                            (<chunk> is e.g. -13_-10_0_0, -13_-10, or Global_0_0)
+  scene prefabs <scene[,…]|all> [--name re] [--class cls[,…]] [--join-go] [--where expr] [--pick a,b]
+      [--limit n] [--json]                 list unique placed prefabs across scenes, or with --class scan
+                                           their Unity objects declaratively with --where / --pick / --join-go
   scene env <map|level> [--at x,y,z] [--json]
                                            base environment per level, or with --at the volume stack at a point
   scene controls <scene> [--json]          scene states, stream areas and progression controllers`;
@@ -121,6 +134,10 @@ const OPTIONS = {
 	'hlod-links': { type: 'boolean', default: false },
 	'hlod-stats': { type: 'boolean', default: false },
 	foliage: { type: 'boolean', default: false },
+	class: { type: 'string', multiple: true },
+	'join-go': { type: 'boolean', default: false },
+	where: { type: 'string', multiple: true },
+	pick: { type: 'string', multiple: true },
 	at: { type: 'string' },
 	limit: { type: 'string' },
 	json: { type: 'boolean', default: false },
@@ -182,6 +199,18 @@ export const run = async (args: string[]): Promise<void> => {
 					hlodStats: values['hlod-stats'],
 					foliage: values.foliage,
 					limit: searchLimit(values.limit),
+					json: values.json,
+				});
+				break;
+			}
+			case 'prefabs': {
+				await scanScenePrefabs(context, needArg(target, 'scene[,…] or all', usage), {
+					pattern: values.name === undefined ? undefined : new RegExp(values.name, 'i'),
+					classes: parseList(values.class),
+					joinGo: values['join-go'],
+					where: parseWhereList(values.where),
+					pick: parseList(values.pick),
+					limit: parseOptionalInteger(values.limit, '--limit') ?? Infinity,
 					json: values.json,
 				});
 				break;
@@ -1719,6 +1748,234 @@ const inspectChunk = async (
 	}
 	console.error(
 		`${shown.length} of ${matched.length} entities${matched.length > options.limit ? ' (raise --limit for more)' : ''}`,
+	);
+};
+
+// #endregion
+
+// #region prefabs
+
+const toSimpleJson = (value: TypeTreeValue, maxArray = 32): unknown => {
+	if (typeof value === 'bigint') {
+		return value.toString();
+	}
+	if (ArrayBuffer.isView(value)) {
+		return `<${value.constructor.name} ${value.byteLength} bytes>`;
+	}
+	if (Array.isArray(value)) {
+		return value.slice(0, maxArray).map((item) => toSimpleJson(item, maxArray));
+	}
+	if (typeof value === 'object') {
+		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, toSimpleJson(v, maxArray)]));
+	}
+	return value;
+};
+
+const scanScenePrefabs = async (
+	context: Context,
+	sceneArg: string,
+	options: {
+		pattern: RegExp | undefined;
+		classes: readonly string[];
+		joinGo: boolean;
+		where: readonly WherePredicate[];
+		pick: readonly string[];
+		limit: number;
+		json: boolean;
+	},
+): Promise<void> => {
+	const scenes =
+		sceneArg === 'all'
+			? await context.world.scenes()
+			: sceneArg
+					.split(',')
+					.map((s) => s.trim())
+					.filter(Boolean);
+
+	const unique = new Map<
+		bigint,
+		{ hash: bigint; scenes: Set<string>; path: string | null; bundle: string | null }
+	>();
+	const manifest = await context.world.manifest();
+	for (const scene of scenes) {
+		// oxlint-disable-next-line no-await-in-loop -- surveys one scene at a time
+		const survey = await surveyPlacements(context, scene, null, { includeEcs: false });
+		for (const pl of survey.placements) {
+			const hash = pl.model.pathHash;
+			if (hash === 0n) {
+				continue;
+			}
+			let entry = unique.get(hash);
+			if (entry === undefined) {
+				// oxlint-disable-next-line no-await-in-loop -- fast StringPathHash lookup on first sight
+				const path = (await context.world.pathOf(hash)) ?? null;
+				if (options.pattern !== undefined && !options.pattern.test(path ?? '')) {
+					continue;
+				}
+				const assets = manifest.findAssets(hash);
+				const bundle = assets.length > 0 ? manifest.bundleName(assets[0].bundleIndex) : null;
+				entry = { hash, scenes: new Set([scene]), path, bundle };
+				unique.set(hash, entry);
+			} else {
+				entry.scenes.add(scene);
+			}
+		}
+	}
+
+	const entries = [...unique.values()].toSorted((a, b) =>
+		compareStrings(a.path ?? a.hash.toString(), b.path ?? b.hash.toString()),
+	);
+
+	// list-only mode when no object scan flags were provided
+	if (options.classes.length === 0 && options.where.length === 0) {
+		const shown = entries.slice(0, options.limit);
+		if (options.json) {
+			const rows = shown.map((e) => ({
+				hash: hashText(e.hash),
+				bundle: e.bundle,
+				scenes: [...e.scenes],
+				path: e.path,
+			}));
+			console.log(
+				JSON.stringify(
+					options.pick.length === 0 ? rows : rows.map((r) => pickFields(r, options.pick)),
+					null,
+					'\t',
+				),
+			);
+		} else {
+			for (const e of shown) {
+				console.log(`${e.bundle ?? '-'}\t${hashText(e.hash)}\t${[...e.scenes].join(',')}\t${e.path ?? '-'}`);
+			}
+		}
+		console.error(
+			`${shown.length} of ${entries.length} unique placed prefabs across ${scenes.length} scenes`,
+		);
+		return;
+	}
+
+	const resolver = await context.resolver();
+	let scanned = 0;
+	let errors = 0;
+	const perPrefab = await mapPool(entries, 12, async (entry) => {
+		let ref;
+		try {
+			ref = await resolver.findUnique({ hash: entry.hash, path: entry.path }, UnityClass.GameObject);
+		} catch {
+			errors++;
+			return [];
+		}
+		scanned++;
+		const matchesClass = (obj: ObjectInfo): boolean =>
+			options.classes.length === 0 ||
+			options.classes.some((cls) => String(obj.classId) === cls || typeName(obj.type) === cls);
+
+		const matching = ref.file.file.objects.filter(matchesClass);
+		if (matching.length === 0) {
+			return [];
+		}
+
+		const goNames = new Map<bigint, string>();
+		const renderModes = new Map<bigint, number>();
+		if (options.joinGo) {
+			for (const obj of ref.file.file.objects) {
+				if (obj.classId === UnityClass.GameObject) {
+					// oxlint-disable-next-line no-await-in-loop -- lightweight name peek
+					const name = await ref.file.peekName(obj);
+					if (name !== undefined) {
+						goNames.set(obj.pathId, name);
+					}
+				} else if (obj.classId === UnityClass.ParticleSystemRenderer) {
+					try {
+						// oxlint-disable-next-line no-await-in-loop -- reads render mode per sibling
+						const data = await resolver.read({ ...ref, info: obj });
+						const go = pptrField(data, 'm_GameObject').pathId;
+						if (go !== 0n) {
+							renderModes.set(go, numberField(data, 'm_RenderMode'));
+						}
+					} catch {
+						// ignore
+					}
+				}
+			}
+		}
+
+		const rows: Record<string, unknown>[] = [];
+		for (const obj of matching) {
+			let raw: TypeTreeValue;
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- reads matching objects in prefab
+				raw = await resolver.read({ ...ref, info: obj });
+			} catch {
+				continue;
+			}
+			const value = toSimpleJson(raw);
+			let gameObject: string | undefined;
+			let renderMode: number | undefined;
+			if (options.joinGo && isObject(raw)) {
+				if (obj.classId === UnityClass.GameObject) {
+					try {
+						gameObject = stringField(raw, 'm_Name');
+					} catch {
+						// ignore
+					}
+				} else if ('m_GameObject' in raw) {
+					try {
+						const goId = pptrField(raw, 'm_GameObject').pathId;
+						gameObject = goNames.get(goId);
+						if (obj.classId === UnityClass.ParticleSystem) {
+							renderMode = renderModes.get(goId);
+						}
+					} catch {
+						// ignore
+					}
+				}
+			}
+			const header: Record<string, unknown> = {
+				scenes: [...entry.scenes],
+				path: entry.path,
+				bundle: entry.bundle,
+				pathId: obj.pathId.toString(),
+				classId: obj.classId,
+				type: typeName(obj.type),
+				...(gameObject === undefined ? {} : { gameObject }),
+				...(renderMode === undefined ? {} : { renderMode }),
+			};
+			const queryView =
+				value !== null && typeof value === 'object' && !Array.isArray(value)
+					? { ...Object.fromEntries(Object.entries(value)), ...header, value }
+					: { ...header, value };
+			if (options.where.length > 0 && !matchesWhere(queryView, options.where)) {
+				continue;
+			}
+			const outRow =
+				options.pick.length > 0
+					? {
+							scenes: header.scenes,
+							path: header.path,
+							bundle: header.bundle,
+							pathId: header.pathId,
+							...(gameObject === undefined ? {} : { gameObject }),
+							...(renderMode === undefined ? {} : { renderMode }),
+							...pickFields(queryView, options.pick),
+						}
+					: { ...header, value };
+			rows.push(outRow);
+		}
+		return rows;
+	});
+
+	const allRows = perPrefab.flat();
+	const shown = allRows.slice(0, options.limit);
+	if (options.json) {
+		console.log(JSON.stringify(shown, null, '\t'));
+	} else {
+		for (const row of shown) {
+			console.log(JSON.stringify(row));
+		}
+	}
+	console.error(
+		`${shown.length} of ${allRows.length} matching objects across ${scanned} prefabs (${errors} unresolved)`,
 	);
 };
 
