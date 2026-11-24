@@ -1,5 +1,3 @@
-import { parseArgs } from 'node:util';
-
 import { type ObjectInfo, typeName, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { TypeTreeValue } from '@endfield-noclip/formats/unity/type-tree';
 import {
@@ -12,141 +10,67 @@ import {
 
 import { mapDefined } from '@mary-ext/array-fns';
 
-import {
-	collectTargets,
-	parseHash,
-	parseList,
-	parseOptionalInteger,
-	parsePathId,
-	save,
-	separatePositionals,
-} from '../cli-args.ts';
-import { matchesWhere, parseWhereList, pickFields, type WherePredicate } from '../cli-query.ts';
-import { type Context, withContext } from '../context.ts';
-import { errorText } from '../errors.ts';
-import { type BundleAssetFile, openAssetFiles, openBundle } from '../hg/bundles.ts';
-import { VfsGroup } from '../hg/vfs.ts';
+import { type Context, withContext } from '../../../context.ts';
+import { errorText } from '../../../errors.ts';
+import { type BundleAssetFile, openAssetFiles, openBundle } from '../../../hg/bundles.ts';
+import { VfsGroup } from '../../../hg/vfs.ts';
+import { collectTargets, parseHash, save } from '../../helpers.ts';
+import { matchesWhere, pickFields, type WherePredicate } from '../../query.ts';
 
-export const summary = 'inspect and search bundle objects; dump JSON or stream payloads';
+import type { BundleArgs } from './parser.ts';
 
-/** command usage, available without opening the install */
-export const usage = `usage:
-  bundle info <name>                     header, nodes and per-class object counts
-  bundle dump <name>... [--stdin] [--path-id N] [--class Mesh|43[,…]] [--name re]
-      [--join-go] [--where expr] [--pick a,b] [--text] [--json] [--limit n] [--max-array n | --full]
-                                         dump objects as JSONL (or a JSON array with --json); accepts multiple
-                                         bundles, asset paths, or hashes (or --stdin); --join-go attaches
-                                         gameObject names to components; --where filters by dot-path;
-                                         --pick projects selected fields; --text prints TextAsset m_Script
-  bundle stream <name> --path-id N -o <file>
-                                         writes an object's m_StreamData (.resS) payload
-  bundle find [re] [--filter re] [--class Shader|48] [--scan n] [--limit n] [--group main|initial|all]
-                                         searches bundles for m_Container paths matching <re>
-                                         and/or objects of a class; class results include node, path id and name
-
-<name> is a bundle hex id, main/<hex>.ab, a full logical path, or an asset path/hash.`;
-
-const OPTIONS = {
-	config: { type: 'string' },
-	'path-id': { type: 'string' },
-	class: { type: 'string', multiple: true },
-	name: { type: 'string' },
-	'join-go': { type: 'boolean', default: false },
-	where: { type: 'string', multiple: true },
-	pick: { type: 'string', multiple: true },
-	stdin: { type: 'boolean', default: false },
-	text: { type: 'boolean', default: false },
-	json: { type: 'boolean', default: false },
-	full: { type: 'boolean', default: false },
-	limit: { type: 'string' },
-	'max-array': { type: 'string' },
-	filter: { type: 'string' },
-	scan: { type: 'string' },
-	group: { type: 'string', default: 'main' },
-	output: { type: 'string', short: 'o' },
-} as const;
-
-export const run = async (args: string[]): Promise<void> => {
-	const { values, positionals } = parseArgs({
-		args: separatePositionals(args, OPTIONS),
-		allowPositionals: true,
-		options: OPTIONS,
-	});
-	const [sub, ...rest] = positionals;
-	const name = rest[0];
-	const limit = parseOptionalInteger(values.limit, '--limit') ?? Infinity;
-	const maxArray = values.full ? Infinity : (parseOptionalInteger(values['max-array'], '--max-array') ?? 16);
-	const scan = parseOptionalInteger(values.scan, '--scan') ?? Infinity;
-	const pathId = parsePathId(values['path-id'], '--path-id');
-	const classes = parseList(values.class);
-	const where = parseWhereList(values.where);
-	const pick = parseList(values.pick);
-
-	await withContext(values.config, async (context) => {
-		switch (sub) {
+/**
+ * runs `endfield-extract bundle`
+ *
+ * @param args parsed CLI arguments
+ */
+export const runBundle = async (args: BundleArgs): Promise<void> => {
+	await withContext(args.config, async (context) => {
+		switch (args.subcommand) {
 			case 'info': {
-				await info(await openAssetFilesByName(context, name, { eager: false }));
+				await info(await openAssetFilesByName(context, args.name, { eager: false }));
 				break;
 			}
 			case 'dump': {
-				if (values.text && values.json) {
-					throw new Error('use either --text or --json, not both');
-				}
-				const targets = await collectTargets(rest, values.stdin);
+				const targets = await collectTargets(args.targets, args.stdin);
 				if (targets.length === 0) {
-					throw new Error(usage);
+					throw new Error('bundle dump needs at least one target or --stdin');
 				}
 				const matches = (object: ObjectInfo): boolean => {
-					if (pathId !== undefined) {
-						return object.pathId === pathId;
+					if (args.pathId !== undefined) {
+						return object.pathId === args.pathId;
 					}
-					return classes.length === 0 || classes.some((cls) => isClass(object, cls));
+					return args.classes.length === 0 || args.classes.some((cls) => isClass(object, cls));
 				};
 				await dumpMany(context, targets, matches, {
-					nameFilter: values.name === undefined ? undefined : new RegExp(values.name, 'i'),
-					joinGo: values['join-go'],
-					where,
-					pick,
-					text: values.text,
-					json: values.json,
-					limit,
-					maxArray,
-					eager: pathId === undefined && classes.length === 0 && values.name === undefined,
+					nameFilter: args.name,
+					joinGo: args.joinGo,
+					where: [...args.where],
+					pick: [...args.pick],
+					text: args.format === 'text',
+					json: args.format === 'json',
+					limit: args.limit,
+					maxArray: args.maxArray,
+					eager: args.pathId === undefined && args.classes.length === 0 && args.name === undefined,
 				});
 				break;
 			}
 			case 'stream': {
-				if (pathId === undefined || values.output === undefined) {
-					throw new Error('bundle stream needs --path-id N -o <file>');
-				}
-				if (name === undefined) {
-					throw new Error(usage);
-				}
-				await stream(context, name, pathId, values.output);
+				await stream(context, args.name, args.pathId, args.output);
 				break;
 			}
 			case 'find': {
-				if (values.filter !== undefined && name !== undefined) {
-					throw new Error('pass the container pattern either positionally or with --filter, not both');
-				}
-				const filterPattern = values.filter ?? name;
-				if (filterPattern === undefined && classes.length === 0) {
+				if (args.filter === undefined && args.classes.length === 0) {
 					throw new Error('bundle find needs <re>, --filter <re>, and/or --class <class>');
 				}
-				if (!['main', 'initial', 'all'].includes(values.group)) {
-					throw new Error('--group must be main, initial or all');
-				}
 				await find(context, {
-					group: values.group,
-					filter: filterPattern === undefined ? undefined : new RegExp(filterPattern, 'i'),
-					classNames: classes,
-					scan,
-					limit,
+					group: args.group,
+					filter: args.filter,
+					classNames: [...args.classes],
+					scan: args.scan,
+					limit: args.limit,
 				});
 				break;
-			}
-			default: {
-				throw new Error(usage);
 			}
 		}
 	});
@@ -183,12 +107,9 @@ const resolveBundleName = async (context: Context, target: string): Promise<stri
 
 const openAssetFilesByName = async (
 	context: Context,
-	name: string | undefined,
+	name: string,
 	options?: { eager?: boolean },
 ): Promise<BundleAssetFile[]> => {
-	if (name === undefined) {
-		throw new Error(usage);
-	}
 	const resolved = await resolveBundleName(context, name);
 	return openAssetFiles(await openBundle(context, resolved), options);
 };

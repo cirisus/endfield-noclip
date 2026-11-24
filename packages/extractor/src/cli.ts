@@ -1,49 +1,17 @@
 #!/usr/bin/env node
-import { readdir } from 'node:fs/promises';
+import { or } from '@optique/core/constructs';
+import { message } from '@optique/core/message';
+import { command } from '@optique/core/primitives';
+import { run } from '@optique/run';
 
-import { mapDefined } from '@mary-ext/array-fns';
-
-/**
- * each file in `commands/` is one subcommand exporting `summary`, `usage` and `run(args)`, so commands can be
- * added without touching this dispatcher.
- */
-interface CommandModule {
-	summary: string;
-	usage: string;
-	run(args: string[]): Promise<void>;
-}
-
-const COMMANDS_DIR = new URL('./commands/', import.meta.url);
-
-const listCommands = async (): Promise<string[]> => {
-	const files = await readdir(COMMANDS_DIR);
-	const commands = mapDefined(files, (file) =>
-		file.endsWith('.ts') && !file.endsWith('.test.ts') ? file.slice(0, -3) : undefined,
-	);
-	commands.sort();
-	return commands;
-};
-
-const loadCommand = async (name: string): Promise<CommandModule> => {
-	const module: unknown = await import(new URL(`${name}.ts`, COMMANDS_DIR).href);
-	if (!isCommandModule(module)) {
-		throw new Error(`commands/${name}.ts must export \`summary\`, \`usage\` and \`run\``);
-	}
-	return module;
-};
-
-const isCommandModule = (value: unknown): value is CommandModule => {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		'summary' in value &&
-		typeof value.summary === 'string' &&
-		'usage' in value &&
-		typeof value.usage === 'string' &&
-		'run' in value &&
-		typeof value.run === 'function'
-	);
-};
+import { auditParser } from './cli/commands/audit/parser.ts';
+import { bundleParser } from './cli/commands/bundle/parser.ts';
+import { dataParser } from './cli/commands/data/parser.ts';
+import { initParser } from './cli/commands/init/parser.ts';
+import { inspectParser } from './cli/commands/inspect/parser.ts';
+import { packParser } from './cli/commands/pack/parser.ts';
+import { sceneParser } from './cli/commands/scene/parser.ts';
+import { vfsParser } from './cli/commands/vfs/parser.ts';
 
 // exit quietly when piped into `head` and the like
 process.stdout.on('error', (error: NodeJS.ErrnoException) => {
@@ -53,30 +21,210 @@ process.stdout.on('error', (error: NodeJS.ErrnoException) => {
 	throw error;
 });
 
-const main = async ([command, ...args]: string[]): Promise<void> => {
-	const names = await listCommands();
-	if (command === undefined || command === '-h' || command === '--help') {
-		const lines = await Promise.all(
-			names.map(async (name) => `  ${name.padEnd(12)} ${(await loadCommand(name)).summary}`),
-		);
-		console.log(`usage: endfield-extract <command> [args]\n\ncommands:\n${lines.join('\n')}`);
-		return;
-	}
-	if (!names.includes(command)) {
-		throw new Error(`unknown command ${command}; run with --help`);
-	}
-	const module = await loadCommand(command);
-	const separator = args.indexOf('--');
-	const options = separator === -1 ? args : args.slice(0, separator);
-	if (args.length === 0 || options.includes('--help') || options.includes('-h')) {
-		console.log(`${module.usage}\n\n--config <file> selects the local config (default endfield.local.json).`);
-		return;
-	}
-	await module.run(args);
-};
+const rootParser = or(
+	command('audit', auditParser, {
+		brief: message`survey packed packages and debug data`,
+	}),
+	command('bundle', bundleParser, {
+		brief: message`inspect and search bundle objects; dump JSON or stream payloads`,
+	}),
+	command('data', dataParser, {
+		brief: message`search asset paths, resolve hashes, and read SparkBuffer tables & level data`,
+	}),
+	command('init', initParser, {
+		brief: message`derive and validate install keys, then write the local config`,
+	}),
+	command('inspect', inspectParser, {
+		brief: message`inspect a prefab, material, shader, mesh, texture, or water config`,
+	}),
+	command('pack', packParser, {
+		brief: message`build a viewer package for a scene, level, or world rectangle`,
+	}),
+	command('scene', sceneParser, {
+		brief: message`browse scenes, levels, controls, environments, and everything placed near a point`,
+	}),
+	command('vfs', vfsParser, {
+		brief: message`list virtual filesystem groups and files; extract logical files`,
+	}),
+);
+
+const parsed = run(rootParser, {
+	programName: 'endfield-extract',
+	help: 'both',
+	aboveError: 'usage',
+	showDefault: true,
+	showChoices: true,
+	termWidth: 'auto',
+});
 
 try {
-	await main(process.argv.slice(2));
+	switch (parsed.command) {
+		case 'init': {
+			const { runInit } = await import('./cli/commands/init/run.ts');
+			await runInit(parsed);
+			break;
+		}
+		case 'vfs': {
+			const { runVfs } = await import('./cli/commands/vfs/run.ts');
+			await runVfs(parsed);
+			break;
+		}
+		case 'pack': {
+			const { runPack } = await import('./cli/commands/pack/run.ts');
+			await runPack(parsed);
+			break;
+		}
+		case 'bundle': {
+			const { runBundle } = await import('./cli/commands/bundle/run.ts');
+			await runBundle(parsed);
+			break;
+		}
+		case 'data': {
+			const { runData } = await import('./cli/commands/data/run.ts');
+			await runData(parsed);
+			break;
+		}
+		case 'inspect': {
+			switch (parsed.subcommand) {
+				case 'prefab': {
+					const { runInspectPrefab } = await import('./cli/commands/inspect/prefab.ts');
+					await runInspectPrefab(parsed);
+					break;
+				}
+				case 'material': {
+					const { runInspectMaterial } = await import('./cli/commands/inspect/material.ts');
+					await runInspectMaterial(parsed);
+					break;
+				}
+				case 'shader': {
+					const { runInspectShader } = await import('./cli/commands/inspect/shader.ts');
+					await runInspectShader(parsed);
+					break;
+				}
+				case 'mesh': {
+					const { runInspectMesh } = await import('./cli/commands/inspect/mesh.ts');
+					await runInspectMesh(parsed);
+					break;
+				}
+				case 'texture': {
+					const { runInspectTexture } = await import('./cli/commands/inspect/texture.ts');
+					await runInspectTexture(parsed);
+					break;
+				}
+				case 'water-config': {
+					const { runInspectWaterConfig } = await import('./cli/commands/inspect/water-config.ts');
+					await runInspectWaterConfig(parsed);
+					break;
+				}
+			}
+			break;
+		}
+		case 'scene': {
+			switch (parsed.subcommand) {
+				case 'list': {
+					const { runSceneList } = await import('./cli/commands/scene/list.ts');
+					await runSceneList(parsed);
+					break;
+				}
+				case 'levels': {
+					const { runSceneLevels } = await import('./cli/commands/scene/list.ts');
+					await runSceneLevels(parsed);
+					break;
+				}
+				case 'find': {
+					const { runSceneFind } = await import('./cli/commands/scene/find.ts');
+					await runSceneFind(parsed);
+					break;
+				}
+				case 'chunk': {
+					const { runSceneChunk } = await import('./cli/commands/scene/chunk.ts');
+					await runSceneChunk(parsed);
+					break;
+				}
+				case 'prefabs': {
+					const { runScenePrefabs } = await import('./cli/commands/scene/prefabs.ts');
+					await runScenePrefabs(parsed);
+					break;
+				}
+				case 'env': {
+					const { runSceneEnv } = await import('./cli/commands/scene/env.ts');
+					await runSceneEnv(parsed);
+					break;
+				}
+				case 'controls': {
+					const { runSceneControls } = await import('./cli/commands/scene/controls.ts');
+					await runSceneControls(parsed);
+					break;
+				}
+			}
+			break;
+		}
+		case 'audit': {
+			switch (parsed.subcommand) {
+				case 'list': {
+					const { runAuditList } = await import('./cli/commands/audit/list.ts');
+					await runAuditList(parsed);
+					break;
+				}
+				case 'core': {
+					const { runAuditCore } = await import('./cli/commands/audit/core.ts');
+					await runAuditCore(parsed);
+					break;
+				}
+				case 'tree': {
+					const { runAuditTree } = await import('./cli/commands/audit/tree.ts');
+					await runAuditTree(parsed);
+					break;
+				}
+				case 'instances': {
+					const { runAuditInstances } = await import('./cli/commands/audit/instances.ts');
+					await runAuditInstances(parsed);
+					break;
+				}
+				case 'materials': {
+					const { runAuditMaterials } = await import('./cli/commands/audit/assets.ts');
+					await runAuditMaterials(parsed);
+					break;
+				}
+				case 'geometries': {
+					const { runAuditGeometries } = await import('./cli/commands/audit/assets.ts');
+					await runAuditGeometries(parsed);
+					break;
+				}
+				case 'textures': {
+					const { runAuditTextures } = await import('./cli/commands/audit/assets.ts');
+					await runAuditTextures(parsed);
+					break;
+				}
+				case 'stand-ins': {
+					const { runAuditStandIns } = await import('./cli/commands/audit/stand-ins.ts');
+					await runAuditStandIns(parsed);
+					break;
+				}
+				case 'interactives': {
+					const { runAuditInteractives } = await import('./cli/commands/audit/interactives.ts');
+					await runAuditInteractives(parsed);
+					break;
+				}
+				case 'water': {
+					const { runAuditWater } = await import('./cli/commands/audit/water.ts');
+					await runAuditWater(parsed);
+					break;
+				}
+				case 'env': {
+					const { runAuditEnv } = await import('./cli/commands/audit/env.ts');
+					await runAuditEnv(parsed);
+					break;
+				}
+				case 'irradiance': {
+					const { runAuditIrradiance } = await import('./cli/commands/audit/irradiance.ts');
+					await runAuditIrradiance(parsed);
+					break;
+				}
+			}
+			break;
+		}
+	}
 } catch (error) {
 	console.error(error instanceof Error ? (error.stack ?? error.message) : error);
 	process.exitCode = 1;

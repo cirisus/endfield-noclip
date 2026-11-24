@@ -1,5 +1,3 @@
-import { parseArgs } from 'node:util';
-
 import {
 	readLevelInteractives,
 	UnsupportedLevelData,
@@ -8,130 +6,81 @@ import { parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 
 import { definite } from '@mary-ext/array-fns';
 
-import {
-	collectTargets,
-	hashText,
-	jsonReplacer,
-	need as needArg,
-	parseHash,
-	parseOptionalInteger,
-	separatePositionals,
-} from '../cli-args.ts';
-import { compareNatural, compareStrings } from '../compare.ts';
-import { type Context, withContext } from '../context.ts';
-import { errorText } from '../errors.ts';
-import { readViewStates, records, text } from '../game/interactives/view-state-poses.ts';
-import { toScript } from '../game/script-drivers.ts';
-import type { WorldIndex } from '../game/world/world-index.ts';
-import { VfsGroup } from '../hg/vfs.ts';
-import { mapPool } from '../pool.ts';
+import { compareNatural, compareStrings } from '../../../compare.ts';
+import { type Context, withContext } from '../../../context.ts';
+import { errorText } from '../../../errors.ts';
+import { readViewStates, records, text } from '../../../game/interactives/view-state-poses.ts';
+import { toScript } from '../../../game/script-drivers.ts';
+import type { WorldIndex } from '../../../game/world/world-index.ts';
+import { VfsGroup } from '../../../hg/vfs.ts';
+import { mapPool } from '../../../pool.ts';
+import { collectTargets, hashText, jsonReplacer, parseHash } from '../../helpers.ts';
 
-export const summary = 'search asset paths, resolve hashes, and read SparkBuffer tables & level data';
+import type { DataArgs } from './parser.ts';
 
-/** command usage, available without opening the install */
-export const usage = `usage:
-  data paths <re> [--limit n] [--json]               search both path catalogs, with hashes and bundles
-  data resolve <path|hash>... [--stdin] [--json]     path ↔ hash, then asset → bundle + dependencies
-  data tables [--filter re]                          list SparkBuffer config tables in the Table group
-  data table <name> [--key k] [--filter re] [--limit n] [--json]
-                                                     decode a SparkBuffer table (e.g. DungeonTable)
-  data scripts <level> [--id N] [--filter re] [--limit n] [--json]
-                                                     decode MemoryPack level scripts for one level
-  data interactives <level> [--id N] [--filter re] [--limit n] [--json]
-                                                     decode LevelData interactive placements for one level
-  data view-states [model-re] [--emissive re] [--filter re] [--limit n] [--json]
-                                                     inspect or search ModelViewStateControllerData JSONs`;
-
-const OPTIONS = {
-	config: { type: 'string' },
-	key: { type: 'string' },
-	id: { type: 'string' },
-	emissive: { type: 'string' },
-	filter: { type: 'string' },
-	limit: { type: 'string' },
-	stdin: { type: 'boolean', default: false },
-	json: { type: 'boolean', default: false },
-} as const;
-
-export const run = async (args: string[]): Promise<void> => {
-	const { values, positionals } = parseArgs({
-		args: separatePositionals(args, OPTIONS),
-		allowPositionals: true,
-		options: OPTIONS,
-	});
-	const [sub, ...rest] = positionals;
-	const arg = rest[0];
-	const limit = parseLimit(values.limit);
-	const filter = values.filter === undefined ? undefined : new RegExp(values.filter, 'i');
-
-	await withContext(values.config, async (context) => {
-		switch (sub) {
+/**
+ * runs `endfield-extract data`
+ *
+ * @param args parsed CLI arguments
+ */
+export const runData = async (args: DataArgs): Promise<void> => {
+	await withContext(args.config, async (context) => {
+		switch (args.subcommand) {
 			case 'paths': {
-				await findPaths(context.world, new RegExp(needArg(arg, 'pattern', usage), 'i'), limit, values.json);
+				await findPaths(context.world, args.pattern, args.limit, args.json);
 				break;
 			}
 			case 'resolve': {
-				const targets = await collectTargets(rest, values.stdin);
+				const targets = await collectTargets(args.targets, args.stdin);
 				if (targets.length === 0) {
-					throw new Error(`missing path or hash\n${usage}`);
+					throw new Error('data resolve needs at least one path/hash or --stdin');
 				}
-				await resolveMany(context.world, targets, values.json);
+				await resolveMany(context.world, targets, args.json);
 				break;
 			}
 			case 'tables': {
-				await listTables(context, filter);
+				await listTables(context, args.filter);
 				break;
 			}
 			case 'table': {
-				await readTable(context, needArg(arg, 'table name', usage), {
-					key: values.key,
-					filter,
-					limit,
-					json: values.json,
+				await readTable(context, args.name, {
+					key: args.key,
+					filter: args.filter,
+					limit: args.limit,
+					json: args.json,
 				});
 				break;
 			}
 			case 'scripts': {
-				await readScripts(context, needArg(arg, 'level', usage), {
-					id: values.id,
-					filter,
-					limit,
-					json: values.json,
+				await readScripts(context, args.level, {
+					id: args.id,
+					filter: args.filter,
+					limit: args.limit,
+					json: args.json,
 				});
 				break;
 			}
 			case 'interactives': {
-				await readInteractives(context, needArg(arg, 'level', usage), {
-					id: values.id,
-					filter,
-					limit,
-					json: values.json,
+				await readInteractives(context, args.level, {
+					id: args.id,
+					filter: args.filter,
+					limit: args.limit,
+					json: args.json,
 				});
 				break;
 			}
 			case 'view-states': {
 				await readViewStatesCmd(context, {
-					model: arg === undefined ? undefined : new RegExp(arg, 'i'),
-					emissive: values.emissive === undefined ? undefined : new RegExp(values.emissive, 'i'),
-					filter,
-					limit,
-					json: values.json,
+					model: args.model,
+					emissive: args.emissive,
+					filter: args.filter,
+					limit: args.limit,
+					json: args.json,
 				});
 				break;
 			}
-			default: {
-				throw new Error(usage);
-			}
 		}
 	});
-};
-
-const parseLimit = (raw: string | undefined): number => {
-	const limit = parseOptionalInteger(raw, '--limit') ?? 100;
-	if (limit < 1) {
-		throw new Error('--limit must be a positive integer');
-	}
-	return limit;
 };
 
 // #region paths & resolve

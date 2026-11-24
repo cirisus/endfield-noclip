@@ -7,6 +7,9 @@ import { parse } from '@optique/core/parser';
 import { option } from '@optique/core/primitives';
 import { integer, string } from '@optique/core/valueparser';
 
+import { bundleParser } from './commands/bundle/parser.ts';
+import { packParser } from './commands/pack/parser.ts';
+import { sceneParser } from './commands/scene/parser.ts';
 import {
 	bounds,
 	pathIdOption,
@@ -82,5 +85,28 @@ describe('cli parsers', () => {
 			assert.equal(withTargets.value.json, true);
 			assert.deepEqual(withTargets.value.targets, ['a', 'b']);
 		}
+	});
+
+	test('enforces mutual exclusions and coupled groups in command parsers', () => {
+		// pack: --existing XOR <scene> / --cache XOR --no-cache
+		assert.equal(parse(packParser, ['--existing', 'map02']).success, false);
+		assert.equal(parse(packParser, ['map02', '--cache', '/tmp/c', '--no-cache']).success, false);
+		assert.equal(parse(packParser, ['map02', '--no-cache']).success, true);
+
+		// scene find: --near and --radius must be paired
+		assert.equal(parse(sceneParser, ['find', 'map02', '--near', '-1,2,-3']).success, false);
+		assert.equal(parse(sceneParser, ['find', 'map02', '--near', '-1,2,-3', '--radius', '25']).success, true);
+
+		// scene chunk: negative chunk key works without --
+		const chunkRes = parse(sceneParser, ['chunk', 'map01', '-13_-10_0_0', '--json']);
+		assert.equal(chunkRes.success, true);
+		if (chunkRes.success && chunkRes.value.subcommand === 'chunk') {
+			assert.equal(chunkRes.value.chunk, '-13_-10_0_0');
+		}
+
+		// bundle dump: --text XOR --json, --max-array XOR --full
+		assert.equal(parse(bundleParser, ['dump', 'abc', '--text', '--json']).success, false);
+		assert.equal(parse(bundleParser, ['dump', 'abc', '--max-array', '4', '--full']).success, false);
+		assert.equal(parse(bundleParser, ['dump', 'abc', '--full', '--json']).success, true);
 	});
 });
