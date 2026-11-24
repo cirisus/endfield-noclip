@@ -57,11 +57,12 @@ struct Config {
 @group(2) @binding(5) var flow_map: texture_2d<f32>;
 @group(2) @binding(6) var repeat_sampler: sampler;
 // [0]: x = 1 with wave normals, y = 1 with a flow map, z = flow map size (m), w = 1 with a caustic map;
-// [1]: the flow map's centre (world xz), z = 1 with foam boxes drawn into `foam_texture`, w unused;
+// [1]: the flow map's centre (world xz), z = 1 with foam boxes drawn into `foam_texture`, w = sector tile px;
 // [2]: the sun as the atmosphere fog takes it (raw colour, pre-exposed), w unused;
 // [3..6]: last frame's camera-relative view-projection (columns 0..3);
-// [7]: this frame's eye minus last frame's (m), w = 1 when `reflection_scene` has no valid previous frame
-@group(2) @binding(7) var<uniform> water: array<vec4f, 8>;
+// [7]: this frame's eye minus last frame's (m), w = 1 when `reflection_scene` has no valid previous frame;
+// [8]: xy = 3×3 sector window origin relative to flow map centre (m), z = sector size (m), w = 9-bit mask (u32)
+@group(2) @binding(7) var<uniform> water: array<vec4f, 9>;
 @group(2) @binding(8) var caustic_map: texture_2d<f32>;
 // the foam the WaterDecal boxes leave on the surface (`fs_water_foam` in effect.wgsl): rgb to add, alpha what's
 // left of the water's own foam
@@ -71,6 +72,8 @@ struct Config {
 @group(2) @binding(12) var clamp_sampler: sampler;
 // the nearest water surface's depth, which only that surface shades
 @group(2) @binding(14) var water_depth_texture: texture_depth_2d;
+// 3×3 high-res sector flow atlas around the camera
+@group(2) @binding(15) var sector_flow: texture_2d<f32>;
 
 // the in-water Mie lobe: Henyey–Greenstein with the game's anisotropy
 fn water_mie_phase(cos_theta: f32) -> f32 {
@@ -189,12 +192,36 @@ fn fs_water(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) v
 	// angles
 	let near = max(0.0, 1.0 - clamp(surface_distance * clamp(1.0 - geo_n_dot_v, 0.0, 1.0) / max(c.fade.x, 1e-4), 0.0, 1.0));
 
-	// the flow: rg the direction (green points along −z), b the foam, a the wave amplitude
+	// the flow: rg the direction (green points along −z), b the foam, a the wave amplitude. near the camera,
+	// high-res 3×3 sector tiles override the global flow map and blend back to it over the outer 10 % of the window
 	var flow = vec4f(0.5, 0.5, 0.0, 1.0);
 	{
-		let uv = (world.xz - water[1].xy) / max(water[0].z, 1.0) + 0.5;
+		let q = world.xz - water[1].xy;
+		let uv = q / max(water[0].z, 1.0) + 0.5;
 		let sampled = textureSampleLevel(flow_map, repeat_sampler, uv, 0.0);
 		flow = select(flow, sampled, water[0].y > 0.5);
+		let sector_mask = bitcast<u32>(water[8].w);
+		if (sector_mask != 0u) {
+			let local = (q - water[8].xy) / max(water[8].z, 1.0);
+			if (all(local >= vec2f(0.0)) && all(local < vec2f(3.0))) {
+				let cell = vec2u(floor(local));
+				let bit = 1u << (cell.y * 3u + cell.x);
+				if ((sector_mask & bit) != 0u) {
+					// clamp inside the cell along any border whose neighbour isn't loaded in the atlas
+					let inset = 0.5 / max(water[1].w, 1.0);
+					let has_xm = cell.x > 0u && (sector_mask & (1u << (cell.y * 3u + cell.x - 1u))) != 0u;
+					let has_xp = cell.x < 2u && (sector_mask & (1u << (cell.y * 3u + cell.x + 1u))) != 0u;
+					let has_zm = cell.y > 0u && (sector_mask & (1u << ((cell.y - 1u) * 3u + cell.x))) != 0u;
+					let has_zp = cell.y < 2u && (sector_mask & (1u << ((cell.y + 1u) * 3u + cell.x))) != 0u;
+					let lo = vec2f(cell) + vec2f(select(inset, 0.0, has_xm), select(inset, 0.0, has_zm));
+					let hi = vec2f(cell) + 1.0 - vec2f(select(inset, 0.0, has_xp), select(inset, 0.0, has_zp));
+					let s_uv = clamp(local, lo, hi) / 3.0;
+					let sector = textureSampleLevel(sector_flow, clamp_sampler, s_uv, 0.0);
+					let edge = max(abs(local.x / 3.0 - 0.5), abs(local.y / 3.0 - 0.5)) * 2.0;
+					flow = mix(sector, flow, clamp((edge - 0.9) * 10.0, 0.0, 1.0));
+				}
+			}
+		}
 	}
 	let amplitude = select(flow.a, 1.0, c.flow.w == 1.0);
 	let direction = (mix(c.flow.xy, flow.rg, c.flow.z) * 2.0 - 1.0) * vec2f(1.0, -1.0);

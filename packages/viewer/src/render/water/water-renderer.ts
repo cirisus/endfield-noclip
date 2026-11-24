@@ -38,8 +38,10 @@ import waterWgsl from './water.wgsl?raw';
 const SURFACE_FLOATS = 20;
 /** floats of `Config` in water.wgsl */
 const CONFIG_FLOATS = 56;
-/** floats of the `water` uniform in water.wgsl (3 base vec4s + 5 reprojection vec4s) */
-const PARAM_FLOATS = 32;
+/** floats of the `water` uniform in water.wgsl (3 base vec4s + 5 reprojection vec4s + 1 sector window vec4) */
+const PARAM_FLOATS = 36;
+/** edge of the camera-centred sector flow atlas, in sector tiles */
+const SECTOR_GRID = 3;
 const MAX_SURFACES = 4096;
 /** priority of the surfaces' geometry at 1 m, and of their textures */
 const PRIORITY = 1e5;
@@ -111,6 +113,21 @@ interface Draw {
 	slot: number;
 }
 
+/** a 3×3 GPU atlas of the camera's nearest high-res sector flow tiles */
+interface SectorAtlas {
+	texture: GPUTexture;
+	view: GPUTextureView;
+	tileWidth: number;
+	tileHeight: number;
+	format: GPUTextureFormat;
+}
+
+interface SectorCopy {
+	src: GPUTexture;
+	cellX: number;
+	cellZ: number;
+}
+
 /** packs one config the way `Config` in water.wgsl reads it */
 const packConfig = (c: WaterConfig, out: Float32Array, at: number): void => {
 	const rows = [
@@ -154,6 +171,7 @@ export class WaterRenderer {
 	#configs: GPUBuffer | null = null;
 	#params: GPUBuffer;
 	#paramData = new Float32Array(PARAM_FLOATS);
+	#paramWords = new Uint32Array(this.#paramData.buffer);
 	#repeat: GPUSampler;
 	#clamp: GPUSampler;
 	#noNormals: GPUTextureView;
@@ -163,6 +181,17 @@ export class WaterRenderer {
 	#normals: TextureBinding | null = null;
 	#flow: TextureBinding | null = null;
 	#caustics: TextureBinding | null = null;
+	/** by `"x,z"`, the texture id of each packed sector flow tile */
+	#sectorIds = new Map<string, number>();
+	/** 3×3 sector flow atlas around the camera, created on first resident sector tile */
+	#sectorAtlas: SectorAtlas | null = null;
+	/** origin of the current 3×3 sector window, in sector grid coords (`NaN` until placed) */
+	#sectorWinX = Number.NaN;
+	#sectorWinZ = Number.NaN;
+	/** per 3×3 cell (`z * 3 + x`): texture id and binding version already copied into {@link #sectorAtlas} */
+	#sectorSlots = Array.from({ length: SECTOR_GRID * SECTOR_GRID }, () => ({ id: -1, version: -1 }));
+	/** copies to issue into {@link #sectorAtlas} before the water shading pass */
+	#pendingSectorCopies: SectorCopy[] = [];
 	/** group 2, per water depth view bound: the depth pass's placeholder or the scene's */
 	#groups = new BindGroupCache<GPUTextureView>();
 
@@ -198,6 +227,7 @@ export class WaterRenderer {
 				texture(11, 'float'),
 				{ binding: 12, visibility: fragment, sampler: { type: 'filtering' } },
 				texture(14, 'depth'),
+				texture(15, 'float'),
 			],
 		});
 		const layout = device.createPipelineLayout({
@@ -256,10 +286,25 @@ export class WaterRenderer {
 		this.#table = table;
 		this.#configs?.destroy();
 		this.#configs = null;
+		this.#sectorIds.clear();
+		this.#sectorAtlas?.texture.destroy();
+		this.#sectorAtlas = null;
+		this.#sectorWinX = Number.NaN;
+		this.#sectorWinZ = Number.NaN;
+		for (const slot of this.#sectorSlots) {
+			slot.id = -1;
+			slot.version = -1;
+		}
+		this.#pendingSectorCopies.length = 0;
 		this.#groups.clear();
 		this.clear();
 		if (table === null || table.configs.length === 0) {
 			return;
+		}
+		for (const sector of table.global?.sectors ?? []) {
+			if (sector.texture !== null) {
+				this.#sectorIds.set(`${sector.x},${sector.z}`, sector.texture);
+			}
 		}
 		const data = new Float32Array(table.configs.length * CONFIG_FLOATS);
 		table.configs.forEach((config, i) => packConfig(config.values, data, i * CONFIG_FLOATS));
@@ -355,6 +400,7 @@ export class WaterRenderer {
 		this.#normals = streamBinding(global?.normalMaps ?? null, '2d-array');
 		this.#flow = streamBinding(global?.flowMap ?? null, '2d');
 		this.#caustics = streamBinding(global?.causticMap ?? null, '2d');
+		const sectorMask = this.#prepareSectors(eye, global, stream, textures);
 		const params = this.#paramData;
 		params[0] = this.#normals === null ? 0 : 1;
 		params[1] = this.#flow === null ? 0 : 1;
@@ -362,8 +408,87 @@ export class WaterRenderer {
 		params[3] = this.#caustics === null ? 0 : 1;
 		params[4] = global?.center[0] ?? 0;
 		params[5] = global?.center[1] ?? 0;
+		params[7] = this.#sectorAtlas?.tileWidth ?? 256;
 		params.set(sun, 8);
+		const sectorSize = global?.sectorSize ?? 128;
+		params[32] = Number.isFinite(this.#sectorWinX) ? this.#sectorWinX * sectorSize : 0;
+		params[33] = Number.isFinite(this.#sectorWinZ) ? this.#sectorWinZ * sectorSize : 0;
+		params[34] = sectorSize;
+		this.#paramWords[35] = sectorMask;
 		this.#device.queue.writeBuffer(this.#params, 0, params);
+	}
+
+	/**
+	 * streams the 3×3 high-res sector flow tiles around the camera and queues GPU copies into
+	 * {@link #sectorAtlas} whenever the window shifts or a tile finishes loading
+	 *
+	 * @returns a 9-bit mask (`cellZ * 3 + cellX`) of cells ready in {@link #sectorAtlas}
+	 */
+	#prepareSectors(
+		eye: Vec3,
+		global: WaterTable['global'],
+		stream: StreamManager,
+		textures: TextureStore,
+	): number {
+		this.#pendingSectorCopies.length = 0;
+		if (global === null || this.#sectorIds.size === 0 || global.sectorSize <= 0) {
+			return 0;
+		}
+		const sx = Math.floor((eye[0] - global.center[0]) / global.sectorSize);
+		const sz = Math.floor((eye[2] - global.center[1]) / global.sectorSize);
+		const winX = sx - 1;
+		const winZ = sz - 1;
+		if (winX !== this.#sectorWinX || winZ !== this.#sectorWinZ) {
+			this.#sectorWinX = winX;
+			this.#sectorWinZ = winZ;
+			for (const slot of this.#sectorSlots) {
+				slot.id = -1;
+				slot.version = -1;
+			}
+		}
+		let mask = 0;
+		for (let j = 0; j < SECTOR_GRID; j++) {
+			for (let i = 0; i < SECTOR_GRID; i++) {
+				const id = this.#sectorIds.get(`${winX + i},${winZ + j}`);
+				if (id === undefined) {
+					continue;
+				}
+				const streamed = streamWholeTexture({ stream, textures, id, kind: '2d', priority: PRIORITY });
+				const binding = streamed?.binding ?? null;
+				const gpu = binding === null ? null : textures.gpuTexture(id);
+				if (binding === null || gpu === null) {
+					continue;
+				}
+				if (this.#sectorAtlas === null) {
+					const texture = this.#device.createTexture({
+						label: 'water sector flow 3x3',
+						size: [gpu.width * SECTOR_GRID, gpu.height * SECTOR_GRID],
+						format: gpu.format,
+						usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+					});
+					this.#sectorAtlas = {
+						texture,
+						view: texture.createView(),
+						tileWidth: gpu.width,
+						tileHeight: gpu.height,
+						format: gpu.format,
+					};
+				}
+				const atlas = this.#sectorAtlas;
+				if (gpu.width !== atlas.tileWidth || gpu.height !== atlas.tileHeight || gpu.format !== atlas.format) {
+					continue;
+				}
+				const cell = j * SECTOR_GRID + i;
+				const slot = this.#sectorSlots[cell];
+				if (slot.id !== id || slot.version !== binding.version) {
+					this.#pendingSectorCopies.push({ src: gpu, cellX: i, cellZ: j });
+					slot.id = id;
+					slot.version = binding.version;
+				}
+				mask |= 1 << cell;
+			}
+		}
+		return mask;
 	}
 
 	/**
@@ -376,6 +501,7 @@ export class WaterRenderer {
 			return null;
 		}
 		const foam = this.#foamTargets?.foamView ?? this.#noFoam;
+		const sectorFlow = this.#sectorAtlas?.view ?? this.#noFlow;
 		const reflectionScene = context.reflectionScene ?? context.background;
 		const parts = [
 			context.version,
@@ -385,9 +511,10 @@ export class WaterRenderer {
 			this.#flow,
 			this.#caustics,
 			foam,
+			sectorFlow,
 		];
 		return this.#groups.get(waterDepth, parts, () =>
-			this.#createGroup(context, waterDepth, configs, foam, reflectionScene),
+			this.#createGroup(context, waterDepth, configs, foam, sectorFlow, reflectionScene),
 		);
 	}
 
@@ -397,6 +524,7 @@ export class WaterRenderer {
 		waterDepth: GPUTextureView,
 		configs: GPUBuffer,
 		foam: GPUTextureView,
+		sectorFlow: GPUTextureView,
 		reflectionScene: GPUTextureView,
 	): GPUBindGroup {
 		return this.#device.createBindGroup({
@@ -417,6 +545,7 @@ export class WaterRenderer {
 				{ binding: 11, resource: reflectionScene },
 				{ binding: 12, resource: this.#clamp },
 				{ binding: 14, resource: waterDepth },
+				{ binding: 15, resource: sectorFlow },
 			],
 		});
 	}
@@ -498,6 +627,17 @@ export class WaterRenderer {
 		if (!this.active) {
 			return;
 		}
+		if (this.#sectorAtlas !== null && this.#pendingSectorCopies.length > 0) {
+			const { texture, tileWidth, tileHeight } = this.#sectorAtlas;
+			for (const copy of this.#pendingSectorCopies) {
+				encoder.copyTextureToTexture(
+					{ texture: copy.src },
+					{ texture, origin: [copy.cellX * tileWidth, copy.cellZ * tileHeight, 0] },
+					[tileWidth, tileHeight, 1],
+				);
+			}
+			this.#pendingSectorCopies.length = 0;
+		}
 		this.#paramData[6] = context.foam ? 1 : 0;
 		this.#paramData.set(context.reprojection, 12);
 		this.#device.queue.writeBuffer(this.#params, 0, this.#paramData);
@@ -567,5 +707,6 @@ export class WaterRenderer {
 		this.#params.destroy();
 		this.#foam.destroy();
 		this.#noWaterDepth.destroy();
+		this.#sectorAtlas?.texture.destroy();
 	}
 }

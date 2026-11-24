@@ -234,7 +234,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 
 - **shading** ([viewer](viewer/water.md#shading),
   [game-data](game-data/water.md#how-surfaces-are-drawn)):
-  - sector flow tiles and rain map are packed but unread (uses global map).
+  - rain map is packed but unread.
   - missing: LOD-grid wave displacement, rain/character ripples, shoreline wetness, `FlowmapOption`
     1 coverage mask, sun-disc nearest-point highlight, and multiple scattering.
   - divergences: LOD surfaces draw as meshes (not resampled grid); shared-`materialIndex` configs

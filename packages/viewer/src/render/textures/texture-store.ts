@@ -174,6 +174,14 @@ export class TextureStore {
 
 	/**
 	 * @param id texture id
+	 * @returns its current GPU texture, or `null` before the tail arrives
+	 */
+	gpuTexture(id: number): GPUTexture | null {
+		return this.#states.get(id)?.gpu ?? null;
+	}
+
+	/**
+	 * @param id texture id
 	 * @returns how many pieces (from the tail) are integrated
 	 */
 	integrated(id: number): number {

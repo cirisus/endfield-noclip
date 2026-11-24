@@ -26,8 +26,9 @@ visibility group and a ready geometry entry.
 
 ## `Global_Water_Config`
 
-the wave-normal array, global flow map, and caustic map stream whole. sector tiles and the rain map
-are packed but unbound; flow and foam use the global map everywhere.
+the wave-normal array, global flow map, and caustic map stream whole. near the camera, the 3×3
+high-res sector flow tiles around the eye stream into a GPU copy atlas and blend to `flowMap` over
+the outer 10 % of the window (matching the game). the rain map is packed but unbound.
 
 ## shading
 
