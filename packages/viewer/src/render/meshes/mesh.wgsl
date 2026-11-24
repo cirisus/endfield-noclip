@@ -1090,8 +1090,10 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 	}
 
 	var emission = vec3f(0.0);
-	// a vertex offset's textures in the parallax slots leave the pulse and breathing their rows
-	let pulse_rows = (flags & (PARALLAX_MAP | LAYER_BLEND)) == 0u || (flags & VERTEX_OFFSET) != 0u;
+	// transparent Fresnel (`!wet && look.parallax_bright.x > 0.5`) holds the parallax rows; a vertex offset's
+	// textures in the parallax slots leave the pulse and breathing their rows
+	let has_fresnel = !wet && look.parallax_bright.x > 0.5;
+	let pulse_rows = !has_fresnel && ((flags & (PARALLAX_MAP | LAYER_BLEND)) == 0u || (flags & VERTEX_OFFSET) != 0u);
 	var emissive_color = look.emissive.rgb;
 	if (pulse_rows && look.parallax2.y > 0.0) {
 		emissive_color *= mix(1.0, cos(frame.eye.w * look.parallax2.y * 6.2831853) * 0.5 + 0.5, look.parallax2.z);
@@ -1181,7 +1183,7 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 		s.scatter_indirect = look.foliage_ao.x;
 	}
 	// `HGRP/LitTransparent`'s `_USE_FRESNEL` (`wet` is false only in `fs_transparent`)
-	if (!wet && look.parallax_bright.x > 0.5) {
+	if (has_fresnel) {
 		let f = transparent_fresnel(
 			look,
 			in,

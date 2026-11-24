@@ -195,8 +195,8 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		params.set([...detail.overlay, detail.overlayCover], LookRow.detailOverlay);
 	}
 
-	// the glow and the layer take the parallax rows, which the pulse has otherwise
-	let parallaxRowsFree = true;
+	// the glow, the layer, and transparent Fresnel take the parallax rows, which the pulse has otherwise
+	let parallaxRowsFree = surface.fresnel == null;
 	switch (overlay?.kind) {
 		case 'parallax': {
 			parallaxParams(look, overlay, textures.mro === null && triChannel === null);
