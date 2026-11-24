@@ -24,7 +24,7 @@ import { loadWaterDrains } from '../game/water/water-drains.ts';
 
 import { ARCHIVE_CAP, ArchiveLayout, TERRAIN_LAYER_STEM } from './archives.ts';
 import { collectEntities } from './content/entities.ts';
-import { PackContent } from './content/pack-content.ts';
+import { chainDraw, PackContent } from './content/pack-content.ts';
 import { SHARED_GROUP } from './control-registry.ts';
 import { type AssetConversion, convertAssets, pendingAssets, type PlacedTexture } from './convert/assets.ts';
 import { ConvertPool } from './convert/convert-pool.ts';
@@ -78,6 +78,9 @@ const MATERIAL_CONCURRENCY = 16;
  * fraction of its edge length (64 m leaf → 4 m). tunable in the viewer through its SSE threshold
  */
 const ERROR_PER_EDGE = 1 / 16;
+
+/** `WaterVolumeManager.m_waterDecalPositionOffset.y`, lifting each volume's surface decal 1 cm above the water */
+const WATER_VOLUME_DECAL_Y_OFFSET = 0.01;
 
 /**
  * packs one streaming scene into a viewer package. the phases run in a fixed order
@@ -186,6 +189,36 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 					tileAt(scene.grid, scene.grid.shardLevel, (rect.minX + rect.maxX) / 2, (rect.minZ + rect.maxZ) / 2),
 			}),
 		]);
+		// volume surface decals (`WaterVolumeManagerConfig.decalPrefab`) ride their volume's surface as resident
+		// global rows using the volume's own polygon mesh, raised 1 cm above the water surface
+		for (const decal of water.volumeDecals) {
+			const material = content.materials.internObject(decal.material);
+			const chain = content.chains.intern([chainDraw({ geometry: decal.geometry, material, minSquared: 0 })]);
+			const y = decal.y + WATER_VOLUME_DECAL_Y_OFFSET;
+			const matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, y, 0, 1]);
+			const bounds = {
+				center: [(decal.minX + decal.maxX) / 2, y, (decal.minZ + decal.maxZ) / 2] as [number, number, number],
+				extents: [(decal.maxX - decal.minX) / 2, 0, (decal.maxZ - decal.minZ) / 2] as [
+					number,
+					number,
+					number,
+				],
+			};
+			content.collector.addGlobal({
+				tag: decal.levelTag,
+				condition: null,
+				row: {
+					chain,
+					matrix,
+					bounds,
+					entityId: content.nextSyntheticId(decal.levelTag),
+					floatsOn: decal.volumeId,
+				},
+				name: `water volume decal ${decal.volumeId}`,
+				file: -1,
+			});
+			content.uses.note(chain, null);
+		}
 		timer.end('environments and water');
 		// gating order fixes condition and group ids: environments, water, lights, then the scene states they need
 		gateEnvironments(environments, controls);

@@ -263,6 +263,7 @@ describe('finishWater', () => {
 		};
 		const plan: WaterPlan = {
 			surfaceOwners: [],
+			volumeDecals: [],
 			table,
 			textures: [],
 			levelSources: [],
@@ -300,6 +301,7 @@ describe('finishWater', () => {
 	it('passes a table without global water through', () => {
 		const plan: WaterPlan = {
 			surfaceOwners: [],
+			volumeDecals: [],
 			table: { global: null, configs: [], surfaces: [], volumes: [] },
 			textures: [],
 			levelSources: [],

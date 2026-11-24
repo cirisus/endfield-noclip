@@ -26,12 +26,11 @@ import {
 	loadSectorTexture,
 	loadWaterGlobalConfig,
 	loadWaterSurfaceConfig,
-	type LoadedWaterConfig,
 	type SceneWater,
 	type SourcedWaterSurface,
 } from '../../game/water/water-source.ts';
 import { type ScriptWaterLevel, waterActionTarget } from '../../game/water/water-volume-scripts.ts';
-import { loadVolumeSurfaceConfigs } from '../../game/water/water-volume-surfaces.ts';
+import { type LoadedVolumeSurface, loadVolumeSurfaces } from '../../game/water/water-volume-surfaces.ts';
 import type { LevelWaterVolume } from '../../game/water/water-volumes.ts';
 import type { ChunkSource } from '../../game/world/world-index.ts';
 import { centre, type ControlRegistry } from '../control-registry.ts';
@@ -76,6 +75,20 @@ export interface WaterDebug {
 	errors: string[];
 }
 
+/** a water volume's surface decal (`WaterVolumeManagerConfig.decalPrefab`), emitted as a floating instance */
+export interface WaterVolumeDecal {
+	volumeId: string;
+	levelTag: number;
+	geometry: number;
+	material: ObjectRef;
+	/** surface height at authored fill (world y) */
+	y: number;
+	minX: number;
+	maxX: number;
+	minZ: number;
+	maxZ: number;
+}
+
 /** water planned before asset conversion */
 export interface WaterPlan {
 	/**
@@ -88,6 +101,8 @@ export interface WaterPlan {
 	 * loads with its level
 	 */
 	surfaceOwners: { levelTag: number; sources: ChunkSource[] | null }[];
+	/** surface decals of packed water volumes whose liquid names a `decalPrefab` */
+	volumeDecals: WaterVolumeDecal[];
 	textures: PlacedTexture[];
 	/**
 	 * per table volume, per entry of its `levels`: whether the level authors it, and the script actions that
@@ -303,6 +318,7 @@ export const planWater = async (
 	const plan: WaterPlan = {
 		table: { global: null, configs: [], surfaces: [], volumes: [] },
 		surfaceOwners: [],
+		volumeDecals: [],
 		textures: [],
 		levelSources: [],
 		debug: {
@@ -324,14 +340,15 @@ export const planWater = async (
 	}
 	const [resolver, pathOf] = await Promise.all([context.resolver(), world.pathLookup()]);
 
-	// volumes that name no config take their liquid's surface prefab's
-	const liquids = unique(
+	// every volume's liquid may name a surface decal prefab, and volumes without a config take its surface config
+	const allLiquids = unique(volumes.map(({ itemType }) => itemType));
+	const liquidsNeedingConfig = new Set(
 		volumes.filter((volume) => volume.configHash === null).map(({ itemType }) => itemType),
 	);
-	let liquidConfigs = new Map<string, LoadedWaterConfig<WaterSurfaceConfig> | Error>();
-	if (liquids.length > 0) {
+	let liquidSurfaces = new Map<string, LoadedVolumeSurface | Error>();
+	if (allLiquids.length > 0) {
 		try {
-			liquidConfigs = await loadVolumeSurfaceConfigs({ world, resolver }, liquids);
+			liquidSurfaces = await loadVolumeSurfaces({ world, resolver }, allLiquids);
 		} catch (error) {
 			plan.debug.errors.push(`water volume surfaces: ${errorText(error)}`);
 		}
@@ -363,16 +380,16 @@ export const planWater = async (
 			plan.table.configs.push(entry);
 		}
 	}
-	for (const liquid of liquids) {
-		const loadedConfig = liquidConfigs.get(liquid);
-		if (loadedConfig === undefined) {
+	for (const liquid of liquidsNeedingConfig) {
+		const loadedSurface = liquidSurfaces.get(liquid);
+		if (loadedSurface === undefined) {
 			continue;
 		}
 		try {
-			if (loadedConfig instanceof Error) {
-				throw loadedConfig;
+			if (loadedSurface instanceof Error) {
+				throw loadedSurface;
 			}
-			const entry = configEntry(loadedConfig.config);
+			const entry = configEntry(loadedSurface.config.config);
 			configIndex.set(liquid, plan.table.configs.length);
 			liquidConfigNames.set(liquid, entry.name);
 			plan.table.configs.push(entry);
@@ -418,8 +435,28 @@ export const planWater = async (
 		plan.table.volumes.push(entry);
 		parents.push(parent);
 		plan.levelSources.push(sources);
-		plan.table.surfaces.push(volumeSurface(volume, geometry, config, index));
+		const surface = volumeSurface(volume, geometry, config, index);
+		plan.table.surfaces.push(surface);
 		plan.surfaceOwners.push({ levelTag: volume.levelTag, sources: null });
+		const loadedSurface = liquidSurfaces.get(volume.itemType);
+		if (
+			volume.id !== '0' &&
+			loadedSurface !== undefined &&
+			!(loadedSurface instanceof Error) &&
+			loadedSurface.decalMaterial !== null
+		) {
+			plan.volumeDecals.push({
+				volumeId: volume.id,
+				levelTag: volume.levelTag,
+				geometry,
+				material: loadedSurface.decalMaterial,
+				y: surface.bounds.min[1],
+				minX: surface.bounds.min[0],
+				maxX: surface.bounds.max[0],
+				minZ: surface.bounds.min[2],
+				maxZ: surface.bounds.max[2],
+			});
+		}
 		plan.debug.rows.push({
 			id: Number(volume.id),
 			name: `water volume ${volume.id}`,

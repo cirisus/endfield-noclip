@@ -24,25 +24,46 @@ import type { LoadedWaterConfig } from './water-source.ts';
 
 const MANAGER_CONFIG = 'assets/beyond/dynamicassets/gameplay/gamemech/watervolumemanagerconfig.prefab';
 
-/** a `WaterVolumeManagerConfig`'s surface choice, as {@link volumeSurfacePrefab} reads it */
+/** a liquid's prefabs from `WaterVolumeManagerConfig` */
+export interface WaterSurfaceSetting {
+	surface: PPtr;
+	decal: PPtr | null;
+}
+
+/** a `WaterVolumeManagerConfig`'s surface choice, as {@link volumeSurfaceSetting} reads it */
 export interface WaterSurfaceSettings {
-	/** by water type (`FacItemSubType`), its surface prefab's root GameObject */
-	surfaces: ReadonlyMap<number, PPtr>;
+	/** by water type (`FacItemSubType`), its surface and optional decal prefab root GameObjects */
+	surfaces: ReadonlyMap<number, WaterSurfaceSetting>;
 	/** by water type, the type whose surface it borrows */
 	remap: ReadonlyMap<number, number>;
 	/** the surface for a type the table doesn't list */
 	fallback: PPtr;
 }
 
+/** a liquid's resolved surface config and optional surface decal material */
+export interface LoadedVolumeSurface {
+	config: LoadedWaterConfig<WaterSurfaceConfig>;
+	decalMaterial: ObjectRef | null;
+}
+
 /**
  * @param settings the manager config's surface choice
  * @param waterType the volume's water type
- * @returns the surface prefab the game instantiates for it: the type is first remapped, then looked up, and a
- *   missing or null entry falls back to the config's fallback prefab
+ * @returns the surface and optional decal prefabs the game instantiates for it: the type is first remapped,
+ *   then looked up, and a missing or null surface falls back to the config's fallback prefab
  */
-export const volumeSurfacePrefab = (settings: WaterSurfaceSettings, waterType: number): PPtr => {
-	const surface = settings.surfaces.get(settings.remap.get(waterType) ?? waterType);
-	return surface === undefined || surface.pathId === 0n ? settings.fallback : surface;
+export const volumeSurfaceSetting = (
+	settings: WaterSurfaceSettings,
+	waterType: number,
+): WaterSurfaceSetting => {
+	const entry = settings.surfaces.get(settings.remap.get(waterType) ?? waterType);
+	if (entry === undefined) {
+		return { surface: settings.fallback, decal: null };
+	}
+	return {
+		surface: entry.surface.pathId === 0n ? settings.fallback : entry.surface,
+		decal: entry.decal,
+	};
 };
 
 /**
@@ -51,12 +72,16 @@ export const volumeSurfacePrefab = (settings: WaterSurfaceSettings, waterType: n
  * @throws {FormatError} if a dictionary doesn't have the serialized shape
  */
 export const readWaterSurfaceSettings = (data: TypeTreeObject): WaterSurfaceSettings => {
-	const surfaces = new Map<number, PPtr>();
+	const surfaces = new Map<number, WaterSurfaceSetting>();
 	for (const [key, value] of dictionaryEntries(objectField(data, 'waterSurfaceSettingDict'))) {
 		if (!isObject(value)) {
 			throw new FormatError('water surface setting is not an object');
 		}
-		surfaces.set(key, pptrField(value, 'surfacePrefab'));
+		const decal = 'decalPrefab' in value ? pptrField(value, 'decalPrefab') : null;
+		surfaces.set(key, {
+			surface: pptrField(value, 'surfacePrefab'),
+			decal: decal !== null && decal.pathId !== 0n ? decal : null,
+		});
 	}
 	const remap = new Map<number, number>();
 	for (const [key, value] of dictionaryEntries(objectField(data, 'waterTypeToSurfaceDict'))) {
@@ -100,17 +125,18 @@ export const readFactoryItemSubTypes = async (world: WorldIndex): Promise<Map<st
 };
 
 /**
- * loads the surface config each liquid's volumes draw with when they name none
+ * loads the surface config and optional surface decal material each liquid's volumes draw with
  *
  * @param context install readers
  * @param itemTypes the volumes' `waterItemType`s
- * @returns by item type, the config its surface prefab's water renderer names, or why it couldn't be found
+ * @returns by item type, the surface prefab's water config and optional decal prefab's material, or why it
+ *   couldn't be found
  * @throws {Error} if the manager config itself can't be found or read
  */
-export const loadVolumeSurfaceConfigs = async (
+export const loadVolumeSurfaces = async (
 	context: { world: WorldIndex; resolver: AssetResolver },
 	itemTypes: readonly string[],
-): Promise<Map<string, LoadedWaterConfig<WaterSurfaceConfig> | Error>> => {
+): Promise<Map<string, LoadedVolumeSurface | Error>> => {
 	const { world, resolver } = context;
 	const [hash] = await world.hashesOf(MANAGER_CONFIG);
 	if (hash === undefined) {
@@ -124,16 +150,17 @@ export const loadVolumeSurfaceConfigs = async (
 	const settings = readWaterSurfaceSettings(manager.data);
 	const subTypes = await readFactoryItemSubTypes(world);
 
-	const configs = new Map<string, LoadedWaterConfig<WaterSurfaceConfig> | Error>();
+	const results = new Map<string, LoadedVolumeSurface | Error>();
 	for (const itemType of new Set(itemTypes)) {
 		const waterType = subTypes.get(itemType);
 		if (waterType === undefined) {
-			configs.set(itemType, new Error(`${itemType} isn't in FactoryItemTable`));
+			results.set(itemType, new Error(`${itemType} isn't in FactoryItemTable`));
 			continue;
 		}
 		try {
+			const setting = volumeSurfaceSetting(settings, waterType);
 			// oxlint-disable-next-line no-await-in-loop -- a scene has a handful of liquids
-			const prefab = await resolver.resolve(manager.ref, volumeSurfacePrefab(settings, waterType));
+			const prefab = await resolver.resolve(manager.ref, setting.surface);
 			if (prefab === null) {
 				throw new FormatError(`no surface prefab for water type ${waterType}`);
 			}
@@ -149,12 +176,28 @@ export const loadVolumeSurfaceConfigs = async (
 			}
 			// oxlint-disable-next-line no-await-in-loop -- as above
 			const config = readWaterSurfaceConfig(ref.info.type.nodes, await resolver.read(ref));
-			configs.set(itemType, { ref, config });
+			let decalMaterial: ObjectRef | null = null;
+			if (setting.decal !== null) {
+				// oxlint-disable-next-line no-await-in-loop -- as above
+				const decalPrefab = await resolver.resolve(manager.ref, setting.decal);
+				if (decalPrefab !== null) {
+					// oxlint-disable-next-line no-await-in-loop -- as above
+					const decalRenderer = await componentWith(resolver, decalPrefab, 'material');
+					if (decalRenderer !== null) {
+						// oxlint-disable-next-line no-await-in-loop -- as above
+						decalMaterial = await resolver.resolve(
+							decalRenderer.ref,
+							pptrField(decalRenderer.data, 'material'),
+						);
+					}
+				}
+			}
+			results.set(itemType, { config: { ref, config }, decalMaterial });
 		} catch (error) {
-			configs.set(itemType, error instanceof Error ? error : new Error(String(error)));
+			results.set(itemType, error instanceof Error ? error : new Error(String(error)));
 		}
 	}
-	return configs;
+	return results;
 };
 
 /** @returns the first MonoBehaviour on a GameObject that has the field, with its data */
