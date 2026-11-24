@@ -136,6 +136,15 @@ const FILE_CACHE_SIZE = 96;
 
 const CLASS_NAMES = new Map<number, string>(Object.entries(UnityClass).map(([name, id]) => [id, name]));
 
+/** matches a Unity class id against a required class id or predicate */
+export type ClassMatcher = number | ((classId: number) => boolean);
+
+const matchesClass = (actual: number, matcher: ClassMatcher): boolean =>
+	typeof matcher === 'function' ? matcher(actual) : actual === matcher;
+
+const classMatcherLabel = (matcher: ClassMatcher): string =>
+	typeof matcher === 'function' ? 'matching' : (CLASS_NAMES.get(matcher) ?? `class ${matcher}`);
+
 /** @returns the manifest's bundle name, e.g. `main/<hex>.ab`, for any form {@link bundlePath} accepts */
 const manifestBundleName = (name: string): string => bundlePath(name).slice(BUNDLE_PREFIX.length);
 
@@ -423,11 +432,11 @@ export class AssetResolver {
 	 *
 	 * @param path asset path as StringPathHash spells it
 	 * @param pathHash its StringPathHash key, to locate the bundle in the manifest
-	 * @param classId only return objects of this class (a {@link UnityClass} id)
+	 * @param classId only return objects matching this class (a {@link UnityClass} id or predicate)
 	 * @returns matching objects; several when a sub-asset name is ambiguous
 	 * @throws {Error} if the manifest doesn't know the hash
 	 */
-	async findAsset(path: string, pathHash: bigint, classId: number): Promise<ObjectRef[]> {
+	async findAsset(path: string, pathHash: bigint, classId: ClassMatcher): Promise<ObjectRef[]> {
 		const assets = this.manifest.findAssets(pathHash);
 		if (assets.length === 0) {
 			throw new Error(`${path} isn't in the bundle manifest`);
@@ -441,16 +450,18 @@ export class AssetResolver {
 	 * like {@link findAsset}, but for an asset that must resolve to exactly one object
 	 *
 	 * @param asset hash and path
-	 * @param classId the object's class (a {@link UnityClass} id)
+	 * @param classId the object's class (a {@link UnityClass} id or predicate)
 	 * @returns the object
 	 * @throws {Error} if the path is unknown, or not exactly one object matches
 	 */
-	async findUnique(asset: AssetRef, classId: number): Promise<ObjectRef> {
+	async findUnique(asset: AssetRef, classId: ClassMatcher): Promise<ObjectRef> {
 		if (asset.locator !== undefined) {
 			const { bundleIndex, file, pathId } = asset.locator;
 			const ref = await this.objectIn(bundleIndex, file, pathId);
-			if (ref.info.classId !== classId) {
-				throw new FormatError(`prefab dependency has class ${ref.info.classId}, expected ${classId}`);
+			if (!matchesClass(ref.info.classId, classId)) {
+				throw new FormatError(
+					`prefab dependency has class ${ref.info.classId}, expected ${classMatcherLabel(classId)}`,
+				);
 			}
 			return ref;
 		}
@@ -459,9 +470,7 @@ export class AssetResolver {
 		}
 		const refs = await this.findAsset(asset.path, asset.hash, classId);
 		if (refs.length !== 1) {
-			throw new Error(
-				`${refs.length} ${CLASS_NAMES.get(classId) ?? `class ${classId}`} objects match the path`,
-			);
+			throw new Error(`${refs.length} ${classMatcherLabel(classId)} objects match the path`);
 		}
 		return refs[0];
 	}
@@ -471,10 +480,10 @@ export class AssetResolver {
 	 *
 	 * @param index manifest bundle index
 	 * @param path asset path, optionally with a `##<sub-asset>` suffix
-	 * @param classId only return objects of this class
+	 * @param classId only return objects matching this class (a {@link UnityClass} id or predicate)
 	 * @returns matching objects
 	 */
-	async findInBundle(index: number, path: string, classId: number): Promise<ObjectRef[]> {
+	async findInBundle(index: number, path: string, classId: ClassMatcher): Promise<ObjectRef[]> {
 		const [containerPath, subAsset] = path.toLowerCase().split('##');
 		const entries = (await this.#container(index)).get(containerPath) ?? [];
 		const matches = await Promise.all(
@@ -488,7 +497,7 @@ export class AssetResolver {
 				return Promise.all(
 					pointers.map(async (pointer) => {
 						const ref = await this.resolve(from, pointer);
-						if (ref === null || ref.info.classId !== classId) {
+						if (ref === null || !matchesClass(ref.info.classId, classId)) {
 							return null;
 						}
 						if (subAsset !== undefined && (await ref.file.peekName(ref.info))?.toLowerCase() !== subAsset) {

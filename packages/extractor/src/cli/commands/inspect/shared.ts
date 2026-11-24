@@ -7,6 +7,9 @@ import { hashText, parseHash } from '../../helpers.ts';
 /** matches a bundle hex id or bundle path */
 export const BUNDLE_NAME = /^(?:(?:Data\/Bundles\/Windows\/)?(?:main|initial)\/)?[0-9a-f]{24}(?:\.ab)?$/i;
 
+/** matches a SerializedFile object locator (`CAB-<hex>:<pathId>` or `CAB-<hex>`) */
+const CAB_LOCATOR = /^CAB-[0-9a-f]+(?::(-?\d+))?$/i;
+
 interface ResolveOptions {
 	pathId: bigint | undefined;
 	nameFilter: RegExp | undefined;
@@ -14,6 +17,9 @@ interface ResolveOptions {
 
 const matchesClass = (actual: number, expected: number): boolean =>
 	expected === UnityClass.Texture2D ? isTextureClass(actual) : actual === expected;
+
+const classMatcherOf = (classId: number): number | ((actual: number) => boolean) =>
+	classId === UnityClass.Texture2D ? isTextureClass : classId;
 
 /** resolves `<bundle> [--path-id=N] [--name re]`, an asset path, or a path hash to a single {@link ObjectRef} */
 export const resolveObjectArg = async (
@@ -23,12 +29,20 @@ export const resolveObjectArg = async (
 	classId: number,
 	options: ResolveOptions,
 ): Promise<ObjectRef> => {
+	const cabMatch = CAB_LOCATOR.exec(target);
+	if (cabMatch !== null) {
+		const pathIdHint = cabMatch[1] === undefined ? '' : ` --path-id=${cabMatch[1]}`;
+		throw new Error(
+			`${target} is a SerializedFile locator, not a bundle or asset path; pass a bundle (e.g. main/<24-hex>.ab${pathIdHint}) or an asset path/name`,
+		);
+	}
 	if (options.pathId !== undefined) {
 		return resolver.object(resolver.bundleIndex(target), options.pathId);
 	}
+	const matcher = classMatcherOf(classId);
 	const hash = parseHash(target);
 	if (hash !== null) {
-		return resolver.findUnique({ hash, path: (await context.world.pathOf(hash)) ?? null }, classId);
+		return resolver.findUnique({ hash, path: (await context.world.pathOf(hash)) ?? null }, matcher);
 	}
 	if (BUNDLE_NAME.test(target)) {
 		const [ref] = await resolveFromBundle(resolver, target, classId, {
@@ -39,7 +53,7 @@ export const resolveObjectArg = async (
 	}
 	const hashes = await context.world.hashesOf(target);
 	if (hashes.length === 1) {
-		return resolver.findUnique({ hash: hashes[0], path: target }, classId);
+		return resolver.findUnique({ hash: hashes[0], path: target }, matcher);
 	}
 	if (hashes.length > 1) {
 		throw new Error(
@@ -74,7 +88,7 @@ export const resolveObjectArg = async (
 		}
 	}
 	if (matches.length === 1) {
-		return resolver.findUnique({ hash: matches[0].hash, path: matches[0].path }, classId);
+		return resolver.findUnique({ hash: matches[0].hash, path: matches[0].path }, matcher);
 	}
 	if (matches.length === 0) {
 		throw new Error(`${target} is not in StringPathHash`);

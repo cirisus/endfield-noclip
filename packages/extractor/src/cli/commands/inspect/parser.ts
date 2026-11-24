@@ -119,17 +119,17 @@ const inspectTextureParser = merge(
 		subcommand: constant('texture'),
 		output: optional(
 			option('-o', '--output', string({ metavar: 'FILE' }), {
-				description: message`write KTX2 (.ktx2) or DX10 DDS (.dds) file`,
+				description: message`write KTX2 (.ktx2), DX10 DDS (.dds), or uncompressed 8-bit PNG (.png)`,
 			}),
 		),
 		layer: optional(
 			option('--layer', integer({ min: 0, metavar: 'N' }), {
-				description: message`array/cubemap layer index for .dds export`,
+				description: message`array/cubemap layer index for .dds/.png export`,
 			}),
 		),
 		mip: optional(
 			option('--mip', integer({ min: 0, metavar: 'N' }), {
-				description: message`mip level for .dds export`,
+				description: message`mip level for .dds/.png export`,
 			}),
 		),
 		zstd: optional(
