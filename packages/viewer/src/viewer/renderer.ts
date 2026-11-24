@@ -24,6 +24,7 @@ import { RenderTargets } from '../render/frame/render-targets.ts';
 import { InstanceRenderer } from '../render/instances/instance-renderer.ts';
 import { IrradianceVolume } from '../render/lighting/irradiance-volume.ts';
 import { type LocalLightFrame, LocalLights } from '../render/lighting/local-lights.ts';
+import { ReflectionProbes } from '../render/lighting/reflection-probes.ts';
 import { MeshRenderer } from '../render/meshes/mesh-renderer.ts';
 import { PostProcess } from '../render/post/post-process.ts';
 import { SHADOW_LAYERS, ShadowMap } from '../render/shadows/shadow-map.ts';
@@ -74,6 +75,7 @@ export class Renderer {
 	/** the loaded package's irradiance volume; an empty one without a package */
 	readonly irradiance: IrradianceVolume;
 	readonly lights: LocalLights;
+	readonly reflectionProbes: ReflectionProbes;
 	/** group 0 for the main and shadow passes */
 	readonly bindings: FrameBindings;
 	readonly profiler: GpuProfiler;
@@ -121,12 +123,14 @@ export class Renderer {
 		this.shadows = new ShadowMap(device, { depthClipControl: gfx.features.depthClipControl });
 		this.irradiance = new IrradianceVolume(device, this.pipelines);
 		this.lights = new LocalLights(device);
+		this.reflectionProbes = new ReflectionProbes(device, { bc: gfx.features.textureCompressionBc });
 		this.bindings = new FrameBindings(device, {
 			layout: this.#layouts.frame,
 			uniforms: this.#ring.buffer,
 			shadows: this.shadows,
 			irradiance: this.irradiance,
 			lights: this.lights,
+			reflectionProbes: this.reflectionProbes,
 		});
 		this.profiler = new GpuProfiler(device, gfx.features.timestampQuery);
 		const layouts = this.#layouts;
@@ -170,12 +174,14 @@ export class Renderer {
 			this.fog,
 			this.shadows,
 			this.lights.shadows,
+			this.reflectionProbes,
 		];
 		this.#histories = [this.post, this.fog, this.meshes];
 		this.#owned = [
 			this.post,
 			this.fog,
 			this.lights,
+			this.reflectionProbes,
 			this.irradiance,
 			this.water,
 			this.meshes,
@@ -262,6 +268,7 @@ export class Renderer {
 			shadows: settings.shadows,
 			irradiance: this.irradiance.centers(),
 			lights,
+			reflectionProbes: this.reflectionProbes.frame(),
 			revealRadii: input.revealRadii,
 			options: input.options,
 		});

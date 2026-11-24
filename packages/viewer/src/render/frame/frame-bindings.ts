@@ -2,6 +2,7 @@ import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_CLAMP_MIPMAPPED, sampler } from '../../gfx/samplers.ts';
 import type { IrradianceVolume } from '../lighting/irradiance-volume.ts';
 import type { LocalLights } from '../lighting/local-lights.ts';
+import type { ReflectionProbes } from '../lighting/reflection-probes.ts';
 import { SHADOW_FORMAT, type ShadowMap } from '../shadows/shadow-map.ts';
 import type { TextureBinding } from '../textures/texture-store.ts';
 
@@ -19,6 +20,7 @@ export interface FrameSources {
 	shadows: ShadowMap;
 	irradiance: IrradianceVolume;
 	lights: LocalLights;
+	reflectionProbes: ReflectionProbes;
 }
 
 /**
@@ -134,7 +136,7 @@ export class FrameBindings {
 	}
 
 	#groups(): [main: GPUBindGroup, shadow: GPUBindGroup] {
-		const { layout, uniforms, shadows, irradiance, lights } = this.#sources;
+		const { layout, uniforms, shadows, irradiance, lights, reflectionProbes } = this.#sources;
 		const reflection = this.#reflection;
 		const clipmaps = irradiance.views();
 		const group = (
@@ -161,6 +163,8 @@ export class FrameBindings {
 					{ binding: 12, resource: { buffer: lights.binBuffer } },
 					{ binding: 13, resource: this.#views.cloudShadow },
 					{ binding: 14, resource: lightShadowView },
+					{ binding: 15, resource: reflectionProbes.view },
+					{ binding: 16, resource: { buffer: reflectionProbes.buffer } },
 				],
 			});
 		return [

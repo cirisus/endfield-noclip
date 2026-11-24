@@ -18,6 +18,10 @@ import {
 } from '@endfield-noclip/package-format/manifest';
 import type { MaterialTable } from '@endfield-noclip/package-format/materials';
 import { resolveParticleLuts, type ParticlesTable } from '@endfield-noclip/package-format/particles';
+import {
+	decodeReflectionProbesTable,
+	type ReflectionProbesTable,
+} from '@endfield-noclip/package-format/reflection-probes';
 import { decodeTextureTable, type TextureTable } from '@endfield-noclip/package-format/texture-table';
 import { decodeTree, type Tree } from '@endfield-noclip/package-format/tree';
 import type { WaterTable } from '@endfield-noclip/package-format/water';
@@ -51,6 +55,8 @@ export interface ViewerPackage {
 	water: WaterTable;
 	/** the scene's local lights */
 	lights: LightsTable;
+	/** the scene's local reflection probes */
+	reflectionProbes: ReflectionProbesTable;
 	/** the particle systems chain draws emit */
 	particles: ParticlesTable;
 	/** the environment volumes and their phases, the phases' sections looked up */
@@ -130,6 +136,7 @@ export const openViewerPackage = async (
 		textures,
 		water,
 		lights,
+		reflectionProbes,
 		luts,
 		rawParticles,
 		environment,
@@ -145,6 +152,9 @@ export const openViewerPackage = async (
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same package version as the manifest
 		json(CORE_PATHS.water) as Promise<WaterTable>,
 		member(CORE_PATHS.lights).then(decodeLightsTable),
+		optionalMember(CORE_PATHS.reflectionProbes).then((bytes): ReflectionProbesTable =>
+			bytes === null ? { probes: [] } : decodeReflectionProbesTable(bytes),
+		),
 		optionalMember(CORE_PATHS.luts).then((bytes): LutsTable | null =>
 			bytes === null ? null : decodeLutsTable(bytes),
 		),
@@ -167,6 +177,7 @@ export const openViewerPackage = async (
 		textures,
 		water,
 		lights,
+		reflectionProbes,
 		particles,
 		environment,
 		irradiance,

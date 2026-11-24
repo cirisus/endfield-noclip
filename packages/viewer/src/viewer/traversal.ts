@@ -171,6 +171,12 @@ export class Traversal {
 			{ environment, celestial, flowNoise: options.flowNoise },
 			{ post: renderer.post, bindings: renderer.bindings },
 		);
+		renderer.reflectionProbes.prepare({
+			camera,
+			planes: view.planes,
+			stream,
+			textures: scene.textures,
+		});
 		if (options.water) {
 			water.prepare({
 				eye: camera.position,

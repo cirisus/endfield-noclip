@@ -126,7 +126,7 @@ export class Viewer {
 		this.#renderer = renderer;
 		this.#traversal = new Traversal(renderer);
 		this.#pool = new DecodePool(Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) >> 1)));
-		this.#groupsConsumers = [renderer.water, renderer.lights, renderer.irradiance];
+		this.#groupsConsumers = [renderer.water, renderer.lights, renderer.irradiance, renderer.reflectionProbes];
 		this.#sceneState = new SceneState(this.#waterLevels, this.options);
 		this.#sceneState.setPackage(null, this.#groupsConsumers);
 		this.controls = new NoclipControls(this.camera, canvas);
@@ -202,6 +202,7 @@ export class Viewer {
 		renderer.water.setTable(pkg.water);
 		this.#waterLevels.setVolumes(pkg.water.volumes);
 		renderer.lights.setLights(pkg.lights.lights);
+		renderer.reflectionProbes.setProbes(pkg.reflectionProbes.probes);
 		this.#updateVisibility();
 		this.#waterLevels.settle();
 		this.#applyEnvironment();
@@ -238,6 +239,7 @@ export class Viewer {
 		renderer.water.setTable(null);
 		this.#waterLevels.setVolumes([]);
 		renderer.lights.setLights([]);
+		renderer.reflectionProbes.setProbes([]);
 		renderer.terrain.setSplat(null);
 		this.#level = null;
 		this.#levelCell = null;

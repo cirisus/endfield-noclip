@@ -73,6 +73,8 @@ struct Frame {
 	iv_default_sh: array<vec4f, 3>,
 	// luminance L1 SH of `skyAmbientSH` (`_ReflectionProbeGlobalParam3`), unscaled by `indirectDiffuseFactor`
 	reflection_probe_sh: vec4f,
+	// local reflection probes: x = active count (0..32), y = cube-array max mip level, zw unused
+	reflection_probes: vec4f,
 	// #endregion
 }
 
@@ -105,6 +107,9 @@ struct Frame {
 // depth, the tile's rect in the atlas (origin, size), then a texel's size at 1 m, the constant offset along the
 // normal, the far plane and 1 for a drawn tile
 @group(0) @binding(14) var light_shadow_map: texture_depth_2d;
+// local reflection probes: 32-slot cube-array cache (reflection-probes.ts) and 7-vec4 records
+@group(0) @binding(15) var reflection_probes_tex: texture_cube_array<f32>;
+@group(0) @binding(16) var<storage, read> reflection_probes: array<vec4f>;
 
 // #region sun shadow
 
@@ -539,6 +544,69 @@ fn reflection_normalisation(irradiance: vec3f, n: vec3f) -> f32 {
 	return (2.0 * clamp(d / p, 0.0, 1.0) + d) / (2.0 + p);
 }
 
+// samples local reflection probes front-to-back (highest importance first) over the sky reflection cubemap,
+// normalising each probe against the surface's diffuse irradiance (docs/game-data/lighting.md#ambient)
+fn sample_reflection(world: vec3f, n: vec3f, r: vec3f, roughness: f32, irradiance: vec3f) -> vec3f {
+	let d = dot(irradiance, LUMINANCE);
+	let count = u32(frame.reflection_probes.x);
+	var accum = vec3f(0.0);
+	var remaining = 1.0;
+	let probe_mip = roughness * frame.reflection_probes.y;
+	let w4 = vec4f(world, 1.0);
+	for (var i = 0u; i < count; i++) {
+		if (remaining <= 0.01) {
+			break;
+		}
+		let base = i * 7u;
+		let m1 = reflection_probes[base + 1u];
+		let m2 = reflection_probes[base + 2u];
+		let m3 = reflection_probes[base + 3u];
+		let m4 = reflection_probes[base + 4u];
+		let local_pos = vec3f(dot(m2, w4), dot(m3, w4), dot(m4, w4));
+		let abs_local = abs(local_pos);
+		let half = m1.xyz;
+		if (any(abs_local > half)) {
+			continue;
+		}
+		let m5 = reflection_probes[base + 5u];
+		let m6 = reflection_probes[base + 6u];
+		var weight: f32;
+		if (m6.y > 0.5) {
+			let fade = (half - abs_local) * m5.xyz;
+			weight = clamp(min(fade.x, min(fade.y, fade.z)), 0.0, 1.0) * m6.w;
+		} else {
+			weight = clamp((half.x - length(local_pos)) * m5.x, 0.0, 1.0) * m6.w;
+		}
+		if (weight <= 0.0) {
+			continue;
+		}
+		var dir = r;
+		if (m6.x > 0.5) {
+			let local_r = vec3f(dot(m2.xyz, r), dot(m3.xyz, r), dot(m4.xyz, r));
+			let inv_r = select(vec3f(1e9), 1.0 / local_r, abs(local_r) > vec3f(1e-6));
+			let t0 = (-half - local_pos) * inv_r;
+			let t1 = (half - local_pos) * inv_r;
+			let tmax = max(t0, t1);
+			let t = min(tmax.x, min(tmax.y, tmax.z));
+			dir = local_pos + local_r * t;
+		}
+		let m0 = reflection_probes[base];
+		let p = max(1e-4, max(0.0, dot(m0, vec4f(n, 1.0))));
+		let norm = (2.0 * clamp(d / p, 0.0, 1.0) + d) / (2.0 + p);
+		let c = textureSampleLevel(reflection_probes_tex, reflection_sampler, dir, u32(m1.w), probe_mip).rgb;
+		accum += c * (m5.w * norm * weight * remaining);
+		remaining *= 1.0 - weight;
+	}
+	if (remaining > 0.01) {
+		var sky = ambient_probe(r);
+		if (frame.ambient.z > 0.5) {
+			sky = textureSampleLevel(reflection_map, reflection_sampler, r, roughness * frame.ambient.w).rgb;
+		}
+		accum += sky * (reflection_normalisation(irradiance, n) * remaining);
+	}
+	return accum;
+}
+
 // height-correlated Smith visibility (Heitz), V = G / (4 n·l n·v)
 fn smith_visibility(n_dot_v: f32, n_dot_l: f32, a2: f32) -> f32 {
 	let v = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
@@ -896,23 +964,16 @@ fn shade_surface(s: Surface, rel: vec3f, px: vec2f) -> Shaded {
 	}
 	direct += local_lighting(s, v, rel, px, diffuse_color, f0, roughness);
 
-	let irradiance = ambient_irradiance(frame.eye.xyz + rel, n);
+	let world_pos = frame.eye.xyz + rel;
+	let irradiance = ambient_irradiance(world_pos, n);
 	let diffuse_ambient = (diffuse_color + s.scatter.rgb * s.scatter_indirect) * irradiance;
 	// specular sees only the material occlusion, through Lagarde's specular occlusion
 	let specular_occlusion = clamp(pow(n_dot_v + s.occlusion, exp2(-16.0 * roughness - 1.0)) - 1.0 + s.occlusion, 0.0, 1.0);
 	// a screen-space hit gets the environment BRDF and specular occlusion but not the sky's specular factor
 	let ssr_weight = environment_brdf(f0, roughness, n_dot_v) * specular_occlusion;
 	let specular_weight = ssr_weight * frame.ambient.x;
-	var specular_ambient: vec3f;
-	{
-		let r = normalize(mix(reflect(-v, n), n, roughness * roughness));
-		// without the cubemap, reflect the ambient probe (the sky's low-frequency radiance)
-		var reflected = ambient_probe(r);
-		if (frame.ambient.z > 0.5) {
-			reflected = textureSampleLevel(reflection_map, reflection_sampler, r, roughness * frame.ambient.w).rgb;
-		}
-		specular_ambient = reflected * reflection_normalisation(irradiance, n) * specular_weight;
-	}
+	let r = normalize(mix(reflect(-v, n), n, roughness * roughness));
+	let specular_ambient = sample_reflection(world_pos, n, r, roughness, irradiance) * specular_weight;
 	let ambient = diffuse_ambient * s.occlusion + specular_ambient;
 	let albedo_luminance = dot(diffuse_color, LUMINANCE_ROUNDED);
 

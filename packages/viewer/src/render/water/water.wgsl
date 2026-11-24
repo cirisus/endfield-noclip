@@ -367,15 +367,11 @@ fn fs_water(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) v
 		direct = (specular + subsurface + foam_albedo * n_dot_l) * frame.sun_color.rgb / PI * visibility;
 	}
 
-	// reflection: what the screen-space march finds, else the sky reflection
+	// reflection: what the screen-space march finds, else the local probes / sky reflection
 	let n_dot_v = clamp(dot(n, v), 0.0, 1.0);
 	let r = reflect(-v, n);
-	var sky = ambient_probe(r);
-	if (frame.ambient.z > 0.5) {
-		sky = textureSampleLevel(reflection_map, reflection_sampler, r, roughness * frame.ambient.w).rgb;
-	}
-	// HGRP/WaterRendering scales sky reflections by `_GraphicsFeaturesGlobalParam0.z` (= 1) × `envLightSpecularIntensity`
-	sky *= reflection_normalisation(irradiance, n) * c.surface.w;
+	// HGRP/WaterRendering scales probe/sky reflections by `_GraphicsFeaturesGlobalParam0.z` (= 1) × `envLightSpecularIntensity`
+	let sky = sample_reflection(frame.eye.xyz + in.rel, n, r, roughness, irradiance) * c.surface.w;
 	var reflection = sky;
 	var found = 0.0;
 	if (post.reflections.x > 0.5) {

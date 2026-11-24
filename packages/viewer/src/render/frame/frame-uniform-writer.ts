@@ -10,13 +10,14 @@ import type { Vec3 } from '@endfield-noclip/package-format/values';
 import type { Environment } from '../../environment/environment.ts';
 import type { Camera } from '../../scene/camera.ts';
 import type { LocalLightFrame } from '../lighting/local-lights.ts';
+import type { ReflectionProbeFrame } from '../lighting/reflection-probes.ts';
 import type { ShadowMap } from '../shadows/shadow-map.ts';
 
 import { DEBUG_VIEWS, type DebugView } from './debug-views.ts';
 import type { FrameBindings } from './frame-bindings.ts';
 
 /** byte size of `Frame` */
-export const FRAME_UNIFORM_BYTES = 992;
+export const FRAME_UNIFORM_BYTES = 1008;
 
 /** float offsets of `Frame` fields */
 export const FrameOffsets = {
@@ -62,6 +63,8 @@ export const FrameOffsets = {
 	ivDefaultSh: 232,
 	/** luminance L1 SH for sky reflection normalisation (`_ReflectionProbeGlobalParam3`) */
 	reflectionProbeSh: 244,
+	/** local reflection probes: active count, max mip level, unused, unused */
+	reflectionProbes: 248,
 } as const;
 
 /** what {@link writeFrameUniforms} packs */
@@ -98,6 +101,7 @@ export interface FrameUniformInputs {
 	/** each irradiance clipmap level's centre, `null` while it's not filled */
 	irradiance: readonly (Vec3 | null)[];
 	lights: Readonly<LocalLightFrame>;
+	reflectionProbes: Readonly<ReflectionProbeFrame>;
 	/** the global reveal radii the player's fire seed sets (`FireSeedInfo.radii`), `Frame.render_size.zw` */
 	revealRadii: readonly [inner: number, outer: number];
 	options: {
@@ -149,6 +153,10 @@ export const writeFrameUniforms = (f32: Float32Array, u32: Uint32Array, inputs: 
 		f32.set(environment.sh, FrameOffsets.sh);
 		f32.set(environment.ivDefaultSh, FrameOffsets.ivDefaultSh);
 		f32.set(environment.reflectionProbeSh, FrameOffsets.reflectionProbeSh);
+		f32[FrameOffsets.reflectionProbes] = inputs.reflectionProbes.count;
+		f32[FrameOffsets.reflectionProbes + 1] = inputs.reflectionProbes.maxMip;
+		f32[FrameOffsets.reflectionProbes + 2] = 0;
+		f32[FrameOffsets.reflectionProbes + 3] = 0;
 		f32[FrameOffsets.ambient] = environment.indirectSpecular;
 		// emitters marked `_IgnorePostExposure` divide out the post exposure (the game's adapted exposure)
 		// the post chain applies, which debug views turn off

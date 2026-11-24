@@ -67,6 +67,9 @@ export const createBindLayouts = (device: GPUDevice): BindLayouts => {
 			{ binding: 13, visibility: lighting, texture: { sampleType: 'float' } },
 			// the local lights' shadow atlas, compared through the shadow sampler
 			{ binding: 14, visibility: lighting, texture: { sampleType: 'depth' } },
+			// local reflection probes: 32-slot cube-array cache and probe records
+			{ binding: 15, visibility: lighting, texture: { sampleType: 'float', viewDimension: 'cube-array' } },
+			storage(16, lighting),
 		],
 	});
 	const terrain = device.createBindGroupLayout({
