@@ -139,18 +139,29 @@ export const materialSway = (material: MaterialValues, shader: ShaderEntry): Lit
  */
 export const materialVat = (material: MaterialValues, shader: ShaderEntry): VatAnimation | null => {
 	const reader = readerOf(material, shader);
-	if (shader.name === 'HGRP/Effect/VFXBaseV2') {
-		if (!reader.has(VAT_KEYWORDS.rigid) || reader.has(VAT_KEYWORDS.soft)) {
+	switch (shader.name) {
+		case 'HGRP/Lit': {
+			const animation = vatOf(reader);
+			return animation === null || 'kind' in animation ? null : animation;
+		}
+		case 'HGRP/LitEffect': {
+			if (!reader.has(VAT_KEYWORDS.rigid) && !reader.has(VAT_KEYWORDS.soft)) {
+				return null;
+			}
+			const animation = vatOf(reader);
+			return animation === null || 'kind' in animation ? null : animation;
+		}
+		case 'HGRP/Effect/VFXBaseV2': {
+			if (!reader.has(VAT_KEYWORDS.rigid) || reader.has(VAT_KEYWORDS.soft)) {
+				return null;
+			}
+			const animation = vatOf(reader);
+			return animation === null || 'kind' in animation ? null : animation;
+		}
+		default: {
 			return null;
 		}
-		const animation = vatOf(reader);
-		return animation === null || 'kind' in animation ? null : animation;
 	}
-	if (shader.name !== 'HGRP/Lit') {
-		return null;
-	}
-	const animation = vatOf(reader);
-	return animation === null || 'kind' in animation ? null : animation;
 };
 
 /**

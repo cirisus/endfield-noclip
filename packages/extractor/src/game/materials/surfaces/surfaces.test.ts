@@ -1423,6 +1423,15 @@ describe('rigid-body animation', () => {
 		assert.ok(animation !== null && 'kind' in animation);
 		assert.deepEqual(surfaceGaps(readerOf(held, shader)), ['_VAT_RIGIDBODY']);
 	});
+
+	it('draws Houdini VAT on HGRP/LitEffect without a gap', () => {
+		const litEffect = shaderEntry({ name: 'HGRP/LitEffect', family: 'litEffect' });
+		assert.deepEqual(surfaceGaps(readerOf(cans, litEffect)), []);
+		const soft = { ...cans, keywords: ['_VAT_SOFTBODY'] };
+		assert.deepEqual(surfaceGaps(readerOf(soft, litEffect)), []);
+		const held = { ...cans, floats: { ...cans.floats, _B_autoPlayback: 0 } };
+		assert.deepEqual(surfaceGaps(readerOf(held, litEffect)), ['_VAT_RIGIDBODY']);
+	});
 });
 
 describe('bone animation', () => {

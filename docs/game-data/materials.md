@@ -653,7 +653,8 @@ Jingyu's hanging ornaments pair both from one simulation: rigid cans/charms and 
 
 `HGRP/Lit` with `_VAT_RIGIDBODY` moves mesh pieces rigidly (Jingyu cans/charms
 `M_map02_sfornament_1_001_*`, machine parts `M_fx_zmdmachinevat_*`, rocks, Hongshan waterway).
-`HGRP/LitEffect` also has the keyword (map02 cedar snow, floors, drones; vertex stage unread).
+`HGRP/LitEffect` shares the same vertex stage for both `_VAT_RIGIDBODY` (map02 cedar snow, floors,
+drones, rocks) and `_VAT_SOFTBODY` (`indie_dg007` `fx_shuimohuajuan3_mat`).
 
 per vertex in every pass:
 

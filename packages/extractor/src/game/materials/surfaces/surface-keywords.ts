@@ -5,7 +5,7 @@
 
 import type { MaterialReader } from '../material-values.ts';
 
-import { vatKeyword, vatOf } from './vat-animation.ts';
+import { VAT_KEYWORDS, vatKeyword, vatOf } from './vat-animation.ts';
 
 /** keywords every surface reads: the alpha test and both emission sources */
 const SURFACE_KEYWORDS = ['_ALPHATEST_ON', '_EMISSIVE_MAP', '_EMISSIVE_MASK'];
@@ -51,7 +51,7 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 			'_COMMONVAT_BONE_4',
 			'_ZWRITE_OFF',
 		],
-		'HGRP/LitEffect': LIT_KEYWORDS,
+		'HGRP/LitEffect': [...LIT_KEYWORDS, VAT_KEYWORDS.rigid, VAT_KEYWORDS.soft],
 		'Hidden/HGRP/LitEffectBlend': LIT_KEYWORDS,
 		'HGRP/LitTransparent': [...SURFACE_KEYWORDS, '_TWO_BASEMAP', '_USE_FRESNEL', '_SUBSURFACE'],
 		// its own cubemap reflection (`_CUSTOM_IBL`) isn't drawn: the viewer lights Lit surfaces deferred
@@ -125,7 +125,10 @@ export const surfaceGaps = (reader: MaterialReader): string[] => {
 			}
 		}
 	}
-	const vat = shader === 'HGRP/Lit' ? vatOf(reader) : null;
+	const hasVat =
+		shader === 'HGRP/Lit' ||
+		(shader === 'HGRP/LitEffect' && (reader.has(VAT_KEYWORDS.rigid) || reader.has(VAT_KEYWORDS.soft)));
+	const vat = hasVat ? vatOf(reader) : null;
 	const keyword = vat !== null && 'kind' in vat ? vatKeyword(reader) : null;
 	if (keyword !== null) {
 		gaps.push(keyword);
