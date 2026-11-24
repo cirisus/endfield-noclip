@@ -1,3 +1,6 @@
+import { fileURLToPath } from 'node:url';
+
+import { DEFAULT_OUT } from '../cli-args.ts';
 import type { Context } from '../context.ts';
 import type { SceneEnvironmentVolume } from '../game/environment.ts';
 
@@ -9,6 +12,9 @@ import {
 import { PackContent } from './content/pack-content.ts';
 import { indexScene, type SceneIndex } from './scene-index.ts';
 import { progressionControls } from './states.ts';
+import { PackCache } from './store/pack-cache.ts';
+
+const DEFAULT_CACHE_DIR = fileURLToPath(new URL('.cache', DEFAULT_OUT));
 
 // the entities phase's placement sources run on their own, without the chunk files or prefab renderers, so
 // the inspection commands see the placements, gating and volumes a package of the scene holds
@@ -32,11 +38,18 @@ export const surveyPlacements = async (
 	context: Context,
 	scene: string,
 	level: string | null = null,
-	options?: { includeEcs?: boolean },
+	options?: { includeEcs?: boolean; cache?: PackCache | null },
 ): Promise<ScenePlacementSurvey> => {
-	const index = await indexScene(context, { scene, level, bounds: null }, { terrain: false, hlod: false });
+	const [index, cache] = await Promise.all([
+		indexScene(context, { scene, level, bounds: null }, { terrain: false, hlod: false }),
+		options?.cache !== undefined ? options.cache : PackCache.openReadOnly(DEFAULT_CACHE_DIR),
+	]);
 	const content = await PackContent.create(context.world, index, () => {});
-	return { scene: index, content, ...(await collectPlacementSources(context, content, options)) };
+	return {
+		scene: index,
+		content,
+		...(await collectPlacementSources(context, content, { ...options, cache })),
+	};
 };
 
 /**

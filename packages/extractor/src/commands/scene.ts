@@ -1796,10 +1796,14 @@ const scanScenePrefabs = async (
 		bigint,
 		{ hash: bigint; scenes: Set<string>; path: string | null; bundle: string | null }
 	>();
-	const manifest = await context.world.manifest();
-	for (const scene of scenes) {
-		// oxlint-disable-next-line no-await-in-loop -- surveys one scene at a time
-		const survey = await surveyPlacements(context, scene, null, { includeEcs: false });
+	const [manifest, surveys] = await Promise.all([
+		context.world.manifest(),
+		mapPool(scenes, 4, async (scene) => ({
+			scene,
+			survey: await surveyPlacements(context, scene, null, { includeEcs: false }),
+		})),
+	]);
+	for (const { scene, survey } of surveys) {
 		for (const pl of survey.placements) {
 			const hash = pl.model.pathHash;
 			if (hash === 0n) {

@@ -61,14 +61,16 @@ export class PackCache {
 	/** conversion results, step outputs, values and stored forms, by key */
 	readonly #memos: BlobDir;
 	readonly #fingerprints: Record<ConvertJob['kind'], string>;
+	readonly #readOnly: boolean;
 	readonly #stepFingerprints = new Map<string, Promise<string>>();
 	readonly #used = new Set<string>();
 
-	private constructor(root: string, fingerprints: Record<ConvertJob['kind'], string>) {
+	private constructor(root: string, fingerprints: Record<ConvertJob['kind'], string>, readOnly: boolean) {
 		this.root = root;
 		this.blobs = new BlobDir(join(root, 'blobs'));
 		this.#memos = new BlobDir(join(root, 'memo'));
 		this.#fingerprints = fingerprints;
+		this.#readOnly = readOnly;
 	}
 
 	/**
@@ -85,7 +87,21 @@ export class PackCache {
 			moduleFingerprint(CONVERTER_ENTRIES.geometry),
 			moduleFingerprint(CONVERTER_ENTRIES.texture),
 		]);
-		return new PackCache(root, { geometry, texture });
+		return new PackCache(root, { geometry, texture }, false);
+	}
+
+	/**
+	 * opens an existing cache read-only without taking a lock or fingerprinting asset converters, so inspection
+	 * commands (`scene find`, `scene prefabs`, `scene env`) can reuse step memos from previous packs
+	 *
+	 * @param root the cache directory
+	 * @returns a read-only handle, or `null` if the directory doesn't exist
+	 */
+	static async openReadOnly(root: string): Promise<PackCache | null> {
+		if ((await ignoreMissing(stat(join(root, 'memo')), undefined)) === undefined) {
+			return null;
+		}
+		return new PackCache(root, { geometry: '', texture: '' }, true);
 	}
 
 	/**
@@ -221,6 +237,9 @@ export class PackCache {
 	 * @param value what to remember
 	 */
 	async rememberValue(key: string, value: unknown): Promise<void> {
+		if (this.#readOnly) {
+			return;
+		}
 		await this.#memos.replace(key, serialize(value));
 		this.#used.add(key);
 	}
@@ -318,6 +337,9 @@ export class PackCache {
 
 	/** releases the lock */
 	async close(): Promise<void> {
+		if (this.#readOnly) {
+			return;
+		}
 		await rm(join(this.root, 'lock'), { force: true });
 	}
 }
