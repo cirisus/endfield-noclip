@@ -145,10 +145,14 @@ and `p` = `_ReflectionProbeGlobalParam3` dotted with `(N, 1)` (the Rec. 709 lumi
 swapped relative to `GetCoefficientsL1`), the scale is `(2 · min(d / p, 1) + d) / (2 + p)` (~`d / p`
 indoors, ~1 outdoors).
 
-local reflection probes are octahedral, box-projected, priority-blended over the sky cubemap, binned
-into screen tiles and depth slices like [local lights](#local-lights), and normalised against their
-own probe. textures ship at `releasedata/reflectionprobedata/reflectionprobe-*.exr` (Dijiang has
-several); placements are unlocated.
+local reflection probes live in `InitChunkData` tag-1 `MonoObject`s under component type `0x10000`
+(`StreamingComponentType.ReflectionProbe`, matching Unity `ReflectionProbe`: box size, influence
+scale, `m_TRS` / `m_TRInverse`, intensity, box projection, mode, importance, shape box/sphere, baked
+or custom L2 SH, and cubemap path hash). the game packs them into a 32-slot octahedral atlas, bins
+them into screen tiles and depth slices like [local lights](#local-lights), blends front-to-back in
+priority order over the sky cubemap, and normalises each probe against its own luminance L1 SH.
+cubemap textures ship as 128² BC6H cubemaps (and `reflectionprobe-*.exr` assets); a handful of
+decoration prefabs (`p_lightingdeco_*_reflectionprobe`) also place probes.
 
 ### screen-space reflections
 
@@ -300,7 +304,6 @@ per-renderer value and `_VFXParams1` ([blending](effects.md#blending)).
 - sun units: sun uses the local-light lobe (no `1/π` on diffuse); whether the CPU folds `1/π` into
   sun colour is unknown (`directIntensityDividePi` also exists on phases).
 - baked lightmaps on HLOD and terrain (unchecked).
-- where local reflection probe placements are stored.
 - [local light shadows](#local-light-shadows): native dirty flag that triggers cached tile redraws,
   native caster cull and small-caster metric, how static+dynamic lights combine both tiles, and how
   fog froxels filter the map.

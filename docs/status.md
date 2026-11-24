@@ -26,9 +26,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   volumes) ([scene states](game-data/scene-states.md),
   [scene controls](extraction/scene-controls.md))
 - **environment & lighting**: environment profiles and volume blending, spatial rain, water,
-  post-processing, baked irradiance (with scene-state and Dijiang room bakes), and local
-  point/spot/tube lights ([environment](viewer/environment.md), [lighting](viewer/lighting.md),
-  [water](viewer/water.md))
+  post-processing, baked irradiance (with scene-state and Dijiang room bakes), local reflection
+  probes, and local point/spot/tube lights ([environment](viewer/environment.md),
+  [lighting](viewer/lighting.md), [water](viewer/water.md))
 - **effects & particles**: six scene-effect shaders, mist, six-way smoke, stencil portals, and
   particle systems with custom data ([effects](game-data/effects.md),
   [particles](game-data/particles.md), [viewer](viewer/particles.md))
@@ -38,8 +38,11 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **ambient** ([viewer](viewer/lighting.md#ambient), [open](game-data/lighting.md#open)):
   - verified against an in-game shot only at Jingyu's cave arch.
   - missing: lookup jitter, forward-shifted clipmap centres, per-channel AO multi-bounce (uses
-    luminance), GTAO specular occlusion, and local reflection probes (placements not found).
-  - specular ambient falls back to the ambient probe until the reflection cubemap streams in.
+    luminance), GTAO specular occlusion, and prefab-placed reflection probes
+    (`p_lightingdeco_*_reflectionprobe`; none in Yinglung Pass).
+  - specular ambient falls back to the ambient probe until the sky cubemap streams in; local
+    reflection probes evaluate up to 32 frustum-visible probes per frame (without screen-tile
+    binning) and fall back to the sky cubemap while their cubemaps stream.
   - next: compare GPU clipmap samples with the bake at one point and check clipmap seams (L0
     repeats, L1 clamps).
 - **irradiance volume** ([viewer](viewer/lighting.md#irradiance-volume),

@@ -7,9 +7,9 @@ archives of content-addressed blobs and tables. see [extraction](extraction.md#p
 [package-format](../packages/package-format/src/) defines the shared types and binary codecs
 (`container`, `manifest`, `tiles`, `tree`, `instances`, `geometry`, `geometry-table`, `textures`,
 `texture-table`, `materials`, `surfaces`, `terrain`, `environment`, `environment-volumes`,
-`volumes`, `water`, `lights`, `particles`, `curves`, `luts`, `animation`, `irradiance`, `states`,
-`conditions`, `camera`, `stream-areas`, `story`, `blobs`, `blob-table`). its JSDoc is authoritative.
-`package-format` has no Node API or workspace dependencies.
+`volumes`, `water`, `lights`, `reflection-probes`, `particles`, `curves`, `luts`, `animation`,
+`irradiance`, `states`, `conditions`, `camera`, `stream-areas`, `story`, `blobs`, `blob-table`). its
+JSDoc is authoritative. `package-format` has no Node API or workspace dependencies.
 
 | side   | code                                                                                                                                               |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -32,6 +32,7 @@ archives of content-addressed blobs and tables. see [extraction](extraction.md#p
     tables/textures.bin.zst       texture table
     tables/water.json.zst         water table
     tables/lights.bin.zst         local lights (EFLT TLV)
+    tables/reflection-probes.bin.zst  local reflection probes (EFRP TLV)
     tables/particles.json.zst     particle systems
     tables/environment.json.zst   environment volumes, phases and post profiles
     tables/irradiance.bin         irradiance cell keys → blobs, per bake
@@ -201,22 +202,23 @@ skipped, unknown `Required` sections fail explicitly, and fixed-stride record se
 `stride` so trailing fields added later don't break older readers. `.bin.zst` tables are single zstd
 frames; `.bin` tables are uncompressed.
 
-| member                      | magic                    | sections                                                                                                                                                                                                       |
-| --------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tree.bin`                  | `EFTR`                   | `NODE` (52 B, includes `parent: i32`), `REFS` (24 B, includes `streamingLayer`), `GLOB` (24 B), optional `RCHS` (16 B), optional `HLOD` (16 B cluster links)                                                   |
-| `tables/chains.bin`         | `EFCH`                   | `CHNS` (16 B, includes `u64 contentHash`), `DRWS` (32 B, includes `sortingBand`), optional `DORG` (16 B: `chainIndex` + `distanceOrigin`)                                                                      |
-| `tables/blobs.bin`          | `EFBX`                   | `BLBS` (16 B: `kind`, `codec`, `archive`, `offset`, `length`, `rawLength`)                                                                                                                                     |
-| `tables/irradiance.bin`     | `EFIV`                   | `KEYS` (`u32[]`), `BLBS` (`u32[]`), `GRPS` (`u32[]`)                                                                                                                                                           |
-| `tables/geometries.bin.zst` | `EFGE`                   | `GEOM` (44 B records, [asset tables](#asset-tables))                                                                                                                                                           |
-| `tables/textures.bin.zst`   | `EFTX`                   | `SAMP` (12 B), `TEXS` (20 B, includes `droppedMips`), `PCES` (8 B) ([asset tables](#asset-tables))                                                                                                             |
-| `tables/lights.bin.zst`     | `EFLT`                   | `LGHT` (100 B), optional `SHDW` (32 B), optional `CBOX` (52 B)                                                                                                                                                 |
-| `tables/luts.bin.zst`       | `EFLU`                   | optional `CRVH`/`CRVS`, `GRDH`/`GRDS`, `PMSH`/`PMPO`/`PMNM`/`PMCL`/`PMPR`/`PMCD` (particle shape meshes + precomputed area CDFs)                                                                               |
-| `tables/assemblies.bin.zst` | `EFAS`                   | `ASMB` (20 B), `NODE` (56 B), optional `STAT` (12 B) (moving/stateful prefab assemblies)                                                                                                                       |
-| `.inst`                     | `EFIN`                   | `HEAD`, optional `PLTT` (`u64[]` chain hash palette), `CHNS`, `XFRM`, `BNDS`, optional `FLAG` (`RowFlags`), optional `HLOD`, optional sparse `DECL`/`SPIN`/`FLOT`/`RIDE`/`MOTN`/`LODG`/`ASMB`, optional `PATH` |
-| `.mesh`                     | `EFGM`                   | `HEAD`, `STRM` (36 B), `SUBM` (40 B), `VBUF`, `IBUF`, optional `ANIM`                                                                                                                                          |
-| `.hgt` / `.tsp` / `.tsl`    | `EFHT` / `EFTS` / `EFSL` | `HEAD` + `HGTS` / (`ALBD`, `NORM`) / (`CTRL`, `TINT`, `INDX`)                                                                                                                                                  |
-| `.anim`                     | `EFAN`                   | `HEAD` + kind-specific section (`SKIN`, `TRNS`, `SPIN`, `FLOT`, `VATC`, or `MATR` + `MSMP`)                                                                                                                    |
-| `.fol`                      | `EFFL`                   | `HEAD`, optional `PLTT` (`u64[]`), `CLST` (40 B), `INST` (24 B quantized foliage instances)                                                                                                                    |
+| member                             | magic                    | sections                                                                                                                                                                                                       |
+| ---------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tree.bin`                         | `EFTR`                   | `NODE` (52 B, includes `parent: i32`), `REFS` (24 B, includes `streamingLayer`), `GLOB` (24 B), optional `RCHS` (16 B), optional `HLOD` (16 B cluster links)                                                   |
+| `tables/chains.bin`                | `EFCH`                   | `CHNS` (16 B, includes `u64 contentHash`), `DRWS` (32 B, includes `sortingBand`), optional `DORG` (16 B: `chainIndex` + `distanceOrigin`)                                                                      |
+| `tables/blobs.bin`                 | `EFBX`                   | `BLBS` (16 B: `kind`, `codec`, `archive`, `offset`, `length`, `rawLength`)                                                                                                                                     |
+| `tables/irradiance.bin`            | `EFIV`                   | `KEYS` (`u32[]`), `BLBS` (`u32[]`), `GRPS` (`u32[]`)                                                                                                                                                           |
+| `tables/geometries.bin.zst`        | `EFGE`                   | `GEOM` (44 B records, [asset tables](#asset-tables))                                                                                                                                                           |
+| `tables/textures.bin.zst`          | `EFTX`                   | `SAMP` (12 B), `TEXS` (20 B, includes `droppedMips`), `PCES` (8 B) ([asset tables](#asset-tables))                                                                                                             |
+| `tables/lights.bin.zst`            | `EFLT`                   | `LGHT` (100 B), optional `SHDW` (32 B), optional `CBOX` (52 B)                                                                                                                                                 |
+| `tables/reflection-probes.bin.zst` | `EFRP`                   | `PRBS` (140 B: group, texture, importance, shape, flags, intensity, bounds, half-extents, `invBlendDistance`, `worldToLocal`, luminance L1 SH)                                                                 |
+| `tables/luts.bin.zst`              | `EFLU`                   | optional `CRVH`/`CRVS`, `GRDH`/`GRDS`, `PMSH`/`PMPO`/`PMNM`/`PMCL`/`PMPR`/`PMCD` (particle shape meshes + precomputed area CDFs)                                                                               |
+| `tables/assemblies.bin.zst`        | `EFAS`                   | `ASMB` (20 B), `NODE` (56 B), optional `STAT` (12 B) (moving/stateful prefab assemblies)                                                                                                                       |
+| `.inst`                            | `EFIN`                   | `HEAD`, optional `PLTT` (`u64[]` chain hash palette), `CHNS`, `XFRM`, `BNDS`, optional `FLAG` (`RowFlags`), optional `HLOD`, optional sparse `DECL`/`SPIN`/`FLOT`/`RIDE`/`MOTN`/`LODG`/`ASMB`, optional `PATH` |
+| `.mesh`                            | `EFGM`                   | `HEAD`, `STRM` (36 B), `SUBM` (40 B), `VBUF`, `IBUF`, optional `ANIM`                                                                                                                                          |
+| `.hgt` / `.tsp` / `.tsl`           | `EFHT` / `EFTS` / `EFSL` | `HEAD` + `HGTS` / (`ALBD`, `NORM`) / (`CTRL`, `TINT`, `INDX`)                                                                                                                                                  |
+| `.anim`                            | `EFAN`                   | `HEAD` + kind-specific section (`SKIN`, `TRNS`, `SPIN`, `FLOT`, `VATC`, or `MATR` + `MSMP`)                                                                                                                    |
+| `.fol`                             | `EFFL`                   | `HEAD`, optional `PLTT` (`u64[]`), `CLST` (40 B), `INST` (24 B quantized foliage instances)                                                                                                                    |
 
 tree nodes sort coarse to fine (`level`, `z`, `x`). children of `(l, x, z)` are
 `(l + 1, 2x + dx, 2z + dz)`. node bounds enclose the node, its descendants, and overhang.
