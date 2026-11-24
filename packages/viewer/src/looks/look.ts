@@ -206,6 +206,8 @@ export const GAPS_FLOAT = 144;
  *   sample it
  * - `refractOpaque`: a VFXRefract layer that replaces what lies behind with its refracted copy, writing depth,
  *   drawn before the `refract` layers from the same copy
+ * - `radialBlur`, `radialBlurThrough`: VFXRadialBlur layers drawn in the `refract` pass, depth-tested against
+ *   the scene or drawing through it (`_DisableZTest`)
  * - `waterFoam`, `waterFoamBehind`, `waterFoamThrough`: WaterDecal boxes drawn into the water's foam before the
  *   water draws, depth-tested in front of the scene, behind it, or not at all
  */
@@ -227,6 +229,8 @@ export type LookQueue =
 	| 'screenMultiply'
 	| 'refract'
 	| 'refractOpaque'
+	| 'radialBlur'
+	| 'radialBlurThrough'
 	| 'waterFoam'
 	| 'waterFoamBehind'
 	| 'waterFoamThrough';

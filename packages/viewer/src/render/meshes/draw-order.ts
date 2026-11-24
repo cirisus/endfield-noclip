@@ -104,6 +104,8 @@ export const drawRangeOf = (
 		case 'screenMultiply':
 		case 'refract':
 		case 'refractOpaque':
+		case 'radialBlur':
+		case 'radialBlurThrough':
 		case 'waterFoam':
 		case 'waterFoamBehind':
 		case 'waterFoamThrough': {

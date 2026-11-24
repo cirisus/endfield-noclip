@@ -1817,6 +1817,104 @@ describe('VFXRefract', () => {
 	});
 });
 
+describe('VFXRadialBlur', () => {
+	const radialBlur = (overrides: Partial<ShaderEntry> = {}) =>
+		shader('HGRP/Effect/VFXRadialBlur', 'vfxRadialBlur', {
+			floats: {
+				_TintColorAlpha: 1,
+				_InParticle: 1,
+				_RadialBlurIntensity: 0.1,
+				_Power: 1,
+				_RadialBlurWithScreenDepth: 0,
+				_UseMaskTexAsAlpha: 1,
+				_ZTest: 4,
+			},
+			...overrides,
+		});
+
+	it('reads radial blur parameters, mask red-as-alpha, and _ZTest Always', () => {
+		// the movable lotus leaf effect (`M_fxint_s_map02_lotusleaf_01_fj_05`)
+		const lotus = ofKind(
+			describeMaterial(
+				material({
+					blend: 'alphaBlend',
+					blendFactors: [5, 10],
+					keywords: ['_USE_MASK'],
+					slots: { _MaskTex: slot(1) },
+					floats: {
+						_Power: 2,
+						_RadialBlurIntensity: 0.15,
+						_RadialBlurWithScreenDepth: 1,
+						_ZTest: 8,
+					},
+				}),
+				radialBlur(),
+			),
+			'radialBlur',
+		);
+		assert.equal(lotus.depthTest, 'always');
+		assert.deepEqual(
+			[lotus.intensity, lotus.power, lotus.alpha, lotus.inParticle, lotus.withScreenDepth],
+			[0.15, 2, 1, true, true],
+		);
+		assert.deepEqual(lotus.centerOffset, [0, 0]);
+		assert.equal(lotus.direction, null);
+		assert.deepEqual(
+			[lotus.mask?.texture.texture, lotus.mask?.texture.source, lotus.mask?.redAlpha],
+			[1, 'uv0', true],
+		);
+		assert.deepEqual([lotus.softDistance, lotus.near], [0, null]);
+	});
+
+	it('normalizes directional blur, handles polar mask UVs, soft blend, and rejects unsupported states', () => {
+		const directional = ofKind(
+			describeMaterial(
+				material({
+					blend: 'alphaBlend',
+					blendFactors: [5, 10],
+					keywords: ['_USE_MASK', '_USE_POLARUV', '_USE_SOFTBLEND', '_USE_DIRECTIONAL_BLUR'],
+					slots: { _MaskTex: slot(2, [2, 1]) },
+					floats: {
+						_MaskSwitchUV: 1,
+						_UseMaskTexAsAlpha: 0,
+						_MaskTexUVRotate: 180,
+						_SoftDistance: 2.5,
+						_InParticle: 0,
+					},
+					vectors: {
+						_Direction: [3, 4, 0, 0],
+						_CanterOffset: [0.1, -0.2, 0, 0],
+						_MaskTexUVSpeed: [0.5, 0, 0, 1],
+					},
+				}),
+				radialBlur(),
+			),
+			'radialBlur',
+		);
+		assert.equal(directional.depthTest, 'less-equal');
+		assert.deepEqual(directional.direction, [0.6, 0.8]);
+		assert.deepEqual(directional.centerOffset, [0.1, -0.2]);
+		assert.equal(directional.inParticle, false);
+		assert.equal(directional.softDistance, 2.5);
+		assert.deepEqual(
+			[
+				directional.mask?.texture.source,
+				directional.mask?.redAlpha,
+				directional.mask?.texture.scroll,
+				directional.mask?.texture.customScroll,
+			],
+			['polar', false, [0.5, 0], [0, 1]],
+		);
+		assert.equal(directional.mask?.texture.rotation[0], -1);
+
+		assert.equal(
+			describeMaterial(material({ blend: 'alphaBlend', floats: { _ZTest: 5 } }), radialBlur()).kind,
+			'unsupported',
+		);
+		assert.equal(describeMaterial(material({ blend: 'additive' }), radialBlur()).kind, 'unsupported');
+	});
+});
+
 describe('VFXWater', () => {
 	it('lays out a flipbook sheet: its frames as they are, motion vectors and normals, the HDR tint as stored', () => {
 		// without a main texture the sheet samples the shader's white default

@@ -49,6 +49,8 @@ export const DRAW_RANGES: readonly DrawRangeInfo[] = [
 	{ range: 'screenMultiply', order: 'bindings', effect: true },
 	{ range: 'refractOpaque', order: 'pipelineThenNearest', effect: true },
 	{ range: 'refract', order: 'bindings', effect: true },
+	{ range: 'radialBlur', order: 'bindings', effect: true },
+	{ range: 'radialBlurThrough', order: 'bindings', effect: true },
 	{ range: 'waterFoam', order: 'bindings', effect: true },
 	{ range: 'waterFoamBehind', order: 'bindings', effect: true },
 	{ range: 'waterFoamThrough', order: 'bindings', effect: true },
@@ -128,6 +130,8 @@ export const PHASES = {
 	screenMultiply: shading('mesh/effect-multiply', 'screenMultiply'),
 	refract: shading('mesh/refract', 'refract'),
 	refractOpaque: shading('mesh/refract-opaque', 'refractOpaque'),
+	radialBlur: shading('mesh/radial-blur', 'radialBlur'),
+	radialBlurThrough: shading('mesh/radial-blur-through', 'radialBlurThrough'),
 	waterFoam: shading('mesh/water-foam', 'waterFoam'),
 	waterFoamBehind: shading('mesh/water-foam-behind', 'waterFoamBehind'),
 	waterFoamThrough: shading('mesh/water-foam-through', 'waterFoamThrough'),
@@ -219,7 +223,7 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// it and write depth, then those that blend over it, as the game's distortion pass draws its opaque list
 	// before its transparent one. the first pass writes the depth the second binds, so they're separate
 	refractOpaque: [PHASES.refractOpaque],
-	refract: [PHASES.refract],
+	refract: [PHASES.refract, PHASES.radialBlur, PHASES.radialBlurThrough],
 	// WaterDecal boxes, drawn into the water's foam before the water draws: those the game depth-tests in front
 	// of the scene, then those it tests behind it, then those it doesn't test
 	waterFoam: [PHASES.waterFoam, PHASES.waterFoamBehind, PHASES.waterFoamThrough],

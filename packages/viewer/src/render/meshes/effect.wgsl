@@ -963,6 +963,88 @@ fn fs_refract(in: EffectOut) -> @location(0) vec4f {
 
 // #endregion
 
+// #region radial blur
+
+// `EffectKind.RadialBlur` (effect-look.ts), in FX_UNFOGGED's y
+const FX_KIND_RADIAL_BLUR = 7.0;
+
+// rows of a VFXRadialBlur look (`RadialBlurRow` in radial-blur.ts, in vec4s)
+const RB_BLUR = 17u;
+const RB_OPTIONS = 18u;
+const RB_CENTER = 19u;
+
+// VFXRadialBlur (docs/game-data/effects.md#radial-blur): a 5-tap blur of the composited scene radially from
+// the projected object/particle centre or along a screen direction, optionally masked and faded
+@fragment
+fn fs_radial_blur(in: EffectOut) -> @location(0) vec4f {
+	let id = in.look;
+	let bases = fx_bases(in.uv.xy, in.uv.zw, fx_polar(in.uv.xy - 0.5), vec2f(0.0));
+	let blur = fx_row(id, RB_BLUR);
+	let opts = fx_row(id, RB_OPTIONS);
+	let center_dir = fx_row(id, RB_CENTER);
+	let screen_uv = in.position.xy / frame.render_size.xy;
+	var dir = center_dir.zw;
+	if (opts.z == 0.0) {
+		let clip = frame.view_proj * vec4f(in.origin.xyz, 1.0);
+		let w = select(clip.w, 1e-6, abs(clip.w) < 1e-6);
+		let ndc = clip.xy / w;
+		let center_uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+		let v = center_uv * 2.0 - 1.0;
+		let unit_v = normalize(select(v, vec2f(1.0, 0.0), dot(v, v) < 1e-12));
+		// matches the game's compiled check `sqrt(v.x^2 + 2*v.y) > 1.414` without taking a negative root
+		let clamped = select(
+			clamp(center_uv, vec2f(0.0), vec2f(1.0)),
+			(vec2f(1.0) + unit_v) * 0.5,
+			v.x * v.x + v.y + v.y > 1.999396,
+		);
+		dir = screen_uv - (clamped + center_dir.xy);
+	}
+	let denom = select(1.0, max(0.01, in.origin.w - frame.local_lights.w), opts.x != 0.0);
+	let step = dir * pow(max(abs(dir), vec2f(1e-6)), vec2f(blur.y / denom));
+	let intensity = blur.x * select(1.0, in.color.a, blur.w != 0.0);
+	var accum = textureSampleLevel(fx_background, fx_background_samp, screen_uv, 0.0).rgb;
+	for (var i = 1; i < 3; i++) {
+		let fi = f32(i);
+		let a = textureSampleLevel(fx_background, fx_background_samp, screen_uv - step * fi * intensity, 0.0).rgb;
+		let b = textureSampleLevel(
+			fx_background,
+			fx_background_samp,
+			screen_uv - step * (fi - 0.5) * intensity,
+			0.0,
+		).rgb;
+		accum += (a + b) * 0.5;
+	}
+	var color = accum * (1.0 / 3.0);
+	var alpha = blur.z;
+	if (opts.y != 0.0) {
+		let bias = exp2(frame.params.y);
+		let bits = fx_slot_bits(id, 0u);
+		let base = fx_slot_base(bases, bits);
+		let custom_shift = fx_row(id, FX_CUSTOM_SCROLL).xy * in.custom.w;
+		var mask = fx_sample(
+			0u,
+			fx_slot_coords(id, 0u, base[0] + custom_shift),
+			fx_slot_gradient(id, 0u, base[1]) * bias,
+			fx_slot_gradient(id, 0u, base[2]) * bias,
+		);
+		if ((bits & SLOT_RED_ALPHA) != 0u) {
+			mask = vec4f(1.0, 1.0, 1.0, mask.r);
+		}
+		color *= mask.rgb;
+		alpha *= mask.a;
+	}
+	let depth = dot(in.rel, frame.view_forward.xyz);
+	let soft = fx_row(id, FX_SOFT);
+	var soft_fade = 1.0;
+	if (soft.x > 0.0) {
+		soft_fade = saturate((fx_scene_depth(vec2i(in.position.xy)) - depth) / soft.x);
+	}
+	alpha = saturate(alpha * soft_fade * fx_near_fade(id, depth));
+	return vec4f(clamp(color, vec3f(0.0), vec3f(1000.0)), alpha);
+}
+
+// #endregion
+
 // #region water sheets
 
 // `EffectKind.WaterSheet` (effect-look.ts), in FX_UNFOGGED's y

@@ -61,6 +61,10 @@ passes running after composite and water, into the composited scene with main-pa
   only (mesh UV1 unread).
 - **opaque refraction**: draws just before blended refraction from the same copy with `One Zero`
   blend, writing main-pass depth.
+- **radial blur**: [VFXRadialBlur](../game-data/effects.md#radial-blur) draws in the blended
+  refraction pass from the same composited-scene copy, with separate pipelines for depth-tested
+  (`_ZTest` `LEqual`) and depth-ignoring (`_ZTest` `Always` / `_DisableZTest`) materials. non-alpha
+  blends and other `_ZTest` values stay unsupported.
 
 ## reflection-only effects
 

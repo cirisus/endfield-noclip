@@ -351,20 +351,18 @@ export const prepareMeshPipelines = (
 		],
 		DEPTH_COMPARE,
 	);
-	describeEffect(
-		PHASES.refract,
-		'fs_refract',
-		[
-			{
-				format: HDR_FORMAT,
-				blend: {
-					color: ALPHA_OVER,
-					alpha: KEEP,
-				},
+	const refractBlend: GPUColorTargetState[] = [
+		{
+			format: HDR_FORMAT,
+			blend: {
+				color: ALPHA_OVER,
+				alpha: KEEP,
 			},
-		],
-		DEPTH_COMPARE,
-	);
+		},
+	];
+	describeEffect(PHASES.refract, 'fs_refract', refractBlend, DEPTH_COMPARE);
+	describeEffect(PHASES.radialBlur, 'fs_radial_blur', refractBlend, DEPTH_COMPARE);
+	describeEffect(PHASES.radialBlurThrough, 'fs_radial_blur', refractBlend, 'always');
 	// under an opaque blend state the refracted colour replaces the scene's whatever its alpha
 	describeEffect(
 		PHASES.refractOpaque,

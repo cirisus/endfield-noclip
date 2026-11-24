@@ -142,6 +142,7 @@ describe('shaderFamily', () => {
 		assert.equal(shaderFamily('HGRP/SludgeV2'), 'erosion');
 		assert.equal(shaderFamily('Hidden/HGRP/LitEffectBlend'), 'litEffect');
 		assert.equal(shaderFamily('HGRP/Effect/VFXWaterDitherAlpha'), 'vfxDitherAlpha');
+		assert.equal(shaderFamily('HGRP/Effect/VFXRadialBlur'), 'vfxRadialBlur');
 		assert.equal(shaderFamily('HGRP/Effect/VFXTransparentDepthOnly'), 'vfxTransparentDepth');
 		assert.equal(shaderFamily('HGRP/Effect/VFXWater'), 'water');
 		assert.equal(shaderFamily('HGRP/DecalErosionVolume'), 'decal');

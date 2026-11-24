@@ -18,6 +18,7 @@ import type { EffectLook } from './effects/effect-look.ts';
 import { lightBeamLook } from './effects/light-beam.ts';
 import { litDecalLook, wetnessDecalLook } from './effects/lit-decal.ts';
 import { mistCardLook, mistVolumeLook } from './effects/mist.ts';
+import { radialBlurLook } from './effects/radial-blur.ts';
 import { refractLook } from './effects/refract.ts';
 import { sixWaySmokeLook } from './effects/six-way-smoke.ts';
 import { multipliesScene, stackLook } from './effects/stack.ts';
@@ -283,6 +284,12 @@ const surfaceLook = (entry: ReadyMaterial): MaterialLook => {
 		case 'refract': {
 			return effectMaterialLook(refractLook(surface), {
 				queue: surface.opaque ? 'refractOpaque' : 'refract',
+				cull: entry.cull,
+			});
+		}
+		case 'radialBlur': {
+			return effectMaterialLook(radialBlurLook(surface), {
+				queue: surface.depthTest === 'always' ? 'radialBlurThrough' : 'radialBlur',
 				cull: entry.cull,
 			});
 		}

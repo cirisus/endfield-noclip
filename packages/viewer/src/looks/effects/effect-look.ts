@@ -44,6 +44,8 @@ export const EffectKind = {
 	WaterFoam: 5,
 	/** six-way lit smoke (`SixWayRow`) */
 	SixWaySmoke: 6,
+	/** a VFXRadialBlur layer (`RadialBlurRow`), drawn by the radial blur entry point over the composited scene */
+	RadialBlur: 7,
 } as const;
 
 /**

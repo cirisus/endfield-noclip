@@ -40,6 +40,7 @@ export type ShaderFamily =
 	| 'vfxBase'
 	| 'vfxAdvance'
 	| 'vfxRefract'
+	| 'vfxRadialBlur'
 	| 'vfxDitherAlpha'
 	| 'vfxSmokeSixWay'
 	| 'vfxFakeVolumeFog'

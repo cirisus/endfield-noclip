@@ -16,6 +16,7 @@ import { describeDitherEffect, isDitherEffect } from './effects/dither-effect.ts
 import { describeLightBeam } from './effects/light-beam.ts';
 import { describeMistCard } from './effects/mist-card.ts';
 import { describeMistVolume } from './effects/mist-volume.ts';
+import { describeRadialBlur } from './effects/radial-blur.ts';
 import { describeRefract } from './effects/refract.ts';
 import { describeSixWaySmoke } from './effects/six-way-smoke.ts';
 import { describeTransparentDepthOnly } from './effects/transparent-depth.ts';
@@ -55,6 +56,7 @@ const EFFECT_FAMILIES: ReadonlySet<ShaderFamily> = new Set([
 	'vfxBase',
 	'vfxAdvance',
 	'vfxRefract',
+	'vfxRadialBlur',
 	'vfxDitherAlpha',
 	'vfxSmokeSixWay',
 	'vfxTransparentDepth',
@@ -106,6 +108,7 @@ const DESCRIBERS: { readonly [F in ShaderFamily]?: Describer | ReadonlyMap<strin
 		'HGRP/CharacterNPR_VFX': describeCharacterVfx,
 	}),
 	vfxRefract: byShader({ 'HGRP/Effect/VFXRefract': describeRefract }),
+	vfxRadialBlur: describeRadialBlur,
 	vfxSmokeSixWay: describeSixWaySmoke,
 	vfxTransparentDepth: describeTransparentDepthOnly,
 	water: byShader({ 'HGRP/Effect/VFXWater': describeWaterSheet }),

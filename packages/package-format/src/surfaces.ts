@@ -58,6 +58,7 @@ export type MaterialSurface =
 	| LitDecalSurface
 	| WetnessDecalSurface
 	| RefractSurface
+	| RadialBlurSurface
 	| WaterFoamSurface;
 
 /** a material the game draws nothing visible with */
@@ -1668,6 +1669,41 @@ export interface RefractSurface {
 		/** `_SpreadAlphaCurve` */
 		alphaScale: number;
 	} | null;
+	/** the soft blend's distance, 0 without `_USE_SOFTBLEND` */
+	softDistance: number;
+	near: EffectNearFade | null;
+}
+
+/**
+ * `HGRP/Effect/VFXRadialBlur`, a 5-tap radial or directional blur of the composited scene
+ * (`docs/game-data/effects.md#radial-blur`)
+ */
+export interface RadialBlurSurface {
+	kind: 'radialBlur';
+	/**
+	 * the game's `_ZTest` against the scene's depth, in Unity's (forward) depth: `less-equal` draws only in
+	 * front of the scene, `always` draws through it (`_DisableZTest`)
+	 */
+	depthTest: Extract<EffectCompare, 'less-equal' | 'always'>;
+	/** `_RadialBlurIntensity` */
+	intensity: number;
+	/** `_Power`, exponent on the blur offset vector */
+	power: number;
+	/** `_TintColorAlpha`, scales the blended alpha */
+	alpha: number;
+	/** `_InParticle`: the particle's vertex alpha scales the blur intensity */
+	inParticle: boolean;
+	/** `_RadialBlurWithScreenDepth`: divides `power` by the blur centre's view depth past the near plane */
+	withScreenDepth: boolean;
+	/** `_CanterOffset` xy, screen-UV offset added to the projected blur centre */
+	centerOffset: [u: number, v: number];
+	/**
+	 * `_USE_DIRECTIONAL_BLUR`: unit screen-UV direction blurred along instead of radially from the centre;
+	 * `null` for radial blur
+	 */
+	direction: [u: number, v: number] | null;
+	/** `_USE_MASK`: red is the alpha (`_UseMaskTexAsAlpha`), else RGBA multiplies colour and alpha */
+	mask: { texture: RefractTexture; redAlpha: boolean } | null;
 	/** the soft blend's distance, 0 without `_USE_SOFTBLEND` */
 	softDistance: number;
 	near: EffectNearFade | null;

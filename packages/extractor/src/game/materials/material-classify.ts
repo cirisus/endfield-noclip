@@ -33,6 +33,7 @@ const FAMILIES: [RegExp, ShaderFamily][] = [
 	// VFXAdvance's slots, drawn over characters
 	[/^HGRP\/CharacterNPR_VFX$/i, 'vfxAdvance'],
 	[/^HGRP\/Effect\/VFXRefract/i, 'vfxRefract'],
+	[/^HGRP\/Effect\/VFXRadialBlur$/i, 'vfxRadialBlur'],
 	[/^HGRP\/Effect\/VFXDitherAlpha/i, 'vfxDitherAlpha'],
 	[/^HGRP\/Effect\/VFXSmoke_SixWay$/i, 'vfxSmokeSixWay'],
 	[/^HGRP\/Effect\/VFXTransparentDepthOnly$/i, 'vfxTransparentDepth'],

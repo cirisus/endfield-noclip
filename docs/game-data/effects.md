@@ -431,6 +431,28 @@ remapped by `_Bi_Refract`, or normal `xy` under `_RefractIsNormal`).
     unity −753, 143, 55, global var 4 = 2; `M_fx_common_smoke_01_02_03_1`) uses both `_USE_BLEND`
     and `_USE_SPREAD`.
 
+## radial blur
+
+`HGRP/Effect/VFXRadialBlur` runs in the same `Distortion` pass (`LightMode` `Distortion`), taking 5
+samples of the scene colour copy along a screen-UV direction (`step = dir · |dir|^(power / denom)`)
+at offsets `0, 0.5, 1, 1.5, 2` × `step · intensity`, weighted `(1/3, 1/6, 1/6, 1/6, 1/6)`:
+
+- **direction**: by default, radially outward from the projected object origin (or particle centre
+  `TEXCOORD1.xyz` under `_InParticle`), clamped into `[0, 1]^2` (or onto the unit circle when its
+  compiled check `sqrt(v.x^2 + 2·v.y) > 1.414` holds in `[-1, 1]^2`) plus `_CanterOffset.xy`. under
+  `_USE_DIRECTIONAL_BLUR`, blurs along `normalize(_Direction.xy)` instead.
+- **depth & particle scaling**: `_RadialBlurWithScreenDepth` divides `_Power` by
+  `max(0.01, centerViewDepth − near)`. under `_InParticle`, vertex alpha scales
+  `_RadialBlurIntensity`.
+- **mask & fades**: `_USE_MASK` multiplies colour and alpha by `_MaskTex` (UV0 or polar under
+  `_USE_POLARUV` + `_MaskSwitchUV`, scrolled by `_MaskTexUVSpeed.xy · time + .zw · custom.w`,
+  rotated by `_MaskTexUVRotate` deg), or alpha alone by its R under default `_UseMaskTexAsAlpha`.
+  `_TintColorAlpha`, `_USE_SOFTBLEND` (`_SoftDistance`), and near-camera fade scale alpha.
+  `_DisableZTest` sets `_ZTest` to `Always` (8) so the blur draws through scene depth.
+  - examples: Jingyu Valley movable lotus leaf (`blur_01` in `p_fxint_s_map02_lotusleaf_01`,
+    `M_fxint_s_map02_lotusleaf_01_fj_05`), Marker Stone stronghold wave (`wenli_blur`/`blur01` in
+    `p_fxmap_map02_lv004_stronghold_wave_01_loop`).
+
 ### the Very Large Rift's ripples
 
 in Wuling Very Large Rift (dung02_dg005, unity 297, 100, 2), two default-on prefabs
