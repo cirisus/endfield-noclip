@@ -34,9 +34,10 @@ assignment and redraw cadence are in [frame.md](frame.md).
 - **fit**: sharp cascades fit bounding spheres of frustum slices (stable under camera rotation). the
   far layer fits an 832 m radius around the camera (game's 800 m plus one grid cell), centre snapped
   to a 32 m light-space grid. all layers snap to world texels.
-- **casters**: main-pass draws plus off-screen instances within 250 m inside the view frustum swept
-  250 m toward the sun. off-screen casters smaller than 16 px (projected as if on screen) are
-  skipped; off-screen terrain does not cast.
+- **casters**: main-pass draws plus off-screen instances inside the view frustum swept towards the
+  sun (by the shadow layers' 1500 m caster reach) and intersecting the fitted shadow layers'
+  volumes. casters below each layer's native screen-size threshold (`CSMScreenSizeMin` /
+  `ASMScreenSizeMin`) are skipped; off-screen terrain does not cast.
 - **shadow-only renderers**: draw into shadow layers only, in view or not, with normal back-face
   culling (enough for Dijiang's roof; `_ShadowCullMode` is unread).
 - **flags**: `CastsCascades` casts into sharp cascades; `CastsStatic` casts into the far layer

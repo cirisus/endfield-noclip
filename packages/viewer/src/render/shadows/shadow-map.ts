@@ -48,15 +48,11 @@ const FAR_SNAP = 32;
 const FAR_RADIUS = SPLITS[SHADOW_LAYERS - 1] + FAR_SNAP;
 /** how far towards the sun casters are kept beyond the layer's sphere, m */
 const CASTER_REACH = 1500;
-/**
- * how far from the camera instances outside the view still cast into it, and how long their shadows are
- * assumed to be, m. a 100 m tower's shadow is this long with the sun 22° up
- */
-const OFFSCREEN_CASTER_REACH = 250;
 
 /**
  * @param planes the view's camera-relative frustum planes
  * @param towardsSun unit vector towards the sun
+ * @param layers the fitted shadow layers' volumes
  * @param lights world-space spheres (x, y, z, radius) around what casts into local lights' shadow maps
  * @returns the volumes instances outside the view can cast shadows from: into the view along the sun, or into
  *   a local light's map
@@ -64,10 +60,11 @@ const OFFSCREEN_CASTER_REACH = 250;
 export const offscreenCasters = (
 	planes: readonly Plane[],
 	towardsSun: Vec3,
+	layers: ShadowLayerVolumes,
 	lights: Float64Array,
 ): CasterVolume => ({
-	planes: sweepPlanes(planes, [-towardsSun[0], -towardsSun[1], -towardsSun[2]], OFFSCREEN_CASTER_REACH),
-	distance: OFFSCREEN_CASTER_REACH,
+	planes: sweepPlanes(planes, [-towardsSun[0], -towardsSun[1], -towardsSun[2]], layers.reach),
+	layers,
 	lights,
 });
 

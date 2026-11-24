@@ -118,8 +118,6 @@ export interface MeshSelectorInit {
 
 /** priority multiplier for shadow casters outside the view */
 const CASTER_PRIORITY = 0.1;
-/** shadow casters outside the view smaller than this are culled, px (as if on screen) */
-const CASTER_MIN_PIXELS = 16;
 /**
  * how far a group's LOD bands are widened when picking the LODs its rows can reach, as a factor of the
  * squared metric: the GPU measures rows in f32, so a row at a band's edge may land on either side
@@ -258,7 +256,6 @@ export class MeshSelector {
 	#casterPlanes = new Float64Array(4 * 5);
 	/** floats of {@link #casterPlanes} in use this frame, 0 without casters */
 	#casterFloats = 0;
-	#casterDistance = 0;
 	/** this frame's light caster spheres (`CasterVolume.lights`), camera-relative */
 	#lightCasters = new Float64Array(0);
 	#pending: ChainSlot[] = [];
@@ -362,7 +359,6 @@ export class MeshSelector {
 			for (let p = 0; p < casterFloats; p++) {
 				casterPlanes[p] = casters.planes[p >> 2][p & 3];
 			}
-			this.#casterDistance = casters.distance;
 		}
 		this.#casterFloats = casterFloats;
 		// the lights' caster spheres, relative to the eye like the rows
@@ -382,9 +378,7 @@ export class MeshSelector {
 			planeFloats,
 			casterPlanes,
 			casterFloats,
-			casterDistance: this.#casterDistance,
 			lightCasters,
-			casterMinPixels: CASTER_MIN_PIXELS,
 			pixelFactor,
 			viewportHeight,
 			minPixels,
@@ -433,13 +427,30 @@ export class MeshSelector {
 				const inView = sphereInPlanes(planes, planeFloats, gx, gy, gz, radius);
 				if (
 					!inView &&
-					(rowPixels < CASTER_MIN_PIXELS ||
-						!(
-							(casterFloats > 0 && sphereInPlanes(casterPlanes, casterFloats, gx, gy, gz, radius)) ||
-							sphereTouchesSpheres(lightCasters, gx, gy, gz, radius)
-						))
+					!(
+						(casterFloats > 0 && sphereInPlanes(casterPlanes, casterFloats, gx, gy, gz, radius)) ||
+						sphereTouchesSpheres(lightCasters, gx, gy, gz, radius)
+					)
 				) {
 					continue;
+				}
+				const layer =
+					view.shadowLayers === null
+						? SHADOW_LAYERS
+						: firstShadowLayer(view.shadowLayers, gx, gy, gz, radius);
+				if (!inView) {
+					if (layer === SHADOW_LAYERS) {
+						continue;
+					}
+					// upper bound on any row's squared relative size: 2 · rowRadius · pixelFactor / (nearest · height)
+					const maxRelative = (2 * rowPixels) / viewportHeight;
+					if (
+						radius !== Infinity &&
+						maxRelative * maxRelative <=
+							(layer === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3])
+					) {
+						continue;
+					}
 				}
 				// every row of a group wholly in view is in view too
 				const inside = inView && sphereInsidePlanes(planes, planeFloats, gx, gy, gz, radius);
@@ -447,14 +458,6 @@ export class MeshSelector {
 				const rowEnd = Math.min(end, (g + 1) * GROUP_ROWS);
 				// a group holding moving rows has no bounds to pick its LODs by
 				if (view.gpuCulling && radius !== Infinity) {
-					const layer =
-						view.shadowLayers === null
-							? SHADOW_LAYERS
-							: firstShadowLayer(view.shadowLayers, gx, gy, gz, radius);
-					// an out-of-view group outside every shadow layer can neither draw nor cast
-					if (!inView && layer === SHADOW_LAYERS) {
-						continue;
-					}
 					const group = this.#group;
 					group.first = rowFirst;
 					group.end = rowEnd;
@@ -926,7 +929,6 @@ export class MeshSelector {
 		const planeFloats = this.#planeFloats;
 		const casterPlanes = this.#casterPlanes;
 		const casterFloats = this.#casterFloats;
-		const casterDistance = this.#casterDistance;
 		const lightCasters = this.#lightCasters;
 		const pending = this.#pending;
 		const f32 = instances.rowsF32;
@@ -960,11 +962,8 @@ export class MeshSelector {
 				let castOnly = false;
 				if (!inside && !sphereInPlanes(planes, planeFloats, x, y, z, radius)) {
 					if (
-						(radius * pixelFactor) / distance < CASTER_MIN_PIXELS ||
 						!(
-							(casterFloats > 0 &&
-								distance - radius <= casterDistance &&
-								sphereInPlanes(casterPlanes, casterFloats, x, y, z, radius)) ||
+							(casterFloats > 0 && sphereInPlanes(casterPlanes, casterFloats, x, y, z, radius)) ||
 							sphereTouchesSpheres(lightCasters, x, y, z, radius)
 						)
 					) {
@@ -972,9 +971,20 @@ export class MeshSelector {
 					}
 					castOnly = true;
 				}
+				const group = shadowLayers === null ? SHADOW_LAYERS : firstShadowLayer(shadowLayers, x, y, z, radius);
+				if (castOnly && group === SHADOW_LAYERS) {
+					continue;
+				}
 				// Unity's LODGroup metric: the object's size relative to the screen height
 				const relative = (2 * cull[i * CULL_FLOATS + 1] * pixelFactor) / (distance * viewportHeight);
-				let squared = relative * relative;
+				const relativeSquared = relative * relative;
+				if (
+					castOnly &&
+					relativeSquared <= (group === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3])
+				) {
+					continue;
+				}
+				let squared = relativeSquared;
 				if (origin !== null) {
 					// rows hold the transform's top three rows, row-major, translation relative to the block
 					const [px, py, pz] = origin;
@@ -1018,7 +1028,6 @@ export class MeshSelector {
 				}
 				const fade = this.#fade;
 				const fadeBits = fade << 24;
-				const group = shadowLayers === null ? SHADOW_LAYERS : firstShadowLayer(shadowLayers, x, y, z, radius);
 				const mirrored = mirroredRow[i] === 1 ? 1 : 0;
 				for (let p = 0; p < pendingCount; p++) {
 					const slot = pending[p];

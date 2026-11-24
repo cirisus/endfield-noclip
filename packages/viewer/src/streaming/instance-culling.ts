@@ -1,3 +1,5 @@
+import type { Vec3 } from '@endfield-noclip/package-format/values';
+
 import { SHADOW_LAYERS, type ShadowLayerVolumes } from '../render/shadows/shadow-map.ts';
 
 /**
@@ -158,4 +160,48 @@ export const firstShadowLayer = (
 		}
 	}
 	return SHADOW_LAYERS;
+};
+
+/**
+ * @param volumes the shadow layers' volumes
+ * @param min box minimum, world
+ * @param max box maximum, world
+ * @param eye camera position, world
+ * @returns whether the box intersects any shadow layer's caster volume
+ */
+export const boxTouchesShadowLayers = (
+	volumes: ShadowLayerVolumes,
+	min: readonly number[],
+	max: readonly number[],
+	eye: Vec3,
+): boolean => {
+	const cx = (min[0] + max[0]) * 0.5 - eye[0];
+	const cy = (min[1] + max[1]) * 0.5 - eye[1];
+	const cz = (min[2] + max[2]) * 0.5 - eye[2];
+	const hx = (max[0] - min[0]) * 0.5;
+	const hy = (max[1] - min[1]) * 0.5;
+	const hz = (max[2] - min[2]) * 0.5;
+	const axes = volumes.axes;
+	const u = cx * axes[0] + cy * axes[1] + cz * axes[2];
+	const v = cx * axes[3] + cy * axes[4] + cz * axes[5];
+	const w = cx * axes[6] + cy * axes[7] + cz * axes[8];
+	const eu = hx * Math.abs(axes[0]) + hy * Math.abs(axes[1]) + hz * Math.abs(axes[2]);
+	const ev = hx * Math.abs(axes[3]) + hy * Math.abs(axes[4]) + hz * Math.abs(axes[5]);
+	const ew = hx * Math.abs(axes[6]) + hy * Math.abs(axes[7]) + hz * Math.abs(axes[8]);
+	const layers = volumes.layers;
+	// test coarsest first: the far layer encloses the sharp cascades, so most hits return on the first check
+	for (let layer = SHADOW_LAYERS - 1; layer >= 0; layer--) {
+		const at = layer * 4;
+		const radius = layers[at + 3];
+		const dw = w - layers[at + 2];
+		if (
+			Math.abs(u - layers[at]) <= radius + eu &&
+			Math.abs(v - layers[at + 1]) <= radius + ev &&
+			dw <= radius + ew &&
+			dw >= -radius - ew - volumes.reach
+		) {
+			return true;
+		}
+	}
+	return false;
 };

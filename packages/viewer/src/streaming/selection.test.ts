@@ -3,6 +3,7 @@ import { it } from 'node:test';
 
 import { ContentKind, type ContentRef } from '@endfield-noclip/package-format/tree';
 
+import { type ShadowLayerVolumes, offscreenCasters } from '../render/shadows/shadow-map.ts';
 import { Camera } from '../scene/camera.ts';
 import type { TileNode, TileTree } from '../scene/tile-tree.ts';
 
@@ -532,4 +533,85 @@ it('cross-fades HLOD and detail with complementary fade codes, reverses mid-fade
 
 	// large camera jump snaps active fades immediately
 	assert.deepEqual(step(300, 0.05), { fading: false, rows: [[1, 0]] });
+});
+
+it('selects off-screen shadow casters past 250 m when they reach the view along the sun and touch a shadow layer', () => {
+	// looking +x; sun is +z and up (light travels -z and down). a tall tower 320 m to the left (+z) shades
+	// the ground in front of the camera, while one 1500 m away across the light is outside every shadow layer
+	const makeNode = (
+		index: number,
+		blob: number,
+		min: [number, number, number],
+		max: [number, number, number],
+	): TileNode => ({
+		index,
+		level: 0,
+		x: 0,
+		z: 0,
+		minX: min[0],
+		minZ: min[2],
+		size: 64,
+		bounds: { min, max },
+		geometricError: 4,
+		quadrants: [null, null, null, null],
+		terrain: null,
+		surface: null,
+		terrainSplat: null,
+		detail: [],
+		hlod: [{ kind: ContentKind.Hlod, tier: 0, group: 0, blob, first: 0, count: 1, reach: null }],
+		conditional: [],
+		cellId: null,
+	});
+	const tower = makeNode(0, 1, [-20, 0, 290], [40, 200, 350]);
+	const tooFarAcross = makeNode(1, 2, [1000, 0, 1200], [1060, 200, 1260]);
+	const downwind = makeNode(2, 3, [-20, 0, -350], [40, 200, -290]);
+	const tree: TileTree = {
+		nodes: [tower, tooFarAcross, downwind],
+		roots: [tower, tooFarAcross, downwind],
+		byId: new Map(),
+		terrainLeafLevel: -1,
+		terrainRootLevel: Infinity,
+		reached: [],
+	};
+	const items = new Map([1, 2, 3].map((blob) => [blob, { blob } as ContentItem]));
+	const selector = new Selector(
+		tree,
+		{
+			want: (blob) => items.get(blob) ?? null,
+			get: (blob) => items.get(blob),
+			markUsed: () => true,
+			isReady: () => true,
+		},
+		[],
+		64,
+	);
+	selector.setGroupsShown([true]);
+	const camera = new Camera();
+	camera.position = [0, 10, 0];
+	camera.yaw = Math.PI / 2;
+	const planes = camera.frustumPlanes(16 / 9, []);
+	const towardsSun: [number, number, number] = [0, Math.SQRT1_2, Math.SQRT1_2];
+	// light frame: x = +x, y = (0, 1/√2, -1/√2), z = -towardsSun = (0, -1/√2, -1/√2)
+	const layers: ShadowLayerVolumes = {
+		axes: new Float64Array([1, 0, 0, 0, Math.SQRT1_2, -Math.SQRT1_2, 0, -Math.SQRT1_2, -Math.SQRT1_2]),
+		layers: new Float64Array([0, 0, 0, 12, 0, 0, 0, 30, 0, 0, 0, 80, 0, 0, 0, 832]),
+		reach: 1500,
+	};
+	const casters = offscreenCasters(planes, towardsSun, layers, new Float64Array(0));
+	const options: SelectionOptions = {
+		terrain: false,
+		terrainSurface: false,
+		terrainSplat: false,
+		instances: true,
+		detail: false,
+		global: false,
+		detailDistance: 160,
+		terrainPixels: 3,
+		hlodTiers: [true, true, true],
+	};
+	const sel = selector.run({ camera, planes, pixelFactor: 1000, casters, dt: 0 }, options, null);
+	assert.deepEqual(
+		sel.instances.map(({ item }) => item.blob),
+		[1],
+	);
 });

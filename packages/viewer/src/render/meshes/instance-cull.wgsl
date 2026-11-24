@@ -19,15 +19,11 @@ struct View {
 	pixel_factor: f32,
 	viewport_height: f32,
 	min_pixels: f32,
-	caster_min_pixels: f32,
-	caster_distance: f32,
 	shadow_reach: f32,
 	shadows: u32,
 	slots_at: u32,
 	buckets_at: u32,
 	light_caster_count: u32,
-	pad1: u32,
-	pad2: u32,
 	// last frame's camera-relative view-projection, whose depth the pyramid holds
 	previous: mat4x4f,
 	// this frame's eye minus last frame's
@@ -179,14 +175,14 @@ fn test_row(row: u32, flags: u32) -> Tested {
 	}
 	out.in_view = (flags & ITEM_INSIDE) != 0u || in_planes(p, radius);
 	if (!out.in_view) {
-		if (pixels < view.caster_min_pixels) {
-			return out;
-		}
-		let sun_caster = view.caster_plane_count != 0u && distance - radius <= view.caster_distance &&
-			in_caster_planes(p, radius);
+		let sun_caster = view.caster_plane_count != 0u && in_caster_planes(p, radius);
 		if (!sun_caster && !in_light_casters(p, radius)) {
 			return out;
 		}
+	}
+	out.layer = first_layer(p, radius);
+	if (!out.in_view && out.layer >= SHADOW_LAYERS) {
+		return out;
 	}
 	// Unity's LODGroup metric: the object's size relative to the screen height
 	let size = max(extent.x, max(extent.y, extent.z));
@@ -194,7 +190,6 @@ fn test_row(row: u32, flags: u32) -> Tested {
 	out.squared = relative * relative;
 	let basis = mat3x3f(rows[at].xyz, rows[at + 1u].xyz, rows[at + 2u].xyz);
 	out.mirrored = select(0u, 1u, determinant(basis) < 0.0);
-	out.layer = first_layer(p, radius);
 	// fading rows bypass occlusion culling so newly-appearing detail isn't hidden behind last frame's HLOD
 	out.occluded = out.in_view && view.occlusion != 0u && (flags & 0x00ff0000u) == 0u && occluded(p, radius);
 	out.drawn = true;

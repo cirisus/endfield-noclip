@@ -117,7 +117,12 @@ export class Traversal {
 			pixelFactor: camera.pixelFactor(targets.outputHeight),
 			// with the lights whose shadow tiles wait for their casters, which this selection then covers
 			casters: shadows
-				? offscreenCasters(planes, environment.sunDirection, renderer.lights.shadows.casterSpheres())
+				? offscreenCasters(
+						planes,
+						environment.sunDirection,
+						renderer.shadows.volumes,
+						renderer.lights.shadows.casterSpheres(),
+					)
 				: null,
 			dt: input.dt,
 		};

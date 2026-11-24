@@ -73,7 +73,7 @@ const LIGHT_CASTERS_AT = 68;
  * floats of `View` in instance-cull.wgsl: the view's planes, the caster volume's planes, the shadow axes and
  * layers and the light caster spheres (vec4 each), then {@link ViewWord}
  */
-export const VIEW_FLOATS = 116;
+export const VIEW_FLOATS = 112;
 
 /** words of `View` past its vec4 arrays */
 export const ViewWord = {
@@ -84,17 +84,15 @@ export const ViewWord = {
 	pixelFactor: 104,
 	viewportHeight: 105,
 	minPixels: 106,
-	casterMinPixels: 107,
-	casterDistance: 108,
-	shadowReach: 109,
+	shadowReach: 107,
 	/** 1 when shadow layers group the casters */
-	shadows: 110,
+	shadows: 108,
 	/** where the slot region starts in the work buffer, u32 */
-	slotsAt: 111,
+	slotsAt: 109,
 	/** where the bucket region starts, u32 */
-	bucketsAt: 112,
+	bucketsAt: 110,
 	/** how many light caster spheres are set */
-	lightCasterCount: 113,
+	lightCasterCount: 111,
 } as const;
 
 /** what a GPU-culled bucket gathers over a frame */
@@ -212,10 +210,8 @@ export const writeCullView = (
 		planeFloats: number;
 		casterPlanes: Float64Array;
 		casterFloats: number;
-		casterDistance: number;
 		/** camera-relative spheres (x, y, z, radius), at most {@link MAX_LIGHT_CASTERS} */
 		lightCasters: Float64Array;
-		casterMinPixels: number;
 		pixelFactor: number;
 		viewportHeight: number;
 		minPixels: number;
@@ -252,7 +248,5 @@ export const writeCullView = (
 	out[ViewWord.pixelFactor] = view.pixelFactor;
 	out[ViewWord.viewportHeight] = view.viewportHeight;
 	out[ViewWord.minPixels] = view.minPixels;
-	out[ViewWord.casterMinPixels] = view.casterMinPixels;
-	out[ViewWord.casterDistance] = view.casterDistance;
 	words[ViewWord.shadows] = layers === null ? 0 : 1;
 };

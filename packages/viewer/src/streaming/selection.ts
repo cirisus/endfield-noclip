@@ -1,11 +1,12 @@
 import { TERRAIN_PAGE_SAMPLES } from '@endfield-noclip/package-format/terrain';
 import type { ContentRef } from '@endfield-noclip/package-format/tree';
 
+import type { ShadowLayerVolumes } from '../render/shadows/shadow-map.ts';
 import { type Camera, type Plane, boxInFrustum, distanceToBox } from '../scene/camera.ts';
 import { type TileNode, type TileTree, isLeaf } from '../scene/tile-tree.ts';
 
 import type { ContentItem } from './content-item.ts';
-import { boxTouchesSpheres } from './instance-culling.ts';
+import { boxTouchesShadowLayers, boxTouchesSpheres } from './instance-culling.ts';
 import type { StreamManager } from './stream-manager.ts';
 
 // #region types
@@ -79,8 +80,8 @@ export interface Selection {
 export interface CasterVolume {
 	/** the view's planes swept towards the sun (`sweepPlanes` in camera.ts) */
 	planes: Plane[];
-	/** how far from the camera, m */
-	distance: number;
+	/** the fitted shadow layers' volumes that bound off-screen sun casters */
+	layers: ShadowLayerVolumes;
 	/**
 	 * world-space spheres (x, y, z, radius) whose instances cast into a local light's shadow map, wherever the
 	 * view looks
@@ -393,7 +394,7 @@ export class Selector {
 			) {
 				return;
 			}
-			const inView = this.#inView(node, view, distance);
+			const inView = this.#inView(node, view);
 			if (inView === null) {
 				return;
 			}
@@ -404,7 +405,7 @@ export class Selector {
 			}
 			return;
 		}
-		const inView = this.#inView(node, view, distance);
+		const inView = this.#inView(node, view);
 		if (inView === null) {
 			return;
 		}
@@ -514,7 +515,7 @@ export class Selector {
 				if (node !== lastNode) {
 					lastNode = node;
 					lastDistance = Math.max(distanceToBox(node.bounds.min, node.bounds.max, eye), 1);
-					lastInView = this.#inView(node, view, lastDistance);
+					lastInView = this.#inView(node, view);
 				}
 				if (lastInView === null) {
 					continue;
@@ -530,11 +531,8 @@ export class Selector {
 		}
 	}
 
-	/**
-	 * @param distance from the camera to the node's bounds
-	 * @returns `true` for a node in view, `false` for one only in the caster volume, `null` for neither
-	 */
-	#inView(node: TileNode, view: SelectionView, distance: number): boolean | null {
+	/** @returns `true` for a node in view, `false` for one only in the caster volume, `null` for neither */
+	#inView(node: TileNode, view: SelectionView): boolean | null {
 		const { min, max } = node.bounds;
 		const eye = view.camera.position;
 		if (boxInFrustum(view.planes, min, max, eye)) {
@@ -544,7 +542,10 @@ export class Selector {
 		if (casters === null) {
 			return null;
 		}
-		if (distance <= casters.distance && boxInFrustum(casters.planes, min, max, eye)) {
+		if (
+			boxInFrustum(casters.planes, min, max, eye) &&
+			boxTouchesShadowLayers(casters.layers, min, max, eye)
+		) {
 			return false;
 		}
 		return boxTouchesSpheres(casters.lights, min, max) ? false : null;
@@ -622,11 +623,11 @@ export class Selector {
 	/** @returns whether the node's area is fully covered by what was emitted (or needs nothing) */
 	#instances(node: TileNode, view: SelectionView, options: SelectionOptions, parentFade: number): boolean {
 		this.selection.visited++;
-		const distance = Math.max(distanceToBox(node.bounds.min, node.bounds.max, view.camera.position), 1);
-		const inView = this.#inView(node, view, distance);
+		const inView = this.#inView(node, view);
 		if (inView === null) {
 			return true;
 		}
+		const distance = Math.max(distanceToBox(node.bounds.min, node.bounds.max, view.camera.position), 1);
 		// content outside the view only casts shadows into it, so its streaming never holds back what's in view
 		return this.#refineInstances(node, view, options, { distance, inView, parentFade }) || !inView;
 	}
