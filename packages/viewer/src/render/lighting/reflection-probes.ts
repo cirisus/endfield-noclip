@@ -9,7 +9,11 @@ import { type TextureStream, streamWholeTexture } from '../../streaming/texture-
 import type { TextureStore } from '../textures/texture-store.ts';
 
 /** local probes the shading evaluates per frame, matching the game's `_ReflectionProbeGlobalDatas[32]` */
-const MAX_REFLECTION_PROBES = 32;
+/**
+ * maximum number of active local reflection probes evaluated per frame (matches `MAX_REFLECTION_PROBES` in
+ * WGSL)
+ */
+export const MAX_REFLECTION_PROBES = 32;
 /** cubemap face edge, texels (every shipped local reflection probe is 128² BC6H with 8 mips) */
 const PROBE_SIZE = 128;
 const PROBE_MIPS = 8;
@@ -146,30 +150,18 @@ export class ReflectionProbes {
 			const shown = this.#groupsShown;
 			this.#shown = this.#entries.filter((probe) => shown[probe.group] ?? true);
 		}
-		const eye = camera.position;
-		const visible: { probe: ReflectionProbeEntry; dist2: number }[] = [];
-		for (const probe of this.#shown) {
-			if (!aabbInFrustum(probe.center, probe.boundsExtents, eye, planes)) {
-				continue;
-			}
-			visible.push({ probe, dist2: aabbDistance2(probe.center, probe.boundsExtents, eye) });
-		}
-		// highest importance first; break ties by nearest to camera (probes containing the camera have dist2 = 0)
-		visible.sort((a, b) => b.probe.importance - a.probe.importance || a.dist2 - b.dist2);
-		if (visible.length > MAX_REFLECTION_PROBES) {
-			visible.length = MAX_REFLECTION_PROBES;
-		}
+		const visible = selectVisibleProbes(this.#shown, camera.position, planes);
 
 		this.#tick++;
 		const tick = this.#tick;
 		const wantedTextures = new Set<number>();
-		for (const { probe } of visible) {
+		for (const probe of visible) {
 			wantedTextures.add(probe.texture);
 		}
 
 		let encoder: GPUCommandEncoder | null = null;
 		let count = 0;
-		for (const { probe } of visible) {
+		for (const probe of visible) {
 			const streamed = streamWholeTexture({
 				stream,
 				textures,
@@ -302,6 +294,38 @@ const packProbe = (out: Float32Array, index: number, probe: ReflectionProbeEntry
 	out[at + 25] = probe.shape === ReflectionProbeShape.Box ? 1 : 0;
 	out[at + 26] = 0;
 	out[at + 27] = 1;
+};
+
+/**
+ * culls `probes` to the camera frustum, keeps the nearest {@link MAX_REFLECTION_PROBES} (breaking ties by
+ * higher importance so probes containing the camera win), and returns them ordered by importance descending
+ * then distance ascending for front-to-back blending.
+ *
+ * @param probes shown reflection probes
+ * @param eye camera world position
+ * @param planes camera-relative frustum planes
+ * @returns active probes in shading order (at most {@link MAX_REFLECTION_PROBES})
+ */
+export const selectVisibleProbes = (
+	probes: readonly ReflectionProbeEntry[],
+	eye: Vec3,
+	planes: readonly Plane[],
+): ReflectionProbeEntry[] => {
+	const visible: { probe: ReflectionProbeEntry; dist2: number }[] = [];
+	for (const probe of probes) {
+		if (!aabbInFrustum(probe.center, probe.boundsExtents, eye, planes)) {
+			continue;
+		}
+		visible.push({ probe, dist2: aabbDistance2(probe.center, probe.boundsExtents, eye) });
+	}
+	// pick the nearest probes first so distant high-importance probes cannot evict probes around the camera
+	visible.sort((a, b) => a.dist2 - b.dist2 || b.probe.importance - a.probe.importance);
+	if (visible.length > MAX_REFLECTION_PROBES) {
+		visible.length = MAX_REFLECTION_PROBES;
+	}
+	// order the kept probes by importance descending for front-to-back shading
+	visible.sort((a, b) => b.probe.importance - a.probe.importance || a.dist2 - b.dist2);
+	return visible.map(({ probe }) => probe);
 };
 
 const aabbInFrustum = (center: Vec3, extents: Vec3, eye: Vec3, planes: readonly Plane[]): boolean => {

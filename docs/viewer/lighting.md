@@ -77,7 +77,7 @@ sets it).
   occlusion uses material occlusion only (no GTAO).
 - **specular**: Karis analytic split-sum BRDF scaled by `light.indirectSpecularFactor`.
   `sample_reflection` in [`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl) (shared
-  by surfaces and water) blends up to 32 frustum-visible local reflection probes
+  by surfaces and water) blends the nearest 32 frustum-visible local reflection probes
   ([`reflection-probes.ts`](../../packages/viewer/src/render/lighting/reflection-probes.ts))
   front-to-back in importance-then-distance order with box/sphere falloff, optional box projection,
   and per-probe luminance L1 SH normalisation, falling back to the sky cubemap (or the ambient probe
