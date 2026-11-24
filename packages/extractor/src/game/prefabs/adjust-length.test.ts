@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { lengthScale, lengthTextureTransform, readAdjustLength } from './adjust-length.ts';
+import { lengthAxisPoint, lengthScale, lengthTextureTransform, readAdjustLength } from './adjust-length.ts';
 
 // the rope of int_rope_port_topright_postmodel: 0.5 m along y as authored, its colour and normal maps tiled
 // along v
@@ -49,6 +49,20 @@ test('a tiling offset moves by the stretch; reverted tiling divides', () => {
 	);
 });
 
+test('reads moved Transforms and particle lifetime targets', () => {
+	const adjust = readAdjustLength({
+		...rope,
+		useMoveTransformPositions: 1,
+		targetMoveTransforms: [{ m_FileID: 0, m_PathID: 3n }],
+		useParticleSystemLifeTimes: 1,
+		targetLifeTimeParticleSystems: [{ target: { m_FileID: 0, m_PathID: 4n }, offsetLength: 1.5 }],
+	});
+	assert.deepEqual(adjust.unread, []);
+	assert.equal(adjust.moveTargets.length, 1);
+	assert.deepEqual(adjust.lifetimeTargets, [{ target: { fileId: 0, pathId: 4n }, offsetLength: 1.5 }]);
+	assert.deepEqual(lengthAxisPoint(adjust, 9.5), [0, 9.5, 0]);
+});
+
 test('parts the reader doesn’t apply are named', () => {
-	assert.deepEqual(readAdjustLength({ ...rope, useMoveTransformPositions: 1 }).unread, ['moved Transforms']);
+	assert.deepEqual(readAdjustLength({ ...rope, useMultiRenderersEnable: 1 }).unread, ['renderer bounds']);
 });

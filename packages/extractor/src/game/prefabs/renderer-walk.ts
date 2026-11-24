@@ -27,6 +27,7 @@ import {
 import {
 	isAdjustLengthType,
 	isPositionFollowerType,
+	lengthAxisPoint,
 	lengthScale,
 	readAdjustLength,
 } from './adjust-length.ts';
@@ -162,6 +163,10 @@ export interface RendererWalk {
 	settingOrigins: Map<string, [number, number, number]>;
 	/** by Transform, the local scale a length the pose sets gives it */
 	lengthScales: Map<string, [number, number, number]>;
+	/** by Transform, the `VFXAdjustLength` Transform and local axis point it moves to */
+	lengthMoves: Map<string, { origin: string; point: [number, number, number] }>;
+	/** by ParticleSystem component key, `offsetLength + length` for `VFXAdjustLength` lifetime scaling */
+	lengthLifetimes: Map<string, number>;
 	/** by renderer, the textures whose tiling follows a length the pose sets */
 	lengthTilings: Map<string, ScaledTiling[]>;
 	/** by renderer, the emission colours an enabled `AnimationProperties_Emissive` writes to it */
@@ -206,6 +211,8 @@ export const createRendererWalk = (
 	proxySwitched: new Map(),
 	settingOrigins: new Map(),
 	lengthScales: new Map(),
+	lengthMoves: new Map(),
+	lengthLifetimes: new Map(),
 	lengthTilings: new Map(),
 	emissiveOverrides: new Map(),
 	followers: new Map(),
@@ -384,6 +391,19 @@ const readAdjustLengthComponent: ComponentReader = {
 				throw new FormatError(`VFXAdjustLength on ${node.name} scales a Transform drawn before it`);
 			}
 			walk.lengthScales.set(objectKey(target), lengthScale(adjust, length));
+		}
+		const axisPoint = lengthAxisPoint(adjust, length);
+		for (const pointer of adjust.moveTargets) {
+			const target = await walk.resolver.resolve(component.ref, pointer);
+			if (target !== null) {
+				walk.lengthMoves.set(objectKey(target), { origin: node.transformKey, point: axisPoint });
+			}
+		}
+		for (const lifetime of adjust.lifetimeTargets) {
+			const target = await walk.resolver.resolve(component.ref, lifetime.target);
+			if (target !== null) {
+				walk.lengthLifetimes.set(objectKey(target), lifetime.offsetLength + length);
+			}
 		}
 		for (const tiling of adjust.tilings) {
 			const renderer = await walk.resolver.resolve(component.ref, tiling.renderer);
@@ -580,7 +600,11 @@ const localTransform = (walk: RendererWalk, node: PrefabNode, paths: ClipPaths):
 	const base: LocalTransform = node.isRoot
 		? { position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] }
 		: node.saved;
-	const scaled = { ...base, scale: walk.lengthScales.get(node.transformKey) ?? base.scale };
+	const scaled = {
+		...base,
+		rotation: (!node.isRoot && walk.pose?.rotations?.get(node.name)) || base.rotation,
+		scale: walk.lengthScales.get(node.transformKey) ?? base.scale,
+	};
 	walk.nodes.push({
 		key: node.transformKey,
 		parent: node.parent?.transformKey ?? null,

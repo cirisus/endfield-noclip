@@ -36,6 +36,14 @@ export interface LengthTiling {
 	revert: boolean;
 }
 
+/** a particle system whose `startLifetime.constantMax` scales with the length */
+export interface LengthParticleLifetime {
+	/** the ParticleSystem component */
+	target: PPtr;
+	/** added to the set length before dividing by `startSpeed.constantMax` */
+	offsetLength: number;
+}
+
 /** a `VFXAdjustLength`, with the parts that change when its length is set */
 export interface AdjustLength {
 	/** `VFXAdjustLength.AxisDir`: 0 x, 1 y, 2 z */
@@ -44,6 +52,13 @@ export interface AdjustLength {
 	preset: number;
 	/** Transforms whose local scale becomes the ratio along {@link axis} */
 	scaleTargets: PPtr[];
+	/** Transforms moved to `length` along {@link axis} in the component's local frame */
+	moveTargets: PPtr[];
+	/**
+	 * ParticleSystems whose `startLifetime.constantMax` becomes `(offsetLength + length) /
+	 * startSpeed.constantMax`
+	 */
+	lifetimeTargets: LengthParticleLifetime[];
 	tilings: LengthTiling[];
 	/** parts set that this reader doesn't apply */
 	unread: string[];
@@ -79,17 +94,20 @@ export const readAdjustLength = (data: TypeTreeObject): AdjustLength => {
 		throw new FormatError(`VFXAdjustLength preset length ${preset}`);
 	}
 	const unread: string[] = [];
-	for (const [flag, name] of [
-		['useMultiRenderersEnable', 'renderer bounds'],
-		['useParticleSystemLifeTimes', 'particle lifetimes'],
-		['useMoveTransformPositions', 'moved Transforms'],
-	] as const) {
-		if (booleanField(data, flag)) {
-			unread.push(name);
-		}
+	if (booleanField(data, 'useMultiRenderersEnable')) {
+		unread.push('renderer bounds');
 	}
 	const scaleTargets = booleanField(data, 'useScaleTransform')
 		? arrayField(data, 'targetScaleTransforms').map((pointer) => asPPtr(pointer))
+		: [];
+	const moveTargets = booleanField(data, 'useMoveTransformPositions')
+		? arrayField(data, 'targetMoveTransforms').map((pointer) => asPPtr(pointer))
+		: [];
+	const lifetimeTargets = booleanField(data, 'useParticleSystemLifeTimes')
+		? objectsField(data, 'targetLifeTimeParticleSystems').map((config): LengthParticleLifetime => ({
+				target: pptrField(config, 'target'),
+				offsetLength: numberField(config, 'offsetLength'),
+			}))
 		: [];
 	const tilings = booleanField(data, 'useTillingOffset')
 		? objectsField(data, 'tillingOffsetConfigs').map((config): LengthTiling => ({
@@ -100,7 +118,21 @@ export const readAdjustLength = (data: TypeTreeObject): AdjustLength => {
 				revert: booleanField(config, 'revertScale'),
 			}))
 		: [];
-	return { axis, preset, scaleTargets, tilings, unread };
+	return { axis, preset, scaleTargets, moveTargets, lifetimeTargets, tilings, unread };
+};
+
+/**
+ * @param adjust the component
+ * @param length the length set
+ * @returns the point `length` along {@link AdjustLength.axis} in the component's local space
+ */
+export const lengthAxisPoint = (
+	adjust: Pick<AdjustLength, 'axis'>,
+	length: number,
+): [number, number, number] => {
+	const point: [number, number, number] = [0, 0, 0];
+	point[adjust.axis] = length;
+	return point;
 };
 
 /**

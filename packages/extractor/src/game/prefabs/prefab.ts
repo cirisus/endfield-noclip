@@ -29,7 +29,7 @@ import type { PrefabBillboard } from './billboard.ts';
 import type { EmissiveColors } from './emissive-override.ts';
 import { playedFloats, posedMaterialValues } from './material-values.ts';
 import { walkPrefab } from './prefab-walk.ts';
-import { moveFollowers, resolveForces, resolveSubEmitters } from './renderer-passes.ts';
+import { moveFollowers, moveLengthTargets, resolveForces, resolveSubEmitters } from './renderer-passes.ts';
 import {
 	ABOVE_ROOT,
 	createRendererWalk,
@@ -175,6 +175,11 @@ export interface PrefabPose {
 	/** lengths the states set on GameObjects' `VFXAdjustLength`, by GameObject name; absent when none */
 	lengths?: ReadonlyMap<string, number>;
 	/**
+	 * local rotation quaternions (xyzw) set on GameObjects by name (e.g. water pipe `RotateRoot`); absent when
+	 * none
+	 */
+	rotations?: ReadonlyMap<string, [number, number, number, number]>;
+	/**
 	 * emissive configs the states leave on GameObjects' `AnimationProperties_Emissive`, by GameObject name;
 	 * absent when none
 	 */
@@ -244,6 +249,7 @@ export const readPrefabRenderers = async (
 	const pose = viewPose ?? (await animatorDefaultPose(resolver, root));
 	const walk = createRendererWalk(resolver, { pose, particleQuad, decalCube, locked, effectLod });
 	await walkPrefab(resolver, root, rendererVisitor(walk), ABOVE_ROOT);
+	moveLengthTargets(walk);
 	moveFollowers(walk);
 	await resolveForces(walk);
 	await resolveSubEmitters(walk);

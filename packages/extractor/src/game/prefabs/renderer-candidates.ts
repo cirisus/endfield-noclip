@@ -267,7 +267,25 @@ const collectParticles: NodeStep = async (walk, node, state) => {
 	if (renderer === undefined || systemComponent === undefined) {
 		return;
 	}
-	const system = { ref: systemComponent.ref, data: await systemComponent.read() };
+	const rawSystemData = await systemComponent.read();
+	const adjustedDistance = walk.lengthLifetimes.get(objectKey(systemComponent.ref));
+	let systemData = rawSystemData;
+	if (adjustedDistance !== undefined) {
+		// VFXAdjustLength._AdjustParticleSystemLifeTimes: startLifetime.constantMax = (offsetLength + length) / startSpeed.constantMax
+		const initial = objectField(rawSystemData, 'InitialModule');
+		const startSpeedMax = numberField(objectField(initial, 'startSpeed'), 'scalar');
+		if (startSpeedMax > 0) {
+			const startLifetime = objectField(initial, 'startLifetime');
+			systemData = {
+				...rawSystemData,
+				InitialModule: {
+					...initial,
+					startLifetime: { ...startLifetime, scalar: adjustedDistance / startSpeedMax },
+				},
+			};
+		}
+	}
+	const system = { ref: systemComponent.ref, data: systemData };
 	// the renderer's second material is its trails' (Unity's `trailMaterial`), not another pass over the
 	// particles' mesh as on a mesh renderer
 	const materials = arrayField(renderer.data, 'm_Materials');
