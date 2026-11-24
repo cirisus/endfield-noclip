@@ -107,7 +107,9 @@ export interface ChunkContent {
 	waterGlobals: WaterGlobalBinding[];
 }
 
-const VOLUME_MONO_COMPONENTS = BigInt(MonoComponentType.HGEnvironmentVolume | MonoComponentType.Volume);
+const VOLUME_MONO_COMPONENTS = BigInt(
+	MonoComponentType.HGEnvironmentVolume | MonoComponentType.Volume | MonoComponentType.ReflectionProbe,
+);
 /** an entity read from a chunk, with its membership */
 export interface IndexedEntity extends ChunkEntity {
 	source: ChunkFile;

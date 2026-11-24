@@ -29,6 +29,7 @@ import type { SceneIndex } from '../scene-index.ts';
 import { SkippedEntities } from '../skipped-entities.ts';
 import { LightCollector } from '../tables/lights.ts';
 import { ParticleTable } from '../tables/particles.ts';
+import { ReflectionProbeCollector } from '../tables/reflection-probes.ts';
 
 // what the entity phase builds up. every content source (static chunks, dynamic structures, interactives,
 // cabins, placed prefabs) writes through this one object: it interns draws, files rows, registers controls and
@@ -109,6 +110,7 @@ export class PackContent {
 	readonly controls = new ControlRegistry();
 	readonly collector: Collector;
 	readonly lights = new LightCollector();
+	readonly reflectionProbes = new ReflectionProbeCollector();
 	/** the report's entity counts */
 	readonly counts: Record<string, number> = {};
 	/** entities that became no instance row, for `debug/skipped-entities.json` */

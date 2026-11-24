@@ -1,6 +1,11 @@
 import type { ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
 import type { RendererDraw, WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
+import { levelTagOf } from '@endfield-noclip/formats/endfield/level-partition';
 import type { MonoObject } from '@endfield-noclip/formats/endfield/mono-objects';
+import {
+	type ChunkReflectionProbe,
+	readReflectionProbe,
+} from '@endfield-noclip/formats/endfield/reflection-probe';
 import type { WaterGlobalBinding, WaterSurface } from '@endfield-noclip/formats/endfield/water';
 import type { Aabb } from '@endfield-noclip/formats/unity/values';
 import type { ChainDraw } from '@endfield-noclip/package-format/instances';
@@ -93,6 +98,7 @@ interface StaticChunksMemo {
 	skipped: SkippedEntityRow[];
 	seen: Uint32Array;
 	lights: { light: ChunkLight; fileIndex: number }[];
+	reflectionProbes: { probe: ChunkReflectionProbe; fileIndex: number }[];
 	chains: CachedChainSpec[];
 	placements: CachedPlacement[];
 	sceneStates: number[];
@@ -167,6 +173,9 @@ const replayStaticChunks = (content: PackContent, memo: StaticChunksMemo): Stati
 	}
 	for (const { light, fileIndex } of memo.lights) {
 		content.lights.add(light, scene.files[fileIndex]);
+	}
+	for (const { probe, fileIndex } of memo.reflectionProbes) {
+		content.reflectionProbes.add(probe, scene.files[fileIndex]);
 	}
 	for (const spec of memo.chains) {
 		const draws = spec.draws.map((entry): ChainDraw => {
@@ -320,6 +329,7 @@ export const collectStaticChunks = async (
 	}
 	const record = memoKey !== null;
 	const recordedLights: { light: ChunkLight; fileIndex: number }[] = [];
+	const recordedProbes: { probe: ChunkReflectionProbe; fileIndex: number }[] = [];
 	const recordedChains: CachedChainSpec[] = [];
 	const recordedPlacements: CachedPlacement[] = [];
 	const internChain = (specs: CachedDrawSpec[], draws: ChainDraw[], placement?: ChainPlacement): number => {
@@ -477,6 +487,15 @@ export const collectStaticChunks = async (
 			}
 			if (read.monoObjects.length > 0) {
 				volumeFiles.push({ file, objects: read.monoObjects });
+				for (const object of read.monoObjects) {
+					const probe = readReflectionProbe(object);
+					if (probe !== undefined && subset.includesPoint(levelTagOf(probe.id), probe.center)) {
+						content.reflectionProbes.add(probe, file);
+						if (record) {
+							recordedProbes.push({ probe, fileIndex });
+						}
+					}
+				}
 			}
 			if (read.waterSurfaces.length > 0 || read.waterGlobals.length > 0) {
 				waterFiles.push({ file, surfaces: read.waterSurfaces, globals: read.waterGlobals });
@@ -686,6 +705,7 @@ export const collectStaticChunks = async (
 			skipped: content.skipped.rows(),
 			seen: Uint32Array.from(seen),
 			lights: recordedLights,
+			reflectionProbes: recordedProbes,
 			chains: recordedChains,
 			placements: recordedPlacements,
 			sceneStates: [...requiredSceneStates],

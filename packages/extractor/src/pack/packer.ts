@@ -14,6 +14,7 @@ import {
 	PACKAGE_VERSION,
 } from '@endfield-noclip/package-format/manifest';
 import type { MaterialTable } from '@endfield-noclip/package-format/materials';
+import { encodeReflectionProbesTable } from '@endfield-noclip/package-format/reflection-probes';
 import { encodeTextureTable } from '@endfield-noclip/package-format/texture-table';
 import { tileAt } from '@endfield-noclip/package-format/tiles';
 import { ContentKind, encodeTree } from '@endfield-noclip/package-format/tree';
@@ -46,6 +47,7 @@ import {
 	planEnvironments,
 } from './tables/environments.ts';
 import { packIrradiance, packIrradianceRegions, sceneStateBakeCondition } from './tables/irradiance.ts';
+import { finishReflectionProbes, planReflectionProbes } from './tables/reflection-probes.ts';
 import { packTerrain } from './tables/terrain.ts';
 import { finishWater, gateWater, indexWaterControls, planWater } from './tables/water.ts';
 import { binaryTable, type CoreMember, jsonTable, writePackage } from './write.ts';
@@ -236,6 +238,15 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		for (const [reason, count] of Object.entries(content.lights.skipped)) {
 			content.count(`lightsSkipped ${reason}`, count);
 		}
+		const reflectionProbes = await planReflectionProbes(content.reflectionProbes, {
+			resolver: await context.resolver(),
+			groupOf: (levelTag, sources) => controls.groupOfSources(levelTag, sources),
+			placeAt: (x, z) => tileAt(scene.grid, scene.grid.shardLevel, x, z),
+		});
+		content.count('reflectionProbes', reflectionProbes.entries.length);
+		for (const [reason, count] of Object.entries(reflectionProbes.skipped)) {
+			content.count(`reflectionProbesSkipped ${reason}`, count);
+		}
 		addSceneStateControls(controls, scene);
 		// every hash has its path by now; the tables are the largest thing the later phases would carry
 		context.world.releasePathTables();
@@ -286,6 +297,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		const extraTextures: PlacedTexture[][] = [
 			environments.textures.map((ref) => ({ ref, place: null })),
 			water.textures,
+			reflectionProbes.textures,
 		];
 		let conversion: AssetConversion | null = null;
 		let assetTables: Pick<AssetConversion, 'geometries' | 'materials' | 'textures' | 'extraTextureIds'>;
@@ -346,11 +358,12 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 		timer.end('states');
 
 		// #region write
-		const [environmentTextureIds, waterTextureIds] = assetTables.extraTextureIds;
+		const [environmentTextureIds, waterTextureIds, reflectionProbeTextureIds] = assetTables.extraTextureIds;
 		const environmentTable = finishEnvironments(environments, environmentTextureIds);
 		indexEnvironmentControls(environmentTable, states.controlIndex);
 		const waterTable = finishWater(water, waterTextureIds);
 		indexWaterControls(waterTable, states.controlIndex);
+		const reflectionProbesTable = finishReflectionProbes(reflectionProbes, reflectionProbeTextureIds);
 		let fireSeed: FireSeedInfo | null = null;
 		if (entities.fireSeed !== null) {
 			const control = states.controlIndex.get(entities.fireSeed.control);
@@ -376,6 +389,10 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			},
 			{ path: CORE_PATHS.water, data: jsonTable(waterTable) },
 			{ path: CORE_PATHS.lights, data: binaryTable(encodeLightsTable(lights)) },
+			{
+				path: CORE_PATHS.reflectionProbes,
+				data: binaryTable(encodeReflectionProbesTable(reflectionProbesTable)),
+			},
 			{ path: CORE_PATHS.luts, data: binaryTable(encodeLutsTable(luts)) },
 			{ path: CORE_PATHS.particles, data: jsonTable(particlesTable) },
 			{ path: CORE_PATHS.environment, data: jsonTable(environmentTable) },
