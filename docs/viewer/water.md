@@ -1,8 +1,6 @@
 # water
 
-viewer implementation of [game-data/water.md](../game-data/water.md) in
-[`water-renderer.ts`](../../packages/viewer/src/render/water/water-renderer.ts) and
-[`water.wgsl`](../../packages/viewer/src/render/water/water.wgsl); packed table in
+viewer implementation of [game-data/water.md](../game-data/water.md); packed table in
 [package-format.md](../package-format.md#water).
 
 ## placements
@@ -35,21 +33,19 @@ the outer 10 % of the window (matching the game). the rain map is packed but unb
 computes the [game's shading](../game-data/water.md#shading) per fragment in one pass (instead of a
 water G-buffer + fullscreen light pass):
 
-- **depth prepass**: before composite, `fs_water_depth` writes the nearest visible water surface's
-  depth into `SceneTextures.waterDepth` (dropping fragments behind opaque scene depth). shading
-  tests against `waterDepth` so only the nearest surface shades (e.g. Wuling's stream slopes stay
-  hidden under its river plane).
+- **depth prepass**: before composite, writes the nearest visible water surface's depth (dropping
+  fragments behind opaque scene depth). shading tests against water depth so only the nearest
+  surface shades (e.g. Wuling's stream slopes stay hidden under its river plane).
 - **shading pass**: runs after composite over a copy of the HDR scene, in the `lit` debug view only,
   before the [transparent pass](frame.md). transparent effects test opaque scene depth without
   water, matching the game's camera depth ([WaterDecal](../game-data/water.md#waterdecal); unchecked
   against an in-game shot).
 - **lighting and reflections**: binds the main pass's frame group (sun shadows, irradiance volume,
   sky reflection scaled by `envLightSpecularIntensity` alone, matching the game). because water
-  draws after composite, it marches SSR separately using the same march
-  ([`ssr-trace.wgsl`](../../packages/viewer/src/render/water/ssr-trace.wgsl)) and samples last
-  frame's resolved HDR scene (reprojected through the previous camera, falling back to the opaque
-  copy on the first frame or off-screen hits) so reflections include transparent effects and
-  particles such as waterfall mist and sheets.
+  draws after composite, it marches SSR separately and samples last frame's resolved HDR scene
+  (reprojected through the previous camera, falling back to the opaque copy on the first frame or
+  off-screen hits) so reflections include transparent effects and particles such as waterfall mist
+  and sheets.
 
 divergences from the game:
 
@@ -65,18 +61,15 @@ divergences from the game:
 
 ## water volumes
 
-[`water-levels.ts`](../../packages/viewer/src/scene-states/water-levels.ts) tracks each
-[water volume](../game-data/water.md#water-volumes)'s fill:
+tracks each [water volume](../game-data/water.md#water-volumes)'s fill:
 
 - surfaces are packed at authored fill; the renderer offsets transforms and bounds by the fill
   delta. floating instance rows (listed in each block's `floaters` section) shift by the same delta
   in both CPU culling copies and GPU buffers, tracked from block upload to release ("floating parts"
   count = loaded rows).
-- the "Water levels" panel
-  ([`water-levels.tsx`](../../packages/viewer/src/ui/scene-controls/water-levels.tsx)) lists
-  script-moved volumes and [pumped pools](../game-data/water.md#depletable-pools) (current level
-  first), each with a `waterLevel` control, surface height, and "Go" camera jump (`waterHeight`,
-  `surfaceView`).
+- the "Water levels" panel lists script-moved volumes and
+  [pumped pools](../game-data/water.md#depletable-pools) (current level first), each with a
+  `waterLevel` control, surface height, and "Go" camera jump.
 - fill moves linearly at script speed (or volume fill speed; Suiming stages take 2–3 minutes);
   "Movement" speeds up or jumps. follower volumes track their parent's surface within their own
   depth. package defaults and "Reset" snap immediately to default fills (quest-drained pools start
@@ -85,12 +78,10 @@ divergences from the game:
 divergences from the game:
 
 - volumes without a config use their water type's
-  [surface prefab](../game-data/water.md#water-volumes) config
-  ([`water-volume-surfaces.ts`](../../packages/extractor/src/game/water/water-volume-surfaces.ts));
-  when the type names a `decalPrefab`, the packer emits a resident global floating instance sharing
-  the volume's polygon mesh 1 cm above the surface
-  (`WaterVolumeManager.m_waterDecalPositionOffset`), so it rises and falls with the volume and
-  shades through `fs_water_foam`. volumes with non-default `flowSpeed`/`flowDirection` get a
+  [surface prefab](../game-data/water.md#water-volumes) config; when the type names a `decalPrefab`,
+  the packer emits a resident global floating instance sharing the volume's polygon mesh 1 cm above
+  the surface (`WaterVolumeManager.m_waterDecalPositionOffset`), so it rises and falls with the
+  volume and shades as water foam. volumes with non-default `flowSpeed`/`flowDirection` get a
   dedicated config with `UpdateWaterFlowParams` applied (`flowDirectionVector2` and per-level
   `flowFullCycle*` / `largeWaveNormalScale` multipliers). outlines are always triangulated instead
   of loading `_WaterSurface` meshes.
@@ -113,28 +104,24 @@ the main view.
 
 ### foam boxes
 
-[WaterDecal](../game-data/water.md#waterdecal) boxes pack as `waterFoam` surfaces and draw via
-`fs_water_foam` in [`effect.wgsl`](../../packages/viewer/src/render/meshes/effect.wgsl) inside the
-water pass when any are in frame:
+[WaterDecal](../game-data/water.md#waterdecal) boxes pack as `waterFoam` surfaces and draw inside
+the water pass when any are in frame:
 
-1. **water depth**: `SceneTextures.waterDepth` laid down before composite.
-2. **foam target**: boxes draw into `rgba8unorm` cleared to `(0, 0, 0, 1)` with `waterDepth`
-   read-only for `_ZTest` (`waterFoam`, `waterFoamBehind`, `waterFoamThrough` looks, one phase
-   each), projecting onto `waterDepth`. blend accumulates `rgb = box_premul + dst_rgb * (1 − a)` and
-   `a = dst_a * (1 − a)`. mip bias scales base-colour and mask UV gradients; dissolve samples a
-   fixed mip.
+1. **water depth**: laid down before composite.
+2. **foam target**: boxes draw into `rgba8unorm` cleared to `(0, 0, 0, 1)` with water depth
+   read-only for `_ZTest`, projecting onto water depth. blend accumulates
+   `rgb = box_premul + dst_rgb * (1 − a)` and `a = dst_a * (1 − a)`. mip bias scales base-colour and
+   mask UV gradients; dissolve samples a fixed mip.
 3. **shading**: water reads the target and computes `saturate(rgb + saturate(own) * a)` (8-bit
    clamp; own foam saturates even without boxes).
 
-- **erosion (`wf_erosion`)**: [water erosion](../game-data/water.md#water-erosion) needs 6 textures
-  and reuses distortion, mask, and dissolve slots (`EROSION_SLOTS` in
-  [`water-foam.ts`](../../packages/viewer/src/looks/effects/water-foam.ts)), so it draws only when
-  dissolve is off, distortion strength is 0, and no mask texture is set. flowmap and gradient clamp
-  UVs half a texel inside edges (no clamping sampler), and gradient mip ignores noise U.
+- **erosion**: [water erosion](../game-data/water.md#water-erosion) needs 6 textures and reuses
+  distortion, mask, and dissolve slots, so it draws only when dissolve is off, distortion strength
+  is 0, and no mask texture is set. flowmap and gradient clamp UVs half a texel inside edges (no
+  clamping sampler), and gradient mip ignores noise U.
 - **static boxes (InitChunkData component 31)**: packed like rect decals; non-neutral renderer
-  values generate a material variant (`placedWaterFoam` in
-  [`water-foam.ts`](../../packages/extractor/src/game/materials/effects/water-foam.ts)) applying
-  tiling to base UVs, speed to scroll, and opacity/brightness/tint to output.
+  values generate a material variant applying tiling to base UVs, speed to scroll, and
+  opacity/brightness/tint to output.
 - **unsupported and divergences**: keywords beyond `_BLEND_BASECOLOR`, `_BLEND_BASECOLOR2`,
   `_BLEND_DISPLACEMENT`, `_USE_DISTURB`, `_USE_MASK`, `_USE_SOFTBLEND`, `_USE_DISSOLVE`,
   `_USE_WATER_EROSION`, `_USE_BUBBLE`, `_USE_TWO_LAYER_FLOATING_MAP`, or `_ZTest` other than 4, 5, 8

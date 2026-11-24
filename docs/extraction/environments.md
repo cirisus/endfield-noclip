@@ -4,14 +4,9 @@ how `pack` converts [environment phases and volumes](../game-data/environment.md
 environment table ([environments](../package-format.md#environments)) and picks each level's base
 environment.
 
-code: [hg/environment-phase.ts](../../packages/formats/src/hg/environment-phase.ts),
-[game/environment.ts](../../packages/extractor/src/game/environment.ts),
-[pack/tables/environments.ts](../../packages/extractor/src/pack/tables/environments.ts).
-
 ## sections
 
-the extractor reads these `HGEnvironmentPhase` sections (`ENVIRONMENT_SECTIONS`) and renames them in
-the package:
+the extractor reads these `HGEnvironmentPhase` sections and renames them in the package:
 
 | phase field           | package key     |
 | --------------------- | --------------- |
@@ -32,13 +27,9 @@ the package:
 | `rainConfig`          | `rain`          |
 | `lensFlareConfig`     | `lensFlare`     |
 
-the `light` section omits fields the game derives from others (`DERIVED_LIGHT_FIELDS`: precomputed
-intensities, `forwardDirect`, `localToWorld`, and effects' `rotation*` quaternions), which can be
-stale ([sun](../game-data/lighting.md#sun)).
-
-to add another section (`snowConfig`, `volumetricCloudConfig`, …), update `ENVIRONMENT_SECTIONS` and
-`mapSections` in `environment-phase.ts`, `SECTION_KEYS` in `pack/tables/environments.ts`, and the
-interface in [package-format/src/environment.ts](../../packages/package-format/src/environment.ts).
+the `light` section omits fields the game derives from others (precomputed intensities,
+`forwardDirect`, `localToWorld`, and effects' `rotation*` quaternions), which can be stale
+([sun](../game-data/lighting.md#sun)).
 
 ### values
 
@@ -62,9 +53,7 @@ is packed once as `flowNoise` on the environment table.
 ## blend schema
 
 the environment table's `schema` tells the viewer how to blend each section field between phases.
-the extractor builds it from TypeTree types (`plainKinds` in
-[unity/plain-object.ts](../../packages/formats/src/unity/plain-object.ts)), merged across all packed
-phases:
+the extractor builds it from TypeTree types, merged across all packed phases:
 
 - floats, colours, vectors, SH: lerp
 - booleans, strings, references (textures, materials, lens flares): switch at ½
@@ -73,10 +62,8 @@ phases:
 
 ## volumes
 
-`loadSceneVolumes` deduplicates volumes across overlapping cell chunks by object id.
-[endfield/environment-volume.ts](../../packages/formats/src/endfield/environment-volume.ts) decodes
-the component, rotating prism points by yaw and making them absolute (untested on real data: every
-map02 volume stores yaw 0).
+volumes are deduplicated across overlapping cell chunks by object id. prism points are rotated by
+yaw and made absolute (untested on real data: every map02 volume stores yaw 0).
 
 volumes are read from the default stream area's chunk files across all scene states. each volume is
 filed in a visibility group (owning level + loading condition;
@@ -114,15 +101,14 @@ visibility holds under the [default scene values](scene-controls.md#defaults).
 
 ## the level's base environment
 
-the game has no per-level base environment, so `resolveLevelEnvironment` derives one volume per
-level (stored in `LevelInfo.environment`) to seed the viewer's blend. it samples a 32 m grid (4 × 4
-per 128 m cell) over the level's `levelGrids`, considering only volumes owned by that level that
-load under default scene states:
+the game has no per-level base environment, so the packer derives one volume per level (stored in
+`LevelInfo.environment`) to seed the viewer's blend. it samples a 32 m grid (4 × 4 per 128 m cell)
+over the level's `levelGrids`, considering only volumes owned by that level that load under default
+scene states:
 
 1. at each sample, find the topmost volume whose 2D footprint contains the point (boxes tested at
-   their centre height), ordered by `compareVolumes` in
-   [`package-format/environment-volumes.ts`](../../packages/package-format/src/environment-volumes.ts)
-   (its equal-priority tie-breaker is an assumption).
+   their centre height), ordered by ascending priority, then shape kind (global, box, prism), then
+   list order (its equal-priority tie-breaker is an assumption).
 2. pick the volume covering the most samples among those that win at least once (lower priority wins
    ties). a volume beaten everywhere cannot be the base.
 3. if none wins, fall back to the scene's global volume.
@@ -133,15 +119,13 @@ the vote is 2D on footprints and treats every loaded volume as enabled
 at runtime, the viewer seeds its blend with every section of the base phase (including inactive
 ones), then applies the scene's global volume over it like any other. a section therefore resolves
 to: level active → global active → level inactive (assumption: game behavior when no active phase
-sets a section is unknown). `composeEnvironment` records these per-section sources in
-`debug/environments.json`.
+sets a section is unknown). per-section sources are recorded in `debug/environments.json`.
 
 each level's post profile (`LevelInfo.environment.post`) is its own global `Volume`, or the scene's,
 highest priority first. its `Bloom`, `GTAmbientOcclusion`, `Vignette`, and
-`ScreenSpaceReflectionVolume` components become a `posts` entry. `toPlainObject` strips
-`overrideState` and keeps authored values, so unoverridden parameters use their authored value
-rather than the component default or a lower-priority volume
-([status](../status.md#lighting-and-post-processing)).
+`ScreenSpaceReflectionVolume` components become a `posts` entry. `overrideState` is stripped and
+authored values are kept, so unoverridden parameters use their authored value rather than the
+component default or a lower-priority volume ([status](../status.md#lighting-and-post-processing)).
 
 the pack report lists each level's base volume, coverage, where it wins, and inherited sections.
 `scene env` explains the vote over the same chunk and prefab volumes (marking prefab ones), and

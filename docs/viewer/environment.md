@@ -14,8 +14,8 @@ cloud panorama is static, and PC volumetric fog switches on `volumetricFogConfig
 
 ## environment volumes
 
-`eyeInLevelVolume` nudges a level's initial viewpoint along its view line until the base volume
-holds it fully and no neighbouring level's volume overlaps it.
+a level's initial viewpoint is nudged along its view line until the base volume holds it fully and
+no neighbouring level's volume overlaps it.
 
 the viewer blends only the chunk and [prefab](../game-data/environment.md#prefab-volumes) volumes in
 the package. omitted ([volumes](../extraction/environments.md#volumes)): cylinder volumes, moved
@@ -28,26 +28,20 @@ the viewer skips any volume whose visibility group condition fails for the selec
 
 ## blending at the camera
 
-[`environment/blend.ts`](../../packages/viewer/src/environment/blend.ts) implements the
-[game's blend](../game-data/environment.md#blending-at-the-camera). a "profile" here is a phase plus
-post profile, not a Unity `VolumeProfile`.
+implements the [game's blend](../game-data/environment.md#blending-at-the-camera). a "profile" here
+is a phase plus post profile, not a Unity `VolumeProfile`.
 
 - **base profile.** starts from every section of the [current level's](streaming.md#levels) base
   phase (including inactive sections) and its post profile. entering another level's cells switches
   the base while preserving active fades. the scene's global volume and level's base volume then
   apply as normal volumes.
-- **caching.** `planBlend` computes active volumes, factors, and a cache key; `applyBlend` blends
-  sections only when the key changes.
-  [`viewer/environment-state.ts`](../../packages/viewer/src/viewer/environment-state.ts) re-plans
-  only when eye, volume settings, condition results, or fades change, deriving one look
-  (environment, celestial layers, lens flare, wetness) per change.
+- **caching.** active volumes, factors, and a cache key are re-planned only when eye, volume
+  settings, condition results, or fades change; sections re-blend and derive a new look only when
+  the key changes.
 - **order.** volumes sort by ascending priority, then shape kind (global, box, prism), then list
-  order (tie-break among equal priorities is assumed). sort order and shape tests live in
-  [`package-format/environment-volumes.ts`](../../packages/package-format/src/environment-volumes.ts),
-  shared with the extractor's
+  order (tie-break among equal priorities is assumed), shared with the extractor's
   [base-environment vote](../extraction/environments.md#the-levels-base-environment).
-- **time fades.** `EnvironmentFades` tracks per-camera time-mode factors and snaps them on moves
-  > 5 m in a frame.
+- **time fades.** time-mode factors snap on camera moves > 5 m in a frame.
 - **field blending.** factor ≥ 1 copies the section; below 1, fields follow the environment table's
   `schema` ([schema](../extraction/environments.md#blend-schema)): lerp, lerp+round, or switch at ½.
   cloud panorama, height-fog flow noise, lens flare, and rain wetness follow the game's special
@@ -62,8 +56,7 @@ post profile, not a Unity `VolumeProfile`.
 the "volumes at camera" toggle disables positional blending so scene-wide global volumes and the
 level's base volume apply at full strength. a pinned phase overrides the volume blend using phases
 from the current level's listed volumes ([listing](scene-states.md#the-scene-conditions-panel),
-including overlapping neighbours). `volumeApplies` is the single check for whether a volume can
-apply (has a phase and passes its visibility condition).
+including overlapping neighbours).
 
 ## activation
 
@@ -82,12 +75,9 @@ drawn, and `snowConfig` is not packed.
 
 ### wetness
 
-`rain_wet_surface` ([`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl), fed by
-[`environment/wetness.ts`](../../packages/viewer/src/environment/wetness.ts)) wets mesh and terrain
-surfaces (including standing water) matching the
-[game's deferred lighting](../game-data/environment.md#wetness). `lerpRain`
-([`environment/blend.ts`](../../packages/viewer/src/environment/blend.ts)) implements the one-sided
-`enableWetness` blend (profiles without a rain section count as dry).
+mesh and terrain surfaces (including standing water) are wetted matching the
+[game's deferred lighting](../game-data/environment.md#wetness), using a one-sided `enableWetness`
+blend (profiles without a rain section count as dry).
 
 divergences: no rain occlusion map (all surfaces count as open to the sky over the 100 m range), no
 coverage-edge jitter, no ripples or splashes, no wall streaks, and no flooded normal-map dips.

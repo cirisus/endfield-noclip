@@ -43,10 +43,7 @@ controls:
 | water volume fill          | `waterLevel:<id>`                                  | authored fill; drained if a quest requires it drained   |
 | fire seed level            | `fireSeed:player` (not carried / levels 1–5)       | highest level                                           |
 
-each control's kind is its id prefix (`door`, `script`, …). `sceneControl`
-([scene-control.ts](../../packages/extractor/src/game/state/scene-control.ts)) assigns its UI
-category; controls register in any order with
-[control-registry.ts](../../packages/extractor/src/pack/control-registry.ts).
+each control's kind is its id prefix (`door`, `script`, …), which determines its UI category.
 
 interactive poses are in [prefabs and interactives](prefabs-and-interactives.md#view-state-poses);
 environment volume and water level controls are in [environments](../package-format.md#environments)
@@ -56,11 +53,6 @@ set its level, listed under "Player nearby" with those scripts as drivers and pl
 midpoint; `PackageManifest.fireSeed` holds per-level reveal radii from `FireSeedGameplayConfig`.
 
 ## MapConfig scene states
-
-code: [map-config.ts](../../packages/formats/src/endfield/map-config.ts) (parsing),
-[scene-conditions.ts](../../packages/extractor/src/game/state/scene-conditions.ts) (controls),
-[game-state.ts](../../packages/extractor/src/game/state/game-state.ts) (quests, variables, required
-control values).
 
 condition classes map to `SceneCondition.kind`:
 
@@ -72,11 +64,9 @@ condition classes map to `SceneCondition.kind`:
 
 unknown classes or malformed fields throw.
 
-`WorldIndex` exposes chunk suffixes as `ChunkFile.sceneState` and `ChunkFile.area` (`scene find`
-accepts `--scene-state` / `--area`).
-[dynamic-scene.ts](../../packages/formats/src/endfield/dynamic-scene.ts) reads visible-state lists
-(`states`) and visible-area lists (`areas`) on entities and resource groups; gating uses these
-lists, never the resource group's `sceneState` field.
+`scene find` accepts `--scene-state` and `--area`. dynamic entities and resource groups gate on
+their visible-state (`states`) and visible-area (`areas`) lists, never the resource group's
+`sceneState` field.
 
 [gated content](../game-data/scene-states.md#what-they-gate) follows one rule (union of chunk file
 states; any appearance in an always-loaded file makes it unconditional):
@@ -85,8 +75,8 @@ states; any appearance in an always-loaded file makes it unconditional):
   ([how the packer files instances](../extraction.md#how-the-packer-files-instances))
 - **environment and post volumes** ([volumes](environments.md#volumes); base environment votes only
   over volumes loaded under defaults)
-- **water surfaces** ([water-source.ts](../../packages/extractor/src/game/water/water-source.ts),
-  [water](../package-format.md#water)) and **local lights** ([lights](../package-format.md#lights))
+- **water surfaces** ([water](../package-format.md#water)) and **local lights**
+  ([lights](../package-format.md#lights))
 
 ## defaults
 
@@ -98,7 +88,6 @@ unless overridden by the user. defaults represent a finished story:
   the client ships no variable defaults)
 - condition-less states default off
 - state indices referenced by visibility lists but unnamed in MapConfig get an off control
-  (`unnamedSceneStateControl`)
 
 on map01's [example](../game-data/scene-states.md#how-the-game-applies-them), these defaults yield:
 `001_normal` on, `001_damaged` off, `001_overcast_rainy` off, `001_sunny` on,
@@ -120,25 +109,21 @@ light column variable (not default `4`), and red-ringed spires compare against s
   MapConfig globals and numbered gate globals stay separate. gates on another map's variable never
   hold and create no control
   ([gates on another map's variable](../game-data/scene-states.md#gates-on-another-maps-variable)).
-- **interactive saved properties**
-  ([interactive-variables.ts](../../packages/extractor/src/game/state/interactive-variables.ts)):
-  labelled from the interactive's template ("Sludge core", "Outfall", "Wuling bridge", or template
-  id, plus property name if not `state`) and placed at it. its assumption notes the interactive,
-  property, and fresh-world value; default stays highest compared.
-- **blight variables** ([blight and its cores](../game-data/scene-states.md#blight-and-its-cores),
-  [dynamic-structures.ts](../../packages/extractor/src/game/dynamic/dynamic-structures.ts)): map01
-  erosion and map02 sludge variables keep id `mapVar:<map>:#<id>` but label as "Blight core" at the
-  core/patch position with two states: present (erosion ≠ 2; sludge = 0) and cleansed (default).
-  note: this hides that an active sludge core (`1`) already unloads its sludge. patches and core
-  both require present. `GameState.claimVariable` claims the variable only if no other condition
-  reads it; otherwise patches keep the generic control and the core stays unconditional.
+- **interactive saved properties**: labelled from the interactive's template ("Sludge core",
+  "Outfall", "Wuling bridge", or template id, plus property name if not `state`) and placed at it.
+  its assumption notes the interactive, property, and fresh-world value; default stays highest
+  compared.
+- **blight variables** ([blight and its cores](../game-data/scene-states.md#blight-and-its-cores)):
+  map01 erosion and map02 sludge variables keep id `mapVar:<map>:#<id>` but label as "Blight core"
+  at the core/patch position with two states: present (erosion ≠ 2; sludge = 0) and cleansed
+  (default). note: this hides that an active sludge core (`1`) already unloads its sludge. patches
+  and core both require present. the variable is claimed only if no other condition reads it;
+  otherwise patches keep the generic control and the core stays unconditional.
 
 ## dynamic load gates
 
-[dynamic-scene.ts](../../packages/formats/src/endfield/dynamic-scene.ts) decodes
-[dynamic load gates](../game-data/scene-states.md#dynamic-load-gates) into `DynamicEntity.gates`;
-[game-state.ts](../../packages/extractor/src/game/state/game-state.ts) maps them to quest, mission,
-and variable requirements. mission gates become combined conditions (`all`/`any`,
+[dynamic load gates](../game-data/scene-states.md#dynamic-load-gates) map to quest, mission, and
+variable requirements. mission gates become combined conditions (`all`/`any`,
 `reverse = !loadWhen`). variables with `controlLoad === 0` are ignored.
 
 server-set variable gates remain plain variable controls: Yinglung Pass's
@@ -147,19 +132,17 @@ server-set variable gates remain plain variable controls: Yinglung Pass's
 all four tiers show by default.
 
 **outpost upgrade missions**:
-[settlement-upgrades.ts](../../packages/extractor/src/game/state/settlement-upgrades.ts) reads
 [upgrade missions](../game-data/scene-states.md#outpost-upgrade-missions) from
-`SettlementBasicDataTable`. `GameState` rewrites completion tests (`= completed`, `≠ completed`) to
-the outpost's level control (complete above the level naming the mission) whenever the outpost is in
-the scene and has a higher authored level. tests distinguishing unfinished states keep a mission
-control. outposts default to their highest authored level, so upgrade-gated content (e.g. Cardiac
-Remediation Station's light column on `f1m19d3`) shows by default. these are factory missions, so
-"Main story progress" doesn't move them—only the outpost's level control does.
+`SettlementBasicDataTable` rewrite completion tests (`= completed`, `≠ completed`) to the outpost's
+level control (complete above the level naming the mission) whenever the outpost is in the scene and
+has a higher authored level. tests distinguishing unfinished states keep a mission control. outposts
+default to their highest authored level, so upgrade-gated content (e.g. Cardiac Remediation
+Station's light column on `f1m19d3`) shows by default. these are factory missions, so "Main story
+progress" doesn't move them—only the outpost's level control does.
 
 ## progressions
 
-implemented in [scenery-variants.ts](../../packages/extractor/src/game/state/scenery-variants.ts)
-([progressions](../game-data/scene-states.md#progressions); inspect with `scene controls <scene>`).
+[progressions](../game-data/scene-states.md#progressions) (inspect with `scene controls <scene>`):
 
 - keyed `<kind>:<key>` (settlement id, POI id, or region level id); a settlement's main and
   secondary controllers share one progression.
@@ -173,15 +156,10 @@ implemented in [scenery-variants.ts](../../packages/extractor/src/game/state/sce
 
 ## facility visual forms
 
-implemented in
-[template-models.ts](../../packages/extractor/src/game/interactives/template-models.ts) and
-[facility-forms.ts](../../packages/extractor/src/game/interactives/facility-forms.ts) using
-MemoryPack `InteractiveTemplateData`
-([facility visual forms](../game-data/scene-states.md#facility-visual-forms)).
+read from MemoryPack `InteractiveTemplateData`
+([facility visual forms](../game-data/scene-states.md#facility-visual-forms)):
 
-- placements deduplicate by id
-  ([placed-interactives.ts](../../packages/extractor/src/game/interactives/placed-interactives.ts)),
-  with `createState === 0` winning over rows created later.
+- placements deduplicate by id, with `createState === 0` winning over rows created later.
 - rows with `createState !== 0` also require a per-level `created:<level id>` control (default off,
   since server/scripts create them during play).
 - each facility placement gets a `facility:<id>` progression over list indices, defaulting to the
@@ -190,30 +168,24 @@ MemoryPack `InteractiveTemplateData`
 
 ## Dijiang cabins and region walls
 
-- **cabins** ([cabins.ts](../../packages/extractor/src/game/dynamic/cabins.ts),
-  [Dijiang cabins](../game-data/scene-states.md#dijiang-cabins)): each slot gets the largest cabin
-  whose row pivots fit its box, else the smallest (putting the growth chamber in the medium slot and
-  manufacturing cabins in small slots). assumption: no client data maps cabin types to slots. the
-  doorless small slot without a room-table row is included. room type ids (used for room bakes) are
-  matched manually to `SpaceshipRoomTypeTable` icons
+- **cabins** ([Dijiang cabins](../game-data/scene-states.md#dijiang-cabins)): each slot gets the
+  largest cabin whose row pivots fit its box, else the smallest (putting the growth chamber in the
+  medium slot and manufacturing cabins in small slots). assumption: no client data maps cabin types
+  to slots. the doorless small slot without a room-table row is included. room type ids (used for
+  room bakes) are matched manually to `SpaceshipRoomTypeTable` icons
   (`icon_sapceship_room_icon_manufacturing_station` = 1, `…_icon_grow_cabin` = 2). each slot gets
   `cabin:<id>` (default empty), carrying its [region bake](../package-format.md#irradiance-cells).
-- **growth chamber planting boxes**
-  ([grow-boxes.ts](../../packages/extractor/src/game/dynamic/grow-boxes.ts)): numbered in
-  resource-group listing order. each growth chamber slot gets `cabinLevel:<id>` (default level 1).
-  each box emits two rows: saved prefab below its field's unlock level, and shutter-hidden from that
-  level on. planted crops and status bars aren't drawn.
-- **region walls**
-  ([region-walls.ts](../../packages/extractor/src/game/interactives/region-walls.ts),
-  [Dijiang region walls](../game-data/scene-states.md#dijiang-region-walls)): one
+- **growth chamber planting boxes**: numbered in resource-group listing order. each growth chamber
+  slot gets `cabinLevel:<id>` (default level 1). each box emits two rows: saved prefab below its
+  field's unlock level, and shutter-hidden from that level on. planted crops and status bars aren't
+  drawn.
+- **region walls** ([Dijiang region walls](../game-data/scene-states.md#dijiang-region-walls)): one
   `controlNexus:<level id>` control (default level 1) offering level 1 and each area-unlock level.
   each wall shows below its area's unlock level; cabin slots behind locked walls remain selectable.
 
 ## doors
 
-implemented in [doors.ts](../../packages/extractor/src/game/interactives/doors.ts) and
-[cabins.ts](../../packages/extractor/src/game/dynamic/cabins.ts) using
-[door poses](prefabs-and-interactives.md#view-state-poses). each interactive with door poses gets
+each interactive with [door poses](prefabs-and-interactives.md#view-state-poses) gets
 `door:<interactive id>` (0 closed, 1 open). because unlock triggers aren't in client data:
 
 - doors default closed
@@ -223,8 +195,7 @@ implemented in [doors.ts](../../packages/extractor/src/game/interactives/doors.t
 
 ## bridges
 
-implemented in [bridges.ts](../../packages/extractor/src/game/interactives/bridges.ts)
-([telescopic bridges](../game-data/scene-states.md#telescopic-bridges)). each bridge gets
+each [telescopic bridge](../game-data/scene-states.md#telescopic-bridges) gets
 `bridge:<interactive id>` (0 retracted default, 1 extended) with its
 [poses](prefabs-and-interactives.md#view-state-poses). unreadable bridge prefabs log to
 `unsupported-interactives.json` and draw as saved.
@@ -233,76 +204,67 @@ implemented in [bridges.ts](../../packages/extractor/src/game/interactives/bridg
 
 a switch interactive with `WaterSwitch` (98), `CommonSwitchComponent` (102), or
 `SwitchCommonNoElectric` (175) whose `target_list` names a single interactive driven by a `door:`,
-`bridge:`, or tracked `state` `mapVar:` control (`interactiveStateGates` in
-[interactive-variables.ts](../../packages/extractor/src/game/state/interactive-variables.ts),
-`switchTargetGate` in [rest-looks.ts](../../packages/extractor/src/game/interactives/rest-looks.ts))
-emits both its `state` 0 and `state` 1 settled looks under that target's control (when the two looks
-differ). Wuling magic-bridge switches therefore show green (`openidle`) while their bridge is
-extended by default and turn red (`closeidle`) when the bridge's `mapVar` is switched off; door and
-telescopic-bridge switches follow their door or bridge control the same way.
+`bridge:`, or tracked `state` `mapVar:` control emits both its `state` 0 and `state` 1 settled looks
+under that target's control (when the two looks differ). Wuling magic-bridge switches therefore show
+green (`openidle`) while their bridge is extended by default and turn red (`closeidle`) when the
+bridge's `mapVar` is switched off; door and telescopic-bridge switches follow their door or bridge
+control the same way.
 
 ## variable-driven view states
 
 for a DynamicStreaming entity whose current-version view-state controller reads a variable
-([view states on dynamic entities](../game-data/scene-states.md#view-states-on-dynamic-entities),
-[dynamic-structures.ts](../../packages/extractor/src/game/dynamic/dynamic-structures.ts)):
+([view states on dynamic entities](../game-data/scene-states.md#view-states-on-dynamic-entities)):
 
-- values tested against `state` (`testedValues`) register on that variable's control.
-- the model emits once per tested value (posed via `settledPose`), plus once as saved for all other
-  values and unset. the variable's default (highest tested) gives the finished look (The Hub →
-  Valley Pass bridge lowered, magic Wuling bridges extended).
+- values tested against `state` register on that variable's control.
+- the model emits once per tested value (settled pose), plus once as saved for all other values and
+  unset. the variable's default (highest tested) gives the finished look (The Hub → Valley Pass
+  bridge lowered, magic Wuling bridges extended).
 - entities with multiple variables follow their first.
 - the same variable drives controller-less logic-state masks (loads when equal to a bit, or none of
   the others for masks >16 levels) without creating a `logic:` toggle.
 - old-version controllers (entity type 5), trigger-driven controllers, and script-set states
   (`SetDecorationViewState`) aren't posed.
-- **water pipes** ([water-pipes.ts](../../packages/extractor/src/game/dynamic/water-pipes.ts),
-  [water pipes](../game-data/scene-states.md#water-pipes)): non-outfall `WaterPipeComp` entities
-  register `0` and `1` on their `mapVar` (and upstream outfall/pipe `mapVar`s) and emit posed looks
-  rotating `RotateRoot` to `targetAngle` (`state = 1`, default) or `initialAngle` (`state ≠ 1`),
-  hiding `Effect` when any upstream pipe/outfall is not at `1`, and setting `VFXAdjustLength` on
-  `WaterFall` and `Splash` to `heightToDownStream` or `heightToGround` when water is present.
+- **water pipes** ([water pipes](../game-data/scene-states.md#water-pipes)): non-outfall
+  `WaterPipeComp` entities register `0` and `1` on their `mapVar` (and upstream outfall/pipe
+  `mapVar`s) and emit posed looks rotating `RotateRoot` to `targetAngle` (`state = 1`, default) or
+  `initialAngle` (`state ≠ 1`), hiding `Effect` when any upstream pipe/outfall is not at `1`, and
+  setting `VFXAdjustLength` on `WaterFall` and `Splash` to `heightToDownStream` or `heightToGround`
+  when water is present.
 
 ## doodad groups
 
-implemented in [doodad-shell.ts](../../packages/extractor/src/game/interactives/doodad-shell.ts) and
-[doodad-groups.ts](../../packages/extractor/src/game/interactives/doodad-groups.ts)
-([doodad groups](../game-data/scene-states.md#doodad-groups)). shells without identity slots are
+for [doodad groups](../game-data/scene-states.md#doodad-groups), shells without identity slots are
 reported and keep only their own renderers. each level with doodad groups gets
 `doodadGroups:<level id>` ("Resource nodes") over all named group levels, defaulting to the highest;
 each form places at the interactive's transform under `1 << level`.
 
 ## graded doodads
 
-implemented in [doodad-grades.ts](../../packages/extractor/src/game/interactives/doodad-grades.ts)
-for plain-model rows ([graded doodads](../game-data/scene-states.md#graded-doodads)). rows with an
-upgrade source and >1 distinct model across their four forms emit one placement per distinct model
-under `<source>:<map>` (levels = all thresholds referenced in the scene). keyed by map rather than
-per level, since each open-world map is one domain.
+for plain-model [graded doodads](../game-data/scene-states.md#graded-doodads), rows with an upgrade
+source and >1 distinct model across their four forms emit one placement per distinct model under
+`<source>:<map>` (levels = all thresholds referenced in the scene). keyed by map rather than per
+level, since each open-world map is one domain.
 
 ## script groups
 
 each [script-control entity](../game-data/scene-states.md#script-groups) gets `script:<entity id>`
-defaulting to its stored default-load flag
-([dynamic-structures.ts](../../packages/extractor/src/game/dynamic/dynamic-structures.ts)), unless
-settled by [activation quest checks](#following-quest-checks-on-activation) (event content like
-limited-time race courses lands here, usually off).
+defaulting to its stored default-load flag, unless settled by
+[activation quest checks](#following-quest-checks-on-activation) (event content like limited-time
+race courses lands here, usually off).
 
 level interactives shown/hidden by a constant entity pointer in a scene script get
-`script:<logic id>` (default shown) added to their visibility
-([interactive-row.ts](../../packages/extractor/src/game/interactives/interactive-row.ts)). scripts
-are read once before placing interactives; script-slot pointers and computed targets aren't followed
-(counted in `scriptVisibilityUntraced`).
+`script:<logic id>` (default shown) added to their visibility. scripts are read once before placing
+interactives; script-slot pointers and computed targets aren't followed (counted in
+`scriptVisibilityUntraced`).
 
 script and logic toggles label themselves with the 1–2 most frequent renderer names under them (for
 identification only, not activation semantics).
 
 ### drivers
 
-[script-drivers.ts](../../packages/extractor/src/game/script-drivers.ts) traces every path from
-script headers to show/hide actions (up to 16 guard sets per node, and up to 5 hops back across
-custom events and script starts). each root cause becomes a `ControlDriver` with the action's
-`visible` flag:
+tracing every path from script headers to show/hide actions (up to 16 guard sets per node, and up to
+5 hops back across custom events and script starts) records each root cause as a `ControlDriver`
+with the action's `visible` flag:
 
 | header / source                                                                                           | driver kind                                      |
 | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
@@ -349,9 +311,7 @@ Power Plateau gate is open and its props show, both tracking "Main story progres
 
 ## quest and mission labels
 
-parsed by [mission-runtime.ts](../../packages/formats/src/endfield/mission-runtime.ts), labelled by
-[story.ts](../../packages/extractor/src/game/state/story.ts), and stored as
-[story places](../package-format.md#controls):
+stored as [story places](../package-format.md#controls):
 
 - rich-text tags (`<@…>…</>`) are stripped
 - quest label = first objective's text, else `descriptionOverride`
@@ -361,17 +321,17 @@ parsed by [mission-runtime.ts](../../packages/formats/src/endfield/mission-runti
 
 ## places
 
-the control registry assigns each control a [place](../package-format.md#controls):
+each control gets a [place](../package-format.md#controls):
 
 - **position**: explicit spot named by the mechanism (interactive placement for doors, bridges,
   campfires, script-shown interactives; cabin slot; blight core), else the bounding-box centre of
   gated instances (propagated back through derived controls). content >1024 m wide or deep gets no
   place unless named explicitly. lights, water surfaces, and environment volumes don't expand the
   box.
-- **label** ([map-labels.ts](../../packages/extractor/src/game/world/map-labels.ts)): owning cell's
-  level display name plus nearest [map place name](../game-data/world.md#map-place-names) within 150
-  m (e.g. "The Hub · Bridge Approach", "Wuling City · Tianjing Courtyard"). control names then
-  describe _what_ ("Door (int_door_common_v2)", "Campfire", "Blight core") instead of coordinates.
+- **label**: owning cell's level display name plus nearest
+  [map place name](../game-data/world.md#map-place-names) within 150 m (e.g. "The Hub · Bridge
+  Approach", "Wuling City · Tianjing Courtyard"). control names then describe _what_ ("Door
+  (int_door_common_v2)", "Campfire", "Blight core") instead of coordinates.
 
 ## rules
 

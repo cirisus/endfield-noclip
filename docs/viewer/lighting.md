@@ -8,30 +8,28 @@ viewer implementation of [game-data/lighting.md](../game-data/lighting.md) and
 the viewer lights in pre-exposed physical units: `preExposure = 1 / (1.2 · 2^directEV100)`. sun,
 ambient probe, and fog colours are pre-exposed so shaded values reach the tonemapper around 0–2.
 
-[`deriveEnvironment`](../../packages/viewer/src/environment/derive.ts) packs a blended profile into
-`Environment`, matching the game's CPU packing where known and approximating it elsewhere
-([open](../game-data/lighting.md#open)). packages without profiles use a built-in default.
+blended profiles are derived into lighting parameters matching the game's CPU packing where known
+and approximating it elsewhere ([open](../game-data/lighting.md#open)). packages without profiles
+use a built-in default.
 
 ## sun
 
 - pre-exposed sun illuminance is `light.directLux · preExposure`.
-- every effect's direction comes from its pitch, yaw, and mode (`effectPitchYaw` in
-  [`environment/sun.ts`](../../packages/viewer/src/environment/sun.ts)), so
+- every effect's direction comes from its pitch, yaw, and mode, so
   [blending](environment.md#blending-at-the-camera) lerps angles. the package omits derived light
   fields that some phases store stale ([sun](../game-data/lighting.md#sun)).
-- `shade_surface` in [`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl) evaluates GGX
-  with height-correlated Smith visibility (scaled by `directSpecularIntensity`) plus Lambert diffuse
-  times `(1 − F)`, both with `1/π` and the sun colour as illuminance. compared to local lights, this
-  divides by π, adds `(1 − F)` on diffuse, and omits clamps and multiple scattering; the sun may be
-  π too dark because the game's CPU scaling is unknown ([open](../game-data/lighting.md#open)).
+- surface shading evaluates GGX with height-correlated Smith visibility (scaled by
+  `directSpecularIntensity`) plus Lambert diffuse times `(1 − F)`, both with `1/π` and the sun
+  colour as illuminance. compared to local lights, this divides by π, adds `(1 − F)` on diffuse, and
+  omits clamps and multiple scattering; the sun may be π too dark because the game's CPU scaling is
+  unknown ([open](../game-data/lighting.md#open)).
 - foliage uses the game's two-sided model.
 
 ## shadows
 
 the viewer renders the game's four layers ([shadows](../game-data/lighting.md#shadows)) as 2048²
-`depth32float` maps in [`shadow-map.ts`](../../packages/viewer/src/render/shadows/shadow-map.ts).
-layers are fitted once per frame to the render aspect before mesh selection; layer assignment and
-redraw cadence are in [frame.md](frame.md).
+depth maps. layers are fitted once per frame to the render aspect before mesh selection; layer
+assignment and redraw cadence are in [frame.md](frame.md).
 
 - **fit**: sharp cascades fit bounding spheres of frustum slices (stable under camera rotation). the
   far layer fits an 832 m radius around the camera (game's 800 m plus one grid cell), centre snapped
@@ -64,31 +62,26 @@ sets it).
 ## ambient
 
 - **diffuse probe**: `sky.skyAmbientSH * light.indirectDiffuseFactor`, converted to Unity `ShadeSH9`
-  vectors (`shaderSh`) and pre-exposed, used by volumetric fog and the reflection-map fallback. sky
-  reflection normalisation uses a separate unscaled pure-L1 luminance vector
-  (`reflectionProbeLumaSh`, matching `_ReflectionProbeGlobalParam3`). irradiance volume samples
-  apply `indirectDiffuseFactor` in the shader so all diffuse ambient scales once. the volume's
-  default SH (`_IVDefaultSHAr/g/b`) packs `sky.customIVDefaultSH` when `sky.useCustomIVDefaultSH` is
-  set, else `sky.skyAmbientSH`, as pure L1 SH (`shaderShL1`) scaled by
-  `sky.skyDirectIntensity * light.indirectDiffuseFactor`.
-- **irradiance sampling**: `ambient_irradiance` blends clipmap levels near edges with validity
-  fill-in and vertical correction, without jitter or forward-shifted centres.
+  vectors and pre-exposed, used by volumetric fog and the reflection-map fallback. sky reflection
+  normalisation uses a separate unscaled pure-L1 luminance vector (matching
+  `_ReflectionProbeGlobalParam3`). irradiance volume samples apply `indirectDiffuseFactor` in the
+  shader so all diffuse ambient scales once. the volume's default SH (`_IVDefaultSHAr/g/b`) packs
+  `sky.customIVDefaultSH` when `sky.useCustomIVDefaultSH` is set, else `sky.skyAmbientSH`, as pure
+  L1 SH scaled by `sky.skyDirectIntensity * light.indirectDiffuseFactor`.
+- **irradiance sampling**: blends clipmap levels near edges with validity fill-in and vertical
+  correction, without jitter or forward-shifted centres.
 - **occlusion**: multi-bounce AO uses albedo luminance rather than per-channel fits. specular
   occlusion uses material occlusion only (no GTAO).
-- **specular**: Karis analytic split-sum BRDF scaled by `light.indirectSpecularFactor`.
-  `sample_reflection` in [`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl) (shared
-  by surfaces and water) blends the nearest 32 frustum-visible local reflection probes
-  ([`reflection-probes.ts`](../../packages/viewer/src/render/lighting/reflection-probes.ts))
-  front-to-back in importance-then-distance order with box/sphere falloff, optional box projection,
-  and per-probe luminance L1 SH normalisation, falling back to the sky cubemap (or the ambient probe
-  while the sky cubemap streams). cubemaps stream on demand into a 32-slot 128² `bc6h-rgb-ufloat`
-  cube array with LRU eviction.
+- **specular**: Karis analytic split-sum BRDF scaled by `light.indirectSpecularFactor`. surfaces and
+  water blend the nearest 32 frustum-visible local reflection probes front-to-back in
+  importance-then-distance order with box/sphere falloff, optional box projection, and per-probe
+  luminance L1 SH normalisation, falling back to the sky cubemap (or the ambient probe while the sky
+  cubemap streams). cubemaps stream on demand into a 32-slot 128² `bc6h-rgb-ufloat` cube array with
+  LRU eviction.
 
 ### screen-space reflections
 
-[`ssr.wgsl`](../../packages/viewer/src/render/post/ssr.wgsl) and
-[`screen-space-reflections.ts`](../../packages/viewer/src/render/post/screen-space-reflections.ts)
-run the game's [SSR](../game-data/lighting.md#screen-space-reflections) as half-resolution
+runs the game's [SSR](../game-data/lighting.md#screen-space-reflections) as half-resolution
 fullscreen passes (march, temporal filter, pyramid, resolve; ~0.5 ms at 2560×1600), reading the
 previous TAA history for hit colour. the composite bilinearly upsamples the resolved radiance and
 fade and applies each full-resolution pixel's environment BRDF and sky reflection, matching
@@ -113,18 +106,15 @@ frame so toggling a scene state swaps cells and refills affected levels.
 
 ### clipmaps
 
-[`irradiance-volume.ts`](../../packages/viewer/src/render/lighting/irradiance-volume.ts) maintains
-three 128 × 64 × 128 3D clipmaps at 0.5, 2, and 8 m probe spacing, centred on the camera:
+maintains three 128 × 64 × 128 3D clipmaps at 0.5, 2, and 8 m probe spacing, centred on the camera:
 
 - **layout**: texture A stores L0 RGB; texture B stacks three Y slabs for per-channel L1. levels
   stack along Z in one A and one B texture, with wrapped border slices (last slice before, first
-  after) so toroidal sampling filters across wraps
-  ([`irradiance-clipmap.wgsl`](../../packages/viewer/src/render/lighting/irradiance-clipmap.wgsl)).
+  after) so toroidal sampling filters across wraps.
 - **streaming and updates**: each level streams cells in its window into one storage buffer (coarse
-  levels first, ahead of scenery).
-  [`irradiance-update.wgsl`](../../packages/viewer/src/render/lighting/irradiance-update.wgsl)
-  refills a whole level (instead of partial updates) when the camera moves >4 texels or a cell
-  arrives/leaves, looking up cells in the window rather than the game's top-level hash.
+  levels first, ahead of scenery). a compute pass refills a whole level (instead of partial updates)
+  when the camera moves >4 texels or a cell arrives/leaves, looking up cells in the window rather
+  than the game's top-level hash.
 - **cascade**: levels refill coarse-to-fine; refilling a level refills every finer level because
   probe-less texels copy it ([cells and probes](../game-data/irradiance.md#cells-and-probes)). each
   level writes to scratch textures and copies into its stacked slab.
@@ -140,17 +130,15 @@ keep the scene bake, so rooms beyond ~29 m light as if empty.
 ## local lights
 
 the `lights` table ([JSON tables](../package-format.md#json-tables)) packs spot, point, and tube
-lights (omitting directional, shadow-only, and character-only lights) for
-[`local-lights.ts`](../../packages/viewer/src/render/lighting/local-lights.ts). `local_lighting` in
-[`frame.wgsl`](../../packages/viewer/src/render/frame/frame.wgsl) matches the game's
-[lobe](../game-data/lighting.md#local-lights) and foliage two-sided model, without multiple
+lights (omitting directional, shadow-only, and character-only lights), matching the game's
+[lobe](../game-data/lighting.md#local-lights) and foliage two-sided model without multiple
 scattering, cookies, or flicker.
 
 - lights inherit their file, structure, or placement visibility (chunk-file lights keep their files'
   conditions); prefab culling boxes rotate with their placement.
-- each frame `local-lights.ts` filters visible lights within culling distance and frustum, sorts by
-  camera distance then priority, keeps the nearest 256 (PC cap), and bins them into tiles and slices
-  on the CPU using conservative bounding spheres.
+- each frame filters visible lights within culling distance and frustum, sorts by camera distance
+  then priority, keeps the nearest 256 (PC cap), and bins them into tiles and slices on the CPU
+  using conservative bounding spheres.
 - uploads are skipped when camera, render size, and visible lights are unchanged. volumetric fog
   reuses the same light lists per froxel.
 
@@ -160,13 +148,9 @@ the viewer implements the game's cached atlas
 ([local light shadows](../game-data/lighting.md#local-light-shadows)) for static-caster lights that
 carry `shadow`; per-frame dynamic tiles are omitted.
 
-- [`shadow-tiles.ts`](../../packages/viewer/src/render/lighting/shadow-tiles.ts) ranks casters as in
-  the game (nearest first, 200 m and cull distance; 12 × 1024², 12 × 512², 16 × 256² tiles), draws
-  one tile per frame, evicts identically, and fades strength near cull distance.
-- [`light-shadows.ts`](../../packages/viewer/src/render/lighting/light-shadows.ts) owns the 4096²
-  atlas and tile pass (viewport clear + far-layer static casters and terrain via the same depth
-  pipelines). per-light shadow records (matrix, rect, bias, far plane) follow lights in the light
-  buffer for `local_light_shadow` in `frame.wgsl` (surfaces and fog froxels).
+- ranks casters as in the game (nearest first, 200 m and cull distance; 12 × 1024², 12 × 512², 16 ×
+  256² tiles in a 4096² atlas), draws one tile per frame, evicts identically, and fades strength
+  near cull distance.
 
 divergences from the game:
 

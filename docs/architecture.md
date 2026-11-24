@@ -54,12 +54,12 @@ geometry, raw BC texel blocks, binary instance blocks), so the runtime does no g
 
 ## packages
 
-| package          | owns                                                                                                                                                                                                                                                                   | depends on                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `formats`        | on-disk decoders: binary primitives (`binary/`: reader, LZ4 incl. inverted variant, KTX2, PE, flatbuffers), Hypergryph containers/tables (`hg/`), IL2CPP metadata (`il2cpp/`), Unity serialization and asset classes (`unity/`), Endfield world data (`endfield/`)     | `@noble/ciphers`, `@mary-ext/array-fns`                                                       |
-| `extractor`      | CLI, local config/keys, VFS and bundle readers with file I/O, cross-bundle asset resolution, game-data interpretation (`game/`: assets, world, state, materials, effects, prefabs, interactives, dynamic, water), packer (`pack/`), glTF/PNG debug exports (`export/`) | `formats`, `package-format`, `@mary-ext/array-fns`, `@mary-ext/ds-queue`, czar, meshoptimizer |
-| `package-format` | package contract: manifest and table types, enums, path constants, binary codecs for hot data, scene-control condition evaluation                                                                                                                                      | nothing                                                                                       |
-| `viewer`         | package sources (HTTP, File System Access, OPFS), decode workers, streaming and tile selection, WebGPU rendering, React UI                                                                                                                                             | `package-format`, `@mary-ext/array-fns`, czar, meshoptimizer, react, react-dom, zstddec       |
+| package          | owns                                                                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `formats`        | on-disk decoders for binary primitives, Hypergryph containers/tables, IL2CPP metadata, Unity serialization/asset classes, and world data |
+| `extractor`      | CLI, local config/keys, VFS/bundle I/O, cross-bundle asset resolution, game-data interpretation, packer, and glTF/PNG debug exports      |
+| `package-format` | package contract: manifest and table types, enums, path constants, binary codecs for hot data, and scene-control condition evaluation    |
+| `viewer`         | package sources (HTTP, File System Access, OPFS), decode workers, streaming and tile selection, WebGPU rendering, and React UI           |
 
 dependencies are one-way: `extractor → formats`, `extractor → package-format`,
 `viewer → package-format`. the viewer never imports `formats`, and `package-format` imports neither.
@@ -67,11 +67,11 @@ dependencies are one-way: `extractor → formats`, `extractor → package-format
 ### boundaries
 
 - **`formats` is environment-agnostic.** it accepts bytes or a `ByteSource` and returns plain
-  values, with no `node:` APIs outside tests. file I/O, handle caching, and install layout
-  (`hg/vfs.ts`, `hg/bundles.ts`, `game/assets/assets.ts`) live in `extractor`.
+  values, with no `node:` APIs outside tests. file I/O, handle caching, and install layout live in
+  `extractor`.
 - **`formats` decodes; `extractor` interprets.** a `formats` module parses one layout (catalog,
   bundle, TypeTree, chunk file). record selection, level/scene-state rules, and package mapping live
-  in `extractor/src/game/` and `extractor/src/pack/`.
+  in `extractor`.
 - **`package-format` is the only shared contract.** incompatible changes bump the package or
   encoding version so stale packages fail at load instead of misrendering. it stays free of node and
   browser APIs.

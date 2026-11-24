@@ -4,17 +4,8 @@
 archives of content-addressed blobs and tables. see [extraction](extraction.md#pack) for packing,
 [loading](viewer/loading.md) for reading, and [game-data](game-data/) for source formats.
 
-[package-format](../packages/package-format/src/) defines the shared types and binary codecs
-(`container`, `manifest`, `tiles`, `tree`, `instances`, `geometry`, `geometry-table`, `textures`,
-`texture-table`, `materials`, `surfaces`, `terrain`, `environment`, `environment-volumes`,
-`volumes`, `water`, `lights`, `reflection-probes`, `particles`, `curves`, `luts`, `animation`,
-`irradiance`, `states`, `conditions`, `camera`, `stream-areas`, `story`, `blobs`, `blob-table`). its
-JSDoc is authoritative. `package-format` has no Node API or workspace dependencies.
-
-| side   | code                                                                                                                                               |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| packer | [pack/packer.ts](../packages/extractor/src/pack/packer.ts) and siblings in [pack/](../packages/extractor/src/pack/)                                |
-| viewer | [package/](../packages/viewer/src/package/): `viewer-package.ts` opens the core, `package-source.ts` reads files, `decode-worker.ts` decodes blobs |
+`packages/package-format` defines the shared types and binary codecs (its JSDoc is authoritative)
+and has no Node API or workspace dependencies.
 
 ## layout
 
@@ -89,19 +80,17 @@ range-read blobs without fetching shard JSON headers.
 - **offsets**: u32 (max 4 GiB per archive).
 - **core offsets**: `ArchiveInfo.dataOffset` is `null` for `core.czar`. readers load the core whole
   and measure core blob offsets from the first member's byte offset. `blobs/…` sorts before all
-  fixed members so blob offsets never depend on table sizes; `BlobStore.writeCore` rejects any fixed
-  member that sorts earlier.
+  fixed members so blob offsets never depend on table sizes.
 - **generation**: `manifest.generation` hashes the core's binary and table members (excluding the
   manifest). equal generations guarantee identical tables for cache keying.
-- **determinism**: `BlobStore.prepare` compresses and hashes concurrently; `commit` assigns blob
-  indices in deterministic input order.
+- **determinism**: blob compression and hashing run concurrently, while blob indices are assigned in
+  deterministic input order.
 
 ## coordinates
 
 all geometry and transforms use Unity's coordinate frame: left-handed, +Y up, +Z north, metres.
 right-handed consumers apply `scale(1, 1, -1)` at the root and reverse front-face winding. the
-viewer keeps Unity coordinates in its projection
-([camera.ts](../packages/viewer/src/scene/camera.ts)).
+viewer keeps Unity coordinates in its projection.
 
 - transforms are `rows3x4`: top three rows of object-to-world, row-major (matches WGSL
   `array<vec4f, 3>`).
@@ -189,12 +178,11 @@ rows sorted by node into contiguous runs. global refs follow node refs in `tree.
 `levels` (`null` = shared; entity-id level tags stay in the extractor, [world](extraction.md#world),
 and unowned tags count as shared). each level's rect and `playerInitPos` come from
 [LevelConfig](game-data/world.md#levelconfig) (`rectLeftBottom`, `rectRightTop`, `playerInitPos`)
-and drive initial camera framing ([level-pose.ts](../packages/viewer/src/scene/level-pose.ts)).
+and drive initial camera framing.
 
 ## binary encodings
 
-all v2 binary tables and blobs use the shared FourCC TLV container
-([container.ts](../packages/package-format/src/container.ts)): a 16-byte little-endian header
+all v2 binary tables and blobs use the shared FourCC TLV container: a 16-byte little-endian header
 (`u32 magic, u16 majorVersion, u16 flags, u32 sectionCount, u32 reserved`), a `sectionCount × 24`
 directory (`u32 tag, u32 flags, u32 offset, u32 byteLength, u32 count, u32 stride`), and
 16-byte-aligned payloads (enabling zero-copy typed-array views). unknown optional sections are
@@ -223,11 +211,10 @@ frames; `.bin` tables are uncompressed.
 tree nodes sort coarse to fine (`level`, `z`, `x`). children of `(l, x, z)` are
 `(l + 1, 2x + dx, 2z + dz)`. node bounds enclose the node, its descendants, and overhang.
 
-**chains** are LOD-chain templates deduplicated by ordered draws and f32 threshold bit patterns
-([chains.ts](../packages/extractor/src/pack/instances/chains.ts)), sorted deterministically by
-64-bit `contentHash`. `.inst` blocks store a local `PLTT` (`u64[]`) of the chain hashes they
-reference so their bytes are independent of global chain numbering across packs; decoders remap
-local palette indices to global chain IDs via `chainHashMap(chains.hashes)`.
+**chains** are LOD-chain templates deduplicated by ordered draws and f32 threshold bit patterns,
+sorted deterministically by 64-bit `contentHash`. `.inst` blocks store a local `PLTT` (`u64[]`) of
+the chain hashes they reference so their bytes are independent of global chain numbering across
+packs; decoders remap local palette indices to global chain IDs.
 
 - **thresholds**: a draw is active while `minSquared < s² ≤ maxSquared`, where `s` is Unity's
   screen-relative height (negative `minSquared` disables size culling). the viewer computes `s` as
@@ -245,9 +232,8 @@ local palette indices to global chain IDs via `chainHashMap(chains.hashes)`.
   transparent pass before distance); `0` for static draws.
 - **billboards**: `BillboardFacing` (mode 0) and `BillboardUpright` (other modes, around world +Y)
   mark camera-relative rotation; stored bounds enclose all orientations
-  ([billboards](game-data/assets.md#billboards),
-  [billboard.ts](../packages/extractor/src/game/prefabs/billboard.ts)). the transform stores the
-  offset times the renderer's rotation relative to the billboard at the renderer's own position.
+  ([billboards](game-data/assets.md#billboards)). the transform stores the offset times the
+  renderer's rotation relative to the billboard at the renderer's own position.
 - **`CameraDistance`**: thresholds are squared camera distances (m²) measured from the chain's
   instance-space distance origin transformed to world space. used for prefab
   [effect LOD tables](game-data/effects.md#effect-lod-tables) (origin at the effect GameObject,
@@ -257,12 +243,9 @@ local palette indices to global chain IDs via `chainHashMap(chains.hashes)`.
 
 ### asset tables
 
-`tables/geometries.bin.zst` ([geometry-table.ts](../packages/package-format/src/geometry-table.ts))
-and `tables/textures.bin.zst` ([texture-table.ts](../packages/package-format/src/texture-table.ts))
-store fixed-size records read in place. ID = array index. `EntryStatus`: `0` ready, `1` pending
-(`--no-assets`), `2` failed (reason in `debug/assets.json`). unconverted records are zeroed and
-skipped by draws. `GeometryTable.blob` reads the blob id directly; `TextureTable.entry` decodes a
-`ReadyTexture` on first use.
+`tables/geometries.bin.zst` and `tables/textures.bin.zst` store fixed-size records read in place.
+ID = array index. `EntryStatus`: `0` ready, `1` pending (`--no-assets`), `2` failed (reason in
+`debug/assets.json`). unconverted records are zeroed and skipped by draws.
 
 - **geometries**: `.mesh` blob id, local bounds, vertex/index/submesh counts, `VertexAttribute`
   bitmask, `tangentUv` (`0xff` if no generated tangents), and `animationFrames` (`0` for static).
@@ -273,15 +256,12 @@ skipped by draws. `GeometryTable.blob` reads the blob id directly; `TextureTable
   codes: address modes `0` `repeat`, `1` `clamp-to-edge`, `2` `mirror-repeat`; filters `0`
   `nearest`, `1` `linear`; plus Unity `mipBias`.
 
-table codecs live outside `geometry.ts` and `textures.ts` so table layout changes do not invalidate
-the [pack cache](#versioning).
-
 ### irradiance cells
 
-[pack/tables/irradiance.ts](../packages/extractor/src/pack/tables/irradiance.ts) packs every cell
-whose centre lies in the package—from the base bake and every MapConfig scene-state bake—as a
-zstd-compressed decompressed `Irradiance` blob in `irradiance/<x>_<z>-<id>.czar` (512 m squares),
-keeping the game's GPU layout ([cells and probes](game-data/irradiance.md#cells-and-probes)).
+every cell whose centre lies in the package—from the base bake and every MapConfig scene-state
+bake—packs as a zstd-compressed decompressed `Irradiance` blob in `irradiance/<x>_<z>-<id>.czar`
+(512 m squares), keeping the game's GPU layout
+([cells and probes](game-data/irradiance.md#cells-and-probes)).
 
 - `tables/irradiance.bin`: ascending cell keys (shifted to one origin,
   [parser](extraction.md#irradiance)), blob indices, and visibility groups. duplicate keys list
@@ -341,9 +321,9 @@ all pyramid levels are packed for native CDLOD; node bounds span non-hole sample
 is omitted ([terrain](game-data/terrain.md#tiles-and-placement)). scenes with terrain tiles but no
 `HGTerrainSurfacesData` fail the pack.
 
-fixed format constants ([terrain.ts](../packages/package-format/src/terrain.ts), validated by the
-packer): `TERRAIN_PAGE_SAMPLES` (65), `TERRAIN_HOLE_BIT`, `TERRAIN_SURFACE_TEXELS` (132),
-`TERRAIN_SURFACE_BORDER` (2), `TERRAIN_LEAF_METRES` (64), `TERRAIN_SPLAT_CELL_METRES` (8).
+fixed format constants (validated by the packer): `TERRAIN_PAGE_SAMPLES` (65), `TERRAIN_HOLE_BIT`,
+`TERRAIN_SURFACE_TEXELS` (132), `TERRAIN_SURFACE_BORDER` (2), `TERRAIN_LEAF_METRES` (64),
+`TERRAIN_SPLAT_CELL_METRES` (8).
 
 ### surface page (`.tsp`, `EFTS`)
 
@@ -381,9 +361,7 @@ largest-first, `< 4²` padded to 1 block; top 1024² level dropped, starting at 
 - **40-byte submesh records**:
   `u32 firstIndex, u32 indexCount, u32 baseVertex, u32 vertexCount, f32×3 min, f32×3 max`
 - **payloads**: meshopt-encoded (codec v1, no filters) stream buffers, index buffer, then optional
-  animation. `package-format` treats payloads as opaque; the viewer decodes with
-  `meshoptimizer/decoder`. conversion:
-  [geometry.ts](../packages/extractor/src/pack/convert/geometry.ts).
+  animation. `package-format` treats payloads as opaque; the viewer decodes with `meshoptimizer`.
 
 **animated geometry** (`SkinAnimation`): bind-pose streams with bone weights/indices (rigid meshes
 bind all vertices to bone 0 at weight 1). animation payload:
@@ -425,7 +403,7 @@ each stream is one vertex buffer, numbered by Unity's `VertexAttribute`:
 ### textures (`.tex`)
 
 raw BC or float blocks unchanged (no transcoding, no KTX2); sRGB comes from the texture asset. each
-texture splits into pieces ([textures.ts](../packages/extractor/src/pack/convert/textures.ts)):
+texture splits into pieces:
 
 - **tail**: longest run of smallest mip levels totalling ≤ `TEXTURE_TAIL_BYTES` (64 KiB) as one
   blob.
@@ -450,9 +428,7 @@ each table is one zstd frame (level 9) wrapping JSON. material ID = index in `en
 
 ### environments
 
-`tables/environment.json.zst` (`EnvironmentTable`,
-[pack/tables/environments.ts](../packages/extractor/src/pack/tables/environments.ts),
-[packing rules](extraction/environments.md)):
+`tables/environment.json.zst` (`EnvironmentTable`, [packing rules](extraction/environments.md)):
 
 - `posts`: post-processing profiles deduplicated by name.
 - `schema`: per-field blend mode (lerp, lerp-and-round, or switch at 0.5; unlisted fields switch;
@@ -472,10 +448,8 @@ each table is one zstd frame (level 9) wrapping JSON. material ID = index in `en
 ### materials
 
 each `ReadyMaterial` holds cull mode, render queue, `gaps` (undrawn keywords/properties for the
-[gaps view](viewer/materials.md#gaps)), and a resolved `surface` union
-([surfaces.ts](../packages/package-format/src/surfaces.ts),
-[material-describe.ts](../packages/extractor/src/game/materials/material-describe.ts)). `undrawn`
-marks invisible materials; `unsupported` records the reason.
+[gaps view](viewer/materials.md#gaps)), and a resolved `surface` union. `undrawn` marks invisible
+materials; `unsupported` records the reason.
 
 - **rect decals**: draw the game's VFXDecal cube with row-provided colour and UV transform
   ([instance block](#instance-block-inst-efin)). `litDecal` stores `_DecalOpacity`; `wetnessDecal`
@@ -490,13 +464,11 @@ marks invisible materials; `unsupported` records the reason.
 
 ### lights
 
-`tables/lights.json.zst` ([pack/tables/lights.ts](../packages/extractor/src/pack/tables/lights.ts))
-stores spot and point lights (positive tube length = tube light along `direction`). directional,
-shadow-only, and character-only lights are omitted.
+`tables/lights.json.zst` stores spot and point lights (positive tube length = tube light along
+`direction`). directional, shadow-only, and character-only lights are omitted.
 
 - **sources**: chunk lights inherit their chunk files' scene-state groups; dynamic-structure ECS
-  lights inherit their structure's group; prefab lights
-  ([prefab-lights.ts](../packages/extractor/src/game/prefabs/prefab-lights.ts)) derive linear colour
+  lights inherit their structure's group; prefab lights derive linear colour
   (`linear(sRGB) × intensity × temperatureTint`), inherit placement visibility, and rotate their
   culling boxes with the placement.
 - **`shadow`** (`LightShadow`): populated for static-scenery cached shadow casters (shadows on,
@@ -504,9 +476,7 @@ shadow-only, and character-only lights are omitted.
 
 ### water
 
-`tables/water.json.zst` ([water.ts](../packages/package-format/src/water.ts),
-[pack/tables/water.ts](../packages/extractor/src/pack/tables/water.ts)) ships whole in `core.czar`
-since water is resident (Global chunks only).
+`tables/water.json.zst` ships whole in `core.czar` since water is resident (Global chunks only).
 
 ```
 WaterTable
@@ -548,12 +518,10 @@ packing contract:
 
 ### particles
 
-`tables/particles.json.zst` (`ParticlesTable`,
-[particles.ts](../packages/package-format/src/particles.ts)) interns deduplicated
-`ParticleSystemInfo` entries referenced by chain draws. values use Unity `MinMaxCurve` and
-`MinMaxGradient` unions (curves/gradients from
-[curves.ts](../packages/package-format/src/curves.ts), key times normalized to `[0, 1]`). Unity
-enums keep integer values; package-added discriminants (`motion`, `clamp`, `rows`) are strings.
+`tables/particles.json.zst` (`ParticlesTable`) interns deduplicated `ParticleSystemInfo` entries
+referenced by chain draws. values use Unity `MinMaxCurve` and `MinMaxGradient` unions (key times
+normalized to `[0, 1]`). Unity enums keep integer values; package-added discriminants (`motion`,
+`clamp`, `rows`) are strings.
 
 an emitter is a normal instance row whose bounds enclose particle reach. mesh renderers draw their
 meshes (one emitter per mesh `m_Mesh`…`m_Mesh3`); billboard/stretched/horizontal/vertical renderers
@@ -563,16 +531,12 @@ second material is reserved for trails.
 
 each `ParticleSystem` playing on awake packs in one of three ways:
 
-1. **frozen particle**
-   ([particle-mesh.ts](../packages/extractor/src/game/effects/particle-mesh.ts)): max 1 particle,
-   `ringBufferMode ≠ 0`, no texture sheet, non-camera alignment, no curves. baked as a static mesh
-   at shape centre with Euler ZXY start rotation, pivot offset, scaling-mode transform, and midpoint
-   of constant random ranges.
-2. **played system**
-   ([particle-system.ts](../packages/extractor/src/game/effects/particle-system.ts)): evaluated
-   closed-form from birth time + RNG, or stepped at 30 Hz under speed limits or force fields. matrix
-   encodes the [scaling mode](game-data/particles.md#size-and-pose) (`Hierarchy`, `Local`, `Shape`),
-   with `sizedByScale` false for `Shape`. entry stores:
+1. **frozen particle**: max 1 particle, `ringBufferMode ≠ 0`, no texture sheet, non-camera
+   alignment, no curves. baked as a static mesh at shape centre with Euler ZXY start rotation, pivot
+   offset, scaling-mode transform, and midpoint of constant random ranges.
+2. **played system**: evaluated closed-form from birth time + RNG, or stepped at 30 Hz under speed
+   limits or force fields. matrix encodes the [scaling mode](game-data/particles.md#size-and-pose)
+   (`Hierarchy`, `Local`, `Shape`), with `sizedByScale` false for `Shape`. entry stores:
    - render mode, stretched length/velocity scales, quad `screenSize` limits, `sizedByScale`, render
      alignment (`Facing` stored as `View`), pivot (pre-multiplied by mesh size for mesh particles),
      optional `flip` probabilities (`m_Flip`, omitted when zero)
@@ -602,11 +566,10 @@ each `ParticleSystem` playing on awake packs in one of three ways:
    unsupported shape/mesh/force-field, no render mode + no supported trails). draws `m_Mesh` or
    `BillboardFacing` unit quad at emitter transform, sized by scaling mode.
 
-**[spline movers](game-data/particles.md#spline-movers)**
-([spline-movers.ts](../packages/extractor/src/game/effects/spline-movers.ts)) pack as `spline`
-particle systems: one entry per LOD0 renderer of up to 4 LOD groups at the mover's GameObject; start
-lifetime = `clampedFraction · splineLength / maxSpeed`. `hasAlphaControl` fade is omitted. movers
-with noise, non-box emission, curves, or > 4 groups stand in as their first group at origin.
+**[spline movers](game-data/particles.md#spline-movers)** pack as `spline` particle systems: one
+entry per LOD0 renderer of up to 4 LOD groups at the mover's GameObject; start lifetime =
+`clampedFraction · splineLength / maxSpeed`. `hasAlphaControl` fade is omitted. movers with noise,
+non-box emission, curves, or > 4 groups stand in as their first group at origin.
 
 ## stand-ins
 
@@ -628,18 +591,13 @@ unrenderable game content packs as `Unsupported` chain draws and logs reasons to
 
 geometries and textures are placed in the asset archive of the **lowest common ancestor** (at or
 above `shardLevel`) of all tiles using them, or `assets/common` for global uses or uses spanning
-multiple root tiles
-([asset-placement.ts](../packages/extractor/src/pack/convert/asset-placement.ts)). a tile's
-dependencies therefore reside solely in its archive, its ancestors' archives, and `common`. textures
-inherit the merged placement of materials referencing them; water and environment textures are
-placed explicitly ([water](#water)).
+multiple root tiles. a tile's dependencies therefore reside solely in its archive, its ancestors'
+archives, and `common`. textures inherit the merged placement of materials referencing them; water
+and environment textures are placed explicitly ([water](#water)).
 
 ## conditions
 
-`manifest.states` (`StatesInfo`, [states.ts](../packages/package-format/src/states.ts)) controls
-content visibility. encoding and evaluation live in
-[conditions.ts](../packages/package-format/src/conditions.ts) (`resolveSceneValues`,
-`conditionVisible`, `conditionResults`, `groupsShown`). derivation rules live in
+`manifest.states` (`StatesInfo`) controls content visibility. derivation rules live in
 [scene controls](extraction/scene-controls.md).
 
 ### visibility groups
@@ -659,8 +617,8 @@ each `ConditionalSetInfo` is a DNF expression (`alternatives: SceneRequirement[]
 of `mask` is set (out-of-range values fail); a set holds when any alternative has all terms met
 (`conditionVisible`).
 
-the [control registry](../packages/extractor/src/pack/control-registry.ts) drops unused controls
-before resolving IDs to indices, prunes impossible alternatives, and canonicalises/interns sets:
+the packer drops unused controls before resolving IDs to indices, prunes impossible alternatives,
+and canonicalises/interns sets:
 
 - **masks**: on/off = `2` (value 1); quest/variable = accepted values; progression = `logicState`;
   facility form = `1 << form`; doodad group = `1 << level`; graded doodad = matching levels.
@@ -689,13 +647,11 @@ values in one linear pass (user pick → derived formula → camera value → de
   - `user`: holds `default` unless overridden by a pick.
   - `derived`: `1` when `conditionalSets[condition]` holds, else `0`; `rule` (`RuleText`, joined by
     `ruleText`) describes the formula with control-index references (`null` for unlisted state).
-  - `camera`: evaluated from camera position/path via `cameraValues`
-    ([camera.ts](../packages/package-format/src/camera.ts)): [stream areas](#stream-areas),
+  - `camera`: evaluated from camera position/path: [stream areas](#stream-areas),
     [proximity](#proximity), or [triggers](#triggers).
 - **story**: quest/mission controls link to `StatesInfo.missions` (`MissionInfo`: English name,
   category, chapter, episode, location). `StatesInfo.mainStory` orders main-story mission indices by
   parsed id (`e<episode>m<mission>[d<decimal>]`).
-  [story.ts](../packages/package-format/src/story.ts) converts a story point into consistent picks.
 - **drivers**: `ControlDriver[]` from level scripts (quests, switch, trigger/script area, other
   level, server, classified or `unknown` game event), each with target value and optional position.
 - **place** (`ControlPlace`): `position`, `bounds` of affected content, and `label`, or `null` if
@@ -705,8 +661,8 @@ values in one linear pass (user pick → derived formula → camera value → de
 
 `StatesInfo.streamAreas` (`StreamAreasInfo`, `null` when unused) holds the root list, per-zone area
 lists, and zone triggers (XZ box, height range, XZ ring). non-default-area content requires its
-`area:<id>` camera control (`area` test): `zonesAt` tests the camera and `areasShownIn`
-([stream-areas.ts](../packages/package-format/src/stream-areas.ts)) sets active area controls to 1.
+`area:<id>` camera control (`area` test), which activates areas shown for the zones containing the
+camera.
 
 ### proximity
 
@@ -727,16 +683,12 @@ using `TriggerMemory` passed through `cameraValues`:
 
 ## versioning
 
-- `PACKAGE_VERSION` (`2`, [manifest.ts](../packages/package-format/src/manifest.ts)) is the major
-  format version, paired with `minReaderVersion`, `features`, and `requiredFeatures` validated by
-  `validateManifest`. additive optional JSON fields and optional FourCC binary sections do not bump
-  `PACKAGE_VERSION`.
+- `PACKAGE_VERSION` (`2`) is the major format version, paired with `minReaderVersion`, `features`,
+  and `requiredFeatures`. additive optional JSON fields and optional FourCC binary sections do not
+  bump `PACKAGE_VERSION`.
 - each binary encoding (`EFTR`, `EFCH`, `EFBX`, `EFGE`, `EFTX`, `EFLT`, `EFIV`, `EFIN`, `EFGM`,
   `EFHT`, `EFTS`, `EFSL`, `EFAN`, `EFLU`) uses the shared FourCC TLV container (`majorVersion = 2`)
   with per-section `Required` flags and fixed-stride record growth.
-- the [pack cache](extraction.md#pack-cache) fingerprints geometry (`convert-geometry.ts`) and
-  texture (`convert-texture.ts`) converters separately, so geometry edits keep cached textures
-  valid.
 
 ## reading a package
 

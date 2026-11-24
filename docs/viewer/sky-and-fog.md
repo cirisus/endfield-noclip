@@ -6,41 +6,33 @@ and [post-processing.md](post-processing.md#post-chain).
 
 ## sky
 
-[`atmosphere.wgsl`](../../packages/viewer/src/render/sky/atmosphere.wgsl)
-([`atmosphere-luts.ts`](../../packages/viewer/src/render/sky/atmosphere-luts.ts)) builds the
-transmittance, multiple-scattering, and per-frame sky-view LUTs of the
-[atmosphere model](../game-data/sky-and-fog.md#sky). `skyViewScale`
-([`environment/derive.ts`](../../packages/viewer/src/environment/derive.ts)) applies when
-[`sky.wgsl`](../../packages/viewer/src/render/sky/sky.wgsl) samples the LUT rather than during LUT
-rendering (equivalent).
+builds the transmittance, multiple-scattering, and per-frame sky-view LUTs of the
+[atmosphere model](../game-data/sky-and-fog.md#sky). `skyViewScale` applies when sampling the LUT
+rather than during LUT rendering (equivalent).
 
 divergences: the sky-view LUT omits ground bounce below the horizon (only the multiple-scattering
 LUT uses ground albedo), and the global colour adjustment is omitted. Power Plateau's overcast sky
 renders 15–20 sRGB levels brighter than in-game; Wuling City's matches.
 
 the cloud panorama draws in the celestial pass ([beyond the atmosphere](#beyond-the-atmosphere))
-from `cloudLook` in `environment/derive.ts` with authored contrast/rotation, raw tint,
-`cloudFadeAlpha` always used (one of the game's two paths), and no cloud flow (static).
+with authored contrast/rotation, raw tint, `cloudFadeAlpha` always used (one of the game's two
+paths), and no cloud flow (static).
 
 ## sun disc
 
-[`celestial.wgsl`](../../packages/viewer/src/render/sky/celestial.wgsl) draws the sun disc following
-the [game's lobe](../game-data/sky-and-fog.md#sun-disc). unchecked against an in-game shot facing
-the sun.
+draws the sun disc following the [game's lobe](../game-data/sky-and-fog.md#sun-disc). unchecked
+against an in-game shot facing the sun.
 
 ## beyond the atmosphere
 
 instead of shading celestial layers in a sky-dome draw, the viewer renders them per sky pixel in
-`celestial` ([`celestial.wgsl`](../../packages/viewer/src/render/sky/celestial.wgsl),
-[`render/sky/celestial.ts`](../../packages/viewer/src/render/sky/celestial.ts),
-[`environment/celestial-look.ts`](../../packages/viewer/src/environment/celestial-look.ts)) and
-composites them before fog as `sky · (1 − cover) + layers`. the cloud panorama draws in the same
-pass to preserve the [game's layer order](../game-data/sky-and-fog.md#beyond-the-atmosphere).
+`celestial` and composites them before fog as `sky · (1 − cover) + layers`. the cloud panorama draws
+in the same pass to preserve the
+[game's layer order](../game-data/sky-and-fog.md#beyond-the-atmosphere).
 
-- **ray-traced planet**: `environment/celestial-look.ts` copies and linearises
-  `HGRP/Planet/PlanetBillboard` parameters. lit by the pre-exposed sun (or the material's own
-  colour; space-level lighting is unchecked). skipped if any of its four textures is missing (listed
-  in `debug/environments.json`).
+- **ray-traced planet**: linearises `HGRP/Planet/PlanetBillboard` parameters; lit by the pre-exposed
+  sun (or the material's own colour; space-level lighting is unchecked). skipped if any of its four
+  textures is missing (listed in `debug/environments.json`).
 - **sky planets**: swaps right and forward vectors into the shader, matching the game. divergences:
   always additive regardless of `_BlendMode`, omits global colour adjustment on the first slot, and
   does not thin stars behind rings.
@@ -50,18 +42,14 @@ none of these layers has been checked against an in-game shot.
 
 ## fog
 
-**analytic fog.** `fog_over` ([`fog.wgsl`](../../packages/viewer/src/render/sky/fog.wgsl)) runs in
-`composite` (opaque surfaces and sky at `skyDistance`), `water`, and `transparent`
-([glass](materials.md#glass) and fogged [effects](effects.md#blending)). `FOG_UNIT`
-([`environment/derive.ts`](../../packages/viewer/src/environment/derive.ts)) converts base-2 height
-fog units, pulling layers from the volumetric section when `volumetricFogConfig.enable` is set and
-on/off from `heightFogConfig.enable`, matching the game. (while volumetric fog is on, height fog's
-start distance and inscatter belong to far fog; drawing height fog alone with them would place a
-bright fog wall inside caves.)
+**analytic fog.** runs in `composite` (opaque surfaces and sky at `skyDistance`), `water`, and
+`transparent` ([glass](materials.md#glass) and fogged [effects](effects.md#blending)). converts
+base-2 height fog units, pulling layers from the volumetric section when
+`volumetricFogConfig.enable` is set and on/off from `heightFogConfig.enable`, matching the game.
+(while volumetric fog is on, height fog's start distance and inscatter belong to far fog; drawing
+height fog alone with them would place a bright fog wall inside caves.)
 
-**volumetric fog.**
-[`render/sky/volumetric-fog.ts`](../../packages/viewer/src/render/sky/volumetric-fog.ts) scatters
-sun, ambient probe (carrying `indirectDiffuseFactor`), and packed
+**volumetric fog.** scatters sun, ambient probe (carrying `indirectDiffuseFactor`), and packed
 [local lights](lighting.md#local-lights) through sun and
 [local-light shadow maps](lighting.md#local-light-shadows) on a fixed 160 × 90 × 64 froxel grid
 (game scales up to 240 × 135 × 128 at PC high and 320 × 180 × 128 at very high;
@@ -76,8 +64,7 @@ sun, ambient probe (carrying `indirectDiffuseFactor`), and packed
 
 ## flow noise
 
-`drift_fog` in [`composite.wgsl`](../../packages/viewer/src/render/post/composite.wgsl) sways fog on
-opaque surfaces only (not sky, water, or transparent layers; the game applies it in deferred
-lighting after all fog). the noise texture is packed once as the environment table's `flowNoise`.
-toggled by "drifting fog" and driven by the animation clock (pauses when idle or with "animate" off;
-[performance](performance.md)).
+sways fog on opaque surfaces only (not sky, water, or transparent layers; the game applies it in
+deferred lighting after all fog). the noise texture is packed once as the environment table's
+`flowNoise`. toggled by "drifting fog" and driven by the animation clock (pauses when idle or with
+"animate" off; [performance](performance.md)).

@@ -2,8 +2,7 @@
 
 viewer implementation of [game-data/terrain.md](../game-data/terrain.md) and
 [foliage grids](../game-data/world.md#foliage-grids). page selection and streaming are in
-[streaming.md](streaming.md#terrain-selection); the shader is
-[`terrain.wgsl`](../../packages/viewer/src/render/terrain/terrain.wgsl).
+[streaming.md](streaming.md#terrain-selection).
 
 ## terrain
 
@@ -15,19 +14,16 @@ viewer implementation of [game-data/terrain.md](../game-data/terrain.md) and
   (so any triangle touching a hole vertex is dropped completely). partial retention would hang
   vertical curtains because hole vertices sit at base height hundreds of metres below. triangles
   still rasterize before discard.
-- **quad diagonals**: `gridIndices` in
-  [`terrain-renderer.ts`](../../packages/viewer/src/render/terrain/terrain-renderer.ts) alternates
-  diagonals by sample parity to match the game's hole-edge triangles.
+- **quad diagonals**: alternating diagonals by sample parity matches the game's hole-edge triangles.
 
 ### close-up layers
 
-when a leaf's splat page and layer textures are resident, `detail_surface` blends
-[close-up layers](../game-data/terrain.md#close-up-layers) into the baked page by distance:
+when a leaf's splat page and layer textures are resident, close-up layers blend into the baked page
+by distance ([close-up layers](../game-data/terrain.md#close-up-layers)):
 
-- **distances**: fades over 96–144 m (`DETAIL_FADE_START`/`END`); leaves within 160 m load splat
-  pages (`DETAIL_DISTANCE`, [streaming.md](streaming.md#terrain-selection)). viewer-chosen (game
-  values unknown).
-- **weights**: `sample_control` clamps filtering half a texel inside the 8 m cell.
+- **distances**: fades over 96–144 m; leaves within 160 m load splat pages
+  ([streaming.md](streaming.md#terrain-selection)). viewer-chosen (game values unknown).
+- **weights**: clamps filtering half a texel inside the 8 m cell.
 - **projection**: blends the three planes by baked-normal `|n|⁸` weights instead of the game's
   stochastic per-pixel pick. explicit gradients skip zero-weight slots and planes.
 - **omitted**: cliff projection and cone-map parallax (`C` pages and `LAYER_C` are not packed).
@@ -36,7 +32,7 @@ when a leaf's splat page and layer textures are resident, `detail_surface` blend
 
 ### puddles
 
-`wet_surface` applies [puddle](../game-data/terrain.md#puddles) terms per leaf:
+applies [puddle](../game-data/terrain.md#puddles) terms per leaf:
 
 - ground height blends from weighted layer height to flat 0.5 across the close-up layer fade.
 - only leaf `S` pages are packed, so puddles stop where splat pages stop loading.
