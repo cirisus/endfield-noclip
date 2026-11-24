@@ -82,6 +82,8 @@ const build = (
 		erosion?: boolean;
 		/** adds a last entity, a sludge patch of core 22800030023 */
 		sludge?: boolean;
+		/** adds a last entity, a water pipe */
+		waterPipe?: boolean;
 	} = {},
 ): Uint8Array => {
 	const w = new Writer();
@@ -96,7 +98,7 @@ const build = (
 	w.view.setUint32(strings, 2, true);
 	w.link(rootFields.get(4)!, strings);
 
-	const slots = [0, 3, 5, 7, 8, 9, 12, 16, 17, 27, 28, 29, 31, 32, 33, 36, 44, 46, 52, 55];
+	const slots = [0, 3, 5, 7, 8, 9, 12, 16, 17, 27, 28, 29, 31, 32, 33, 36, 44, 46, 49, 52, 55];
 	const grid = w.table(56, slots);
 	w.link(gridVector + 4, grid.get(0)! - 4);
 	w.view.setUint32(grid.get(0)!, GRID, true);
@@ -114,11 +116,25 @@ const build = (
 		ref(DynamicData.ExtraSceneComp, 0),
 		ref(DynamicData.ErosionRootComp, 1),
 		ref(DynamicData.SludgeComp, 1),
+		ref(DynamicData.WaterPipeComp, 1),
 	].map((words) => words.slice(0, 4));
 	w.link(grid.get(5)!, w.structs(16, dataIndex));
 	// min and max corners (stored swapped), origin, direction
 	const float = (value: number): number => new Int32Array(new Float32Array([value]).buffer)[0];
 	w.link(grid.get(46)!, w.structs(40, [[...[3, 7, 4, -3, 2, -4, 0, 4.5, 0.5].map(float), 1]]));
+	// two water pipes, so a misread stride reads the wrong pipe
+	const waterPipe = (id: number, upstream: number, connected: number, outFall: number) => [
+		...[-59, 61].map(float),
+		connected,
+		0,
+		id % 2 ** 32,
+		Math.floor(id / 2 ** 32),
+		upstream % 2 ** 32,
+		Math.floor(upstream / 2 ** 32),
+		...[0.5, 9.5, 22.5].map(float),
+		outFall,
+	];
+	w.link(grid.get(49)!, w.structs(48, [waterPipe(1, 0, 0, 1), waterPipe(10100290008, 10100290007, 1, 0)]));
 	// two erosion roots, so a misread stride reads the wrong core: core id, PosList, core position, padding
 	const erosionRoot = (id: number, x: number) => [
 		id % 2 ** 32,
@@ -207,6 +223,7 @@ const build = (
 			...(options.slot ? [[29, 0, ...ref(1, 9, 1), 0, ...visibility(0, 0)]] : []),
 			...(options.erosion ? [[36, 0, ...ref(1, 10, 1), 0, ...visibility(0, 0)]] : []),
 			...(options.sludge ? [[25, 0, ...ref(1, 11, 1), 0, ...visibility(0, 0)]] : []),
+			...(options.waterPipe ? [[30, 0, ...ref(1, 12, 1), 0, ...visibility(0, 0)]] : []),
 		]),
 	);
 	w.link(grid.get(55)!, w.structs(8, [[1, 161]]));
@@ -349,4 +366,21 @@ test('reads the sludge core a sludge patch belongs to', () => {
 	assert.deepEqual(entities[2].sludgeCore, { id: 22800030023n, position });
 	assert.equal(entities[2].erosionCore, null);
 	assert.equal(entities[0].sludgeCore, null);
+});
+
+test('reads a water pipe component', () => {
+	const entities = readDynamicScene(build({ waterPipe: true })).entities;
+	assert.equal(entities.length, 3);
+	assert.deepEqual(entities[2].waterPipe, {
+		interactiveId: 10100290008n,
+		upstreamInteractiveId: 10100290007n,
+		isOutFall: false,
+		connectedToWaterWheel: true,
+		initialAngle: -59,
+		targetAngle: 61,
+		delayActivateDownStream: 0.5,
+		heightToDownStream: 9.5,
+		heightToGround: 22.5,
+	});
+	assert.equal(entities[0].waterPipe, null);
 });

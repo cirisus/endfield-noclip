@@ -41,6 +41,7 @@ const outpost: DynamicEntity = {
 	extraScene: null,
 	erosionCore: null,
 	sludgeCore: null,
+	waterPipe: null,
 };
 
 const tree: DynamicEntity = {
@@ -59,6 +60,7 @@ const tree: DynamicEntity = {
 	extraScene: null,
 	erosionCore: null,
 	sludgeCore: null,
+	waterPipe: null,
 };
 
 test('summarizes progressions with their levels and defaults to the highest authored level', () => {

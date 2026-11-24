@@ -28,6 +28,7 @@ export const DynamicData = {
 	ModelViewStateControllerNewComp: 35,
 	SludgeComp: 42,
 	ExtraSceneComp: 44,
+	WaterPipeComp: 47,
 	MapVarControlComp: 51,
 	PoiControlComp: 55,
 } as const;
@@ -176,6 +177,30 @@ export interface DynamicEntity {
 	erosionCore: ErosionCoreLink | null;
 	/** the erosion sludge core whose sludge this entity is, `null` for other entities */
 	sludgeCore: SludgeCoreLink | null;
+	/** water pipe or outfall configuration (`WaterPipeComp`), `null` for other entities */
+	waterPipe: WaterPipe | null;
+}
+
+/** a dynamic water pipe or outfall (`FBDynamicSceneWaterPipeComp`) */
+export interface WaterPipe {
+	/** this pipe's interactive logic id in LevelData */
+	interactiveId: bigint;
+	/** upstream pipe or outfall's interactive logic id, `0n` when fed directly by a waterfall */
+	upstreamInteractiveId: bigint;
+	/** whether this entity is an outfall source rather than a rotatable chute */
+	isOutFall: boolean;
+	/** whether its downstream water hits a waterwheel (for audio) */
+	connectedToWaterWheel: boolean;
+	/** world Y rotation in degrees when not aligned to target (`state !== 1`) */
+	initialAngle: number;
+	/** world Y rotation in degrees when aligned to target (`state === 1`) */
+	targetAngle: number;
+	/** seconds before activating downstream after aligning */
+	delayActivateDownStream: number;
+	/** waterfall drop length in metres when aligned to downstream */
+	heightToDownStream: number;
+	/** waterfall drop length in metres when pouring to the ground */
+	heightToGround: number;
 }
 
 /** decoded grids and entities of one `fb_main_*` file */
@@ -236,6 +261,7 @@ const Slot = {
 	ModelViewStateControllerNewComp: 37,
 	SludgeComp: 44,
 	ExtraSceneComp: 46,
+	WaterPipeComp: 49,
 	MapVarControlComp: 52,
 	PoiControlComp: 55,
 } as const;
@@ -262,6 +288,7 @@ const Width = {
 	ErosionRootComp: 48,
 	ModelViewStateControllerNewComp: 36,
 	SludgeComp: 264,
+	WaterPipeComp: 48,
 } as const;
 
 class LazyDynamicGrid implements DynamicGrid {
@@ -457,6 +484,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 				extraScene: null,
 				erosionCore: null,
 				sludgeCore: null,
+				waterPipe: null,
 			};
 			for (let c = 0; c < comps.count; c++) {
 				const di = row(vectors.dataIndex, comps.index + c, Width.DataIndex, 'DataIndex');
@@ -593,6 +621,28 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 						entity.sludgeCore = {
 							id: fb.u64(s + 248),
 							position: fb.vec3(s + 96),
+						};
+						break;
+					}
+					case DynamicData.WaterPipeComp: {
+						const s = rowIn(fb.u32(di + 8), Slot.WaterPipeComp, index, Width.WaterPipeComp, 'WaterPipeComp');
+						const connected = fb.u8(s + 8);
+						const isOutFall = fb.u8(s + 44);
+						if (connected > 1 || isOutFall > 1) {
+							throw new FormatError(
+								`invalid WaterPipeComp flags (connected ${connected}, isOutFall ${isOutFall})`,
+							);
+						}
+						entity.waterPipe = {
+							interactiveId: fb.u64(s + 16),
+							upstreamInteractiveId: fb.u64(s + 24),
+							isOutFall: isOutFall !== 0,
+							connectedToWaterWheel: connected !== 0,
+							initialAngle: fb.f32(s),
+							targetAngle: fb.f32(s + 4),
+							delayActivateDownStream: fb.f32(s + 32),
+							heightToDownStream: fb.f32(s + 36),
+							heightToGround: fb.f32(s + 40),
 						};
 						break;
 					}
