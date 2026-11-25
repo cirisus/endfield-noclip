@@ -63,6 +63,9 @@ the top of the 27-bit id space.
 
 - models and ECS entities deduplicate by stored reference, unioning visibility alternatives across
   all groups that show them
+- `ResourceComp.LodInfo` (`LodGridResource`) chains swap between LOD 0 (near prefab or detailed ECS)
+  and coarser far-distance stand-ins (ECS static mesh or `farmod`); the extractor keeps only the
+  finest present LOD so they don't draw on top of each other
 - each structure gets its resource group's `levelNum` level tag
 - static chunks win when an ECS entity already exists in static chunks; local lights of selected ECS
   groups keep the same rule ([lights](../package-format.md#lights))

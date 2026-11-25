@@ -738,7 +738,9 @@ class OwnerPass {
 		}
 		for (const group of entity.resourceGroups) {
 			const ref = group.resources;
-			if (ref.count === 0) {
+			// LodGridResource chains swap between LOD 0 (near prefab/detail) and coarser LOD 1/2 stand-ins (far
+			// ECS/farmod); keep only the finest present LOD so they don't draw on top of each other
+			if (ref.count === 0 || (group.lod !== null && group.lod > 0)) {
 				continue;
 			}
 			const tag = partition?.levels.find((level) => level.idNum === group.levelNum)?.tag ?? 0;

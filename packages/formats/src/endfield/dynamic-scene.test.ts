@@ -84,6 +84,8 @@ const build = (
 		sludge?: boolean;
 		/** adds a last entity, a water pipe */
 		waterPipe?: boolean;
+		/** links groups 1 (LOD 0) and 2 (LOD 1) through ResourceComp.LodInfo */
+		lodChain?: boolean;
 	} = {},
 ): Uint8Array => {
 	const w = new Writer();
@@ -98,8 +100,8 @@ const build = (
 	w.view.setUint32(strings, 2, true);
 	w.link(rootFields.get(4)!, strings);
 
-	const slots = [0, 3, 5, 7, 8, 9, 12, 16, 17, 27, 28, 29, 31, 32, 33, 36, 44, 46, 49, 52, 55];
-	const grid = w.table(56, slots);
+	const slots = [0, 3, 5, 7, 8, 9, 12, 16, 17, 27, 28, 29, 31, 32, 33, 36, 44, 46, 49, 52, 55, 57];
+	const grid = w.table(58, slots);
 	w.link(gridVector + 4, grid.get(0)! - 4);
 	w.view.setUint32(grid.get(0)!, GRID, true);
 
@@ -213,9 +215,38 @@ const build = (
 	]);
 	w.link(grid.get(17)!, ids);
 	w.link(grid.get(29)!, w.structs(20, [[0, 0, 0, 0, 1]]));
+	const resourceRow = Array.from({ length: 33 }, () => 0);
+	resourceRow.splice(0, 6, ...ref(options.resType ?? DynamicData.ResourceGroupWithStateDesc, 0, 3));
+	if (options.lodChain) {
+		resourceRow.splice(25, 6, ...ref(DynamicData.LodGridResource, 0, 1));
+	}
+	w.link(grid.get(32)!, w.structs(132, [resourceRow]));
 	w.link(
-		grid.get(32)!,
-		w.structs(132, [ref(options.resType ?? DynamicData.ResourceGroupWithStateDesc, 0, 3)]),
+		grid.get(57)!,
+		w.structs(
+			92,
+			options.lodChain
+				? [
+						[
+							0,
+							0,
+							0,
+							0,
+							DynamicData.ResourceGroupWithStateDesc,
+							GRID,
+							1,
+							0,
+							DynamicData.ResourceGroupWithStateDesc,
+							GRID,
+							2,
+							1,
+							0,
+							0,
+							0,
+						],
+					]
+				: [],
+		),
 	);
 	w.link(
 		grid.get(33)!,
@@ -400,4 +431,15 @@ test('reads a water pipe component', () => {
 		heightToGround: 22.5,
 	});
 	assert.equal(entities[0].waterPipe, null);
+});
+
+test('ranks resource groups belonging to a ResourceComp.LodInfo chain', () => {
+	assert.deepEqual(
+		readDynamicScene(build()).entities[0].resourceGroups.map((group) => group.lod),
+		[null, null, null],
+	);
+	assert.deepEqual(
+		readDynamicScene(build({ lodChain: true })).entities[0].resourceGroups.map((group) => group.lod),
+		[null, 0, 1],
+	);
 });

@@ -31,6 +31,7 @@ export const DynamicData = {
 	WaterPipeComp: 47,
 	MapVarControlComp: 51,
 	PoiControlComp: 55,
+	LodGridResource: 59,
 } as const;
 
 /** a typed slice of a grid vector */
@@ -88,6 +89,11 @@ export interface DynamicResourceGroup {
 	states: number[];
 	/** stream area ids, any of which shows the group; area 0 is shown everywhere */
 	areas: number[];
+	/**
+	 * 0-based rank in a `ResourceComp.LodInfo` (`LodGridResource`) swap chain (0 = finest present LOD, 1/2 =
+	 * coarser far-distance stand-ins), or `null` when not part of an LOD chain
+	 */
+	lod: number | null;
 }
 
 /** what drives an entity's logic state */
@@ -280,6 +286,7 @@ const Slot = {
 	WaterPipeComp: 49,
 	MapVarControlComp: 52,
 	PoiControlComp: 55,
+	LodGridResource: 57,
 } as const;
 
 /** record strides, in bytes */
@@ -305,6 +312,7 @@ const Width = {
 	ModelViewStateControllerNewComp: 36,
 	SludgeComp: 264,
 	WaterPipeComp: 48,
+	LodGridResource: 92,
 } as const;
 
 class LazyDynamicGrid implements DynamicGrid {
@@ -700,14 +708,49 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 						break;
 					}
 					case DynamicData.ResourceComp: {
-						const res = dataRef(row(vectors.resources, index, Width.ResourceComp, 'ResourceComp'));
+						const rc = row(vectors.resources, index, Width.ResourceComp, 'ResourceComp');
+						const res = dataRef(rc);
 						if (res.count > 0 && res.type !== DynamicData.ResourceGroupWithStateDesc) {
 							throw new FormatError(`ResourceComp ${index} in grid ${gridId} has Res type ${res.type}`);
 						}
+						const lodByGroup = new Map<number, number>();
+						const lodInfo = dataRef(rc + 100);
+						if (fb.i32(rc + 100) === 0 && lodInfo.count > 0) {
+							if (lodInfo.type !== DynamicData.LodGridResource) {
+								throw new FormatError(
+									`ResourceComp ${index} in grid ${gridId} has LodInfo type ${lodInfo.type}`,
+								);
+							}
+							for (let k = 0; k < lodInfo.count; k++) {
+								const lgr = rowIn(
+									lodInfo.grid,
+									Slot.LodGridResource,
+									lodInfo.index + k,
+									Width.LodGridResource,
+									'LodGridResource',
+								);
+								let rank = 0;
+								for (const offset of [12, 28, 44]) {
+									if (fb.i32(lgr + offset) !== 0) {
+										continue;
+									}
+									if (fb.i32(lgr + offset + 4) !== DynamicData.ResourceGroupWithStateDesc) {
+										throw new FormatError(
+											`LodGridResource ${lodInfo.index + k} in grid ${lodInfo.grid} has group type ${fb.i32(lgr + offset + 4)}`,
+										);
+									}
+									if (fb.u32(lgr + offset + 8) === gridId) {
+										lodByGroup.set(fb.i32(lgr + offset + 12), rank);
+									}
+									rank++;
+								}
+							}
+						}
 						for (let k = 0; k < res.count; k++) {
+							const groupIndex = res.index + k;
 							const desc = row(
 								vectors.groups,
-								res.index + k,
+								groupIndex,
 								Width.ResourceGroupWithStateDesc,
 								'ResourceGroupWithStateDesc',
 							);
@@ -719,6 +762,7 @@ export const readDynamicScene = (bytes: Uint8Array): DynamicScene => {
 								factoryIndex: fb.i32(desc + 36),
 								states: visibility(desc + 40),
 								areas: visibility(desc + 64),
+								lod: lodByGroup.get(groupIndex) ?? null,
 							});
 						}
 						break;

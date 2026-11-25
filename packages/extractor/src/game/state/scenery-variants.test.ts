@@ -23,6 +23,7 @@ const group = (index: number, logicState: number): DynamicResourceGroup => ({
 	factoryIndex: -1,
 	states: [],
 	areas: [],
+	lod: null,
 });
 
 const outpost: DynamicEntity = {
