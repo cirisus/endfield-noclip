@@ -11,8 +11,8 @@ import { TextureSet } from '../../gfx/texture-set.ts';
 import type { Camera } from '../../scene/camera.ts';
 import { HDR_FORMAT, type SceneTextures } from '../frame/render-targets.ts';
 import colorWgsl from '../shaders/common/color.wgsl?raw';
+import gbufferWgsl from '../shaders/common/gbuffer.wgsl?raw';
 import octahedralWgsl from '../shaders/common/octahedral.wgsl?raw';
-import reflectionSurfaceWgsl from '../shaders/common/reflection-surface.wgsl?raw';
 import screenSpaceWgsl from '../shaders/common/screen-space.wgsl?raw';
 
 import { CAMERA_HISTORY_FLOATS, CameraHistory } from './camera-history.ts';
@@ -76,7 +76,7 @@ export class ScreenSpaceReflections {
 			colorWgsl,
 			screenSpaceWgsl,
 			octahedralWgsl,
-			reflectionSurfaceWgsl,
+			gbufferWgsl,
 			ssrWgsl,
 		]);
 		const pipeline = (label: string, entryPoint: string, formats: GPUTextureFormat[]): GPURenderPipeline =>
@@ -164,9 +164,8 @@ export class ScreenSpaceReflections {
 				group(p.march, 1, {
 					0: ssr,
 					1: scene.depth,
-					2: scene.reflectionSurface,
+					2: scene.gbufferB,
 					3: previousScene,
-					14: scene.decalSurface,
 					4: this.#sampler,
 				}),
 			],

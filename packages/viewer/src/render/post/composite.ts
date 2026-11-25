@@ -2,8 +2,6 @@ import { autoBindGroup, encodeFullscreen, fullscreenPipeline } from '../../gfx/f
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_REPEAT, sampler } from '../../gfx/samplers.ts';
 import { HDR_FORMAT, type SceneTextures } from '../frame/render-targets.ts';
-import octahedralWgsl from '../shaders/common/octahedral.wgsl?raw';
-import reflectionSurfaceWgsl from '../shaders/common/reflection-surface.wgsl?raw';
 import { SkyBinding } from '../sky/atmosphere-luts.ts';
 import atmosphereWgsl from '../sky/atmosphere.wgsl?raw';
 import { fogSource } from '../sky/fog-source.ts';
@@ -42,8 +40,6 @@ export class Composite {
 		this.#pipeline = fullscreenPipeline(device, {
 			label: 'composite',
 			module: postShaderModule(device, 'composite', [
-				octahedralWgsl,
-				reflectionSurfaceWgsl,
 				atmosphereWgsl,
 				fogSource({ group: 1, binding: SkyBinding.froxels }),
 				skyWgsl,
@@ -98,28 +94,16 @@ export class Composite {
 	/**
 	 * rebinds the inputs after they were recreated.
 	 *
-	 * @param input the main pass's outputs, the blurred AO, the resolved half-size reflections (rgb hit
-	 *   radiance, a fade), and the scene the composite writes. `scene.reflection` holds the celestial layers on
-	 *   sky pixels and the main pass's sky reflection on surface pixels
+	 * @param input the deferred-lit scene (`scene.lit`, holding celestial layers on sky pixels and lit radiance
+	 *   on surface pixels), main-pass depth, and the composited target
 	 */
-	resize(input: {
-		scene: SceneTextures;
-		ao: GPUTextureView;
-		reflections: GPUTextureView;
-		target: GPUTextureView;
-	}): void {
+	resize(input: { scene: SceneTextures; target: GPUTextureView }): void {
 		const { scene } = input;
 		this.#sized = {
 			target: input.target,
 			scene: autoBindGroup(this.#device, this.#pipeline, 2, {
-				0: scene.radiance,
-				1: scene.ambient,
-				2: input.ao,
-				3: scene.depth,
-				6: input.reflections,
-				7: scene.reflectionSurface,
-				8: scene.decalSurface,
-				9: scene.reflection,
+				0: scene.lit,
+				1: scene.depth,
 			}),
 		};
 	}

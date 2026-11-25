@@ -60,8 +60,7 @@ test('a lit decal draws its maps through the placement or the PBR map’s own tr
 			described({ ...decal, opacity: 0, wetness: 0.3, emission: null }),
 		],
 	});
-	// a wetness decal writes albedo but changes the surface's own, so it relights; its opacity leaves the tint
-	assert.equal(wet.queue, 'decalRelight');
+	assert.equal(wet.queue, 'litDecal');
 	assert.equal(wet.params[EffectRow.tint + 3], 1);
 	assert.deepEqual(
 		[...wet.params.subarray(DecalLitRow.pbrPlaced, DecalLitRow.pbrPlaced + 4)].map(
@@ -87,7 +86,9 @@ test('a lit decal draws its maps through the placement or the PBR map’s own tr
 		[3, 0, 1],
 	);
 	assert.equal(look.params[EffectRow.unfogged + 1], EffectKind.LitDecal);
-	assert.equal(water.queue, 'decalRelight');
+	assert.equal(water.queue, 'litDecal');
+	assert.equal(water.params[DecalLitRow.writes + 3], 0);
+	assert.equal(look.params[DecalLitRow.writes + 3], 1);
 	assert.equal(water.params[DecalLitRow.pbrPlaced], 0);
 	assert.deepEqual(
 		[...water.params.subarray(EffectRow.uv + 4, EffectRow.uv + 6)].map((v) => Math.round(v * 1000) / 1000),
@@ -117,7 +118,7 @@ test('a wetness decal relights through its mask, its opacity in the tint', () =>
 	const [masked, even] = materialLooks({
 		entries: [described(decal), described({ ...decal, mask: null })],
 	});
-	assert.deepEqual([masked.flags, masked.queue], [LookFlags.Effect, 'decalRelight']);
+	assert.deepEqual([masked.flags, masked.queue], [LookFlags.Effect, 'wetnessDecal']);
 	assert.equal(masked.textures[0], 5);
 	assert.deepEqual([...masked.params.subarray(EffectRow.uv, EffectRow.uv + 4)], [2, 3, 0.5, 0]);
 	assert.equal(Math.round(masked.params[EffectRow.tint + 3] * 1000) / 1000, 0.8);

@@ -113,7 +113,6 @@ export class Renderer {
 		this.device = device;
 		this.targets = new RenderTargets(device, canvas, gfx.presentationFormat, {
 			stencil: gfx.features.depth32floatStencil8,
-			mipFeedback: gfx.features.mipFeedbackTarget,
 		});
 		this.#layouts = createBindLayouts(device);
 		this.pipelines = new PipelineCache(device);
@@ -151,7 +150,14 @@ export class Renderer {
 		}));
 		this.fog = new VolumetricFog(device, this.pipelines, layouts.frame);
 		this.fog.setEnvironment(look.environment, near);
-		this.post = new PostProcess(device, this.pipelines, gfx.presentationFormat, look.environment, this.fog);
+		this.post = new PostProcess(
+			device,
+			this.pipelines,
+			gfx.presentationFormat,
+			look.environment,
+			this.fog,
+			layouts.frame,
+		);
 		this.meshes = new MeshRenderer(device, layouts, this.pipelines, {
 			instances: this.instances,
 			format,

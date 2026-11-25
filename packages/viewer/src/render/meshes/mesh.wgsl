@@ -672,22 +672,31 @@ fn surface_normal(vertex_normal: vec3f, faceted: vec3f, flip: bool) -> vec3f {
 // depth passes of alpha-tested materials discard (fs_cutout_depth). their shading runs fs_opaque where the
 // depth matches.
 
+struct SurfaceEval {
+	surface: Surface,
+	unlit: bool,
+	unlit_color: vec3f,
+}
+
+fn eval_to_gbuffer(ev: SurfaceEval, no_lit_decals: bool, feedback: u32) -> GBufferOut {
+	if (ev.unlit) {
+		return pack_gbuffer_unlit(ev.unlit_color, feedback);
+	}
+	return pack_gbuffer(ev.surface, no_lit_decals, feedback);
+}
+
 @fragment
-fn fs_opaque(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Shaded {
+fn fs_opaque(in: VertexOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
 	let look = look_slot(draws[in.draw]);
 	let feedback = pack_mip_feedback(look, in.uv, in.rel, frame.params.y);
-	var out = shade(in, true, is_front_face(front_facing, in.mirrored));
-	if (looks[look].detail2.w > 0.5) {
-		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
-	}
-	out.mip_feedback = feedback;
-	return out;
+	let ev = eval_surface(in, false, is_front_face(front_facing, in.mirrored));
+	return eval_to_gbuffer(ev, looks[look].detail2.w > 0.5, feedback);
 }
 
 // alpha-tested surfaces that don't write depth (`HGRP/Lit` `_ZWRITE_OFF`, e.g. floor/wall mesh decals):
 // they skip the prepass and discard here against the opaque/cutout depth buffer
 @fragment
-fn fs_cutout_overlay(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Shaded {
+fn fs_cutout_overlay(in: VertexOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
 	if (fade_discard(in.fade, in.position.xy)) {
 		discard;
 	}
@@ -710,18 +719,14 @@ fn fs_cutout_overlay(in: VertexOut, @builtin(front_facing) front_facing: bool) -
 		discard;
 	}
 	let feedback = pack_mip_feedback(id, in.uv, in.rel, frame.params.y);
-	var out = shade(in, true, is_front_face(front_facing, in.mirrored));
-	if (look.detail2.w > 0.5) {
-		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
-	}
-	out.mip_feedback = feedback;
-	return out;
+	let ev = eval_surface(in, false, is_front_face(front_facing, in.mirrored));
+	return eval_to_gbuffer(ev, look.detail2.w > 0.5, feedback);
 }
 
-// lean shading path for plain opaque Lit looks (base + normal only, no mask/emissive/detail/layer/parallax/
+// lean G-buffer path for plain opaque Lit looks (base + normal only, no mask/emissive/detail/layer/parallax/
 // foliage/erosion/unlit/dither/gaps); keeps VGPRs low for the ~86% of opaque materials that need nothing else
 @fragment
-fn fs_opaque_lit(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Shaded {
+fn fs_opaque_lit(in: VertexOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
@@ -771,13 +776,7 @@ fn fs_opaque_lit(in: VertexOut, @builtin(front_facing) front_facing: bool) -> Sh
 	if ((flags & (NORMAL_MAP | NORMAL_OCCLUSION)) == (NORMAL_MAP | NORMAL_OCCLUSION)) {
 		s.occlusion = mix(1.0, packed.a, look.surface2.x);
 	}
-	s = rain_wet_surface(s, in.rel);
-	var out = shade_surface(s, in.rel, in.position.xy);
-	if (look.detail2.w > 0.5) {
-		out.reflection_surface.y |= SURFACE_NO_LIT_DECALS;
-	}
-	out.mip_feedback = feedback;
-	return out;
+	return pack_gbuffer(s, look.detail2.w > 0.5, feedback);
 }
 
 // `HGRP/LitTransparent`'s `_USE_FRESNEL` (`fresnelParams` in lit-look.ts): returns `(fresnel, mask)` where
@@ -819,8 +818,9 @@ fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @
 	let uv1_dy = dpdy(in.uv.zw) * gradient_scale;
 	let front = is_front_face(front_facing, in.mirrored);
 	let faceted = cross(dpdx(in.rel), dpdy(in.rel));
-	// shade before any conditional discard so implicit-LOD samples stay in uniform control flow
-	let shaded = shade(in, false, front);
+	// evaluate surface before any conditional discard so implicit-LOD samples stay in uniform control flow
+	let ev = eval_surface(in, true, front);
+	let radiance = select(shade_surface_forward(ev.surface, in.rel, in.position.xy), ev.unlit_color, ev.unlit);
 	// a map still streaming leaves the tint's alpha alone
 	var alpha = 1.0;
 	if ((flags & ALPHA_NORMAL) != 0u) {
@@ -846,7 +846,7 @@ fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @
 	}
 	alpha *= fade_opacity(in.fade);
 	// premultiplied glass (detail2.z) adds its whole radiance and lets its opacity only dim what's behind
-	let color = shaded.radiance.rgb * select(alpha, 1.0, premul);
+	let color = radiance * select(alpha, 1.0, premul);
 	let uv = in.position.xy / frame.render_size.xy;
 	return vec4f(fog_premultiplied(color, alpha, in.rel, uv), alpha);
 }
@@ -878,7 +878,10 @@ fn dither_vertex_color(look: Look, flags: u32, color: vec4f) -> vec3f {
 	return select(vec3f(1.0), color.rgb, (dither_bits(look, flags) & DITHER_VERTEX_COLOR) != 0u);
 }
 
-fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
+fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
+	var ev: SurfaceEval;
+	ev.unlit = false;
+	ev.unlit_color = vec3f(0.0);
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
 	let id = look_slot(draw);
@@ -907,7 +910,9 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 		let world = in.rel + frame.eye.xyz;
 		let stripe = fract((world.x + world.y + world.z) * 2.0) < 0.5;
 		let shape = select(1.0, dot(base.rgb, LUMINANCE_ROUNDED), (flags & BASE_MAP) != 0u);
-		return unlit(select(vec3f(0.02), vec3f(1.0, 0.5, 0.0), stripe) * (0.5 + 0.5 * shape));
+		ev.unlit = true;
+		ev.unlit_color = select(vec3f(0.02), vec3f(1.0, 0.5, 0.0), stripe) * (0.5 + 0.5 * shape);
+		return ev;
 	}
 	if ((flags & UNLIT) != 0u) {
 		// matte paintings (`mattePaintingLook` in special-looks.ts): the tinted texture brightened above a threshold,
@@ -933,7 +938,9 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 			}
 		}
 		c += max(c - vec3f(look.surface.x), vec3f(0.0)) * look.surface.y;
-		return unlit(clamp(c * mix(1.0, frame.ambient.y, look.emissive2.z), vec3f(0.0), vec3f(1000.0)));
+		ev.unlit = true;
+		ev.unlit_color = clamp(c * mix(1.0, frame.ambient.y, look.emissive2.z), vec3f(0.0), vec3f(1000.0));
+		return ev;
 	}
 	if ((flags & EROSION) != 0u) {
 		var s: Surface;
@@ -944,10 +951,8 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 		} else {
 			s = erosion_surface(look, in, flags, faceted, front, packed, mask, detail, uv0_dx, uv0_dy);
 		}
-		if (wet) {
-			s = rain_wet_surface(s, in.rel);
-		}
-		return shade_surface(s, in.rel, in.position.xy);
+		ev.surface = s;
+		return ev;
 	}
 
 	var albedo = clamp(base.rgb * look.tint.rgb * look.surface2.w, vec3f(0.0), vec3f(1.0));
@@ -1124,9 +1129,9 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 	}
 
 	var emission = vec3f(0.0);
-	// transparent Fresnel (`!wet && look.parallax_bright.x > 0.5`) holds the parallax rows; a vertex offset's
+	// transparent Fresnel (`transparent && look.parallax_bright.x > 0.5`) holds the parallax rows; a vertex offset's
 	// textures in the parallax slots leave the pulse and breathing their rows
-	let has_fresnel = !wet && look.parallax_bright.x > 0.5;
+	let has_fresnel = transparent && look.parallax_bright.x > 0.5;
 	let pulse_rows = !has_fresnel && ((flags & (PARALLAX_MAP | LAYER_BLEND)) == 0u || (flags & VERTEX_OFFSET) != 0u);
 	var emissive_color = look.emissive.rgb;
 	if (pulse_rows && look.parallax2.y > 0.0) {
@@ -1216,7 +1221,7 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 		s.scatter = look.foliage;
 		s.scatter_indirect = look.foliage_ao.x;
 	}
-	// `HGRP/LitTransparent`'s `_USE_FRESNEL` (`wet` is false only in `fs_transparent`)
+	// `HGRP/LitTransparent`'s `_USE_FRESNEL` (`transparent` is true only in `fs_transparent`)
 	if (has_fresnel) {
 		let f = transparent_fresnel(
 			look,
@@ -1231,11 +1236,8 @@ fn shade(in: VertexOut, wet: bool, front: bool) -> Shaded {
 		let fresnel_mask = f.y * mix(1.0, vg, look.parallax2.z);
 		s.emission += mix(s.albedo, look.parallax_color.rgb, look.parallax_color.a * f.x) * fresnel_mask;
 	}
-	// the game wets what its deferred lighting shades, so not the forward-shaded glass
-	if (wet) {
-		s = rain_wet_surface(s, in.rel);
-	}
-	return shade_surface(s, in.rel, in.position.xy);
+	ev.surface = s;
+	return ev;
 }
 
 // smoothstep that also runs downhill (`low` > `high`), as HLSL's does

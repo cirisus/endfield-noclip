@@ -29,11 +29,11 @@
 @group(3) @binding(11) var fx_samp4: sampler;
 @group(3) @binding(12) var fx_samp5: sampler;
 @group(3) @binding(13) var fx_samp6: sampler;
-// the main pass's depth (read-only in this pass) and its packed surfaces (`pack_reflection_surface`)
+// the main pass's depth (read-only in this pass) and G-buffer B (normal, roughness, flags)
 @group(3) @binding(14) var fx_depth: texture_depth_2d;
-@group(3) @binding(15) var fx_surface: texture_2d<u32>;
-// the main pass's diffuse ambient and material occlusion (`Shaded.ambient` in frame.wgsl)
-@group(3) @binding(16) var fx_ambient: texture_2d<f32>;
+@group(3) @binding(15) var fx_surface: texture_2d<f32>;
+// G-buffer A (metallic, occlusion, porosity, shading model; copied during the G-buffer decal pass)
+@group(3) @binding(16) var fx_gbuffer_a: texture_2d<f32>;
 // the look's 3D texture (`volumeTexture`: the mist boxes' noise), a zeroed placeholder without one
 @group(3) @binding(17) var fx_volume: texture_3d<f32>;
 @group(3) @binding(18) var fx_volume_samp: sampler;
@@ -657,14 +657,14 @@ fn fx_unsupported_checker(in: EffectOut) -> vec3f {
 }
 
 // opaque VFXBaseV2 layers (`Blend One Zero`), shaded in the main pass: the colour times the alpha covers what's
-// behind, as the game writes it. what the lit surfaces hand the post passes is left empty, as for unlit meshes
+// behind, as the game writes it. written as unlit into the G-buffer
 @fragment
-fn fs_effect_opaque(in: EffectOut, @builtin(front_facing) front: bool) -> Shaded {
+fn fs_effect_opaque(in: EffectOut, @builtin(front_facing) front: bool) -> GBufferOut {
 	let layer = fx_stack_layer(in, fx_layer_bases(in), front);
 	if (fx_below_water_blend(in)) {
-		return unlit(fx_unsupported_checker(in));
+		return pack_gbuffer_unlit(fx_unsupported_checker(in), 0u);
 	}
-	return unlit(layer.rgb * layer.a);
+	return pack_gbuffer_unlit(layer.rgb * layer.a, 0u);
 }
 
 // `_BlendMode` 2 VFXBaseV2 layers, drawn over the composited scene with a blend that multiplies it by the output:
@@ -1741,13 +1741,13 @@ fn fs_water_foam(in: EffectOut) -> @location(0) vec4f {
 
 // #endregion
 
-// unpacks the normal of `pack_reflection_surface` (frame.wgsl), or returns zero where nothing lit was drawn
+// unpacks the world normal from G-buffer B, or returns zero where nothing lit was drawn
 fn fx_surface_normal(px: vec2i) -> vec3f {
-	let surface = unpack_reflection_surface(textureLoad(fx_surface, px, 0).xy);
-	if (!surface.valid) {
+	let gb = textureLoad(fx_surface, px, 0);
+	if (!gbuffer_b_valid(gb)) {
 		return vec3f(0.0);
 	}
-	return surface.normal;
+	return gbuffer_b_normal(gb);
 }
 
 // VFXDecal's `_USE_PARALLAX` (docs/game-data/effects.md#vfxdecal): the main texture's UV shift where the view
@@ -1829,12 +1829,6 @@ fn fs_effect_decal(in: EffectOut) -> EffectAccumulated {
 	let rel_dy = dpdy(rel);
 	if (any(abs(object_p) >= vec3f(0.5)) || scene_depth >= 1e9) {
 		return fx_nothing();
-	}
-	if (fx_row(id, FX_UNFOGGED).y == FX_KIND_LIT_DECAL) {
-		if (fx_keeps_lit_decals_off(px)) {
-			return fx_nothing();
-		}
-		return fx_lit_decal(in, px, rel, rel_dx, rel_dy, object_p, uv, bases.dx[0], bases.dy[0]);
 	}
 	// VFXDecal's stencil test against the bit surfaces keeping decals off write (`DECAL_COVERS`): 1 skips
 	// them, 2 covers only them
@@ -2041,70 +2035,23 @@ fn ld_decal(in: EffectOut, rel: vec3f, rel_dx: vec3f, rel_dy: vec3f, local: vec3
 	return d;
 }
 
-// whether the surface under a pixel keeps lit decals off (`SURFACE_NO_LIT_DECALS`), as the game's stencil test
+// whether the surface under a pixel keeps lit decals off (`GBUFFER_NO_LIT_DECALS`), as the game's stencil test
 fn fx_keeps_lit_decals_off(px: vec2i) -> bool {
-	return (textureLoad(fx_surface, px, 0).y & SURFACE_NO_LIT_DECALS) != 0u;
+	return gbuffer_b_no_lit_decals(textureLoad(fx_surface, px, 0));
 }
 
-// the main pass's roughness under a pixel (`pack_reflection_surface`)
+// the main pass's roughness under a pixel (G-buffer B)
 fn fx_surface_roughness(px: vec2i) -> f32 {
-	return f32(textureLoad(fx_surface, px, 0).x >> 24u) / 255.0;
+	return textureLoad(fx_surface, px, 0).b;
 }
 
-// a lit decal laid over the surface by its alpha, over the composited scene before the water draws, lit like any
-// surface: the decals that write albedo
-fn fx_lit_decal(in: EffectOut, px: vec2i, rel: vec3f, rel_dx: vec3f, rel_dy: vec3f, local: vec3f, uv: vec2f,
-	dx: vec2f, dy: vec2f) -> EffectAccumulated {
-	var n = fx_surface_normal(px);
-	var roughness = fx_surface_roughness(px);
-	if (all(n == vec3f(0.0))) {
-		n = in.up;
-		roughness = 1.0;
-	}
-	let d = ld_decal(in, rel, rel_dx, rel_dy, local, uv, dx, dy, n, roughness);
-	if (d.alpha <= 0.0) {
-		return fx_nothing();
-	}
-	var s = default_surface(d.albedo, d.normal);
-	s.roughness = d.roughness;
-	if (d.writes_metallic) {
-		s.metallic = d.metallic;
-	}
-	if (d.writes_occlusion) {
-		s.occlusion = d.occlusion;
-	}
-	s.emission = d.emission;
-	let shaded = shade_surface(s, rel, in.position.xy);
-	return fx_accumulate(shaded.radiance.rgb * d.alpha, d.alpha, rel, in.position.xy, 0.0);
+// `HGRP/DecalLit` outputs directly into the G-buffer (emission, gbufferA, gbufferB, gbufferC)
+struct DecalGBufferOut {
+	@location(0) emission: vec4f,
+	@location(1) gbuffer_a: vec4f,
+	@location(2) gbuffer_b: vec4f,
+	@location(3) gbuffer_c: vec4f,
 }
-
-// what a relit decal changes: the radiance and the sky reflection it holds, each added, and the surface the
-// screen-space reflections then trace from in place of the main pass's
-struct DecalRelit {
-	@location(0) radiance: vec4f,
-	@location(1) reflection: vec4f,
-	@location(2) reflection_surface: vec2u,
-}
-
-// the change between the surface lit without and with a decal's changes, the latter weighted by `alpha`
-fn decal_relit(before: Surface, after: Surface, alpha: f32, emission: vec3f, rel: vec3f, px: vec2f) -> DecalRelit {
-	let lit_before = shade_surface(before, rel, px);
-	let lit_after = shade_surface(after, rel, px);
-	let a = unpack_reflection_surface(lit_before.reflection_surface);
-	let b = unpack_reflection_surface(lit_after.reflection_surface);
-	var out: DecalRelit;
-	out.radiance = vec4f((lit_after.radiance.rgb - lit_before.radiance.rgb + emission) * alpha, 0.0);
-	out.reflection = vec4f((lit_after.reflection.rgb - lit_before.reflection.rgb) * alpha, 0.0);
-	// the game's decal blends the normal and roughness in its G-buffer before the reflections march them
-	out.reflection_surface = pack_reflection_surface(normalize(mix(a.normal, b.normal, alpha)),
-		mix(a.roughness, b.roughness, alpha), mix(a.weight, b.weight, alpha));
-	return out;
-}
-
-// Lit's default `_PorosityFactorX` and `_PorosityFactorY`: the porosity the game's G-buffer stores is
-// `saturate(x · roughness + y)` (plus `_PorosityFactorZ` · metallic, 0 by default)
-const WD_POROSITY_PER_ROUGHNESS = 0.2;
-const WD_POROSITY_BASE = 0.4;
 
 // `HGRP/WetnessDecal`'s wetness (0 to 1) at the point `local` in its box (docs/game-data/materials.md#wetness-decals):
 // the placement's alpha times the opacity, fading out with the camera's distance and, with a mask, times its red
@@ -2146,13 +2093,13 @@ fn wd_wetness(in: EffectOut, rel: vec3f, rel_dx: vec3f, rel_dy: vec3f, local: ve
 	return wet * mask * saturate(1.0 - abs(p.z) * 2.0 + row.z);
 }
 
-// lit decals that write no albedo, between the main and the transparent pass (docs/viewer/materials.md#decals):
-// each adds the difference between the surface lit with and without its changes, times its alpha, to the
-// radiance and to the sky reflection it holds, and hands the screen-space reflections the changed surface. the
-// surface's colour is its diffuse ambient over the ambient light at its normal (taken as a dielectric's).
-// wetness decals go through here too
+// `HGRP/DecalLit` blended directly into the G-buffer before deferred lighting:
+// - emission adds `d.emission * d.alpha`
+// - gbuffer_a and gbuffer_b blend against copies in linear / 3D normal space, keeping unwritten channels intact
+// - gbuffer_c uses hardware premultiplied-over blending (`PREMULTIPLIED_OVER`) so both regular albedo decals
+//   and `_BLEND_WETNESS` darkening composite properly over overlapping decals without copying gbuffer_c
 @fragment
-fn fs_decal_relight(in: EffectOut) -> DecalRelit {
+fn fs_decal_gbuffer(in: EffectOut) -> DecalGBufferOut {
 	let px = vec2i(in.position.xy);
 	let scene_depth = fx_scene_depth(px);
 	let rel = in.rel * (scene_depth / dot(in.rel, frame.view_forward.xyz));
@@ -2165,57 +2112,76 @@ fn fs_decal_relight(in: EffectOut) -> DecalRelit {
 	let dy = object_dy.xz;
 	let rel_dx = dpdx(rel);
 	let rel_dy = dpdy(rel);
-	let n = fx_surface_normal(px);
-	// pixels it leaves alone keep the surface an earlier decal wrote
-	if (any(abs(object_p) >= vec3f(0.5)) || scene_depth >= 1e9 || all(n == vec3f(0.0)) || fx_keeps_lit_decals_off(px)) {
+	let prev_gb = textureLoad(fx_surface, px, 0);
+	if (any(abs(object_p) >= vec3f(0.5)) || scene_depth >= 1e9 || !gbuffer_b_valid(prev_gb) || gbuffer_b_no_lit_decals(prev_gb)) {
 		discard;
 	}
-	let ambient = textureLoad(fx_ambient, px, 0);
-	let irradiance = ambient_irradiance(frame.eye.xyz + rel, n);
-	let diffuse = saturate(ambient.rgb / max(irradiance, vec3f(1e-4)));
-	var before = default_surface(diffuse, n);
-	before.roughness = fx_surface_roughness(px);
-	before.occlusion = ambient.a;
-	var after = before;
-	let wet_mask = fx_row(in.look, LD_WET_MASK);
-	if (wet_mask.x > 0.5) {
-		// the game's deferred lighting takes the wetness `w` from its wetness mask: the albedo darkens by
-		// `porosity · w²` and the roughness falls towards `1 − porosity · w` by `w²`, never rising. the change is
-		// added whole, as the game's mask applies before lighting
-		let w = wd_wetness(in, rel, rel_dx, rel_dy, object_p, object_dx, object_dy, wet_mask);
-		if (w <= 0.0) {
-			discard;
-		}
-		let porosity = saturate(WD_POROSITY_PER_ROUGHNESS * before.roughness + WD_POROSITY_BASE);
-		after.albedo = diffuse * (1.0 - porosity * w * w);
-		after.roughness = mix(before.roughness, min(1.0 - porosity * w, before.roughness), w * w);
-		return decal_relit(before, after, 1.0, vec3f(0.0), rel, in.position.xy);
-	}
-	let d = ld_decal(in, rel, rel_dx, rel_dy, object_p, uv, dx, dy, n, before.roughness);
+	let prev_n = gbuffer_b_normal(prev_gb);
+	let prev_r = prev_gb.b;
+	let d = ld_decal(in, rel, rel_dx, rel_dy, object_p, uv, dx, dy, prev_n, prev_r);
 	if (d.alpha <= 0.0) {
 		discard;
 	}
-	after.normal = d.normal;
-	after.roughness = d.roughness;
+	let prev_ga = textureLoad(fx_gbuffer_a, px, 0);
+	let writes_albedo = fx_row(in.look, LD_WRITES).w > 0.5;
 	let wet = fx_row(in.look, LD_PBR_PLACED);
+	var out: DecalGBufferOut;
+	out.emission = vec4f(d.emission * d.alpha, 0.0);
+	let blended_n = normalize(mix(prev_n, d.normal, d.alpha));
+	let blended_r = mix(prev_r, d.roughness, d.alpha);
+	out.gbuffer_b = pack_gbuffer_b(blended_n, blended_r, gbuffer_b_flags(prev_gb));
+	var ga = prev_ga;
 	if (wet.y > 0.5) {
-		// `_BLEND_WETNESS`: the alpha (without the opacity) lays the normal and roughness over and darkens the
-		// surface's albedo by `_Wetness`; the decal's own albedo and occlusion lay over by the alpha times the
-		// opacity. each input blends as the game's G-buffer targets do, so the change is added whole
+		// `_BLEND_WETNESS`: normal/roughness use `d.alpha`, albedo darkens by `wet.z * d.alpha` and blends
+		// decal albedo/occlusion by `covered = d.alpha * wet.w`
 		let covered = d.alpha * wet.w;
-		after.albedo = diffuse * (1.0 - wet.z * d.alpha) * (1.0 - covered) + saturate(d.albedo) * covered;
-		after.normal = normalize(mix(n, d.normal, d.alpha));
-		after.roughness = mix(before.roughness, d.roughness, d.alpha);
-		if (d.writes_occlusion) {
-			after.occlusion = mix(before.occlusion, d.occlusion, covered);
+		if (d.writes_occlusion && gbuffer_shading_model(prev_ga) == SHADING_LIT) {
+			ga.g = mix(prev_ga.g, d.occlusion, covered);
 		}
-		return decal_relit(before, after, 1.0, vec3f(0.0), rel, in.position.xy);
+		out.gbuffer_a = ga;
+		let keep = (1.0 - wet.z * d.alpha) * (1.0 - covered);
+		out.gbuffer_c = vec4f(saturate(d.albedo) * covered, 1.0 - keep);
+	} else {
+		if (gbuffer_shading_model(prev_ga) == SHADING_LIT) {
+			if (d.writes_metallic) {
+				ga.r = mix(prev_ga.r, d.metallic, d.alpha);
+			}
+			if (d.writes_occlusion) {
+				ga.g = mix(prev_ga.g, d.occlusion, d.alpha);
+			}
+		}
+		out.gbuffer_a = ga;
+		if (writes_albedo) {
+			out.gbuffer_c = vec4f(saturate(d.albedo) * d.alpha, d.alpha);
+		} else {
+			out.gbuffer_c = vec4f(0.0, 0.0, 0.0, 0.0);
+		}
 	}
-	if (d.writes_occlusion) {
-		after.occlusion = d.occlusion;
+	return out;
+}
+
+// `HGRP/WetnessDecal`: writes wetness into the `rg8unorm` wetness mask with `max` blending, matching the game's
+// `WetnessDecal` pass so overlapping boxes never double-wet and deferred lighting applies per-material porosity
+@fragment
+fn fs_wetness_decal(in: EffectOut) -> @location(0) vec4f {
+	let px = vec2i(in.position.xy);
+	let scene_depth = fx_scene_depth(px);
+	let rel = in.rel * (scene_depth / dot(in.rel, frame.view_forward.xyz));
+	let p = vec4f(rel, 1.0);
+	let object_p = vec3f(dot(in.to_object0, p), dot(in.to_object1, p), dot(in.to_object2, p));
+	let object_dx = dpdx(object_p);
+	let object_dy = dpdy(object_p);
+	let rel_dx = dpdx(rel);
+	let rel_dy = dpdy(rel);
+	let prev_gb = textureLoad(fx_surface, px, 0);
+	if (any(abs(object_p) >= vec3f(0.5)) || scene_depth >= 1e9 || !gbuffer_b_valid(prev_gb) || gbuffer_b_no_lit_decals(prev_gb)) {
+		discard;
 	}
-	// the decal's emission is added over the surface's rather than replacing it by the alpha
-	return decal_relit(before, after, d.alpha, d.emission, rel, in.position.xy);
+	let w = wd_wetness(in, rel, rel_dx, rel_dy, object_p, object_dx, object_dy, fx_row(in.look, LD_WET_MASK));
+	if (w <= 0.0) {
+		discard;
+	}
+	return vec4f(w, w, 0.0, 0.0);
 }
 
 // #endregion

@@ -1,10 +1,10 @@
 // the game's screen-space reflections, as its PC high quality runs them, in fullscreen passes at half the render
-// size (`ssr.size`), reading the main pass's full-size targets at the pixel each texel stands for:
+// size (`ssr.size`), reading the G-buffer at the pixel each texel stands for:
 // `fs_march` follows each lit pixel's mirror ray through the depth buffer into last frame's composited scene,
 // `fs_temporal` filters the hit colour and fade over frames, `fs_downsample` builds a depth-aware pyramid of both,
-// and `fs_resolve` blurs by the reflected cone's footprint and writes the change to the radiance (composite adds
-// it before occlusion and fog). see docs/viewer/lighting.md#screen-space-reflections. needs post-common.wgsl and,
-// from shaders/common/, noise.wgsl, color.wgsl, screen-space.wgsl, octahedral.wgsl and reflection-surface.wgsl.
+// and `fs_resolve` blurs by the reflected cone's footprint and writes hit radiance and fade for deferred lighting.
+// see docs/viewer/lighting.md#screen-space-reflections. needs post-common.wgsl and,
+// from shaders/common/, noise.wgsl, color.wgsl, screen-space.wgsl, octahedral.wgsl and gbuffer.wgsl.
 
 struct Ssr {
 	// last frame's camera-relative view-projection, unjittered
@@ -21,8 +21,8 @@ struct Ssr {
 
 @group(1) @binding(0) var<uniform> ssr: Ssr;
 @group(1) @binding(1) var depth_texture: texture_depth_2d;
-// the main pass's `reflection_surface` (frame.wgsl, packed as reflection-surface.wgsl describes)
-@group(1) @binding(2) var surface_texture: texture_2d<u32>;
+// G-buffer B (octahedral normal, roughness, valid flag) after decals
+@group(1) @binding(2) var gbuffer_b: texture_2d<f32>;
 // last frame's composited scene, which the hits read
 @group(1) @binding(3) var previous_scene: texture_2d<f32>;
 @group(1) @binding(4) var linear_sampler: sampler;
@@ -38,8 +38,6 @@ struct Ssr {
 // fs_resolve: this frame's pyramid and view depth pyramid, all mips
 @group(1) @binding(11) var pyramid: texture_2d<f32>;
 @group(1) @binding(12) var depth_pyramid: texture_2d<f32>;
-// the surface relit decals changed (`fs_decal_relight` in effect.wgsl), packed alike; 0 where none did
-@group(1) @binding(14) var decal_surface_texture: texture_2d<u32>;
 
 // the view depth stored where nothing was drawn; any real surface is nearer
 const SKY_DEPTH = 60000.0;
@@ -47,13 +45,20 @@ const SKY_DEPTH = 60000.0;
 // the game's 4 × 4 binomial for its pyramid and resolve
 const BINOMIAL = array<f32, 4>(0.125, 0.375, 0.375, 0.125);
 
-// the surface at a pixel as the relit decals left it: in the game they change the G-buffer the march reads
-fn reflection_surface_at(px: vec2i) -> ReflectionSurface {
-	let decal = unpack_reflection_surface(textureLoad(decal_surface_texture, px, 0).xy);
-	if (decal.valid) {
-		return decal;
-	}
-	return unpack_reflection_surface(textureLoad(surface_texture, px, 0).xy);
+struct SsrSurface {
+	normal: vec3f,
+	roughness: f32,
+	valid: bool,
+}
+
+// the surface at a pixel from G-buffer B (after decals have already blended into it)
+fn reflection_surface_at(px: vec2i) -> SsrSurface {
+	let gb = textureLoad(gbuffer_b, px, 0);
+	var s: SsrSurface;
+	s.valid = gbuffer_b_valid(gb);
+	s.normal = gbuffer_b_normal(gb);
+	s.roughness = gb.b;
+	return s;
 }
 
 // the main pass's pixel a texel of the passes stands for: the one under its centre

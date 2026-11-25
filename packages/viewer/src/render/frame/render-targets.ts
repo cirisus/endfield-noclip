@@ -31,26 +31,29 @@ export const HDR_FORMAT: GPUTextureFormat = 'rgba16float';
  */
 export const WATER_FOAM_FORMAT: GPUTextureFormat = 'rgba8unorm';
 
-/** what lit surfaces hand the screen-space reflections, packed (reflection-surface.wgsl) */
-export const REFLECTION_SURFACE_FORMAT: GPUTextureFormat = 'rg32uint';
+/** G-buffer A (`metallic`, `occlusion`, `porosity`, `shadingModel` or foliage/SSS terms) */
+export const GBUFFER_A_FORMAT: GPUTextureFormat = 'rgb10a2unorm';
+
+/** G-buffer B (octahedral world normal, perceptual roughness, valid / decal-reject flags) */
+export const GBUFFER_B_FORMAT: GPUTextureFormat = 'rgb10a2unorm';
+
+/** G-buffer C (sRGB albedo, plus foliage AO or subsurface amount in alpha) */
+export const GBUFFER_C_FORMAT: GPUTextureFormat = 'rgba8unorm-srgb';
+
+/** wetness decals' mask (`rg8unorm`, blended with `max` before deferred lighting) */
+export const WETNESS_MASK_FORMAT: GPUTextureFormat = 'rg8unorm';
 
 /**
- * the main pass's colour targets, in `@location` order: radiance, its ambient part, the sky reflection the
- * radiance holds, and what the screen-space reflections need of the surface. together they fill WebGPU's
- * default 32 bytes per sample
+ * the main pass's G-buffer targets, in `@location` order: HDR emission (`rgba16float`, 8 B), G-buffer A/B/C
+ * (4 B each), and mip feedback (`r32uint`, 4 B). 24 bytes per sample total — within WebGPU's default 32 B/px
  */
 const MAIN_TARGETS: GPUColorTargetState[] = [
 	{ format: HDR_FORMAT },
-	{ format: HDR_FORMAT },
-	{ format: HDR_FORMAT },
-	{ format: REFLECTION_SURFACE_FORMAT },
+	{ format: GBUFFER_A_FORMAT },
+	{ format: GBUFFER_B_FORMAT },
+	{ format: GBUFFER_C_FORMAT },
+	{ format: MIP_FEEDBACK_FORMAT },
 ];
-
-/**
- * {@link MAIN_TARGETS} and the meshes' mip feedback (`Shaded.mip_feedback` in frame.wgsl), where the device
- * takes 36 bytes per sample; without the target, pipelines drop that output
- */
-const MAIN_TARGETS_WITH_FEEDBACK: GPUColorTargetState[] = [...MAIN_TARGETS, { format: MIP_FEEDBACK_FORMAT }];
 
 /**
  * the transparent pass's colour target: the composited scene, which each transparent draw blends over, far to
@@ -76,33 +79,28 @@ export interface PassAttachments {
 	readonly depth: GPURenderPassDepthStencilAttachment;
 }
 
-/** the main pass's outputs, which the post passes read */
+/** the main pass's outputs, which decals, AO, SSR, deferred lighting and composite read */
 export interface SceneTextures {
-	radiance: GPUTextureView;
-	/** the texture behind {@link radiance}; unused once composited, so post passes may copy into it */
-	radianceTexture: GPUTexture;
-	ambient: GPUTextureView;
+	/** HDR emission (or unlit final colour) from the main pass */
+	emission: GPUTextureView;
+	gbufferA: GPUTextureView;
+	gbufferB: GPUTextureView;
+	gbufferC: GPUTextureView;
 	/**
-	 * rgb: the sky reflection in {@link radiance} on surface pixels; the celestial pass writes sky pixels over
-	 * it while keeping surface pixels for the composite
+	 * lit HDR scene (`celestial` on sky pixels, `deferred lighting` on surface pixels); after `composite`
+	 * finishes, reused as the background copy target for water and refracting effects
 	 */
-	reflection: GPUTextureView;
-	/** the surface's normal, roughness and screen-space reflection weight, packed; 0 where nothing lit was drawn */
-	reflectionSurface: GPUTextureView;
-	/**
-	 * {@link reflectionSurface} as the relit decals changed it, which the screen-space reflections take in its
-	 * place; 0 where no decal changed it
-	 */
-	decalSurface: GPUTextureView;
+	lit: GPUTextureView;
+	/** the texture behind {@link lit} */
+	litTexture: GPUTexture;
+	/** `HGRP/WetnessDecal` max-blended wetness mask (`WETNESS_MASK_FORMAT`) */
+	wetnessMask: GPUTextureView;
 	/** the depth aspect alone, for sampling */
 	depth: GPUTextureView;
 	/** the nearest water surface's depth in front of the scene, {@link WATER_DEPTH_FORMAT}; 0 where there's none */
 	waterDepth: GPUTextureView;
-	/**
-	 * the meshes' mip feedback (`pack_mip_feedback` in frame.wgsl), or `null` where the device has no room for
-	 * it
-	 */
-	mipFeedback: GPUTextureView | null;
+	/** the meshes' mip feedback (`pack_mip_feedback` in frame.wgsl) */
+	mipFeedback: GPUTextureView;
 	/** bumped whenever the views or the output size change (resize, render scale) */
 	version: number;
 }
@@ -133,8 +131,13 @@ export class RenderTargets {
 	#depthCopy: GPUTexture | null = null;
 	#depthCopyView: GPUTextureView | null = null;
 	#colors: GPUTexture[] | null = null;
+	#lit: GPUTexture | null = null;
+	#wetnessMask: GPUTexture | null = null;
+	#gbufferACopy: GPUTexture | null = null;
+	#gbufferACopyView: GPUTextureView | null = null;
+	#gbufferBCopy: GPUTexture | null = null;
+	#gbufferBCopyView: GPUTextureView | null = null;
 	#waterDepth: GPUTexture | null = null;
-	#decalSurface: GPUTexture | null = null;
 	#scene: SceneTextures | null = null;
 	/** the passes' attachments, built on first use after each resize */
 	#mainAttachments: PassAttachments | null = null;
@@ -149,21 +152,19 @@ export class RenderTargets {
 	 * @param device the device
 	 * @param canvas the canvas to present to; observed for size changes
 	 * @param colorFormat swapchain format
-	 * @param features `stencil` gives depth a stencil buffer, which needs the `depth32float-stencil8` feature;
-	 *   `mipFeedback` gives the main pass its mip feedback target, which needs 36 bytes per sample of colour
-	 *   targets
+	 * @param features `stencil` gives depth a stencil buffer, which needs the `depth32float-stencil8` feature
 	 */
 	constructor(
 		device: GPUDevice,
 		canvas: HTMLCanvasElement,
 		colorFormat: GPUTextureFormat,
-		{ stencil, mipFeedback }: { stencil: boolean; mipFeedback: boolean },
+		{ stencil }: { stencil: boolean },
 	) {
 		this.#device = device;
 		this.#canvas = canvas;
 		this.colorFormat = colorFormat;
 		this.format = {
-			targets: mipFeedback ? MAIN_TARGETS_WITH_FEEDBACK : MAIN_TARGETS,
+			targets: MAIN_TARGETS,
 			depth: stencil ? DEPTH_STENCIL_FORMAT : DEPTH_FORMAT,
 			stencil,
 		};
@@ -241,31 +242,37 @@ export class RenderTargets {
 		});
 		this.#depthCopy = null;
 		this.#depthCopyView = null;
+		this.#gbufferACopy = null;
+		this.#gbufferACopyView = null;
+		this.#gbufferBCopy = null;
+		this.#gbufferBCopyView = null;
 		this.#colors = [
+			create({ label: 'gbuffer emission', size: [width, height], format: HDR_FORMAT, usage }),
 			create({
-				label: 'radiance',
+				label: 'gbuffer A',
 				size: [width, height],
-				format: HDR_FORMAT,
-				usage: usage | GPUTextureUsage.COPY_DST,
+				format: GBUFFER_A_FORMAT,
+				usage: usage | GPUTextureUsage.COPY_SRC,
 			}),
-			create({ label: 'ambient', size: [width, height], format: HDR_FORMAT, usage }),
-			create({ label: 'reflection', size: [width, height], format: HDR_FORMAT, usage }),
 			create({
-				label: 'reflection surface',
+				label: 'gbuffer B',
 				size: [width, height],
-				format: REFLECTION_SURFACE_FORMAT,
-				usage,
+				format: GBUFFER_B_FORMAT,
+				usage: usage | GPUTextureUsage.COPY_SRC,
 			}),
+			create({ label: 'gbuffer C', size: [width, height], format: GBUFFER_C_FORMAT, usage }),
+			create({ label: 'mip feedback', size: [width, height], format: MIP_FEEDBACK_FORMAT, usage }),
 		];
-		if (this.format.targets.length > MAIN_TARGETS.length) {
-			this.#colors.push(
-				create({ label: 'mip feedback', size: [width, height], format: MIP_FEEDBACK_FORMAT, usage }),
-			);
-		}
-		this.#decalSurface = create({
-			label: 'decal reflection surface',
+		this.#lit = create({
+			label: 'lit scene',
 			size: [width, height],
-			format: REFLECTION_SURFACE_FORMAT,
+			format: HDR_FORMAT,
+			usage: usage | GPUTextureUsage.COPY_DST,
+		});
+		this.#wetnessMask = create({
+			label: 'wetness mask',
+			size: [width, height],
+			format: WETNESS_MASK_FORMAT,
 			usage,
 		});
 		this.#waterDepth = create({
@@ -282,15 +289,16 @@ export class RenderTargets {
 		this.#readOnlyWaterDepth = null;
 		this.#writableDepth = null;
 		this.#scene = {
-			radiance: this.#colors[0].createView(),
-			radianceTexture: this.#colors[0],
-			ambient: this.#colors[1].createView(),
-			reflection: this.#colors[2].createView(),
-			reflectionSurface: this.#colors[3].createView(),
-			decalSurface: this.#decalSurface.createView(),
+			emission: this.#colors[0].createView(),
+			gbufferA: this.#colors[1].createView(),
+			gbufferB: this.#colors[2].createView(),
+			gbufferC: this.#colors[3].createView(),
+			lit: this.#lit.createView(),
+			litTexture: this.#lit,
+			wetnessMask: this.#wetnessMask.createView(),
 			depth: this.#depth.createView({ aspect: 'depth-only' }),
 			waterDepth: this.#waterDepth.createView(),
-			mipFeedback: this.#colors[MAIN_TARGETS.length]?.createView() ?? null,
+			mipFeedback: this.#colors[4].createView(),
 			version: this.#version,
 		};
 		return true;
@@ -300,9 +308,10 @@ export class RenderTargets {
 	get bytes(): number {
 		// depth with stencil is commonly stored as 8 bytes
 		const depth = this.format.stencil ? 8 : 4;
-		const feedback = this.format.targets.length > MAIN_TARGETS.length ? 4 : 0;
+		// G-buffer (24 B) + lit (8 B) + wetnessMask (2 B) + waterDepth (4 B) + optional copies
+		const copies = (this.#depthCopy !== null ? depth : 0) + (this.#gbufferACopy !== null ? 8 : 0);
 		return (
-			this.width * this.height * (depth + 8 * 4 + 8 + 4 + feedback) +
+			this.width * this.height * (depth + 24 + 8 + 2 + 4 + copies) +
 			this.outputWidth * this.outputHeight * 4 * 2
 		);
 	}
@@ -395,6 +404,51 @@ export class RenderTargets {
 			this.height,
 		]);
 		return this.#depthCopyView;
+	}
+
+	/**
+	 * copies `gbufferA` and `gbufferB` into scratch textures so the G-buffer decal pass can sample underlying
+	 * normals, roughness and PBR channels while writing into the live G-buffer
+	 *
+	 * @param encoder command encoder to record the copies into
+	 * @returns views of the copies
+	 */
+	copyGBufferAB(encoder: GPUCommandEncoder): { gbufferA: GPUTextureView; gbufferB: GPUTextureView } {
+		if (this.#colors === null) {
+			throw new Error('render targets used before update()');
+		}
+		if (
+			this.#gbufferACopy === null ||
+			this.#gbufferACopyView === null ||
+			this.#gbufferBCopy === null ||
+			this.#gbufferBCopyView === null
+		) {
+			const usage = GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING;
+			this.#gbufferACopy = this.#device.createTexture({
+				label: 'gbuffer A copy',
+				size: [this.width, this.height],
+				format: GBUFFER_A_FORMAT,
+				usage,
+			});
+			this.#gbufferBCopy = this.#device.createTexture({
+				label: 'gbuffer B copy',
+				size: [this.width, this.height],
+				format: GBUFFER_B_FORMAT,
+				usage,
+			});
+			this.#textures.push(this.#gbufferACopy, this.#gbufferBCopy);
+			this.#gbufferACopyView = this.#gbufferACopy.createView();
+			this.#gbufferBCopyView = this.#gbufferBCopy.createView();
+		}
+		encoder.copyTextureToTexture({ texture: this.#colors[1] }, { texture: this.#gbufferACopy }, [
+			this.width,
+			this.height,
+		]);
+		encoder.copyTextureToTexture({ texture: this.#colors[2] }, { texture: this.#gbufferBCopy }, [
+			this.width,
+			this.height,
+		]);
+		return { gbufferA: this.#gbufferACopyView, gbufferB: this.#gbufferBCopyView };
 	}
 
 	/**

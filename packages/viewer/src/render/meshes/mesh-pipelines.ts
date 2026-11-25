@@ -5,12 +5,15 @@ import type { BindLayouts } from '../frame/bind-layouts.ts';
 import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
 import {
 	DEPTH_COMPARE,
+	GBUFFER_A_FORMAT,
+	GBUFFER_B_FORMAT,
+	GBUFFER_C_FORMAT,
 	HDR_FORMAT,
 	type MainPassFormat,
-	REFLECTION_SURFACE_FORMAT,
 	TRANSPARENT_TARGETS,
 	WATER_DEPTH_FORMAT,
 	WATER_FOAM_FORMAT,
+	WETNESS_MASK_FORMAT,
 } from '../frame/render-targets.ts';
 import { postCommonSource } from '../post/shader-source.ts';
 import normalMapWgsl from '../shaders/common/normal-map.wgsl?raw';
@@ -108,12 +111,8 @@ const createEffectLayout = (device: GPUDevice): GPUBindGroupLayout => {
 				sampler: { type: 'filtering' as const },
 			})),
 			{ binding: 14, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
-			{ binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
-			{
-				binding: 16,
-				visibility: GPUShaderStage.FRAGMENT,
-				texture: { sampleType: 'unfilterable-float' },
-			},
+			{ binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+			{ binding: 16, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
 			{ binding: 17, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: '3d' } },
 			{ binding: 18, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
 			{ binding: 19, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -332,7 +331,6 @@ export const prepareMeshPipelines = (
 	describeEffect(PHASES.effect, 'fs_effect', TRANSPARENT_TARGETS, DEPTH_COMPARE);
 	// decals find their surface through the depth buffer, so their back faces draw wherever they are
 	describeEffect(PHASES.effectDecal, 'fs_effect_decal', TRANSPARENT_TARGETS, 'always');
-	describeEffect(PHASES.litDecal, 'fs_effect_decal', TRANSPARENT_TARGETS, 'always');
 	describeEffect(PHASES.mist, 'fs_mist_card', TRANSPARENT_TARGETS, DEPTH_COMPARE);
 	// fog boxes measure their thickness up to the depth buffer the same way
 	describeEffect(PHASES.mistVolume, 'fs_mist_volume', TRANSPARENT_TARGETS, 'always');
@@ -397,22 +395,45 @@ export const prepareMeshPipelines = (
 	describeEffect(PHASES.waterFoam, 'fs_water_foam', foam, 'greater-equal', onWater);
 	describeEffect(PHASES.waterFoamBehind, 'fs_water_foam', foam, 'less', onWater);
 	describeEffect(PHASES.waterFoamThrough, 'fs_water_foam', foam, 'always', onWater);
-	// relit decals add the change in the surface's light to the radiance, leaving its alpha (the albedo's
-	// luminance) alone, and the change in its sky reflection to the reflection target; the last decal over a
-	// pixel writes the surface the screen-space reflections trace. they read the depth as a texture, so the
-	// pass has no depth attachment
-	const added: GPUColorTargetState = {
+	// `HGRP/DecalLit` boxes blend directly into the G-buffer (emission, gbufferA, gbufferB, gbufferC) before
+	// deferred lighting. they read scene depth and copies of gbufferA/B as textures, so the pass has no depth
+	// attachment:
+	// - emission: additive rgb (alpha kept)
+	// - gbufferA / gbufferB: shader blends against copies in 3D/linear space and replaces rgb (alpha kept so
+	//   shading model and decal-reject flags stay intact)
+	// - gbufferC: premultiplied over (handles both normal albedo alpha-blend and `_BLEND_WETNESS` darkening
+	//   without copying gbufferC), alpha kept
+	const decalEmission: GPUColorTargetState = {
 		format: HDR_FORMAT,
-		blend: {
-			color: ADD,
-			alpha: KEEP,
-		},
+		blend: { color: ADD, alpha: KEEP },
+		writeMask: GPUColorWrite.RED | GPUColorWrite.GREEN | GPUColorWrite.BLUE,
+	};
+	const decalGBufferA: GPUColorTargetState = {
+		format: GBUFFER_A_FORMAT,
+		writeMask: GPUColorWrite.RED | GPUColorWrite.GREEN | GPUColorWrite.BLUE,
+	};
+	const decalGBufferB: GPUColorTargetState = {
+		format: GBUFFER_B_FORMAT,
+		writeMask: GPUColorWrite.RED | GPUColorWrite.GREEN | GPUColorWrite.BLUE,
+	};
+	const decalGBufferC: GPUColorTargetState = {
+		format: GBUFFER_C_FORMAT,
+		blend: { color: PREMULTIPLIED_OVER, alpha: KEEP },
 		writeMask: GPUColorWrite.RED | GPUColorWrite.GREEN | GPUColorWrite.BLUE,
 	};
 	describeEffect(
-		PHASES.decalRelight,
-		'fs_decal_relight',
-		[added, added, { format: REFLECTION_SURFACE_FORMAT }],
+		PHASES.litDecal,
+		'fs_decal_gbuffer',
+		[decalEmission, decalGBufferA, decalGBufferB, decalGBufferC],
+		null,
+	);
+	// `HGRP/WetnessDecal` boxes write max-blended wetness into `wetnessMask` (`rg8unorm`), so overlapping
+	// boxes never double-wet and deferred lighting applies wetness once using per-material porosity
+	const maxBlend: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one', operation: 'max' };
+	describeEffect(
+		PHASES.wetnessDecal,
+		'fs_wetness_decal',
+		[{ format: WETNESS_MASK_FORMAT, blend: { color: maxBlend, alpha: maxBlend } }],
 		null,
 	);
 	// #endregion

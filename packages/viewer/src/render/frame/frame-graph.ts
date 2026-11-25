@@ -346,29 +346,49 @@ export const encodeFrame = (
 		pass.end();
 	}
 	const scene = targets.scene;
-	if (settings.scene && scene.mipFeedback !== null) {
+	if (settings.scene) {
 		meshes.encodeMipFeedback(encoder, { view: scene.mipFeedback, width, height }, context.index);
 	}
-	{
-		// runs without relight draws too, so screen-space reflections never read a stale decal surface; without
-		// draws, attach only decalSurface so radiance and reflection avoid an unnecessary load/store
-		const hasRelight = sceneFrame !== null && meshes.has('relight');
+	// `HGRP/DecalLit` boxes blend directly into the G-buffer before AO, SSR and deferred lighting
+	if (sceneFrame !== null && meshes.has('decals')) {
+		const copies = targets.copyGBufferAB(encoder);
 		const pass = beginPass(
 			encoder,
 			{
-				label: 'decal relight',
-				colorAttachments: hasRelight
-					? [
-							{ view: scene.radiance, loadOp: 'load', storeOp: 'store' },
-							{ view: scene.reflection, loadOp: 'load', storeOp: 'store' },
-							{ view: scene.decalSurface, clearValue: [0, 0, 0, 0], loadOp: 'clear', storeOp: 'store' },
-						]
-					: [{ view: scene.decalSurface, clearValue: [0, 0, 0, 0], loadOp: 'clear', storeOp: 'store' }],
+				label: 'lit decals',
+				colorAttachments: [
+					{ view: scene.emission, loadOp: 'load', storeOp: 'store' },
+					{ view: scene.gbufferA, loadOp: 'load', storeOp: 'store' },
+					{ view: scene.gbufferB, loadOp: 'load', storeOp: 'store' },
+					{ view: scene.gbufferC, loadOp: 'load', storeOp: 'store' },
+				],
 			},
-			hasRelight ? sceneFrame : null,
+			sceneFrame,
 		);
-		if (hasRelight) {
-			draws += meshes.encodeEffectPass('relight', pass, scene);
+		draws += meshes.encodeEffectPass('decals', pass, {
+			...scene,
+			gbufferA: copies.gbufferA,
+			gbufferB: copies.gbufferB,
+			// distinct cache key from the live G-buffer views
+			version: -scene.version,
+		});
+		pass.end();
+	}
+	// `HGRP/WetnessDecal` boxes max-blend into `wetnessMask` (always cleared so deferred lighting reads 0 without them)
+	{
+		const hasWetness = sceneFrame !== null && meshes.has('wetnessDecals');
+		const pass = beginPass(
+			encoder,
+			{
+				label: 'wetness decals',
+				colorAttachments: [
+					{ view: scene.wetnessMask, clearValue: [0, 0, 0, 0], loadOp: 'clear', storeOp: 'store' },
+				],
+			},
+			hasWetness ? sceneFrame : null,
+		);
+		if (hasWetness) {
+			draws += meshes.encodeEffectPass('wetnessDecals', pass, scene);
 		}
 		pass.end();
 	}
@@ -392,12 +412,6 @@ export const encodeFrame = (
 		colorAttachments: [{ view: composited.target, loadOp: 'load', storeOp: 'store' }],
 		depthStencilAttachment: targets.readOnlyDepthAttachment(),
 	});
-	// lit decals are part of the surface they lie on, so they draw before the water covers it
-	if (sceneFrame !== null && meshes.has('decals')) {
-		const pass = beginPass(encoder, over('lit decals'), sceneFrame);
-		draws += meshes.encodeEffectPass('decals', pass, scene);
-		pass.end();
-	}
 	// the water and effects that refract read a copy of the composited scene
 	if (composited.water !== null) {
 		post.copyComposite(encoder, scene);
@@ -448,7 +462,7 @@ export const encodeFrame = (
 			draws += meshes.encodeEffectPass('transparent', pass, {
 				...scene,
 				depth,
-				background: scene.radiance,
+				background: scene.lit,
 				// distinct cache key from `scene.depth` so effect bind groups don't reuse the live depth view
 				version: writesDepth ? -scene.version : scene.version,
 			});
@@ -464,7 +478,7 @@ export const encodeFrame = (
 			// refraction samples the scene as the multiplies left it; as the game's distortion pass, both lists
 			// sample the one copy
 			post.copyComposite(encoder, scene);
-			const inputs = { ...scene, background: scene.radiance };
+			const inputs = { ...scene, background: scene.lit };
 			if (opaqueRefract) {
 				const pass = beginPass(
 					encoder,

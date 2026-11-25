@@ -1,6 +1,7 @@
-// ground-truth ambient occlusion (Jimenez et al. 2016) as XeGTAO computes it, from the depth buffer alone,
-// at half resolution: three slices per pixel, rotated by a 4×4 interleaved pattern that the upsampling blur
-// averages away. see docs/game-data/post-processing.md#ambient-occlusion. needs post-common.wgsl.
+// ground-truth ambient occlusion (Jimenez et al. 2016) as XeGTAO computes it, from the depth buffer and G-buffer
+// world normals, at half resolution: three slices per pixel, rotated by a 4×4 interleaved pattern that the
+// upsampling blur averages away. see docs/game-data/post-processing.md#ambient-occlusion. needs post-common.wgsl,
+// octahedral.wgsl and gbuffer.wgsl.
 //
 // three passes: fs_ao_depth reduces the depth buffer to half-resolution view depth, fs_gtao marches it, and
 // fs_blur filters and upsamples the result to full resolution, weighted by depth so edges stay sharp. the
@@ -10,6 +11,7 @@
 // half resolution, view depth in metres (0 for the sky)
 @group(1) @binding(1) var half_depth: texture_2d<f32>;
 @group(1) @binding(2) var ao_texture: texture_2d<f32>;
+@group(1) @binding(3) var gbuffer_b: texture_2d<f32>;
 
 // the game's high tier
 const SLICES = 3;
@@ -50,21 +52,32 @@ fn fs_gtao(in: FullscreenOut) -> @location(0) vec4f {
 		return vec4f(1.0);
 	}
 	let p = view_position(px, z);
-	// the normal from whichever neighbours lie closer, so silhouettes don't bend it
-	let left = view_position_at(px - vec2i(1, 0));
-	let right = view_position_at(px + vec2i(1, 0));
-	let top = view_position_at(px - vec2i(0, 1));
-	let bottom = view_position_at(px + vec2i(0, 1));
-	var dx = right - p;
-	if (abs(left.z - p.z) < abs(right.z - p.z)) {
-		dx = p - left;
+	let full_size = vec2i(textureDimensions(gbuffer_b));
+	let gb = textureLoad(gbuffer_b, min(px * AO_SCALE, full_size - 1), 0);
+	var n: vec3f;
+	if (gbuffer_b_valid(gb)) {
+		let wn = gbuffer_b_normal(gb);
+		n = normalize(vec3f(
+			dot(wn, normalize(post.right.xyz)),
+			dot(wn, normalize(post.up.xyz)),
+			dot(wn, post.forward.xyz),
+		));
+	} else {
+		// fallback to depth-derived normal for unlit surfaces
+		let left = view_position_at(px - vec2i(1, 0));
+		let right = view_position_at(px + vec2i(1, 0));
+		let top = view_position_at(px - vec2i(0, 1));
+		let bottom = view_position_at(px + vec2i(0, 1));
+		var dx = right - p;
+		if (abs(left.z - p.z) < abs(right.z - p.z)) {
+			dx = p - left;
+		}
+		var dy = p - top;
+		if (abs(bottom.z - p.z) < abs(top.z - p.z)) {
+			dy = bottom - p;
+		}
+		n = normalize(cross(dx, dy));
 	}
-	var dy = p - top;
-	if (abs(bottom.z - p.z) < abs(top.z - p.z)) {
-		dy = bottom - p;
-	}
-	// view space is left-handed and rows grow downwards: this points back at the camera
-	let n = normalize(cross(dx, dy));
 	let v = normalize(-p);
 
 	// the pixel factor is for full resolution. the reach in pixels is capped, and the radius in metres shrinks with

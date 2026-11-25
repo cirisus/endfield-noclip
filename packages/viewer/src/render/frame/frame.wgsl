@@ -289,18 +289,14 @@ fn sun_look(shadow: f32) -> vec3f {
 // computed from the depth buffer afterwards can darken only the light that it occludes. the radiance carries
 // the diffuse ambient times the material occlusion; the composite swaps that for the multi-bounce of the
 // lower of both occlusions, as the game does
-struct Shaded {
-	// rgb: radiance, a: albedo luminance (for the multi-bounce)
-	@location(0) radiance: vec4f,
-	// rgb: diffuse ambient before any occlusion, a: material occlusion
-	@location(1) ambient: vec4f,
-	// rgb: the sky reflection the radiance holds, which a screen-space hit replaces; a unused
-	@location(2) reflection: vec4f,
-	// what the screen-space reflections need of the surface (`pack_reflection_surface` in
-	// shaders/common/reflection-surface.wgsl); 0 where none
-	@location(3) reflection_surface: vec2u,
-	// which material drew the pixel and how finely it samples its UV sets (`pack_mip_feedback`), which texture
-	// streaming reads back; 0 where no mesh reports. dropped where the main pass has no target for it
+// G-buffer outputs of the main geometry pass (`MAIN_TARGETS` in render-targets.ts, 24 bytes/sample):
+// emission (`rgba16float`), gbuffer_a (`rgb10a2unorm`), gbuffer_b (`rgb10a2unorm`), gbuffer_c (`rgba8unorm-srgb`)
+// and mip_feedback (`r32uint`)
+struct GBufferOut {
+	@location(0) emission: vec4f,
+	@location(1) gbuffer_a: vec4f,
+	@location(2) gbuffer_b: vec4f,
+	@location(3) gbuffer_c: vec4f,
 	@location(4) mip_feedback: u32,
 }
 
@@ -359,6 +355,8 @@ struct Surface {
 	scatter: vec4f,
 	// how much of the scattered colour the ambient light adds
 	scatter_indirect: f32,
+	// wetness porosity in [0, 1], or negative to derive Lit's default `saturate(0.2 * roughness + 0.4)`
+	porosity: f32,
 }
 
 fn default_surface(albedo: vec3f, normal: vec3f) -> Surface {
@@ -377,7 +375,97 @@ fn default_surface(albedo: vec3f, normal: vec3f) -> Surface {
 	s.sun_n_dot_l = -1.0;
 	s.scatter = vec4f(0.0);
 	s.scatter_indirect = 0.0;
+	s.porosity = -1.0;
 	return s;
+}
+
+// packs a lit surface into the G-buffer (`GBufferOut`, 24 bytes/sample)
+fn pack_gbuffer(s: Surface, no_lit_decals: bool, mip_feedback: u32) -> GBufferOut {
+	var out: GBufferOut;
+	let flags = GBUFFER_VALID | select(0u, GBUFFER_NO_LIT_DECALS, no_lit_decals);
+	out.gbuffer_b = pack_gbuffer_b(s.normal, s.roughness, flags);
+	out.mip_feedback = mip_feedback;
+	if (s.foliage) {
+		let sub = round(clamp(s.subsurface, 0.0, 1.0) * 127.0);
+		let f0_code = round(clamp(s.f0 / 0.16, 0.0, 1.0) * 15.0);
+		out.emission = vec4f(s.emission, sub + f0_code * 128.0);
+		let nl = select(0.0, (clamp(s.sun_n_dot_l, 0.0, 1.0) * 1022.0 + 1.0) / 1023.0, s.sun_n_dot_l >= 0.0);
+		out.gbuffer_a = vec4f(
+			clamp(s.transmission, 0.0, 1.0),
+			clamp(s.sun_shadow, 0.0, 1.0),
+			nl,
+			f32(SHADING_FOLIAGE) / 3.0,
+		);
+		out.gbuffer_c = vec4f(clamp(s.albedo, vec3f(0.0), vec3f(1.0)), clamp(s.occlusion, 0.0, 1.0));
+	} else if (s.scatter.a > 0.0) {
+		out.emission = vec4f(s.emission, s.scatter_indirect);
+		out.gbuffer_a = vec4f(clamp(s.scatter.rgb, vec3f(0.0), vec3f(1.0)), f32(SHADING_SUBSURFACE) / 3.0);
+		out.gbuffer_c = vec4f(clamp(s.albedo, vec3f(0.0), vec3f(1.0)), clamp(s.scatter.a, 0.0, 1.0));
+	} else {
+		let porosity = select(s.porosity, saturate(0.2 * s.roughness + 0.4), s.porosity < 0.0);
+		out.emission = vec4f(s.emission, s.f0);
+		out.gbuffer_a = vec4f(
+			clamp(s.metallic, 0.0, 1.0),
+			clamp(s.occlusion, 0.0, 1.0),
+			clamp(porosity, 0.0, 1.0),
+			f32(SHADING_LIT) / 3.0,
+		);
+		out.gbuffer_c = vec4f(clamp(s.albedo, vec3f(0.0), vec3f(1.0)), 1.0);
+	}
+	return out;
+}
+
+// packs an unlit colour (matte paintings, debug overlays, opaque effects) into the G-buffer
+fn pack_gbuffer_unlit(color: vec3f, mip_feedback: u32) -> GBufferOut {
+	var out: GBufferOut;
+	out.emission = vec4f(color, 0.0);
+	out.gbuffer_a = vec4f(0.0, 0.0, 0.0, f32(SHADING_UNLIT) / 3.0);
+	out.gbuffer_b = vec4f(0.0);
+	out.gbuffer_c = vec4f(0.0);
+	out.mip_feedback = mip_feedback;
+	return out;
+}
+
+struct UnpackedGBuffer {
+	model: u32,
+	surface: Surface,
+	porosity: f32,
+}
+
+fn unpack_gbuffer(em: vec4f, ga: vec4f, gb: vec4f, gc: vec4f) -> UnpackedGBuffer {
+	var out: UnpackedGBuffer;
+	let model = gbuffer_shading_model(ga);
+	out.model = model;
+	var s = default_surface(gc.rgb, gbuffer_b_normal(gb));
+	s.roughness = gb.b;
+	s.emission = em.rgb;
+	out.porosity = saturate(0.2 * s.roughness + 0.4);
+	switch model {
+		case SHADING_FOLIAGE: {
+			s.foliage = true;
+			s.transmission = ga.r;
+			s.sun_shadow = ga.g;
+			let nl_code = round(ga.b * 1023.0);
+			s.sun_n_dot_l = select(-1.0, (nl_code - 1.0) / 1022.0, nl_code >= 1.0);
+			let packed = u32(max(round(em.a), 0.0));
+			s.subsurface = f32(packed & 127u) / 127.0;
+			s.f0 = f32((packed >> 7u) & 15u) * (0.16 / 15.0);
+			s.occlusion = gc.a;
+		}
+		case SHADING_SUBSURFACE: {
+			s.scatter = vec4f(ga.rgb, gc.a);
+			s.scatter_indirect = em.a;
+		}
+		case SHADING_LIT: {
+			s.metallic = ga.r;
+			s.occlusion = ga.g;
+			out.porosity = ga.b;
+			s.f0 = em.a;
+		}
+		default: {}
+	}
+	out.surface = s;
+	return out;
 }
 
 // the game's rain wetness on a surface at a camera-relative position (docs/game-data/environment.md#wetness).
@@ -926,8 +1014,8 @@ fn subsurface_sun(scatter: vec4f, n: vec3f, v: vec3f, l: vec3f) -> vec3f {
 	return scatter.rgb * through;
 }
 
-// sun (shadowed) plus ambient probe; `rel` is the camera-relative position
-fn shade_surface(s: Surface, rel: vec3f, px: vec2f) -> Shaded {
+// forward sun (shadowed) plus ambient for transparent surfaces; `rel` is the camera-relative position
+fn shade_surface_forward(s: Surface, rel: vec3f, px: vec2f) -> vec3f {
 	let n = s.normal;
 	let v = -normalize(rel);
 	let l = frame.sun.xyz;
@@ -955,7 +1043,6 @@ fn shade_surface(s: Surface, rel: vec3f, px: vec2f) -> Shaded {
 		if (scatters) {
 			direct += subsurface_sun(s.scatter, n, v, l) / PI;
 		}
-		// the shadow lookup only where the sun can reach, which scattered light does past the terminator
 		var visibility = vec3f(0.0);
 		if (n_dot_l > 0.0 || scatters) {
 			visibility = sun_visibility(rel, n, px);
@@ -967,64 +1054,20 @@ fn shade_surface(s: Surface, rel: vec3f, px: vec2f) -> Shaded {
 	let world_pos = frame.eye.xyz + rel;
 	let irradiance = ambient_irradiance(world_pos, n);
 	let diffuse_ambient = (diffuse_color + s.scatter.rgb * s.scatter_indirect) * irradiance;
-	// specular sees only the material occlusion, through Lagarde's specular occlusion
 	let specular_occlusion = clamp(pow(n_dot_v + s.occlusion, exp2(-16.0 * roughness - 1.0)) - 1.0 + s.occlusion, 0.0, 1.0);
-	// a screen-space hit gets the environment BRDF and specular occlusion but not the sky's specular factor
-	let ssr_weight = environment_brdf(f0, roughness, n_dot_v) * specular_occlusion;
-	let specular_weight = ssr_weight * frame.ambient.x;
+	let specular_weight = environment_brdf(f0, roughness, n_dot_v) * specular_occlusion * frame.ambient.x;
 	let r = normalize(mix(reflect(-v, n), n, roughness * roughness));
 	let specular_ambient = sample_reflection(world_pos, n, r, roughness, irradiance) * specular_weight;
 	let ambient = diffuse_ambient * s.occlusion + specular_ambient;
-	let albedo_luminance = dot(diffuse_color, LUMINANCE_ROUNDED);
 
-	var out: Shaded;
-	out.reflection = vec4f(0.0);
-	out.reflection_surface = vec2u(0u);
 	switch frame.flags.y {
-		case 1u: {
-			out.radiance = vec4f(s.albedo, 1.0);
-			out.ambient = vec4f(0.0);
-			return out;
-		}
-		case 2u: {
-			out.radiance = vec4f(n * 0.5 + 0.5, 1.0);
-			out.ambient = vec4f(0.0);
-			return out;
-		}
-		case 3u: {
-			out.radiance = vec4f(vec3f(roughness), 1.0);
-			out.ambient = vec4f(0.0);
-			return out;
-		}
-		case 4u: {
-			out.radiance = vec4f(ambient, albedo_luminance);
-			out.ambient = vec4f(diffuse_ambient, s.occlusion);
-			return out;
-		}
-		// the gaps view: surfaces in grey, so the stripes of those drawn with something missing (`shade` in
-		// mesh.wgsl) stand out
-		case 6u: {
-			out.radiance = vec4f(vec3f(dot(s.albedo, LUMINANCE_ROUNDED)), 1.0);
-			out.ambient = vec4f(0.0);
-			return out;
-		}
-		default: {}
+		case 1u: { return s.albedo; }
+		case 2u: { return n * 0.5 + 0.5; }
+		case 3u: { return vec3f(roughness); }
+		case 4u: { return ambient; }
+		case 6u: { return vec3f(dot(s.albedo, LUMINANCE_ROUNDED)); }
+		default: { return direct + ambient + s.emission; }
 	}
-	out.radiance = vec4f(direct + ambient + s.emission, albedo_luminance);
-	out.ambient = vec4f(diffuse_ambient, s.occlusion);
-	out.reflection = vec4f(specular_ambient, 0.0);
-	out.reflection_surface = pack_reflection_surface(n, roughness, ssr_weight);
-	return out;
-}
-
-// a flat colour that occlusion leaves alone (debug overlays)
-fn unlit(color: vec3f) -> Shaded {
-	var out: Shaded;
-	out.radiance = vec4f(color, 1.0);
-	out.ambient = vec4f(0.0);
-	out.reflection = vec4f(0.0);
-	out.reflection_surface = vec2u(0u);
-	return out;
 }
 
 fn hue(h: f32) -> vec3f {

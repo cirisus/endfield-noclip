@@ -45,7 +45,7 @@ export const DRAW_RANGES: readonly DrawRangeInfo[] = [
 	{ range: 'mist', order: 'bindings', effect: true },
 	{ range: 'mistVolume', order: 'bindings', effect: true },
 	{ range: 'litDecal', order: 'bindings', effect: true },
-	{ range: 'decalRelight', order: 'bindings', effect: true },
+	{ range: 'wetnessDecal', order: 'bindings', effect: true },
 	{ range: 'screenMultiply', order: 'bindings', effect: true },
 	{ range: 'refractOpaque', order: 'pipelineThenNearest', effect: true },
 	{ range: 'refract', order: 'bindings', effect: true },
@@ -126,7 +126,7 @@ export const PHASES = {
 	mist: shading('mesh/mist', 'mist'),
 	mistVolume: shading('mesh/mist-volume', 'mistVolume'),
 	litDecal: shading('mesh/lit-decal', 'litDecal'),
-	decalRelight: shading('mesh/decal-relight', 'decalRelight'),
+	wetnessDecal: shading('mesh/wetness-decal', 'wetnessDecal'),
 	screenMultiply: shading('mesh/effect-multiply', 'screenMultiply'),
 	refract: shading('mesh/refract', 'refract'),
 	refractOpaque: shading('mesh/refract-opaque', 'refractOpaque'),
@@ -181,8 +181,8 @@ export type SurfacePass = 'prepass' | 'main';
 
 /** passes of scene effects, which read the main pass's outputs */
 export type EffectPass =
-	| 'relight'
 	| 'decals'
+	| 'wetnessDecals'
 	| 'transparent'
 	| 'multiply'
 	| 'refractOpaque'
@@ -202,12 +202,10 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 		PHASES.effectOpaque,
 		PHASES.stencilMask,
 	],
-	// lit decals that change only the surface's normal, roughness or occlusion, run between the main and the
-	// transparent pass: they add the change in the surface's light to the radiance
-	relight: [PHASES.decalRelight],
-	// lit decals laid over their surface, drawn over the composited scene before the water: the game writes them
-	// into its GBuffer, so they lie under the water and everything transparent
+	// `HGRP/DecalLit` boxes blended directly into the G-buffer after the main pass, before deferred lighting
 	decals: [PHASES.litDecal],
+	// `HGRP/WetnessDecal` boxes written with `max` blending into the wetness mask before deferred lighting
+	wetnessDecals: [PHASES.wetnessDecal],
 	transparent: [
 		PHASES.transparent,
 		PHASES.transparentDepthWrite,

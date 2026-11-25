@@ -120,11 +120,11 @@ fn vs_wire(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
 }
 
 @fragment
-fn fs_fill(in: VertexOut) -> Shaded {
-	return shade_surface(default_surface(in.color, in.normal), in.rel, in.position.xy);
+fn fs_fill(in: VertexOut) -> GBufferOut {
+	return pack_gbuffer(default_surface(in.color, in.normal), false, 0u);
 }
 
 @fragment
-fn fs_wire(in: VertexOut) -> Shaded {
-	return unlit(in.color * 1.4);
+fn fs_wire(in: VertexOut) -> GBufferOut {
+	return pack_gbuffer_unlit(in.color * 1.4, 0u);
 }

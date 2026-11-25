@@ -100,7 +100,7 @@ export const drawRangeOf = (
 		case 'mist':
 		case 'mistVolume':
 		case 'litDecal':
-		case 'decalRelight':
+		case 'wetnessDecal':
 		case 'screenMultiply':
 		case 'refract':
 		case 'refractOpaque':

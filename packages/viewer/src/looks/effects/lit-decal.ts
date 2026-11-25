@@ -23,7 +23,8 @@ export const DecalLitRow = {
 	surface: 68,
 	/**
 	 * 1 when the decal writes its normal over the surface's, 1 when it writes its roughness, then
-	 * `_BlendSceneNormal` (how much the decal's normal map takes the surface's frame instead of the box's), 0
+	 * `_BlendSceneNormal` (how much the decal's normal map takes the surface's frame instead of the box's), 1
+	 * when it writes albedo
 	 */
 	writes: 72,
 	/** 1 when it writes metallic, 1 when it writes occlusion, `_Metallic`, `_OcclusionStrength` */
@@ -109,7 +110,12 @@ export const litDecalLook = (decal: LitDecalSurface): EffectLook => {
 	}
 	params.set([...decal.roughness, decal.normalScale, decal.angleFade], DecalLitRow.surface);
 	params.set(
-		[decal.writesNormal ? 1 : 0, decal.writesRoughness ? 1 : 0, decal.blendSceneNormal],
+		[
+			decal.writesNormal ? 1 : 0,
+			decal.writesRoughness ? 1 : 0,
+			decal.blendSceneNormal,
+			decal.relight ? 0 : 1,
+		],
 		DecalLitRow.writes,
 	);
 	params.set(

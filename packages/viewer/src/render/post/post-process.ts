@@ -8,6 +8,7 @@ import { TextureSet } from '../../gfx/texture-set.ts';
 import type { Camera } from '../../scene/camera.ts';
 import type { StreamedTexture } from '../../streaming/texture-requests.ts';
 import { type SceneTextures, HDR_FORMAT } from '../frame/render-targets.ts';
+import { DeferredLighting } from '../lighting/deferred-lighting.ts';
 import { AtmosphereLuts, SkyBinding } from '../sky/atmosphere-luts.ts';
 import { CelestialLayer } from '../sky/celestial.ts';
 import type { VolumetricFog } from '../sky/volumetric-fog.ts';
@@ -70,6 +71,7 @@ export class PostProcess {
 	#reflections: ScreenSpaceReflections;
 	/** the nebula, planets and clouds the composite draws on the sky */
 	#celestial: CelestialLayer;
+	#deferred: DeferredLighting;
 	#composite: Composite;
 	#lightShafts: LightShafts;
 	#lensFlares: LensFlares;
@@ -100,6 +102,7 @@ export class PostProcess {
 		swapchainFormat: GPUTextureFormat,
 		environment: Environment,
 		fog: VolumetricFog,
+		frameLayout: GPUBindGroupLayout,
 	) {
 		this.#device = device;
 		this.#fog = fog;
@@ -161,6 +164,11 @@ export class PostProcess {
 					],
 				}),
 			};
+			this.#deferred = new DeferredLighting(
+				device,
+				{ frame: frameLayout, postUniforms: uniforms },
+				postUniforms,
+			);
 		}
 	}
 
@@ -327,15 +335,15 @@ export class PostProcess {
 			histories[0].createView(),
 			histories[1].createView(),
 		];
-		this.#ao.resize({ depth: scene.depth, width, height });
+		this.#ao.resize({ depth: scene.depth, gbufferB: scene.gbufferB, width, height });
 		this.#reflections.resize({ scene, previousScenes: historyViews, width, height });
-		this.#celestial.resize({ depth: scene.depth, target: scene.reflection });
-		this.#composite.resize({
+		this.#celestial.resize({ depth: scene.depth, target: scene.lit });
+		this.#deferred.resize({
 			scene,
 			ao: this.#ao.output,
 			reflections: this.#reflections.output.createView(),
-			target: sceneView,
 		});
+		this.#composite.resize({ scene, target: sceneView });
 		this.#lightShafts.resize({ scene, composited: sceneView, width, height });
 		this.#lensFlares.resize({ scene, composited: sceneView });
 		this.#bloom.resize({ histories, outputWidth, outputHeight });
@@ -422,7 +430,7 @@ export class PostProcess {
 			const reflectionScene = this.#taa.previous(this.#waterReprojection, camera.position);
 			waterContext = {
 				scene,
-				background: scene.radiance,
+				background: scene.lit,
 				reflectionScene,
 				reprojection: this.#waterReprojection,
 				frame: input.frameGroup,
@@ -439,13 +447,14 @@ export class PostProcess {
 		} else {
 			water.clearDepth(encoder, scene);
 		}
+		this.#deferred.encode(encoder, input.frameGroup);
 		this.#composite.encode(encoder);
 		return { target: sized.sceneView, water: waterContext };
 	}
 
 	/**
-	 * copies the composited scene into the main pass's radiance target, which nothing reads after compositing,
-	 * for the passes over it that refract it (the water, refracting effects)
+	 * copies the composited scene into `scene.litTexture`, which nothing reads after compositing, for the
+	 * passes over it that refract it (the water, refracting effects)
 	 *
 	 * @param encoder this frame's encoder, after {@link encodeComposite}
 	 * @param scene the main pass's textures
@@ -455,7 +464,7 @@ export class PostProcess {
 		if (sized === null) {
 			return;
 		}
-		encoder.copyTextureToTexture({ texture: sized.scene }, { texture: scene.radianceTexture }, [
+		encoder.copyTextureToTexture({ texture: sized.scene }, { texture: scene.litTexture }, [
 			sized.scene.width,
 			sized.scene.height,
 		]);

@@ -14,15 +14,7 @@ export interface GfxFeatures {
 	depth32floatStencil8: boolean;
 	/** clamping depth past the near plane instead of clipping, which lets sun shadows use 16-bit depth */
 	depthClipControl: boolean;
-	/**
-	 * a render pass's colour targets may take {@link MIP_FEEDBACK_TARGET_BYTES} a sample, over WebGPU's default
-	 * of 32, which gives the main pass its mip feedback target
-	 */
-	mipFeedbackTarget: boolean;
 }
-
-/** bytes per sample of the main pass's colour targets with the mip feedback target (`MAIN_TARGETS`) */
-const MIP_FEEDBACK_TARGET_BYTES = 36;
 
 /** a ready device plus what it supports */
 export interface GfxDevice {
@@ -61,7 +53,6 @@ export const createGfxDevice = async (onLost: (reason: string) => void): Promise
 		timestampQuery: has('timestamp-query'),
 		depth32floatStencil8: has('depth32float-stencil8'),
 		depthClipControl: has('depth-clip-control'),
-		mipFeedbackTarget: adapter.limits.maxColorAttachmentBytesPerSample >= MIP_FEEDBACK_TARGET_BYTES,
 	};
 	const requiredFeatures: GPUFeatureName[] = [];
 	if (features.textureCompressionBc) {
@@ -92,11 +83,9 @@ export const createGfxDevice = async (onLost: (reason: string) => void): Promise
 			maxTextureArrayLayers: limits.maxTextureArrayLayers,
 			maxStorageBuffersPerShaderStage: limits.maxStorageBuffersPerShaderStage,
 			// the effect pipelines bind 19 sampled textures to their fragment stage, over the default 16
-			// (docs/viewer/gpu-resources.md)
+			// (docs/viewer/gpu-resources.md), and the G-buffer + mip feedback pass takes 36 bytes/sample
 			maxSampledTexturesPerShaderStage: limits.maxSampledTexturesPerShaderStage,
-			...(features.mipFeedbackTarget
-				? { maxColorAttachmentBytesPerSample: MIP_FEEDBACK_TARGET_BYTES }
-				: undefined),
+			maxColorAttachmentBytesPerSample: limits.maxColorAttachmentBytesPerSample,
 		},
 	});
 	device.lost

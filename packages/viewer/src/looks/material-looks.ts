@@ -268,15 +268,14 @@ const surfaceLook = (entry: ReadyMaterial): MaterialLook => {
 		}
 		case 'litDecal': {
 			return effectMaterialLook(litDecalLook(surface), {
-				// a wetness decal darkens the surface's own albedo, which only the relight pass estimates
-				queue: surface.relight || surface.wetness !== null ? 'decalRelight' : 'litDecal',
+				queue: 'litDecal',
 				box: true,
 				cull: entry.cull,
 			});
 		}
 		case 'wetnessDecal': {
 			return effectMaterialLook(wetnessDecalLook(surface), {
-				queue: 'decalRelight',
+				queue: 'wetnessDecal',
 				box: true,
 				cull: entry.cull,
 			});

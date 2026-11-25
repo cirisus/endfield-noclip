@@ -5,6 +5,8 @@ import {
 	fullscreenPipeline,
 } from '../../gfx/fullscreen-pass.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
+import gbufferWgsl from '../shaders/common/gbuffer.wgsl?raw';
+import octahedralWgsl from '../shaders/common/octahedral.wgsl?raw';
 
 import gtaoWgsl from './gtao.wgsl?raw';
 import { postShaderModule } from './shader-source.ts';
@@ -39,7 +41,7 @@ export class AmbientOcclusion {
 		this.#device = device;
 		this.#targets = new TextureSet(device);
 		this.#postUniforms = postUniforms;
-		const module = postShaderModule(device, 'gtao', [gtaoWgsl]);
+		const module = postShaderModule(device, 'gtao', [octahedralWgsl, gbufferWgsl, gtaoWgsl]);
 		const pipeline = (label: string, entryPoint: string, format: GPUTextureFormat): GPURenderPipeline =>
 			fullscreenPipeline(device, { label, module, entryPoint, targets: [{ format }] });
 		this.#pipelines = {
@@ -67,13 +69,13 @@ export class AmbientOcclusion {
 	}
 
 	/**
-	 * (re)creates the targets for a new render size or depth.
+	 * (re)creates the targets for a new render size, depth or G-buffer.
 	 *
-	 * @param input the main pass's depth and the render size
+	 * @param input the main pass's depth, G-buffer B (normals) and the render size
 	 */
-	resize(input: { depth: GPUTextureView; width: number; height: number }): void {
+	resize(input: { depth: GPUTextureView; gbufferB: GPUTextureView; width: number; height: number }): void {
 		this.#release();
-		const { depth, width, height } = input;
+		const { depth, gbufferB, width, height } = input;
 		const device = this.#device;
 		const p = this.#pipelines;
 		const texture = (label: string, w: number, h: number, format: GPUTextureFormat): GPUTexture =>
@@ -107,7 +109,7 @@ export class AmbientOcclusion {
 				{
 					label: 'gtao',
 					pipeline: p.gtao,
-					groups: [post(p.gtao), autoBindGroup(device, p.gtao, 1, { 1: aoDepth.createView() })],
+					groups: [post(p.gtao), autoBindGroup(device, p.gtao, 1, { 1: aoDepth.createView(), 3: gbufferB })],
 					targets: [ao.createView()],
 				},
 				{

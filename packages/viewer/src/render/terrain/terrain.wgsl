@@ -291,7 +291,7 @@ fn wet_surface(s: Surface, depth: f32) -> Surface {
 }
 
 @fragment
-fn fs_main(in: VertexOut) -> Shaded {
+fn fs_main(in: VertexOut) -> GBufferOut {
 	var f: Footprint;
 	f.world = in.world;
 	// the layers' footprint at the output's pixel density (the mip bias, as gradients)
@@ -333,16 +333,15 @@ fn fs_main(in: VertexOut) -> Shaded {
 		}
 		s = wet_surface(s, control.a - ground);
 	}
-	s = rain_wet_surface(s, in.rel);
-	return shade_surface(s, in.rel, in.position.xy);
+	return pack_gbuffer(s, false, 0u);
 }
 
 @fragment
-fn fs_wire(in: VertexOut) -> Shaded {
+fn fs_wire(in: VertexOut) -> GBufferOut {
 	if (in_hole(in.hole)) {
 		discard;
 	}
-	return unlit(mix(vec3f(0.02), hue(f32(in.level) * 0.17) * 0.6, 0.5));
+	return pack_gbuffer_unlit(mix(vec3f(0.02), hue(f32(in.level) * 0.17) * 0.6, 0.5), 0u);
 }
 
 @fragment

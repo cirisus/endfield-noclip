@@ -198,10 +198,10 @@ export const GAPS_FLOAT = 144;
  * - `effectDecal`: a VFXDecal box in the transparent pass, projected onto the surfaces inside it
  * - `mist`: a FogSimple card (`MistRow` in effects/mist.ts) in the transparent pass
  * - `mistVolume`: a VFXFakeVolumeFog box in the transparent pass, drawn by its back faces like a decal's
- * - `litDecal`: a lit decal laid over the surface beneath, drawn over the composited scene before the water,
- *   which it lies under as part of that surface
- * - `decalRelight`: a lit decal that changes only the normal, roughness or occlusion of the surface beneath,
- *   drawn by the decal relight pass into the main pass's radiance
+ * - `litDecal`: an `HGRP/DecalLit` box blended directly into the G-buffer after the main pass, before deferred
+ *   lighting
+ * - `wetnessDecal`: an `HGRP/WetnessDecal` box written with `max` blending into the wetness mask before
+ *   deferred lighting
  * - `screenMultiply`, `refract`: drawn over the composited scene, because they multiply what lies behind or
  *   sample it
  * - `refractOpaque`: a VFXRefract layer that replaces what lies behind with its refracted copy, writing depth,
@@ -225,7 +225,7 @@ export type LookQueue =
 	| 'mist'
 	| 'mistVolume'
 	| 'litDecal'
-	| 'decalRelight'
+	| 'wetnessDecal'
 	| 'screenMultiply'
 	| 'refract'
 	| 'refractOpaque'

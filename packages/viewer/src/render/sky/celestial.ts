@@ -179,17 +179,12 @@ export class CelestialLayer {
 			throw new Error('celestial layer used before resize()');
 		}
 		this.#write(input.eye, input.sun, input.sunIlluminance);
-		encodeFullscreen(
-			encoder,
-			{
-				label: 'celestial',
-				pipeline: this.#pipeline,
-				groups: [this.#postGroup, this.#layerGroup(), sized.group],
-				targets: [sized.target],
-			},
-			// keep the main pass's sky reflections on surface pixels (fs_celestial discards them) for the composite
-			'load',
-		);
+		encodeFullscreen(encoder, {
+			label: 'celestial',
+			pipeline: this.#pipeline,
+			groups: [this.#postGroup, this.#layerGroup(), sized.group],
+			targets: [sized.target],
+		});
 	}
 
 	/**

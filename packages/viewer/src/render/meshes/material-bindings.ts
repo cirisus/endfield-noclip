@@ -9,9 +9,10 @@ export interface EffectInputs {
 	depth: GPUTextureView;
 	/** the nearest water surface's depth (reversed-Z), 0 where there's none, which mist boxes stop at */
 	waterDepth: GPUTextureView;
-	reflectionSurface: GPUTextureView;
-	/** the diffuse ambient and material occlusion, from which relit decals recover the surface's colour */
-	ambient: GPUTextureView;
+	/** G-buffer B (octahedral normal, roughness, flags), or its copy during the G-buffer decal pass */
+	gbufferB: GPUTextureView;
+	/** G-buffer A (metallic, occlusion, porosity, model), or its copy during the G-buffer decal pass */
+	gbufferA: GPUTextureView;
 	/** a copy of the composited scene, which refraction samples; only the pass after compositing has one */
 	background?: GPUTextureView;
 	version: number;
@@ -102,8 +103,8 @@ export class MaterialBindings {
 		this.mainPassStandIns = {
 			depth: standIn('depth32float'),
 			waterDepth: standIn('depth32float'),
-			reflectionSurface: standIn('rg32uint'),
-			ambient: this.#white,
+			gbufferB: this.#white,
+			gbufferA: this.#white,
 			version: -1,
 		};
 	}
@@ -206,8 +207,8 @@ export class MaterialBindings {
 						resource: slot?.sampler ?? this.#defaultSampler,
 					})),
 					{ binding: 14, resource: inputs.depth },
-					{ binding: 15, resource: inputs.reflectionSurface },
-					{ binding: 16, resource: inputs.ambient },
+					{ binding: 15, resource: inputs.gbufferB },
+					{ binding: 16, resource: inputs.gbufferA },
 					{ binding: 17, resource: volume?.view ?? this.#noVolume },
 					{ binding: 18, resource: volume?.sampler ?? this.#defaultSampler },
 					{ binding: 19, resource: inputs.background ?? this.#white },

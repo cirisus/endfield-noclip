@@ -8,11 +8,11 @@
 import { BLOCK_SLOT_BITS } from '../../content/instance-rows.ts';
 import clipmapWgsl from '../lighting/irradiance-clipmap.wgsl?raw';
 import { LOCAL_LIGHTS_WGSL } from '../lighting/local-lights.ts';
+import gbufferWgsl from '../shaders/common/gbuffer.wgsl?raw';
 import luminanceWgsl from '../shaders/common/luminance.wgsl?raw';
 import noiseWgsl from '../shaders/common/noise.wgsl?raw';
 import octahedralWgsl from '../shaders/common/octahedral.wgsl?raw';
 import phaseWgsl from '../shaders/common/phase.wgsl?raw';
-import reflectionSurfaceWgsl from '../shaders/common/reflection-surface.wgsl?raw';
 import { wgslConst } from '../shaders/wgsl-const.ts';
 
 import brdfWgsl from './brdf.wgsl?raw';
@@ -29,7 +29,7 @@ export const FRAME_WGSL = [
 	luminanceWgsl,
 	phaseWgsl,
 	octahedralWgsl,
-	reflectionSurfaceWgsl,
+	gbufferWgsl,
 	clipmapWgsl,
 	frameWgsl,
 ].join('\n');
