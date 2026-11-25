@@ -22,6 +22,7 @@ import frameLightingWgsl from './frame-lighting.wgsl?raw';
 /** WGSL source of the frame uniforms, instance row helpers and G-buffer packing (no lighting) */
 export const FRAME_CORE_WGSL = [
 	wgslConst('BLOCK_SLOT_BITS', 'u32', BLOCK_SLOT_BITS),
+	brdfWgsl,
 	noiseWgsl,
 	luminanceWgsl,
 	octahedralWgsl,
@@ -33,7 +34,6 @@ export const FRAME_CORE_WGSL = [
 export const FRAME_WGSL = [
 	FRAME_CORE_WGSL,
 	LOCAL_LIGHTS_WGSL,
-	brdfWgsl,
 	phaseWgsl,
 	clipmapWgsl,
 	frameLightingWgsl,

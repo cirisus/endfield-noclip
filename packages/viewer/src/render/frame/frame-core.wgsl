@@ -259,6 +259,13 @@ fn unpack_gbuffer(em: vec4f, ga: vec4f, gb: vec4f, gc: vec4f) -> UnpackedGBuffer
 	return out;
 }
 
+// smoothstep that also runs downhill (`low` > `high`), matching HLSL/GLSL
+fn hermite(low: f32, high: f32, x: f32) -> f32 {
+	let span = high - low;
+	let t = saturate((x - low) / select(span, 1e-6, span == 0.0));
+	return t * t * (3.0 - 2.0 * t);
+}
+
 fn hue(h: f32) -> vec3f {
 	let k = vec3f(0.0, 2.0 / 3.0, 1.0 / 3.0);
 	return clamp(abs(fract(vec3f(h) + k) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));

@@ -2,7 +2,7 @@ import { ADD, ALPHA_OVER, KEEP, PREMULTIPLIED_OVER } from '../../gfx/blend.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { SLOTS, Slot } from '../../looks/look.ts';
 import type { BindLayouts } from '../frame/bind-layouts.ts';
-import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
+import { FRAME_CORE_WGSL, FRAME_WGSL } from '../frame/frame-uniforms.ts';
 import {
 	DEPTH_COMPARE,
 	GBUFFER_A_FORMAT,
@@ -21,8 +21,15 @@ import { SHADOW_DEPTH_STATE, shadowDepthState } from '../shadows/shadow-map.ts';
 import { fogSource } from '../sky/fog-source.ts';
 
 import { type DrawPhase, PHASES, type VertexStreams } from './draw-ranges.ts';
-import effectWgsl from './effect.wgsl?raw';
-import meshWgsl from './mesh.wgsl?raw';
+import effectCommonWgsl from './effects/common.wgsl?raw';
+import effectDecalWgsl from './effects/decal-gbuffer.wgsl?raw';
+import effectBeamWgsl from './effects/light-beam.wgsl?raw';
+import effectMistWgsl from './effects/mist.wgsl?raw';
+import effectScreenWgsl from './effects/screen.wgsl?raw';
+import effectSixWayWgsl from './effects/six-way-smoke.wgsl?raw';
+import effectStackWgsl from './effects/stack.wgsl?raw';
+import effectFoamWgsl from './effects/water-foam.wgsl?raw';
+import effectWaterSheetWgsl from './effects/water-sheet.wgsl?raw';
 import {
 	type FaceCull,
 	FRONT_FACE,
@@ -31,6 +38,12 @@ import {
 	VARIANTS,
 	pipelineKey,
 } from './pipeline-variants.ts';
+import meshCommonWgsl from './surfaces/common.wgsl?raw';
+import meshErosionWgsl from './surfaces/erosion.wgsl?raw';
+import meshFoliageWgsl from './surfaces/foliage.wgsl?raw';
+import meshLitWgsl from './surfaces/lit.wgsl?raw';
+import meshSurfaceWgsl from './surfaces/surface.wgsl?raw';
+import meshTransparentWgsl from './surfaces/transparent.wgsl?raw';
 import { NORMAL_STREAM, positionStream } from './vertex-bindings.ts';
 
 /**
@@ -191,15 +204,39 @@ export const prepareMeshPipelines = (
 	};
 
 	// #region meshes
-	const module = pipelines.module('mesh', [FRAME_WGSL, FOG_WGSL, normalMapWgsl, meshWgsl].join('\n'));
+	// separate modules per family so depth/shadow and G-buffer passes never compile lighting or fog
+	const litModule = pipelines.module(
+		'mesh-lit',
+		[FRAME_CORE_WGSL, normalMapWgsl, meshCommonWgsl, meshLitWgsl].join('\n'),
+	);
+	const surfaceModule = pipelines.module(
+		'mesh-surface',
+		[FRAME_CORE_WGSL, normalMapWgsl, meshCommonWgsl, meshFoliageWgsl, meshErosionWgsl, meshSurfaceWgsl].join(
+			'\n',
+		),
+	);
+	const transparentModule = pipelines.module(
+		'mesh-transparent',
+		[
+			FRAME_WGSL,
+			FOG_WGSL,
+			normalMapWgsl,
+			meshCommonWgsl,
+			meshFoliageWgsl,
+			meshErosionWgsl,
+			meshSurfaceWgsl,
+			meshTransparentWgsl,
+		].join('\n'),
+	);
 	const materialLayout = createMaterialLayout(device);
 	const meshPipelineLayout = device.createPipelineLayout({
 		label: 'mesh',
 		bindGroupLayouts: [layouts.frame, layouts.instances, layouts.draw, materialLayout],
 	});
-	/** describes a phase of the mesh shader */
+	/** describes a phase of a mesh shader module */
 	const describeMesh = (
 		phase: DrawPhase,
+		module: GPUShaderModule,
 		stages: Pick<GPURenderPipelineDescriptor, 'fragment' | 'depthStencil'>,
 		unclippedDepth = false,
 	): void => {
@@ -231,74 +268,108 @@ export const prepareMeshPipelines = (
 		depthCompare: 'greater-equal',
 	};
 	const noColor = format.targets.map((target) => ({ ...target, writeMask: 0 }));
-	const shade: GPUFragmentState = { module, entryPoint: 'fs_opaque', targets: format.targets };
-	const shadeLit: GPUFragmentState = { module, entryPoint: 'fs_opaque_lit', targets: format.targets };
-	const depthOnly: GPUFragmentState = { module, entryPoint: 'fs_depth', targets: noColor };
-	describeMesh(PHASES.prepass, { fragment: depthOnly, depthStencil: depthWrite });
+	const shade: GPUFragmentState = { module: surfaceModule, entryPoint: 'fs_opaque', targets: format.targets };
+	const shadeLit: GPUFragmentState = {
+		module: litModule,
+		entryPoint: 'fs_opaque_lit',
+		targets: format.targets,
+	};
+	const depthOnly: GPUFragmentState = { module: litModule, entryPoint: 'fs_depth', targets: noColor };
+	describeMesh(PHASES.prepass, litModule, { fragment: depthOnly, depthStencil: depthWrite });
 	describe({ ...PHASES.prepass, key: 'mesh/prepass-fade' }, (cullMode, positionFormat, uvFormat) => ({
 		layout: meshPipelineLayout,
-		vertex: { ...meshVertex(module, positionFormat, uvFormat, 'position'), entryPoint: 'vs_depth_fade' },
+		vertex: { ...meshVertex(litModule, positionFormat, uvFormat, 'position'), entryPoint: 'vs_depth_fade' },
 		primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
-		fragment: { module, entryPoint: 'fs_depth_fade', targets: noColor },
+		fragment: { module: litModule, entryPoint: 'fs_depth_fade', targets: noColor },
 		depthStencil: depthWrite,
 	}));
 	// each mask draws through a stencil variant; this one only completes the phase
-	describeMesh(PHASES.stencilMask, { fragment: depthOnly, depthStencil: depthTest });
-	describeMesh(PHASES.opaqueLit, { fragment: shadeLit, depthStencil: depthEqual });
-	describeMesh(PHASES.opaque, { fragment: shade, depthStencil: depthEqual });
-	describeMesh(PHASES.cutoutDepth, {
-		fragment: { module, entryPoint: 'fs_cutout_depth', targets: noColor },
+	describeMesh(PHASES.stencilMask, litModule, { fragment: depthOnly, depthStencil: depthTest });
+	describeMesh(PHASES.opaqueLit, litModule, { fragment: shadeLit, depthStencil: depthEqual });
+	describeMesh(PHASES.opaque, surfaceModule, { fragment: shade, depthStencil: depthEqual });
+	describeMesh(PHASES.cutoutDepth, litModule, {
+		fragment: { module: litModule, entryPoint: 'fs_cutout_depth', targets: noColor },
 		depthStencil: depthWrite,
 	});
-	describeMesh(PHASES.cutoutShade, { fragment: shade, depthStencil: depthEqual });
-	describeMesh(PHASES.cutoutOverlay, {
-		fragment: { module, entryPoint: 'fs_cutout_overlay', targets: format.targets },
+	describeMesh(PHASES.cutoutShade, surfaceModule, { fragment: shade, depthStencil: depthEqual });
+	describeMesh(PHASES.cutoutOverlay, surfaceModule, {
+		fragment: { module: surfaceModule, entryPoint: 'fs_cutout_overlay', targets: format.targets },
 		depthStencil: depthGreaterEqual,
 	});
-	describeMesh(PHASES.transparent, {
-		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
+	describeMesh(PHASES.transparent, transparentModule, {
+		fragment: { module: transparentModule, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 		depthStencil: depthTest,
 	});
-	describeMesh(PHASES.transparentDepthWrite, {
-		fragment: { module, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
+	describeMesh(PHASES.transparentDepthWrite, transparentModule, {
+		fragment: { module: transparentModule, entryPoint: 'fs_transparent', targets: TRANSPARENT_TARGETS },
 		depthStencil: depthWrite,
 	});
 	const noTransparentColor = TRANSPARENT_TARGETS.map((target) => ({ ...target, writeMask: 0 }));
-	describeMesh(PHASES.transparentDepthOnly, {
-		fragment: { module, entryPoint: 'fs_depth', targets: noTransparentColor },
+	describeMesh(PHASES.transparentDepthOnly, litModule, {
+		fragment: { module: litModule, entryPoint: 'fs_depth', targets: noTransparentColor },
 		depthStencil: depthWrite,
 	});
 	const sunShadowDepth = shadowDepthState(shadow.format);
-	describeMesh(PHASES.shadowOpaque, { depthStencil: sunShadowDepth }, shadow.unclippedDepth);
+	describeMesh(PHASES.shadowOpaque, litModule, { depthStencil: sunShadowDepth }, shadow.unclippedDepth);
 	describeMesh(
 		PHASES.shadowCutout,
-		{ fragment: { module, entryPoint: 'fs_cutout_depth', targets: [] }, depthStencil: sunShadowDepth },
+		litModule,
+		{
+			fragment: { module: litModule, entryPoint: 'fs_cutout_depth', targets: [] },
+			depthStencil: sunShadowDepth,
+		},
 		shadow.unclippedDepth,
 	);
-	describeMesh(PHASES.lightShadowOpaque, { depthStencil: SHADOW_DEPTH_STATE });
-	describeMesh(PHASES.lightShadowCutout, {
-		fragment: { module, entryPoint: 'fs_cutout_depth', targets: [] },
+	describeMesh(PHASES.lightShadowOpaque, litModule, { depthStencil: SHADOW_DEPTH_STATE });
+	describeMesh(PHASES.lightShadowCutout, litModule, {
+		fragment: { module: litModule, entryPoint: 'fs_cutout_depth', targets: [] },
 		depthStencil: SHADOW_DEPTH_STATE,
 	});
 	// #endregion
 
 	// #region scene effects
 	const effectLayout = createEffectLayout(device);
-	const effectModule = pipelines.module(
-		'mesh-effect',
-		[FRAME_WGSL, FOG_WGSL, normalMapWgsl, effectWgsl].join('\n'),
+	const effectStackModule = pipelines.module(
+		'mesh-effect-stack',
+		[
+			FRAME_WGSL,
+			FOG_WGSL,
+			normalMapWgsl,
+			effectCommonWgsl,
+			effectStackWgsl,
+			effectWaterSheetWgsl,
+			effectSixWayWgsl,
+			effectBeamWgsl,
+		].join('\n'),
+	);
+	const effectDecalModule = pipelines.module(
+		'mesh-effect-decal',
+		[FRAME_CORE_WGSL, FOG_WGSL, normalMapWgsl, effectCommonWgsl, effectDecalWgsl].join('\n'),
+	);
+	const effectFoamModule = pipelines.module(
+		'mesh-effect-foam',
+		[FRAME_CORE_WGSL, FOG_WGSL, effectCommonWgsl, effectFoamWgsl].join('\n'),
+	);
+	const effectScreenModule = pipelines.module(
+		'mesh-effect-screen',
+		[FRAME_CORE_WGSL, FOG_WGSL, effectCommonWgsl, effectScreenWgsl].join('\n'),
+	);
+	const effectMistModule = pipelines.module(
+		'mesh-effect-mist',
+		[FRAME_WGSL, FOG_WGSL, effectCommonWgsl, effectMistWgsl].join('\n'),
 	);
 	const effectPipelineLayout = device.createPipelineLayout({
 		label: 'effect',
 		bindGroupLayouts: [layouts.frame, layouts.instances, layouts.draw, effectLayout],
 	});
 	/**
-	 * describes a phase of the effect shader: its fragment entry point, targets and depth test, if any, which
-	 * writes depth only when `writesDepth` is set and tests the main pass's depth unless `depthFormat` names
-	 * another
+	 * describes a phase of an effect shader module: its fragment entry point, targets and depth test, if any,
+	 * which writes depth only when `writesDepth` is set and tests the main pass's depth unless `depthFormat`
+	 * names another
 	 */
 	const describeEffect = (
 		phase: DrawPhase,
+		module: GPUShaderModule,
 		entryPoint: string,
 		targets: GPUColorTargetState[],
 		depthCompare: GPUCompareFunction | null,
@@ -312,11 +383,10 @@ export const prepareMeshPipelines = (
 				layout: effectPipelineLayout,
 				vertex: {
 					...meshVertex(module, positionFormat, uvFormat, 'all'),
-					module: effectModule,
 					entryPoint: 'vs_effect',
 				},
 				primitive: { topology: 'triangle-list', frontFace: FRONT_FACE, cullMode },
-				fragment: { module: effectModule, entryPoint, targets },
+				fragment: { module, entryPoint, targets },
 			};
 			if (depthCompare !== null) {
 				descriptor.depthStencil = { format: depthFormat, depthWriteEnabled: writesDepth, depthCompare };
@@ -325,18 +395,19 @@ export const prepareMeshPipelines = (
 		});
 	};
 	// opaque layers shade into the main pass's targets like a mesh, without a prepass
-	describeEffect(PHASES.effectOpaque, 'fs_effect_opaque', format.targets, DEPTH_COMPARE, {
+	describeEffect(PHASES.effectOpaque, effectStackModule, 'fs_effect_opaque', format.targets, DEPTH_COMPARE, {
 		writesDepth: true,
 	});
-	describeEffect(PHASES.effect, 'fs_effect', TRANSPARENT_TARGETS, DEPTH_COMPARE);
+	describeEffect(PHASES.effect, effectStackModule, 'fs_effect', TRANSPARENT_TARGETS, DEPTH_COMPARE);
 	// decals find their surface through the depth buffer, so their back faces draw wherever they are
-	describeEffect(PHASES.effectDecal, 'fs_effect_decal', TRANSPARENT_TARGETS, 'always');
-	describeEffect(PHASES.mist, 'fs_mist_card', TRANSPARENT_TARGETS, DEPTH_COMPARE);
+	describeEffect(PHASES.effectDecal, effectStackModule, 'fs_effect_decal', TRANSPARENT_TARGETS, 'always');
+	describeEffect(PHASES.mist, effectMistModule, 'fs_mist_card', TRANSPARENT_TARGETS, DEPTH_COMPARE);
 	// fog boxes measure their thickness up to the depth buffer the same way
-	describeEffect(PHASES.mistVolume, 'fs_mist_volume', TRANSPARENT_TARGETS, 'always');
+	describeEffect(PHASES.mistVolume, effectMistModule, 'fs_mist_volume', TRANSPARENT_TARGETS, 'always');
 	// effects over the composited scene: multiplying it, then blending a refracted copy of it over
 	describeEffect(
 		PHASES.screenMultiply,
+		effectStackModule,
 		'fs_effect_multiply',
 		[
 			{
@@ -358,12 +429,13 @@ export const prepareMeshPipelines = (
 			},
 		},
 	];
-	describeEffect(PHASES.refract, 'fs_refract', refractBlend, DEPTH_COMPARE);
-	describeEffect(PHASES.radialBlur, 'fs_radial_blur', refractBlend, DEPTH_COMPARE);
-	describeEffect(PHASES.radialBlurThrough, 'fs_radial_blur', refractBlend, 'always');
+	describeEffect(PHASES.refract, effectScreenModule, 'fs_refract', refractBlend, DEPTH_COMPARE);
+	describeEffect(PHASES.radialBlur, effectScreenModule, 'fs_radial_blur', refractBlend, DEPTH_COMPARE);
+	describeEffect(PHASES.radialBlurThrough, effectScreenModule, 'fs_radial_blur', refractBlend, 'always');
 	// under an opaque blend state the refracted colour replaces the scene's whatever its alpha
 	describeEffect(
 		PHASES.refractOpaque,
+		effectScreenModule,
 		'fs_refract',
 		[
 			{
@@ -392,9 +464,9 @@ export const prepareMeshPipelines = (
 		},
 	];
 	const onWater = { depthFormat: WATER_DEPTH_FORMAT };
-	describeEffect(PHASES.waterFoam, 'fs_water_foam', foam, 'greater-equal', onWater);
-	describeEffect(PHASES.waterFoamBehind, 'fs_water_foam', foam, 'less', onWater);
-	describeEffect(PHASES.waterFoamThrough, 'fs_water_foam', foam, 'always', onWater);
+	describeEffect(PHASES.waterFoam, effectFoamModule, 'fs_water_foam', foam, 'greater-equal', onWater);
+	describeEffect(PHASES.waterFoamBehind, effectFoamModule, 'fs_water_foam', foam, 'less', onWater);
+	describeEffect(PHASES.waterFoamThrough, effectFoamModule, 'fs_water_foam', foam, 'always', onWater);
 	// `HGRP/DecalLit` boxes blend directly into the G-buffer (emission, gbufferA, gbufferB, gbufferC) before
 	// deferred lighting. they read scene depth and copies of gbufferA/B as textures, so the pass has no depth
 	// attachment:
@@ -423,6 +495,7 @@ export const prepareMeshPipelines = (
 	};
 	describeEffect(
 		PHASES.litDecal,
+		effectDecalModule,
 		'fs_decal_gbuffer',
 		[decalEmission, decalGBufferA, decalGBufferB, decalGBufferC],
 		null,
@@ -432,6 +505,7 @@ export const prepareMeshPipelines = (
 	const maxBlend: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one', operation: 'max' };
 	describeEffect(
 		PHASES.wetnessDecal,
+		effectDecalModule,
 		'fs_wetness_decal',
 		[{ format: WETNESS_MASK_FORMAT, blend: { color: maxBlend, alpha: maxBlend } }],
 		null,
