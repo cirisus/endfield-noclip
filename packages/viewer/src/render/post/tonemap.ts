@@ -1,4 +1,11 @@
-import { autoBindGroup, encodeFullscreen, fullscreenPipeline } from '../../gfx/fullscreen-pass.ts';
+import {
+	type FullscreenPass,
+	type FullscreenPipeline,
+	autoBindGroup,
+	encodeFullscreen,
+	fullscreenPipeline,
+} from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import colorWgsl from '../shaders/common/color.wgsl?raw';
 
 import { postShaderModule } from './shader-source.ts';
@@ -7,33 +14,36 @@ import tonemapWgsl from './tonemap.wgsl?raw';
 /** the final pass (tonemap.wgsl): exposure, bloom, vignette, grading and tonemapping into the swapchain */
 export class Tonemap {
 	#device: GPUDevice;
+	#postUniforms: GPUBuffer;
 	#sampler: GPUSampler;
-	#pipeline: GPURenderPipeline;
-	#postGroup: GPUBindGroup;
-	/** group 1 reading each temporal history */
-	#groups: [GPUBindGroup, GPUBindGroup] | null = null;
+	#pipeline: FullscreenPipeline;
+	#postGroup: GPUBindGroup | null = null;
+	/** per temporal history: the pass reading it */
+	#passes: [FullscreenPass, FullscreenPass] | null = null;
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms
 	 * @param sampler the bilinear clamping sampler the bloom is read with
 	 * @param swapchainFormat the canvas format
 	 */
 	constructor(
 		device: GPUDevice,
+		pipelines: PipelineCache,
 		postUniforms: GPUBuffer,
 		sampler: GPUSampler,
 		swapchainFormat: GPUTextureFormat,
 	) {
 		this.#device = device;
+		this.#postUniforms = postUniforms;
 		this.#sampler = sampler;
-		this.#pipeline = fullscreenPipeline(device, {
+		this.#pipeline = fullscreenPipeline(pipelines, {
 			label: 'tonemap',
 			module: postShaderModule(device, 'tonemap', [colorWgsl, tonemapWgsl]),
 			entryPoint: 'fs_tonemap',
 			targets: [{ format: swapchainFormat }],
 		});
-		this.#postGroup = autoBindGroup(device, this.#pipeline, 0, { 0: { buffer: postUniforms } });
 	}
 
 	/**
@@ -42,13 +52,26 @@ export class Tonemap {
 	 * @param input the temporal histories, and the bloom (`null` without any)
 	 */
 	resize(input: { histories: readonly GPUTexture[]; bloom: GPUTexture | null }): void {
-		const group = (history: GPUTexture): GPUBindGroup =>
-			autoBindGroup(this.#device, this.#pipeline, 1, {
-				0: history.createView(),
-				1: (input.bloom ?? history).createView(),
-				2: this.#sampler,
-			});
-		this.#groups = [group(input.histories[0]), group(input.histories[1])];
+		const makePass = (history: GPUTexture): FullscreenPass => {
+			const historyView = history.createView();
+			const bloomView = (input.bloom ?? history).createView();
+			return {
+				label: 'tonemap',
+				pipeline: this.#pipeline,
+				bind: (compiled) => [
+					(this.#postGroup ??= autoBindGroup(this.#device, compiled, 0, {
+						0: { buffer: this.#postUniforms },
+					})),
+					autoBindGroup(this.#device, compiled, 1, {
+						0: historyView,
+						1: bloomView,
+						2: this.#sampler,
+					}),
+				],
+				targets: [],
+			};
+		};
+		this.#passes = [makePass(input.histories[0]), makePass(input.histories[1])];
 	}
 
 	/**
@@ -56,14 +79,11 @@ export class Tonemap {
 	 * @param input the swapchain's current view and which history this frame's resolve wrote
 	 */
 	encode(encoder: GPUCommandEncoder, input: { swapchain: GPUTextureView; history: number }): void {
-		if (this.#groups === null) {
+		if (this.#passes === null) {
 			throw new Error('tonemap used before resize()');
 		}
-		encodeFullscreen(encoder, {
-			label: 'tonemap',
-			pipeline: this.#pipeline,
-			groups: [this.#postGroup, this.#groups[input.history]],
-			targets: [input.swapchain],
-		});
+		const pass = this.#passes[input.history];
+		pass.targets[0] = input.swapchain;
+		encodeFullscreen(encoder, pass);
 	}
 }

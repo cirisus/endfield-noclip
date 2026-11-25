@@ -50,11 +50,11 @@ export class PostProcess {
 	) {
 		const { swapchainFormat, postUniforms, sampler, environment } = options;
 		this.#autoExposure = new AutoExposure(device, pipelines);
-		this.#lightShafts = new LightShafts(device, postUniforms);
+		this.#lightShafts = new LightShafts(device, pipelines, postUniforms);
 		this.#lensFlares = new LensFlares(device, pipelines);
-		this.#taa = new TemporalAA(device, postUniforms);
-		this.#bloom = new Bloom(device, postUniforms, sampler);
-		this.#tonemap = new Tonemap(device, postUniforms, sampler, swapchainFormat);
+		this.#taa = new TemporalAA(device, pipelines, postUniforms);
+		this.#bloom = new Bloom(device, pipelines, postUniforms, sampler);
+		this.#tonemap = new Tonemap(device, pipelines, postUniforms, sampler, swapchainFormat);
 		this.#environment = environment;
 	}
 

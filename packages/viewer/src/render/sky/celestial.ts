@@ -15,7 +15,14 @@ import {
 	NO_CELESTIAL,
 } from '../../environment/celestial-look.ts';
 import { createUniformBuffer, rowWriter } from '../../gfx/buffers.ts';
-import { autoBindGroup, encodeFullscreen, fullscreenPipeline } from '../../gfx/fullscreen-pass.ts';
+import {
+	type FullscreenPass,
+	type FullscreenPipeline,
+	autoBindGroup,
+	encodeFullscreen,
+	fullscreenPipeline,
+} from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_REPEAT_MIPMAPPED, NEAREST_REPEAT, sampler } from '../../gfx/samplers.ts';
 import { HDR_FORMAT } from '../frame/render-targets.ts';
@@ -39,8 +46,9 @@ const SUN_OFFSET = (11 + 19 + 2 * 13) * 4;
  */
 export class CelestialLayer {
 	#device: GPUDevice;
-	#pipeline: GPURenderPipeline;
-	#postGroup: GPUBindGroup;
+	#postUniforms: GPUBuffer;
+	#pipeline: FullscreenPipeline;
+	#postGroup: GPUBindGroup | null = null;
 	#uniforms: GPUBuffer;
 	#data = new Float32Array(UNIFORM_BYTES / 4);
 	#words = new Uint32Array(this.#data.buffer);
@@ -55,23 +63,28 @@ export class CelestialLayer {
 	/** the cloud panorama bound in group 2 */
 	#cloud: TextureBinding;
 	#noCloud: TextureBinding;
-	/** group 2 (the main pass's depth and the cloud panorama) and the target, once sized */
-	#sized: { depth: GPUTextureView; group: GPUBindGroup; target: GPUTextureView } | null = null;
+	/** the main pass's depth and the target, plus its fullscreen pass, once sized */
+	#sized: { depth: GPUTextureView; target: GPUTextureView; pass: FullscreenPass } | null = null;
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param input the post chain's `Post` uniforms, and the bilinear clamping sampler the cloud panorama is
 	 *   read with until it streams in
 	 */
-	constructor(device: GPUDevice, input: { postUniforms: GPUBuffer; sampler: GPUSampler }) {
+	constructor(
+		device: GPUDevice,
+		pipelines: PipelineCache,
+		input: { postUniforms: GPUBuffer; sampler: GPUSampler },
+	) {
 		this.#device = device;
-		this.#pipeline = fullscreenPipeline(device, {
+		this.#postUniforms = input.postUniforms;
+		this.#pipeline = fullscreenPipeline(pipelines, {
 			label: 'celestial',
 			module: postShaderModule(device, 'celestial', [colorWgsl, celestialWgsl]),
 			entryPoint: 'fs_celestial',
 			targets: [{ format: HDR_FORMAT }],
 		});
-		this.#postGroup = autoBindGroup(device, this.#pipeline, 0, { 0: { buffer: input.postUniforms } });
 		this.#noCloud = {
 			view: placeholder(device, 'black', '2d'),
 			sampler: input.sampler,
@@ -105,14 +118,17 @@ export class CelestialLayer {
 		}
 		if (changed) {
 			this.#group = null;
+			if (this.#sized !== null) {
+				this.#sized.pass.groups = undefined;
+			}
 		}
 	}
 
 	/** @returns group 1, rebuilt after a texture changed */
-	#layerGroup(): GPUBindGroup {
+	#layerGroup(compiled: GPURenderPipeline): GPUBindGroup {
 		this.#group ??= this.#device.createBindGroup({
 			label: 'celestial',
-			layout: this.#pipeline.getBindGroupLayout(1),
+			layout: compiled.getBindGroupLayout(1),
 			entries: [
 				{ binding: 0, resource: { buffer: this.#uniforms } },
 				{ binding: 1, resource: this.#sampler },
@@ -155,14 +171,26 @@ export class CelestialLayer {
 	 */
 	resize(input: { depth: GPUTextureView; target: GPUTextureView }): void {
 		const { depth, target } = input;
+		let cloudGroup: GPUBindGroup | null = null;
 		this.#sized = {
 			depth,
 			target,
-			group: autoBindGroup(this.#device, this.#pipeline, 2, {
-				0: depth,
-				1: this.#cloud.view,
-				2: this.#cloud.sampler,
-			}),
+			pass: {
+				label: 'celestial',
+				pipeline: this.#pipeline,
+				bind: (compiled) => [
+					(this.#postGroup ??= autoBindGroup(this.#device, compiled, 0, {
+						0: { buffer: this.#postUniforms },
+					})),
+					this.#layerGroup(compiled),
+					(cloudGroup ??= autoBindGroup(this.#device, compiled, 2, {
+						0: depth,
+						1: this.#cloud.view,
+						2: this.#cloud.sampler,
+					})),
+				],
+				targets: [target],
+			},
 		};
 	}
 
@@ -179,12 +207,7 @@ export class CelestialLayer {
 			throw new Error('celestial layer used before resize()');
 		}
 		this.#write(input.eye, input.sun, input.sunIlluminance);
-		encodeFullscreen(encoder, {
-			label: 'celestial',
-			pipeline: this.#pipeline,
-			groups: [this.#postGroup, this.#layerGroup(), sized.group],
-			targets: [sized.target],
-		});
+		encodeFullscreen(encoder, sized.pass);
 	}
 
 	/**

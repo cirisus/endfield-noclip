@@ -4,6 +4,7 @@ import {
 	encodeFullscreen,
 	fullscreenPipeline,
 } from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { HDR_FORMAT } from '../frame/render-targets.ts';
 import { postShaderModule } from '../post/shader-source.ts';
 
@@ -29,10 +30,11 @@ export class AtmosphereLuts {
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms, which hold the atmosphere
 	 * @param sampler the bilinear clamping sampler the LUTs are read with
 	 */
-	constructor(device: GPUDevice, postUniforms: GPUBuffer, sampler: GPUSampler) {
+	constructor(device: GPUDevice, pipelines: PipelineCache, postUniforms: GPUBuffer, sampler: GPUSampler) {
 		const lut = (label: string, width: number, height: number): GPUTexture =>
 			device.createTexture({
 				label,
@@ -62,25 +64,32 @@ export class AtmosphereLuts {
 			target: GPUTextureView,
 			reads: readonly number[],
 		): FullscreenPass => {
-			const pipeline = fullscreenPipeline(device, {
+			const pipeline = fullscreenPipeline(pipelines, {
 				label,
 				module,
 				entryPoint,
 				targets: [{ format: HDR_FORMAT }],
 			});
-			const groups = [autoBindGroup(device, pipeline, 0, { 0: { buffer: postUniforms } })];
-			// an `auto` layout has only the bindings the pass reads
-			if (reads.length > 0) {
-				groups.push(
-					autoBindGroup(
-						device,
-						pipeline,
-						1,
-						Object.fromEntries(reads.map((binding) => [binding, resources[binding]])),
-					),
-				);
-			}
-			return { label, pipeline, groups, targets: [target] };
+			return {
+				label,
+				pipeline,
+				bind: (compiled) => {
+					const groups = [autoBindGroup(device, compiled, 0, { 0: { buffer: postUniforms } })];
+					// an `auto` layout has only the bindings the pass reads
+					if (reads.length > 0) {
+						groups.push(
+							autoBindGroup(
+								device,
+								compiled,
+								1,
+								Object.fromEntries(reads.map((binding) => [binding, resources[binding]])),
+							),
+						);
+					}
+					return groups;
+				},
+				targets: [target],
+			};
 		};
 		const B = SkyBinding;
 		this.#passes = {
@@ -116,9 +125,9 @@ export class AtmosphereLuts {
 	 */
 	encode(encoder: GPUCommandEncoder, sky: boolean): void {
 		if (!this.#ready) {
-			encodeFullscreen(encoder, this.#passes.transmittance);
-			encodeFullscreen(encoder, this.#passes.multiScattering);
-			this.#ready = true;
+			const t = encodeFullscreen(encoder, this.#passes.transmittance);
+			const m = encodeFullscreen(encoder, this.#passes.multiScattering);
+			this.#ready = t && m;
 		}
 		// the atmosphere fog is analytic; only the sky reads the LUTs
 		if (sky) {

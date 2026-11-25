@@ -1,10 +1,12 @@
 import { createBufferWithData } from '../../gfx/buffers.ts';
 import {
 	type FullscreenPass,
+	type FullscreenPipeline,
 	autoBindGroup,
 	encodeFullscreen,
 	fullscreenPipeline,
 } from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
 import { HDR_FORMAT } from '../frame/render-targets.ts';
 
@@ -44,23 +46,24 @@ export class Bloom {
 	#device: GPUDevice;
 	#postUniforms: GPUBuffer;
 	#sampler: GPUSampler;
-	#pipelines: Record<'prefilter' | 'blurH' | 'blurV' | 'up', GPURenderPipeline>;
+	#pipelines: Record<'prefilter' | 'blurH' | 'blurV' | 'up', FullscreenPipeline>;
 	#targets: TextureSet;
 	#sized: Sized | null = null;
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms
 	 * @param sampler the bilinear clamping sampler the levels are read with
 	 */
-	constructor(device: GPUDevice, postUniforms: GPUBuffer, sampler: GPUSampler) {
+	constructor(device: GPUDevice, pipelines: PipelineCache, postUniforms: GPUBuffer, sampler: GPUSampler) {
 		this.#device = device;
 		this.#targets = new TextureSet(device);
 		this.#postUniforms = postUniforms;
 		this.#sampler = sampler;
 		const module = postShaderModule(device, 'bloom', [bloomWgsl]);
-		const pipeline = (label: string, entryPoint: string): GPURenderPipeline =>
-			fullscreenPipeline(device, { label, module, entryPoint, targets: [{ format: HDR_FORMAT }] });
+		const pipeline = (label: string, entryPoint: string): FullscreenPipeline =>
+			fullscreenPipeline(pipelines, { label, module, entryPoint, targets: [{ format: HDR_FORMAT }] });
 		this.#pipelines = {
 			prefilter: pipeline('bloom prefilter', 'fs_prefilter'),
 			blurH: pipeline('bloom blur h', 'fs_blur_h'),
@@ -128,7 +131,7 @@ export class Bloom {
 		const buffers: GPUBuffer[] = [];
 		const pass = (descriptor: {
 			label: string;
-			pipeline: GPURenderPipeline;
+			pipeline: FullscreenPipeline;
 			source: GPUTexture;
 			/** upsamples: the matching level of the downsample chain */
 			high: GPUTexture | null;
@@ -154,9 +157,9 @@ export class Bloom {
 			return {
 				label,
 				pipeline,
-				groups: [
-					autoBindGroup(device, pipeline, 0, blur ? {} : { 0: { buffer: this.#postUniforms } }),
-					autoBindGroup(device, pipeline, 1, entries),
+				bind: (compiled) => [
+					autoBindGroup(device, compiled, 0, blur ? {} : { 0: { buffer: this.#postUniforms } }),
+					autoBindGroup(device, compiled, 1, entries),
 				],
 				targets: [target.createView()],
 			};

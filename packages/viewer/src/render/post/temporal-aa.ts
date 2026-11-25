@@ -1,5 +1,12 @@
 import { createUniformBuffer } from '../../gfx/buffers.ts';
-import { autoBindGroup, encodeFullscreen, fullscreenPipeline } from '../../gfx/fullscreen-pass.ts';
+import {
+	type FullscreenPass,
+	type FullscreenPipeline,
+	autoBindGroup,
+	encodeFullscreen,
+	fullscreenPipeline,
+} from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { LINEAR_CLAMP, sampler } from '../../gfx/samplers.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
 import { halton } from '../../math/sequence.ts';
@@ -28,8 +35,8 @@ interface Sized {
 	history: [GPUTexture, GPUTexture];
 	/** views of {@link history} */
 	views: [GPUTextureView, GPUTextureView];
-	/** groups 1 of the frame that writes `history[i]` */
-	groups: [GPUBindGroup, GPUBindGroup];
+	/** resolve pass of the frame that writes `history[i]` */
+	passes: [FullscreenPass, FullscreenPass];
 }
 
 /** owns the jitter sequence, the history and the resolve pass */
@@ -37,8 +44,9 @@ export class TemporalAA {
 	/** jitter and accumulate; off passes the current frame through (upscaled to the output size) */
 	enabled = true;
 	#device: GPUDevice;
-	#pipeline: GPURenderPipeline;
-	#postGroup: GPUBindGroup;
+	#postUniforms: GPUBuffer;
+	#pipeline: FullscreenPipeline;
+	#postGroup: GPUBindGroup | null = null;
 	#uniforms: GPUBuffer;
 	#data = new Float32Array(UNIFORM_BYTES / 4);
 	#sampler: GPUSampler;
@@ -50,17 +58,18 @@ export class TemporalAA {
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms
 	 */
-	constructor(device: GPUDevice, postUniforms: GPUBuffer) {
+	constructor(device: GPUDevice, pipelines: PipelineCache, postUniforms: GPUBuffer) {
 		this.#device = device;
-		this.#pipeline = fullscreenPipeline(device, {
+		this.#postUniforms = postUniforms;
+		this.#pipeline = fullscreenPipeline(pipelines, {
 			label: 'taa',
 			module: postShaderModule(device, 'taa', [colorWgsl, taaWgsl]),
 			entryPoint: 'fs_taa',
 			targets: [{ format: HDR_FORMAT }],
 		});
-		this.#postGroup = autoBindGroup(device, this.#pipeline, 0, { 0: { buffer: postUniforms } });
 		this.#uniforms = createUniformBuffer(device, 'taa uniforms', UNIFORM_BYTES);
 		this.#sampler = sampler(device, LINEAR_CLAMP);
 		this.#targets = new TextureSet(device);
@@ -133,21 +142,28 @@ export class TemporalAA {
 			});
 		const pair: [GPUTexture, GPUTexture] = [history(0), history(1)];
 		const views: [GPUTextureView, GPUTextureView] = [pair[0].createView(), pair[1].createView()];
-		const group = (read: GPUTextureView): GPUBindGroup =>
-			autoBindGroup(this.#device, this.#pipeline, 1, {
-				0: { buffer: this.#uniforms },
-				1: scene,
-				2: depth,
-				3: read,
-				4: this.#sampler,
-				5: velocity,
-			});
+		const makePass = (read: GPUTextureView, target: GPUTextureView): FullscreenPass => ({
+			label: 'taa',
+			pipeline: this.#pipeline,
+			bind: (compiled) => [
+				(this.#postGroup ??= autoBindGroup(this.#device, compiled, 0, { 0: { buffer: this.#postUniforms } })),
+				autoBindGroup(this.#device, compiled, 1, {
+					0: { buffer: this.#uniforms },
+					1: scene,
+					2: depth,
+					3: read,
+					4: this.#sampler,
+					5: velocity,
+				}),
+			],
+			targets: [target],
+		});
 		this.#sized = {
 			width,
 			height,
 			history: pair,
 			views,
-			groups: [group(views[1]), group(views[0])],
+			passes: [makePass(views[1], views[0]), makePass(views[0], views[1])],
 		};
 		this.#camera.reset();
 	}
@@ -201,13 +217,9 @@ export class TemporalAA {
 		f.set([sized.width, sized.height, 1 / sized.width, 1 / sized.height], CAMERA_HISTORY_FLOATS);
 		f.set([BLEND, this.enabled ? 0 : 1, 0, 0], CAMERA_HISTORY_FLOATS + 4);
 		this.#device.queue.writeBuffer(this.#uniforms, 0, f);
-		encodeFullscreen(encoder, {
-			label: 'taa',
-			pipeline: this.#pipeline,
-			groups: [this.#postGroup, sized.groups[written]],
-			targets: [sized.views[written]],
-		});
-		this.#camera.advance();
+		if (encodeFullscreen(encoder, sized.passes[written])) {
+			this.#camera.advance();
+		}
 		return written;
 	}
 

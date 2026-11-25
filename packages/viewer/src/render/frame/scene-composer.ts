@@ -88,11 +88,11 @@ export class SceneComposer {
 		const postUniforms = this.uniforms;
 		const sampler = this.sampler;
 		this.fogInputs = { uniforms: postUniforms, froxels: fog.view, sampler };
-		this.#luts = new AtmosphereLuts(device, postUniforms, sampler);
-		this.#ao = new AmbientOcclusion(device, postUniforms);
-		this.#reflections = new ScreenSpaceReflections(device, postUniforms);
-		this.#celestial = new CelestialLayer(device, { postUniforms, sampler });
-		this.#composite = new Composite(device, {
+		this.#luts = new AtmosphereLuts(device, pipelines, postUniforms, sampler);
+		this.#ao = new AmbientOcclusion(device, pipelines, postUniforms);
+		this.#reflections = new ScreenSpaceReflections(device, pipelines, postUniforms);
+		this.#celestial = new CelestialLayer(device, pipelines, { postUniforms, sampler });
+		this.#composite = new Composite(device, pipelines, {
 			postUniforms,
 			sampler,
 			skyView: this.#luts.skyView,

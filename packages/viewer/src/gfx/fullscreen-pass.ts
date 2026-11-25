@@ -5,38 +5,58 @@
  * @module
  */
 
+import type { PipelineCache } from './pipeline-cache.ts';
+
+/** an asynchronously compiled fullscreen pipeline */
+export interface FullscreenPipeline {
+	readonly key: string;
+	/** @returns the compiled pipeline, or `undefined` while it compiles */
+	get(): GPURenderPipeline | undefined;
+}
+
 /** a fullscreen draw into one or more targets, with its groups bound from 0 */
 export interface FullscreenPass {
 	/** the render pass's label, which the GPU profiler reports it under */
 	label: string;
-	pipeline: GPURenderPipeline;
-	groups: GPUBindGroup[];
+	pipeline: FullscreenPipeline;
+	/**
+	 * builds the pass's bind groups once `pipeline` is compiled; memoized onto {@link groups} by
+	 * {@link encodeFullscreen} so bind groups are created once per pass
+	 */
+	bind(pipeline: GPURenderPipeline): GPUBindGroup[];
 	targets: GPUTextureView[];
+	/** cached bind groups once {@link bind} has run */
+	groups?: GPUBindGroup[];
 }
 
 /**
- * @param device the device
- * @param descriptor the pipeline's label, its module (which has `vs_fullscreen`), the fragment entry point
- *   and its targets
- * @returns the pipeline, with an `auto` layout
+ * prepares an asynchronous fullscreen render pipeline with an `auto` layout via {@link PipelineCache}
+ *
+ * @param pipelines the pipeline cache
+ * @param descriptor the pipeline's label (also its cache key), its module (which has `vs_fullscreen`), the
+ *   fragment entry point, and its targets
+ * @returns a handle whose `get()` returns the compiled pipeline once ready
  */
 export const fullscreenPipeline = (
-	device: GPUDevice,
+	pipelines: PipelineCache,
 	descriptor: {
 		label: string;
 		module: GPUShaderModule;
 		entryPoint: string;
 		targets: GPUColorTargetState[];
 	},
-): GPURenderPipeline => {
+): FullscreenPipeline => {
 	const { label, module, entryPoint, targets } = descriptor;
-	return device.createRenderPipeline({
-		label,
+	void pipelines.prepare(label, () => ({
 		layout: 'auto',
 		vertex: { module, entryPoint: 'vs_fullscreen' },
 		fragment: { module, entryPoint, targets },
 		primitive: { topology: 'triangle-list' },
-	});
+	}));
+	return {
+		key: label,
+		get: () => pipelines.get(label),
+	};
 };
 
 /**
@@ -58,18 +78,24 @@ export const autoBindGroup = (
 	});
 
 /**
- * encodes the pass in a render pass of its own.
+ * encodes the pass in a render pass of its own, skipping while its pipeline is still compiling.
  *
  * @param encoder the encoder
  * @param pass the pass
  * @param loadOp `clear` clears the targets to transparent black first; `load` draws over them, for passes
  *   that blend onto their target
+ * @returns whether the pass was encoded (`false` while the pipeline is still compiling)
  */
 export const encodeFullscreen = (
 	encoder: GPUCommandEncoder,
 	pass: FullscreenPass,
 	loadOp: GPULoadOp = 'clear',
-): void => {
+): boolean => {
+	const pipeline = pass.pipeline.get();
+	if (pipeline === undefined) {
+		return false;
+	}
+	const groups = (pass.groups ??= pass.bind(pipeline));
 	const render = encoder.beginRenderPass({
 		label: pass.label,
 		colorAttachments: pass.targets.map((view) => ({
@@ -79,10 +105,11 @@ export const encodeFullscreen = (
 			clearValue: [0, 0, 0, 0],
 		})),
 	});
-	render.setPipeline(pass.pipeline);
-	for (const [i, group] of pass.groups.entries()) {
+	render.setPipeline(pipeline);
+	for (const [i, group] of groups.entries()) {
 		render.setBindGroup(i, group);
 	}
 	render.draw(3);
 	render.end();
+	return true;
 };

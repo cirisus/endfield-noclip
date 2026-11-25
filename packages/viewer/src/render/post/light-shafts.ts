@@ -3,10 +3,12 @@ import { ADDITIVE } from '../../gfx/blend.ts';
 import { createBufferWithData, createUniformBuffer } from '../../gfx/buffers.ts';
 import {
 	type FullscreenPass,
+	type FullscreenPipeline,
 	autoBindGroup,
 	encodeFullscreen,
 	fullscreenPipeline,
 } from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { LINEAR_CLAMP, sampler } from '../../gfx/samplers.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
 import type { Camera } from '../../scene/camera.ts';
@@ -41,15 +43,16 @@ export class LightShafts {
 	#passUniforms: GPUBuffer[];
 	#data = new Float32Array(UNIFORM_BYTES / 4);
 	#sampler: GPUSampler;
-	#pipelines: Record<'downsample' | 'blur' | 'apply', GPURenderPipeline>;
+	#pipelines: Record<'downsample' | 'blur' | 'apply', FullscreenPipeline>;
 	#targets: TextureSet;
 	#sized: Sized | null = null;
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms
 	 */
-	constructor(device: GPUDevice, postUniforms: GPUBuffer) {
+	constructor(device: GPUDevice, pipelines: PipelineCache, postUniforms: GPUBuffer) {
 		this.#device = device;
 		this.#targets = new TextureSet(device);
 		this.#postUniforms = postUniforms;
@@ -63,8 +66,8 @@ export class LightShafts {
 		);
 		this.#sampler = sampler(device, LINEAR_CLAMP);
 		const module = postShaderModule(device, 'light shafts', [luminanceWgsl, lightShaftsWgsl]);
-		const pipeline = (label: string, entryPoint: string, target: GPUColorTargetState): GPURenderPipeline =>
-			fullscreenPipeline(device, { label, module, entryPoint, targets: [target] });
+		const pipeline = (label: string, entryPoint: string, target: GPUColorTargetState): FullscreenPipeline =>
+			fullscreenPipeline(pipelines, { label, module, entryPoint, targets: [target] });
 		this.#pipelines = {
 			downsample: pipeline('light shaft downsample', 'fs_downsample', { format: HDR_FORMAT }),
 			blur: pipeline('light shaft blur', 'fs_blur', { format: HDR_FORMAT }),
@@ -103,26 +106,28 @@ export class LightShafts {
 			{
 				label: 'light shaft downsample',
 				pipeline: p.downsample,
-				groups: [
-					autoBindGroup(device, p.downsample, 0, {
+				bind: (compiled) => [
+					autoBindGroup(device, compiled, 0, {
 						0: { buffer: this.#postUniforms },
 						1: shafts,
 						2: this.#sampler,
 					}),
-					autoBindGroup(device, p.downsample, 1, { 0: input.composited, 1: input.scene.depth }),
+					autoBindGroup(device, compiled, 1, { 0: input.composited, 1: input.scene.depth }),
 				],
 				targets: [views[0]],
 			},
 		];
 		// the blurs and the apply read none of the post uniforms
-		const blurShared = autoBindGroup(device, p.blur, 0, { 1: shafts, 2: this.#sampler });
+		let blurShared: GPUBindGroup | null = null;
 		for (let i = 0; i < BLUR_PASSES; i++) {
+			const passUniform = this.#passUniforms[i];
+			const readView = views[i % 2];
 			passes.push({
 				label: 'light shaft blur',
 				pipeline: p.blur,
-				groups: [
-					blurShared,
-					autoBindGroup(device, p.blur, 1, { 2: { buffer: this.#passUniforms[i] }, 3: views[i % 2] }),
+				bind: (compiled) => [
+					(blurShared ??= autoBindGroup(device, compiled, 0, { 1: shafts, 2: this.#sampler })),
+					autoBindGroup(device, compiled, 1, { 2: { buffer: passUniform }, 3: readView }),
 				],
 				targets: [views[(i + 1) % 2]],
 			});
@@ -130,9 +135,9 @@ export class LightShafts {
 		const apply: FullscreenPass = {
 			label: 'light shaft apply',
 			pipeline: p.apply,
-			groups: [
-				autoBindGroup(device, p.apply, 0, { 2: this.#sampler }),
-				autoBindGroup(device, p.apply, 1, { 3: views[BLUR_PASSES % 2] }),
+			bind: (compiled) => [
+				autoBindGroup(device, compiled, 0, { 2: this.#sampler }),
+				autoBindGroup(device, compiled, 1, { 3: views[BLUR_PASSES % 2] }),
 			],
 			targets: [input.composited],
 		};

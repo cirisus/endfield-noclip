@@ -2,10 +2,12 @@ import type { PostLook } from '../../environment/environment.ts';
 import { createUniformBuffer } from '../../gfx/buffers.ts';
 import {
 	type FullscreenPass,
+	type FullscreenPipeline,
 	autoBindGroup,
 	encodeFullscreen,
 	fullscreenPipeline,
 } from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { LINEAR_CLAMP, sampler } from '../../gfx/samplers.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
 import type { Camera } from '../../scene/camera.ts';
@@ -56,7 +58,7 @@ export class ScreenSpaceReflections {
 	#uniforms: GPUBuffer;
 	#data = new Float32Array(UNIFORM_BYTES / 4);
 	#sampler: GPUSampler;
-	#pipelines: Record<'march' | 'temporal' | 'downsample' | 'resolve', GPURenderPipeline>;
+	#pipelines: Record<'march' | 'temporal' | 'downsample' | 'resolve', FullscreenPipeline>;
 	#targets: TextureSet;
 	#sized: Sized | null = null;
 	/** the camera of last frame's reflections, which held only if they ran over the current targets */
@@ -64,9 +66,10 @@ export class ScreenSpaceReflections {
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms
 	 */
-	constructor(device: GPUDevice, postUniforms: GPUBuffer) {
+	constructor(device: GPUDevice, pipelines: PipelineCache, postUniforms: GPUBuffer) {
 		this.#device = device;
 		this.#postUniforms = postUniforms;
 		this.#uniforms = createUniformBuffer(device, 'ssr uniforms', UNIFORM_BYTES);
@@ -79,8 +82,8 @@ export class ScreenSpaceReflections {
 			gbufferWgsl,
 			ssrWgsl,
 		]);
-		const pipeline = (label: string, entryPoint: string, formats: GPUTextureFormat[]): GPURenderPipeline =>
-			fullscreenPipeline(device, {
+		const pipeline = (label: string, entryPoint: string, formats: GPUTextureFormat[]): FullscreenPipeline =>
+			fullscreenPipeline(pipelines, {
 				label,
 				module,
 				entryPoint,
@@ -159,9 +162,9 @@ export class ScreenSpaceReflections {
 		const makeMarch = (previousScene: GPUTextureView): FullscreenPass => ({
 			label: 'ssr march',
 			pipeline: p.march,
-			groups: [
-				postGroup(p.march),
-				group(p.march, 1, {
+			bind: (compiled) => [
+				postGroup(compiled),
+				group(compiled, 1, {
 					0: ssr,
 					1: scene.depth,
 					2: scene.gbufferB,
@@ -183,20 +186,24 @@ export class ScreenSpaceReflections {
 		];
 		const chain = (i: number): FullscreenPass[] => {
 			const pyramid = pyramids[i];
+			const marchColorView = marchColor.createView();
+			const marchWeightView = marchWeight.createView();
+			const marchFadeView = marchFade.createView();
+			const prevMip0 = mip(pyramids[1 - i], 0);
 			const passes: FullscreenPass[] = [
 				{
 					label: 'ssr temporal',
 					pipeline: p.temporal,
-					groups: [
-						postGroup(p.temporal),
-						group(p.temporal, 1, {
+					bind: (compiled) => [
+						postGroup(compiled),
+						group(compiled, 1, {
 							0: ssr,
 							1: scene.depth,
 							4: this.#sampler,
-							5: marchColor.createView(),
-							6: marchWeight.createView(),
-							7: marchFade.createView(),
-							8: mip(pyramids[1 - i], 0),
+							5: marchColorView,
+							6: marchWeightView,
+							7: marchFadeView,
+							8: prevMip0,
 							13: scene.velocity,
 						}),
 					],
@@ -204,29 +211,30 @@ export class ScreenSpaceReflections {
 				},
 			];
 			for (let level = 1; level < mips; level++) {
+				const prevColor = mip(pyramid, level - 1);
+				const prevDepth = mip(depthPyramid, level - 1);
 				passes.push({
 					label: 'ssr downsample',
 					pipeline: p.downsample,
 					// the downsample reads no uniforms, so its group 0 is empty
-					groups: [
-						group(p.downsample, 0, {}),
-						group(p.downsample, 1, { 9: mip(pyramid, level - 1), 10: mip(depthPyramid, level - 1) }),
-					],
+					bind: (compiled) => [group(compiled, 0, {}), group(compiled, 1, { 9: prevColor, 10: prevDepth })],
 					targets: [mip(pyramid, level), mip(depthPyramid, level)],
 				});
 			}
+			const pyramidView = pyramid.createView();
+			const depthPyramidView = depthPyramid.createView();
 			passes.push({
 				label: 'ssr resolve',
 				pipeline: p.resolve,
-				groups: [
-					postGroup(p.resolve),
-					group(p.resolve, 1, {
+				bind: (compiled) => [
+					postGroup(compiled),
+					group(compiled, 1, {
 						0: ssr,
 						1: scene.depth,
 						4: this.#sampler,
-						6: marchWeight.createView(),
-						11: pyramid.createView(),
-						12: depthPyramid.createView(),
+						6: marchWeightView,
+						11: pyramidView,
+						12: depthPyramidView,
 					}),
 				],
 				targets: [output.createView()],

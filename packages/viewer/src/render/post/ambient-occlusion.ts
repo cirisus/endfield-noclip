@@ -1,9 +1,11 @@
 import {
 	type FullscreenPass,
+	type FullscreenPipeline,
 	autoBindGroup,
 	encodeFullscreen,
 	fullscreenPipeline,
 } from '../../gfx/fullscreen-pass.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { TextureSet } from '../../gfx/texture-set.ts';
 import gbufferWgsl from '../shaders/common/gbuffer.wgsl?raw';
 import octahedralWgsl from '../shaders/common/octahedral.wgsl?raw';
@@ -28,22 +30,23 @@ interface Sized {
 export class AmbientOcclusion {
 	#device: GPUDevice;
 	#postUniforms: GPUBuffer;
-	#pipelines: Record<'depth' | 'gtao' | 'blur', GPURenderPipeline>;
+	#pipelines: Record<'depth' | 'gtao' | 'blur', FullscreenPipeline>;
 	/** half resolution: view depth, and the AO marched over it; full resolution: the blurred AO */
 	#targets: TextureSet;
 	#sized: Sized | null = null;
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param postUniforms the post chain's `Post` uniforms
 	 */
-	constructor(device: GPUDevice, postUniforms: GPUBuffer) {
+	constructor(device: GPUDevice, pipelines: PipelineCache, postUniforms: GPUBuffer) {
 		this.#device = device;
 		this.#targets = new TextureSet(device);
 		this.#postUniforms = postUniforms;
 		const module = postShaderModule(device, 'gtao', [octahedralWgsl, gbufferWgsl, gtaoWgsl]);
-		const pipeline = (label: string, entryPoint: string, format: GPUTextureFormat): GPURenderPipeline =>
-			fullscreenPipeline(device, { label, module, entryPoint, targets: [{ format }] });
+		const pipeline = (label: string, entryPoint: string, format: GPUTextureFormat): FullscreenPipeline =>
+			fullscreenPipeline(pipelines, { label, module, entryPoint, targets: [{ format }] });
 		this.#pipelines = {
 			depth: pipeline('ao depth', 'fs_ao_depth', AO_DEPTH_FORMAT),
 			gtao: pipeline('gtao', 'fs_gtao', AO_FORMAT),
@@ -96,6 +99,8 @@ export class AmbientOcclusion {
 		const blurred = texture('ao blurred', width, height, AO_FORMAT);
 		const post = (pipeline: GPURenderPipeline): GPUBindGroup =>
 			autoBindGroup(device, pipeline, 0, { 0: { buffer: this.#postUniforms } });
+		const aoDepthView = aoDepth.createView();
+		const aoView = ao.createView();
 		const blurredView = blurred.createView();
 		this.#sized = {
 			blurred: blurredView,
@@ -103,21 +108,24 @@ export class AmbientOcclusion {
 				{
 					label: 'ao depth',
 					pipeline: p.depth,
-					groups: [post(p.depth), autoBindGroup(device, p.depth, 1, { 0: depth })],
-					targets: [aoDepth.createView()],
+					bind: (compiled) => [post(compiled), autoBindGroup(device, compiled, 1, { 0: depth })],
+					targets: [aoDepthView],
 				},
 				{
 					label: 'gtao',
 					pipeline: p.gtao,
-					groups: [post(p.gtao), autoBindGroup(device, p.gtao, 1, { 1: aoDepth.createView(), 3: gbufferB })],
-					targets: [ao.createView()],
+					bind: (compiled) => [
+						post(compiled),
+						autoBindGroup(device, compiled, 1, { 1: aoDepthView, 3: gbufferB }),
+					],
+					targets: [aoView],
 				},
 				{
 					label: 'gtao blur',
 					pipeline: p.blur,
-					groups: [
-						post(p.blur),
-						autoBindGroup(device, p.blur, 1, { 0: depth, 1: aoDepth.createView(), 2: ao.createView() }),
+					bind: (compiled) => [
+						post(compiled),
+						autoBindGroup(device, compiled, 1, { 0: depth, 1: aoDepthView, 2: aoView }),
 					],
 					targets: [blurredView],
 				},
