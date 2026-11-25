@@ -29,6 +29,28 @@ export interface DetailGroup extends Group {
 	reach: Rect | null;
 }
 
+/** one foliage cluster queued for packing into a `.fol` blob */
+export interface CollectedFoliageCluster {
+	chain: number;
+	bounds: Aabb;
+	rendererHalfSize: number;
+	/** packed column-major 4×4 matrices, 16 floats per instance */
+	instances: Float32Array;
+}
+
+/** a tile's foliage clusters sharing one visibility group */
+export interface FoliageGroup {
+	key: TileKey;
+	/** index into the visibility groups */
+	visibility: number;
+	/** whether HLODs don't stand in for these clusters */
+	conditional: boolean;
+	clusters: CollectedFoliageCluster[];
+	instanceCount: number;
+	/** world bounds of the clusters; owned, grown in place */
+	bounds: Bounds | null;
+}
+
 /** an instance row and where it came from */
 export interface CollectedRow {
 	/** the owning level's tag */
@@ -44,6 +66,8 @@ export interface CollectedRow {
 export class Collector {
 	/** detail rows by `tileId/visibility/reach` */
 	readonly detail = new Map<string, DetailGroup>();
+	/** grass foliage clusters by `tileId/visibility/conditional`, packed as `.fol` blobs */
+	readonly foliage = new Map<string, FoliageGroup>();
 	/** HLOD rows by visibility group */
 	readonly hlod = new Map<number, Group>();
 	/** HLOD nodes by sort key */
@@ -98,6 +122,52 @@ export class Collector {
 		this.#countInstance(entry.tag);
 	}
 
+	/**
+	 * adds a grass foliage cluster to be packed as a compact `.fol` blob
+	 *
+	 * @param entry.tag owning level tag
+	 * @param entry.key leaf tile it's filed under
+	 * @param entry.cluster cluster metadata and instance matrices
+	 * @param entry.visibility when it loads, or `null` for always
+	 * @param entry.conditional whether a scene state gates it
+	 */
+	addFoliage(entry: {
+		tag: number;
+		key: TileKey;
+		cluster: CollectedFoliageCluster;
+		visibility: Visibility | null;
+		conditional: boolean;
+	}): void {
+		const count = entry.cluster.instances.length / 16;
+		if (count === 0) {
+			return;
+		}
+		const visibility =
+			entry.conditional && entry.visibility !== null
+				? this.#controls.groupOf(entry.tag, entry.visibility)
+				: this.#controls.group(
+						entry.tag,
+						entry.visibility === null ? null : this.#controls.condition(entry.visibility),
+					);
+		const mapKey = `${tileId(entry.key)}/${visibility}/${entry.conditional ? 'c' : 'd'}`;
+		const group = this.foliage.getOrInsertComputed(mapKey, () => ({
+			key: entry.key,
+			visibility,
+			conditional: entry.conditional,
+			clusters: [],
+			instanceCount: 0,
+			bounds: null,
+		}));
+		group.clusters.push(entry.cluster);
+		group.instanceCount += count;
+		if (group.bounds === null) {
+			group.bounds = aabbBounds(entry.cluster.bounds);
+		} else {
+			growBounds(group.bounds, entry.cluster.bounds);
+		}
+		this.#countInstance(entry.tag, count);
+	}
+
 	#addDetail(
 		{ visibility, conditional, reach }: Pick<DetailGroup, 'visibility' | 'conditional' | 'reach'>,
 		key: TileKey,
@@ -149,14 +219,14 @@ export class Collector {
 	}
 
 	// HLOD clusters stand in for instances that are counted already
-	#countInstance(level: number): void {
-		this.tagInstances.set(level, (this.tagInstances.get(level) ?? 0) + 1);
+	#countInstance(level: number, delta = 1): void {
+		this.tagInstances.set(level, (this.tagInstances.get(level) ?? 0) + delta);
 	}
 
 	/** @returns by visibility group index, a box around the instances it shows */
 	groupBounds(): Map<number, Bounds> {
 		const bounds = new Map<number, Bounds>();
-		const add = (group: number, { bounds: rows }: Group): void => {
+		const add = (group: number, rows: Bounds | null): void => {
 			if (rows === null) {
 				return;
 			}
@@ -164,11 +234,14 @@ export class Collector {
 			bounds.set(group, current === undefined ? structuredClone(rows) : unionBounds(current, rows));
 		};
 		for (const group of this.detail.values()) {
-			add(group.visibility, group);
+			add(group.visibility, group.bounds);
+		}
+		for (const group of this.foliage.values()) {
+			add(group.visibility, group.bounds);
 		}
 		for (const map of [this.hlod, this.global]) {
 			for (const [visibility, group] of map) {
-				add(visibility, group);
+				add(visibility, group.bounds);
 			}
 		}
 		return bounds;
@@ -185,6 +258,9 @@ export class Collector {
 				group.names = [];
 				group.files = [];
 			}
+		}
+		for (const group of this.foliage.values()) {
+			group.clusters = [];
 		}
 	}
 

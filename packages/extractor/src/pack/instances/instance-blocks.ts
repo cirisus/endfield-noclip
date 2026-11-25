@@ -1,14 +1,22 @@
 import { BlobKind } from '@endfield-noclip/package-format/blobs';
+import {
+	encodeFoliageBlock,
+	FOLIAGE_INSTANCE_BYTES,
+	type FoliageBlock,
+	type FoliageCluster,
+	packFoliageInstance,
+} from '@endfield-noclip/package-format/foliage';
 import { encodeInstanceBlock } from '@endfield-noclip/package-format/instances';
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 import { tileFootprint } from '@endfield-noclip/package-format/tiles';
 import { ContentKind, type ContentRef, type TreeInfo } from '@endfield-noclip/package-format/tree';
+import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import { type ArchiveLayout, compressedBlob } from '../archives.ts';
 import type { DebugLog } from '../debug.ts';
 import { type BlobStore, tileLocality } from '../store/blob-store.ts';
 
-import { type Collector, countRows, type Group } from './collector.ts';
+import { type Collector, countRows, type FoliageGroup, type Group } from './collector.ts';
 import type { TileTreeBuilder } from './tile-tree.ts';
 
 /** terrain tiles and detail blocks encoded and compressed at once; bounds memory, keeps blob order stable */
@@ -51,6 +59,9 @@ export const packInstances = async (
 		hlod: countRows(collector.hlod.values()),
 		global: countRows(collector.global.values()),
 	};
+	for (const group of collector.foliage.values()) {
+		rows.detail += group.instanceCount;
+	}
 
 	const detailGroups = [...collector.detail.values()];
 	detailGroups.sort((a, b) => a.key.z - b.key.z || a.key.x - b.key.x || a.visibility - b.visibility);
@@ -80,6 +91,40 @@ export const packInstances = async (
 			builder.extend(group.key, group.bounds!);
 			// oxlint-disable-next-line no-await-in-loop -- lines go out in block order
 			await debugLog.block(store.hashOf(blobs[i]), group, order);
+		}
+	}
+
+	const foliageGroups = [...collector.foliage.values()];
+	foliageGroups.sort(
+		(a, b) =>
+			a.key.z - b.key.z ||
+			a.key.x - b.key.x ||
+			a.visibility - b.visibility ||
+			Number(a.conditional) - Number(b.conditional),
+	);
+	for (let start = 0; start < foliageGroups.length; start += BLOB_BATCH) {
+		const encoded = foliageGroups.slice(start, start + BLOB_BATCH).map((group) => {
+			const { minX, minZ } = tileFootprint(grid, group.key);
+			return { group, block: buildFoliageBlock(group, [minX, 0, minZ], chainHashes) };
+		});
+		// oxlint-disable-next-line no-await-in-loop -- batches bound memory and keep blob order stable
+		const blobs = await store.putMany(
+			encoded.map(({ group, block }) => ({
+				raw: encodeFoliageBlock(block),
+				options: compressedBlob(BlobKind.Foliage, layout.stemOf(group.key), tileLocality(group.key)),
+			})),
+		);
+		for (const [i, { group }] of encoded.entries()) {
+			builder.addRef(group.key, {
+				kind: group.conditional ? ContentKind.Conditional : ContentKind.Detail,
+				tier: 0,
+				group: group.visibility,
+				blob: blobs[i],
+				first: 0,
+				count: group.instanceCount,
+				reach: null,
+			});
+			builder.extend(group.key, group.bounds!);
 		}
 	}
 
@@ -146,4 +191,91 @@ export const packInstances = async (
 		reach: null,
 	}));
 	return { rows, global, hlodClusters, tierCounts };
+};
+
+/** encodes one tile's collected grass clusters into a {@link FoliageBlock} with a local chain palette */
+const buildFoliageBlock = (group: FoliageGroup, origin: Vec3, chainHashes: BigUint64Array): FoliageBlock => {
+	const paletteMap = new Map<number, number>();
+	const paletteHashes: bigint[] = [];
+	const localChainOf = (globalChain: number): number => {
+		let local = paletteMap.get(globalChain);
+		if (local === undefined) {
+			local = paletteHashes.length;
+			paletteMap.set(globalChain, local);
+			paletteHashes.push(chainHashes[globalChain]);
+		}
+		return local;
+	};
+
+	const sorted = group.clusters
+		.map((cluster) => ({ cluster, localChain: localChainOf(cluster.chain) }))
+		.toSorted((a, b) => a.localChain - b.localChain);
+
+	const instances = new Uint8Array(group.instanceCount * FOLIAGE_INSTANCE_BYTES);
+	const clusters: FoliageCluster[] = [];
+	let firstInstance = 0;
+
+	for (const { cluster, localChain } of sorted) {
+		const count = cluster.instances.length / 16;
+		// ensure the quantization box covers both the cluster AABB and every instance translation
+		let minX = cluster.bounds.center[0] - cluster.bounds.extents[0] - origin[0];
+		let minY = cluster.bounds.center[1] - cluster.bounds.extents[1] - origin[1];
+		let minZ = cluster.bounds.center[2] - cluster.bounds.extents[2] - origin[2];
+		let maxX = cluster.bounds.center[0] + cluster.bounds.extents[0] - origin[0];
+		let maxY = cluster.bounds.center[1] + cluster.bounds.extents[1] - origin[1];
+		let maxZ = cluster.bounds.center[2] + cluster.bounds.extents[2] - origin[2];
+		for (let i = 0; i < count; i++) {
+			const tx = cluster.instances[i * 16 + 12] - origin[0];
+			const ty = cluster.instances[i * 16 + 13] - origin[1];
+			const tz = cluster.instances[i * 16 + 14] - origin[2];
+			if (tx < minX) {
+				minX = tx;
+			}
+			if (ty < minY) {
+				minY = ty;
+			}
+			if (tz < minZ) {
+				minZ = tz;
+			}
+			if (tx > maxX) {
+				maxX = tx;
+			}
+			if (ty > maxY) {
+				maxY = ty;
+			}
+			if (tz > maxZ) {
+				maxZ = tz;
+			}
+		}
+		const center: Vec3 = [(minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5];
+		const halfExtents: Vec3 = [(maxX - minX) * 0.5, (maxY - minY) * 0.5, (maxZ - minZ) * 0.5];
+
+		for (let i = 0; i < count; i++) {
+			const matrix = cluster.instances.subarray(i * 16, i * 16 + 16);
+			packFoliageInstance(
+				instances,
+				(firstInstance + i) * FOLIAGE_INSTANCE_BYTES,
+				matrix,
+				origin,
+				center,
+				halfExtents,
+			);
+		}
+		clusters.push({
+			chain: localChain,
+			firstInstance,
+			instanceCount: count,
+			center,
+			halfExtents,
+			rendererHalfSize: cluster.rendererHalfSize,
+		});
+		firstInstance += count;
+	}
+
+	return {
+		origin,
+		palette: BigUint64Array.from(paletteHashes),
+		clusters,
+		instances,
+	};
 };

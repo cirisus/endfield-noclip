@@ -1,5 +1,6 @@
 import type { ChunkLight } from '@endfield-noclip/formats/endfield/chunk-lights';
 import type { ClothGroup } from '@endfield-noclip/formats/endfield/cloth-groups';
+import { FoliageGridType } from '@endfield-noclip/formats/endfield/foliage-grids';
 import type { RendererDraw, WaterDecal } from '@endfield-noclip/formats/endfield/init-chunk-data';
 import { levelTagOf } from '@endfield-noclip/formats/endfield/level-partition';
 import type { MonoObject } from '@endfield-noclip/formats/endfield/mono-objects';
@@ -79,6 +80,8 @@ type CachedPlacement =
 	  }
 	| {
 			kind: 'foliage';
+			/** `true` for grass clusters packed as `.fol` blobs; `false` for tree rows in `.inst` */
+			grass: boolean;
 			tag: number;
 			key: TileKey;
 			name: string;
@@ -86,6 +89,7 @@ type CachedPlacement =
 			entityId: number;
 			chain: number;
 			bounds: Aabb;
+			rendererHalfSize: number;
 			instances: Float32Array;
 			visibility: Visibility | null;
 			stateGated: boolean;
@@ -140,8 +144,15 @@ interface HlodCluster extends CollectedRow {
 /** rows of one entity or foliage grid and where it was first met */
 interface StaticRows {
 	rows: InstanceInput[];
-	/** when set, `rows` came from foliage clusters (kept compact for the pack cache) */
-	foliageClusters?: { chain: number; bounds: Aabb; entityId: number; instances: Float32Array }[];
+	/** when set, `rows` came from foliage clusters (grass clusters pack into `.fol`, trees into `.inst`) */
+	foliageClusters?: {
+		grass: boolean;
+		chain: number;
+		bounds: Aabb;
+		rendererHalfSize: number;
+		entityId: number;
+		instances: Float32Array;
+	}[];
 	tag: number;
 	name: string;
 	/** chunk-file index */
@@ -250,6 +261,23 @@ const replayStaticChunks = (content: PackContent, memo: StaticChunksMemo): Stati
 				break;
 			}
 			case 'foliage': {
+				if (item.grass) {
+					collector.addFoliage({
+						tag: item.tag,
+						key: item.key,
+						cluster: {
+							chain: item.chain,
+							bounds: item.bounds,
+							rendererHalfSize: item.rendererHalfSize,
+							instances: item.instances,
+						},
+						visibility: item.visibility,
+						conditional: item.stateGated && item.visibility !== null,
+					});
+					content.uses.note(item.chain, item.key);
+					collector.noteOwner(item.tag, item.bounds);
+					break;
+				}
 				const condition = item.visibility === null ? null : controls.condition(item.visibility);
 				const instanceCount = item.instances.length / 16;
 				for (let i = 0; i < instanceCount; i++) {
@@ -441,9 +469,28 @@ export const collectStaticChunks = async (
 		if (rows.foliageClusters !== undefined) {
 			for (const cluster of rows.foliageClusters) {
 				const key = tileAt(grid, grid.leafLevel, cluster.bounds.center[0], cluster.bounds.center[2]);
+				if (cluster.grass) {
+					collector.addFoliage({
+						tag: rows.tag,
+						key,
+						cluster: {
+							chain: cluster.chain,
+							bounds: cluster.bounds,
+							rendererHalfSize: cluster.rendererHalfSize,
+							instances: cluster.instances,
+						},
+						visibility,
+						conditional: stateGated && visibility !== null,
+					});
+					if (!stateGated) {
+						detailBounds.getOrInsertComputed(`${tileId(key)}/${rows.tag}`, () => []).push(cluster.bounds);
+					}
+					content.uses.note(cluster.chain, key);
+				}
 				if (record) {
 					recordedPlacements.push({
 						kind: 'foliage',
+						grass: cluster.grass,
 						tag: rows.tag,
 						key,
 						name: rows.name,
@@ -451,6 +498,7 @@ export const collectStaticChunks = async (
 						entityId: cluster.entityId,
 						chain: cluster.chain,
 						bounds: cluster.bounds,
+						rendererHalfSize: cluster.rendererHalfSize,
 						instances: cluster.instances,
 						visibility,
 						stateGated,
@@ -633,10 +681,11 @@ export const collectStaticChunks = async (
 					continue;
 				}
 				content.count('foliageGrids');
-				// every instance of a cluster carries the cluster's bounds, so a cluster culls and switches LOD as
-				// one, the way the game draws it
+				const isGrass = foliage.type === FoliageGridType.Grass;
+				// grass clusters pack into compact `.fol` blobs; tree grids stay in `.inst`
 				const rows: InstanceInput[] = [];
 				const foliageClusters: NonNullable<StaticRows['foliageClusters']> = [];
+				let instanceTotal = 0;
 				for (const cluster of foliage.clusters) {
 					if (!subset.includesPoint(foliage.levelTag, cluster.bounds.center)) {
 						continue;
@@ -646,26 +695,31 @@ export const collectStaticChunks = async (
 						? cluster.renderer.draws.map((draw) => ({ kind: 'renderer', draw }))
 						: [];
 					const chain = internChain(specs, draws);
-					for (let i = 0; i < cluster.instanceCount; i++) {
-						const matrix = cluster.instances.subarray(i * 16, i * 16 + 16);
-						rows.push({ chain, matrix, bounds: cluster.bounds, entityId: foliage.id });
+					instanceTotal += cluster.instanceCount;
+					if (!isGrass) {
+						for (let i = 0; i < cluster.instanceCount; i++) {
+							const matrix = cluster.instances.subarray(i * 16, i * 16 + 16);
+							rows.push({ chain, matrix, bounds: cluster.bounds, entityId: foliage.id });
+						}
 					}
-					if (record && cluster.instanceCount > 0) {
+					if ((isGrass || record) && cluster.instanceCount > 0) {
 						foliageClusters.push({
+							grass: isGrass,
 							chain,
 							bounds: cluster.bounds,
+							rendererHalfSize: cluster.rendererHalfSize,
 							entityId: foliage.id,
 							instances: cluster.instances.subarray(0, cluster.instanceCount * 16),
 						});
 					}
 					collector.noteOwner(foliage.levelTag, cluster.bounds);
 				}
-				content.count('foliageInstances', rows.length);
+				content.count('foliageInstances', instanceTotal);
 				place(
 					foliage.id,
 					{
 						rows,
-						foliageClusters: record ? foliageClusters : undefined,
+						foliageClusters: isGrass || record ? foliageClusters : undefined,
 						tag: foliage.levelTag,
 						name: foliage.name,
 						file: fileIndex,
