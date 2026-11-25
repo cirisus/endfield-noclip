@@ -53,9 +53,10 @@ fragment-stage bindings vs WebGPU defaults:
 
 ## pipelines and uploads
 
-- **pipeline cache**: caches shader modules and pipelines asynchronously once per session. mesh and
-  effect shaders split into per-family `GPUShaderModule`s so depth/shadow, G-buffer, decal, foam,
-  and screen-effect passes do not compile lighting code. mesh pipelines compile lazily on first seen
+- **pipeline cache**: caches shader modules and pipelines asynchronously once per session (including
+  deferred lighting, shadow-tile clear, weather, and lens flare passes). mesh and effect shaders
+  split into per-family `GPUShaderModule`s so depth/shadow, G-buffer, decal, foam, and screen-effect
+  passes do not compile lighting code. mesh pipelines compile lazily on first seen
   `(phase, cull, positionFormat, uvFormat, stencil)` — pre-warming only the 6 hottest back-culled
   `unorm16x4`/`unorm16x2` Lit/depth/shadow pipelines at startup and collapsing UV-format variants on
   position-only phases. draws skip while compiling and trigger a redraw when ready.

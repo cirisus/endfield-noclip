@@ -209,7 +209,7 @@ frames; `.bin` tables are uncompressed.
 | `.mesh`                            | `EFGM`                   | `HEAD`, `STRM` (36 B), `SUBM` (40 B), `VBUF`, `IBUF`, optional `ANIM`                                                                                                                                                 |
 | `.hgt` / `.tsp` / `.tsl`           | `EFHT` / `EFTS` / `EFSL` | `HEAD` + `HGTS` / (`ALBD`, `NORM`) / (`CTRL`, `TINT`, `INDX`)                                                                                                                                                         |
 | `.anim`                            | `EFAN`                   | `HEAD` + kind-specific section (`SKIN`, `TRNS`, `SPIN`, `FLOT`, `VATC`, or `MATR` + `MSMP`)                                                                                                                           |
-| `.fol`                             | `EFFL`                   | `HEAD`, optional `PLTT` (`u64[]`), `CLST` (40 B), `INST` (24 B quantized foliage instances)                                                                                                                           |
+| `.fol`                             | `EFFL`                   | `HEAD`, optional `PLTT` (`u64[]`), `CLST` (40 B), `INST` (24 B quantized grass instances: `u16×3` position in cluster AABB, `u16×3` smallest-three quaternion + mirrored flag, `f16×3` scale, `u8×4` custom param)    |
 
 tree nodes sort coarse to fine (`level`, `z`, `x`). children of `(l, x, z)` are
 `(l + 1, 2x + dx, 2z + dz)`. node bounds enclose the node, its descendants, and overhang.
