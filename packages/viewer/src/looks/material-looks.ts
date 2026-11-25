@@ -137,10 +137,39 @@ const stillLook = (entry: ReadyMaterial): MaterialLook => {
 	return look;
 };
 
+interface BoundTrack {
+	target: object;
+	key: string | number;
+	values: readonly number[];
+}
+
+/** resolves a track's path to its leaf `(target, key)` once so clip playback never re-walks the surface */
+const bindTrack = (
+	root: object,
+	path: readonly (string | number)[],
+	values: readonly number[],
+): BoundTrack | null => {
+	let at: unknown = root;
+	for (let i = 0; i < path.length - 1; i++) {
+		if (typeof at !== 'object' || at === null) {
+			return null;
+		}
+		at = Reflect.get(at, path[i]);
+	}
+	if (typeof at !== 'object' || at === null || path.length === 0) {
+		return null;
+	}
+	const key = path[path.length - 1];
+	if (typeof Reflect.get(at, key) !== 'number') {
+		return null;
+	}
+	return { target: at, key, values };
+};
+
 /**
- * plays a material's looping clip: at each of its steps the surface takes the tracks' values and its look is
- * built again, for the parameters alone. the textures, queue and flags stay the first build's, which tracks
- * of numbers leave alone
+ * plays a material's looping clip: clones the surface once and binds each track's target field so each step
+ * mutates the scratch surface in place and recomputes its parameters without cloning or path walking. the
+ * textures, queue and flags stay the first build's, which tracks of numbers leave alone
  *
  * @param entry the material
  * @param motion its motion
@@ -149,6 +178,15 @@ const stillLook = (entry: ReadyMaterial): MaterialLook => {
  */
 const lookMotion = (entry: ReadyMaterial, motion: MaterialMotion, params: Float32Array): LookMotion => {
 	const steps = Math.min(...motion.tracks.map(({ values }) => values.length));
+	const scratchSurface = structuredClone(entry.surface);
+	const scratchEntry: ReadyMaterial = { ...entry, surface: scratchSurface };
+	const bound: BoundTrack[] = [];
+	for (const { path, values } of motion.tracks) {
+		const track = bindTrack(scratchSurface, path, values);
+		if (track !== null) {
+			bound.push(track);
+		}
+	}
 	let shown = -1;
 	return {
 		advance(time) {
@@ -161,31 +199,14 @@ const lookMotion = (entry: ReadyMaterial, motion: MaterialMotion, params: Float3
 				return false;
 			}
 			shown = step;
-			const surface = structuredClone(entry.surface);
-			for (const { path, values } of motion.tracks) {
-				setAt(surface, path, values[step]);
+			for (let i = 0; i < bound.length; i++) {
+				const track = bound[i];
+				Reflect.set(track.target, track.key, track.values[step]);
 			}
-			params.set(stillLook({ ...entry, surface }).params);
+			params.set(stillLook(scratchEntry).params);
 			return true;
 		},
 	};
-};
-
-/** sets the number at a path of property names and array indices, where the path leads to one */
-const setAt = (root: object, path: readonly (string | number)[], value: number): void => {
-	let at: unknown = root;
-	for (const [i, key] of path.entries()) {
-		if (typeof at !== 'object' || at === null) {
-			return;
-		}
-		if (i === path.length - 1) {
-			if (typeof Reflect.get(at, key) === 'number') {
-				Reflect.set(at, key, value);
-			}
-			return;
-		}
-		at = Reflect.get(at, key);
-	}
 };
 
 /** a new look for a converted material's surface, with the gaps its builder leaves */

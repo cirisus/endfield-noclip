@@ -93,6 +93,7 @@ export class ParticleField {
 	#recycledBuffer: ArrayBuffer | null = null;
 	#recycledIds: Uint32Array<ArrayBuffer> | null = null;
 	#recycledTransforms: Float32Array<ArrayBuffer> | null = null;
+	#recycledCounts: Uint32Array<ArrayBuffer> | null = null;
 	#seq = 0;
 
 	/**
@@ -115,9 +116,7 @@ export class ParticleField {
 			worker.addEventListener('message', (event: MessageEvent<ParticleWorkerResponse>) => {
 				this.#workerBusy = false;
 				if (this.#pendingResult !== null) {
-					this.#recycledBuffer = this.#pendingResult.rows.buffer;
-					this.#recycledIds = this.#pendingResult.ids;
-					this.#recycledTransforms = this.#pendingResult.transforms;
+					this.#recycleResult(this.#pendingResult);
 				}
 				this.#pendingResult = event.data;
 			});
@@ -133,28 +132,7 @@ export class ParticleField {
 			return;
 		}
 		this.#pendingResult = null;
-		const { count: n, ids, transforms, counts, rows } = result;
-		let wordOffset = 0;
-		for (let i = 0; i < n; i++) {
-			const count = counts[i];
-			const words = count * ROW_WORDS;
-			const emitter = this.#emitterById.get(ids[i]);
-			if (emitter !== undefined) {
-				if (count > 0) {
-					this.#store.writeRows(emitter.rows.start, rows.subarray(wordOffset, wordOffset + words), count);
-				}
-				emitter.live.length = count;
-				const start = emitter.rows.start;
-				for (let k = 0; k < count; k++) {
-					emitter.live[k] = start + k;
-				}
-				emitter.simulation = null;
-			}
-			wordOffset += words;
-		}
-		this.#recycledBuffer = rows.buffer;
-		this.#recycledIds = ids;
-		this.#recycledTransforms = transforms;
+		this.#applyWorkerResult(result, false);
 	}
 
 	/**
@@ -176,6 +154,7 @@ export class ParticleField {
 		this.#recycledBuffer = null;
 		this.#recycledIds = null;
 		this.#recycledTransforms = null;
+		this.#recycledCounts = null;
 		this.#workerBusy = false;
 	}
 
@@ -327,7 +306,7 @@ export class ParticleField {
 		}
 		const result = this.#pendingResult;
 		if (result !== null) {
-			const { count: n, ids, transforms, counts, rows } = result;
+			const { count: n, ids, counts } = result;
 			for (let i = 0; i < n; i++) {
 				const emitter = this.#emitterById.get(ids[i]);
 				if (emitter !== undefined && counts[i] > emitter.listedCount) {
@@ -335,38 +314,7 @@ export class ParticleField {
 				}
 			}
 			this.#pendingResult = null;
-			let wordOffset = 0;
-			const padWords = this.#writer.rows;
-			for (let i = 0; i < n; i++) {
-				const count = counts[i];
-				const words = count * ROW_WORDS;
-				const emitter = this.#emitterById.get(ids[i]);
-				if (emitter !== undefined) {
-					if (count > 0) {
-						this.#store.writeRows(emitter.rows.start, rows.subarray(wordOffset, wordOffset + words), count);
-					}
-					const listed = emitter.listedCount;
-					if (count < listed) {
-						const padCount = listed - count;
-						for (let p = 0; p < padCount; p++) {
-							const o = p * ROW_WORDS;
-							padWords.fill(0, o, o + ROW_WORDS);
-							padWords[o + RowWord.block] = emitter.blockSlot;
-						}
-						this.#store.writeRows(emitter.rows.start + count, padWords, padCount);
-					}
-					emitter.live.length = count;
-					const start = emitter.rows.start;
-					for (let k = 0; k < count; k++) {
-						emitter.live[k] = start + k;
-					}
-					emitter.simulation = null;
-				}
-				wordOffset += words;
-			}
-			this.#recycledBuffer = rows.buffer;
-			this.#recycledIds = ids;
-			this.#recycledTransforms = transforms;
+			this.#applyWorkerResult(result, true);
 		}
 		for (let i = 0; i < active.length; i++) {
 			active[i].emitter.frame = frame;
@@ -449,7 +397,12 @@ export class ParticleField {
 		}
 		const buffer = this.#recycledBuffer;
 		this.#recycledBuffer = null;
+		const counts = this.#recycledCounts;
+		this.#recycledCounts = null;
 		const transfer: Transferable[] = [ids.buffer, transforms.buffer];
+		if (counts !== null) {
+			transfer.push(counts.buffer);
+		}
 		if (buffer !== null) {
 			transfer.push(buffer);
 		}
@@ -461,9 +414,52 @@ export class ParticleField {
 			count: n,
 			ids,
 			transforms,
+			counts,
 			buffer,
 		};
 		worker.postMessage(msg, transfer);
+	}
+
+	/** returns a completed worker response's transferred buffers to the ping-pong slots */
+	#recycleResult(result: ParticleWorkerResponse): void {
+		this.#recycledBuffer = result.rows.buffer;
+		this.#recycledIds = result.ids;
+		this.#recycledTransforms = result.transforms;
+		this.#recycledCounts = result.counts;
+	}
+
+	/** uploads a worker batch's rows to the store, optionally zero-padding shrunken spans up to `listedCount` */
+	#applyWorkerResult(result: ParticleWorkerResponse, padListed: boolean): void {
+		const { count: n, ids, counts, rows } = result;
+		let wordOffset = 0;
+		const padWords = this.#writer.rows;
+		for (let i = 0; i < n; i++) {
+			const count = counts[i];
+			const words = count * ROW_WORDS;
+			const emitter = this.#emitterById.get(ids[i]);
+			if (emitter !== undefined) {
+				if (count > 0) {
+					this.#store.writeRows(emitter.rows.start, rows.subarray(wordOffset, wordOffset + words), count);
+				}
+				if (padListed && count < emitter.listedCount) {
+					const padCount = emitter.listedCount - count;
+					for (let p = 0; p < padCount; p++) {
+						const o = p * ROW_WORDS;
+						padWords.fill(0, o, o + ROW_WORDS);
+						padWords[o + RowWord.block] = emitter.blockSlot;
+					}
+					this.#store.writeRows(emitter.rows.start + count, padWords, padCount);
+				}
+				emitter.live.length = count;
+				const start = emitter.rows.start;
+				for (let k = 0; k < count; k++) {
+					emitter.live[k] = start + k;
+				}
+				emitter.simulation = null;
+			}
+			wordOffset += words;
+		}
+		this.#recycleResult(result);
 	}
 
 	/** synchronously evaluates and writes one emitter via {@link #writer} */

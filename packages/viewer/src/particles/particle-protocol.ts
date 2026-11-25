@@ -32,6 +32,8 @@ export type ParticleWorkerMessage =
 			count: number;
 			ids: Uint32Array<ArrayBuffer>;
 			transforms: Float32Array<ArrayBuffer>;
+			/** recycled counts buffer from the previous result, if any */
+			counts?: Uint32Array<ArrayBuffer> | null;
 			/** recycled output buffer from the previous result, if any */
 			buffer: ArrayBuffer | null;
 	  };

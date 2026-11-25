@@ -51,7 +51,10 @@ export const createParticleWorkerHandler = (
 			}
 			case 'step': {
 				const { seq, view, count: n, ids, transforms, buffer } = message;
-				const counts = new Uint32Array(n);
+				const counts =
+					message.counts !== undefined && message.counts !== null && message.counts.length >= n
+						? message.counts
+						: new Uint32Array(n);
 				let out =
 					buffer !== null && buffer.byteLength >= INITIAL_OUT_WORDS * 4
 						? new Uint32Array(buffer)

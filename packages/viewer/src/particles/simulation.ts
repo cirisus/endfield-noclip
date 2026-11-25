@@ -397,14 +397,11 @@ interface PathStart {
 	direction: Vec3;
 	/** m/s along {@link direction}, the speed modifier left out */
 	speed: number;
-	/** the velocity module's speed modifier, 1 when it's a curve ({@link modifierAt}) */
+	/** the velocity module's speed modifier, 1 when it's a curve ({@link hasModifierCurve}) */
 	modifier: number;
-	/**
-	 * a speed modifier curve at an age, s; `null` when it's constant. the packer leaves such systems without
-	 * drag
-	 */
-	modifierAt: ((age: number) => number) | null;
-	/** the curve {@link modifierAt} reads and the particle's random value for it, set when it is */
+	/** whether the velocity module's speed modifier is a curve ({@link modifierCurve}) rather than a constant */
+	hasModifierCurve: boolean;
+	/** the curve read when {@link hasModifierCurve} is true, and the particle's random value for it */
 	modifierCurve: DrawnCurve;
 	/** m/s² down the world's y */
 	gravity: number;
@@ -447,7 +444,7 @@ const path: PathStart = {
 	direction: begin.direction,
 	speed: 0,
 	modifier: 1,
-	modifierAt: null,
+	hasModifierCurve: false,
 	modifierCurve: { curve: { mode: CurveMode.Constant, scalar: 1 }, r: 0 },
 	gravity: 0,
 	age: 0,
@@ -1490,7 +1487,18 @@ export class ParticleSimulation {
 		moving: Vec3,
 	): void {
 		const down = this.#down;
-		const { start, direction, speed, modifier, modifierAt, gravity, startSize, age, life } = motion;
+		const {
+			start,
+			direction,
+			speed,
+			modifier,
+			hasModifierCurve,
+			modifierCurve,
+			gravity,
+			startSize,
+			age,
+			life,
+		} = motion;
 		const scaleR = birth.modifierR;
 		// a ring buffer's paused particle moves on past its lifetime with its curves at their end
 		const lived = livedAt(age, life);
@@ -1498,7 +1506,7 @@ export class ParticleSimulation {
 		// integral over the age, which a constant velocity moves by, and `scaleNow` its value now
 		const scaledAge =
 			this.#scaleInt0 === null ? age : evalPreparedIntegral(this.#scaleInt0, scaleR, 0, age, life);
-		const scaleNow = modifierAt === null ? 1 : modifierAt(age);
+		const scaleNow = hasModifierCurve ? evaluateMinMax(modifierCurve.curve, lived, modifierCurve.r) : 1;
 		let launch: number, launchSpeed: number, fall: number, fallSpeed: number;
 		if (drag === null) {
 			launch = speed * modifier * scaledAge;
@@ -1595,8 +1603,20 @@ export class ParticleSimulation {
 		const seed = this.#seed;
 		const down = this.#down;
 		const worldToLocal = this.#worldToLocal;
-		const { id, start, direction, speed, modifier, modifierAt, gravity, age, life, startSize, growth } =
-			motion;
+		const {
+			id,
+			start,
+			direction,
+			speed,
+			modifier,
+			hasModifierCurve,
+			modifierCurve,
+			gravity,
+			age,
+			life,
+			startSize,
+			growth,
+		} = motion;
 		const sizeOver = this.info.sizeOverLifetime;
 		const forces = this.#forces;
 		const limit = clamp?.kind === 'limit' ? clamp : null;
@@ -1689,7 +1709,9 @@ export class ParticleSimulation {
 			acceleration,
 			push,
 			extra,
-			modifier: modifierAt ?? (() => modifier),
+			modifier: hasModifierCurve
+				? (a) => evaluateMinMax(modifierCurve.curve, livedAt(a, life), modifierCurve.r)
+				: () => modifier,
 			age,
 			life,
 			from: this.#stepped.get(id),
@@ -1977,19 +1999,15 @@ export class ParticleSimulation {
 			moving[2] = along?.moving[2] ?? 0;
 		} else {
 			const { velocity, clamp } = motion;
-			let modifierAt: ((age: number) => number) | null = null;
-			if (!this.#modifierConstant && velocity !== null) {
-				const curve = velocity.speedModifier;
-				const r = birth.modifierR;
-				// the game reads it each step at the particle's age over its lifetime, as linear velocities
-				modifierAt = (a) => evaluateMinMax(curve, livedAt(a, life), r);
-				path.modifierCurve.curve = curve;
-				path.modifierCurve.r = r;
+			const hasModifierCurve = !this.#modifierConstant && velocity !== null;
+			if (hasModifierCurve) {
+				path.modifierCurve.curve = velocity.speedModifier;
+				path.modifierCurve.r = birth.modifierR;
 			}
 			path.id = id;
 			path.speed = birth.speed;
 			path.modifier = birth.modifier;
-			path.modifierAt = modifierAt;
+			path.hasModifierCurve = hasModifierCurve;
 			path.gravity = birth.gravity;
 			path.age = moved;
 			path.life = life;
