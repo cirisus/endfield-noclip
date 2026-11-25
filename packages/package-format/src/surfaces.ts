@@ -144,7 +144,10 @@ export interface LitSurface {
 	foliage: LeafInputs | GrassInputs | CardInputs | null;
 	/** `HGRP/Foliage/Trunk`'s `_FOLIAGE_TRUNK` inputs, `null` without the keyword */
 	trunk: TrunkInputs | null;
-	/** `_SIMPLE_VERTEXANIM_CLOTH`'s sway in the wind, `null` when still */
+	/**
+	 * `_SIMPLE_VERTEXANIM`'s cloth/pendulum sway or `HGRP/Foliage/MushroomAnimation`'s LUT sway, `null` when
+	 * still
+	 */
 	sway: LitSway | null;
 	/** `_USE_VERTOFFSET`'s offset by a scrolling texture, `null` without; it adds to the sway */
 	vertexOffset: LitVertexOffset | null;
@@ -241,10 +244,11 @@ export interface LitVertexOffsetMask {
 }
 
 /**
- * `HGRP/Lit`'s `_SIMPLE_VERTEXANIM` (`docs/game-data/materials.md#swaying-cloth`): each vertex moves with the
- * wind clock, weighted by its colour's alpha, which the geometry's position W carries
+ * vertex sway (`docs/game-data/materials.md#swaying-cloth`, `#swinging-pendulums`, `#mushroom-animation`):
+ * each vertex moves with the wind or animation clock, weighted by its colour's alpha, which the geometry's
+ * position W carries
  */
-export type LitSway = LitClothSway | LitPendulumSway;
+export type LitSway = LitClothSway | LitPendulumSway | MushroomSway;
 
 /**
  * `_SIMPLE_VERTEXANIM_CLOTH`'s sway: each vertex moves along a horizontal direction by a sine of the wind
@@ -285,6 +289,48 @@ export interface LitPendulumSway {
 	stability: number;
 	/** the unit XZ direction the swing follows (`_MainDirectionAngle`), or `null` for the wind's own */
 	direction: [x: number, z: number] | null;
+}
+
+/**
+ * `HGRP/Foliage/MushroomAnimation`'s LUT-driven sway (`docs/game-data/materials.md#mushroom-animation`):
+ * bends, squashes and twists each vertex around the object's origin from a 1D curve LUT sampled by time, with
+ * per-instance phase and speed variation hashed from the object's world XZ
+ */
+export interface MushroomSway {
+	kind: 'mushroom';
+	/** `_SwayAnimationLUT`: 1D RGBA curve texture (bend XY deg, squash, twist deg) */
+	lut: TextureSlot;
+	/** `_SwayAnimationPeriod`, in seconds */
+	period: number;
+	/** `_SwayAnimationBendScale` */
+	bendScale: number;
+	/** `_SwayAnimationSquashScale` */
+	squashScale: number;
+	/** `_SwayAnimationTwistScale` */
+	twistScale: number;
+	/** `_SwayAnimationPhaseRandom` */
+	phaseRandom: number;
+	/** `_SwayAnimationSpeedRandom` */
+	speedRandom: number;
+	/** `_SwayAnimationMaskPow` */
+	maskPow: number;
+}
+
+/**
+ * `HGRP/Foliage/MushroomAnimation`'s `_UseEmissiveNoMapFresnel`: adds a view-angle rim glow to emission
+ * before albedo and exposure scaling
+ */
+export interface EmissiveFresnel {
+	/** `_EmissiveNoMapFresnelColor`, linear HDR RGB (already scaled by resting interactive intensity) */
+	color: Rgb;
+	/** `_EmissiveNoMapFresnelBias` */
+	bias: number;
+	/** `_EmissiveNoMapFresnelPower` */
+	power: number;
+	/** `_EmissiveNoMapFresnelUseVertexNormal`: blend toward the stored vertex normal */
+	useVertexNormal: Weight;
+	/** `_EmissiveNoMapFresnelVertexG`: modulate by vertex colour G */
+	vertexGreen: Weight;
 }
 
 /** a Lit surface's emission (`docs/game-data/materials.md#emission`) */
@@ -336,6 +382,8 @@ export interface LitEmission {
 		/** 0–1 (`clamp(cycleIntensity, 0, 1)`) */
 		intensity: number;
 	} | null;
+	/** `HGRP/Foliage/MushroomAnimation`'s `_UseEmissiveNoMapFresnel` rim glow, `null` when off */
+	fresnel?: EmissiveFresnel | null;
 }
 
 /** one tri-channel mask channel */

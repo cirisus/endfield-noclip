@@ -163,6 +163,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - grass/tree grids draw all instances at cluster LOD without sparsity thinning
     (`rendererHalfSize`, per-instance params, and column 7 unread).
   - glowing foliage: flow clock assumed seconds; Deep Dale Street mushrooms unverified in game.
+  - mushroom animation: omits character interaction and `_EmissiveNoMapMode` 1 vertex-colour
+    emission (unused on map02); sway unverified against an in-game video.
 - **Lit layers** ([viewer](viewer/materials.md#lit-layers)):
   - `HGRP/LitEffect` (~100 map02 materials) draws as Lit without dissolve/disturb;
     `Hidden/HGRP/LitEffectBlend` draws as Lit without `_ObjectBlend*` soft depth blend.
@@ -191,8 +193,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   alpha-weighted animated meshes hold still. clock assumed seconds; unverified in game beyond
   Jingyu's cherry-tree islet ribbons flapping.
 - **unimplemented shaders** ([unsupported](viewer/materials.md#unsupported-materials), counted by
-  `pack`): on map02, `Hidden/HGRP/Effect/VFXInkWashPaint`, `HGRP/CharacterNPR`, and
-  `HGRP/Foliage/MushroomAnimation`.
+  `pack`): on map02, `Hidden/HGRP/Effect/VFXInkWashPaint` and `HGRP/CharacterNPR`.
 - **forward Lit** ([viewer](viewer/materials.md#forward-lit)): golden treasure chest reflects the
   scene instead of `_CUSTOM_IBL`; other variants undecoded.
 - **matte paintings** ([viewer](viewer/materials.md#matte-paintings)): `_UseMainTexAsAlpha` unread
@@ -541,8 +542,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   parallax/layer slots, and feedback-incapable devices fall back to instance screen size. textures
   and meshes share one budget (game budgets textures alone).
 - **TAA** ([frame](viewer/frame.md)): no sharpening (game uses 0.3); dynamic motion vectors cover
-  GPU cloth, cloth/pendulum sway, vertex-offset meshes, and sludge waves, while skinned/VAT,
-  spinning/riding instances, particles, and transparent effects still reproject by static depth.
+  GPU cloth, cloth/pendulum/mushroom sway, vertex-offset meshes, and sludge waves, while
+  skinned/VAT, spinning/riding instances, particles, and transparent effects still reproject by
+  static depth.
 
 ## packaging
 

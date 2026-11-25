@@ -1122,6 +1122,13 @@ const swayReach = (sway: LitSway): SwayReach => {
 			const follow = Math.max(Math.abs(half), 1, Math.abs(half + stability * (1 - half)));
 			return { flat: 0, perHeight: 0, perDistance: angle * follow };
 		}
+		case 'mushroom': {
+			const { bendScale, squashScale, twistScale } = sway;
+			// conservative upper bound over LUT curves (bend ~30°, twist ~15°, squash ~0.5)
+			const perDistance =
+				Math.abs(bendScale) * 0.55 + Math.abs(twistScale) * 0.26 + Math.abs(squashScale) * 0.5;
+			return { flat: 0, perHeight: 0, perDistance };
+		}
 	}
 };
 

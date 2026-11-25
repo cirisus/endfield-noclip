@@ -310,6 +310,38 @@ stalks `M_bush_map02_glow+1_001_01`, near unity −43, 63, 89).
     (Rec. 709 luma).
 - **`_TERRAIN_BLEND`**: blends into terrain beneath as in Lit.
 
+### mushroom animation
+
+`HGRP/Foliage/MushroomAnimation` draws swaying mushrooms and glowing fungi (e.g. Old Dam
+`M_bush_map02_hypsizygus+1_001_01`, `_002_01`, and `M_bush_map02_juan+1_001_01`):
+
+- **GBuffer**: identical to `HGRP/Foliage/Leaf` (`roughnessInB` normal map, vertex R occlusion,
+  transmission, subsurface, fake directional shadow, `_DiffuseUseVertexNormal`, `_TwoSidedNormal`,
+  `_Reflectance`, `_StencilRef`), without `_CANOPY_COLOR_RAMP` or `_BLEND_COLOR`, and optional
+  `_ALPHATEST_ON` (`_AlphaClipThreshold` in `DepthOnly`, `_ShadowAlphaClipThreshold` in
+  `ShadowCaster`).
+- **LUT sway**: samples `_SwayAnimationLUT` (256×1 `RGBAHalf` storing bend XY in degrees, squash,
+  and twist in degrees) at `fract(t · speedScale / _SwayAnimationPeriod + phase)` where
+  `t = _TimeParameters.w` (and `_LastTimeParameters.w` for motion vectors). per-instance
+  `hash = fract(dot(worldOrigin.xz, (0.75487769, 0.56984031)))` sets
+  `phase = hash · _SwayAnimationPhaseRandom` and
+  `speedScale = 1 + (2 · fract(hash · 1.618034 + 0.381966) − 1) · _SwayAnimationSpeedRandom`. with
+  `mask = max(|vertexA|^_SwayAnimationMaskPow, 0.01)` and `rel = worldPos − worldOrigin`:
+  - bend: `bend = lut.xy · _SwayAnimationBendScale · mask`,
+    `axis = (bend.y, 0, −bend.x) / max(|bend|, 0.001)`, `delta = cross(axis, rel) · radians(|bend|)`
+  - squash: `delta.y += rel.y · lut.z · _SwayAnimationSquashScale`
+  - twist: `delta.xz += (rel.z, −rel.x) · radians(lut.w · _SwayAnimationTwistScale · mask)`
+  - character interaction pushes and oscillates mushrooms from the interactive heightmap (not drawn
+    without a character).
+- **emission**: adds no-map emission (`_NoMapEmissiveColor` × remapped base alpha for
+  `_EmissiveNoMapMode` 0, squared vertex-colour channel for mode 1, or remapped normal alpha for
+  mode 2) and optional `_UseEmissiveNoMapFresnel`
+  (`_EmissiveNoMapFresnelColor · (1 − clamp(|V·N| + bias, 0, 1)^power) · mix(1, vertexG, _EmissiveNoMapFresnelVertexG)`,
+  `N` blended toward stored vertex normal by `_EmissiveNoMapFresnelUseVertexNormal`). scales the sum
+  by `_CharacterOutEmissiveIntensity` at rest when `_EnableInteractiveEmissive` is set, by
+  `mix(albedo, 1, _NoMapAlbedoAffectEmissive)`, and divides out post exposure when
+  `_NoMapIgnorePostExposure` is set.
+
 ## subsurface
 
 deferred lighting has a third model alongside default and foliage for subsurface scattering. a

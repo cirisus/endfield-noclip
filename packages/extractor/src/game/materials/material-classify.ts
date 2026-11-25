@@ -19,6 +19,7 @@ const FAMILIES: [RegExp, ShaderFamily][] = [
 	[/^HGRP\/Foliage\/Trunk$/i, 'trunk'],
 	[/^HGRP\/Foliage\/Grass$/i, 'grass'],
 	[/^HGRP\/Foliage\/Glow$/i, 'foliageGlow'],
+	[/^HGRP\/Foliage\/MushroomAnimation$/i, 'mushroom'],
 	// `HGRP/Foliage/TreeFoliageCardMeshLod`, `HGRP/Foliage/Grass Cardmesh Lod`
 	[/^HGRP\/Foliage\/.*card\s*mesh\s*lod$/i, 'cardMesh'],
 	[/^HGRP\/FogSimple$/i, 'fogSimple'],

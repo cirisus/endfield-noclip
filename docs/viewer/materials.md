@@ -61,6 +61,12 @@ as Lit (without `_ObjectBlend*` soft depth blending).
   `HGRP/Foliage/TreeFoliageCardMeshLod` draws as alpha-tested foliage.
 - [glowing foliage](../game-data/materials.md#glowing-foliage) draws as Lit with a flow-glow overlay
   (`t` in seconds, unchecked). terrain blend is omitted (marked in gaps view).
+- [mushroom animation](../game-data/materials.md#mushroom-animation)
+  (`HGRP/Foliage/MushroomAnimation`) draws with leaf foliage lighting, no-map and Fresnel emission
+  (in the unused parallax rows), and LUT-driven sway (`Slot.Parallax`, `SwayRow` with
+  `SwayKind.Mushroom`) across shading, depth, cutout-depth, and shadow passes on the animation
+  clock, emitting dynamic motion vectors. omits character interaction and `_EmissiveNoMapMode` 1
+  vertex-colour emission (unused on map02).
 
 ## swaying cloth
 

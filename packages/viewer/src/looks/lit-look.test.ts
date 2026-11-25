@@ -217,6 +217,82 @@ test('a swinging Lit surface marks its sway a pendulum', () => {
 	assert.equal(look.params[SwayRow.kind], 1);
 });
 
+test('mushroom sway binds its LUT in the parallax slot alongside leaf lighting and emissive Fresnel', () => {
+	const slot = (texture: number): TextureSlot => ({ texture, uv: 0, scale: [1, 1], offset: [0, 0] });
+	const [look] = materialLooks({
+		entries: [
+			described(
+				litSurface({
+					layout: 'roughnessInB',
+					textures: { base: slot(1), normal: slot(2), mro: null, emissive: null },
+					foliage: {
+						kind: 'leaf',
+						occlusionShadow: 0,
+						fakeShadow: { strength: 1.25, power: 1 },
+						diffuseUsesVertexNormal: 1,
+						twoSidedNormal: false,
+						aoTransmission: [0.65, 0.15],
+						aoSubsurface: [0.75, 0.05],
+						subsurface: 0.725,
+						transmissionDistanceFade: 0,
+						canopy: null,
+						blend: null,
+					},
+					sway: {
+						kind: 'mushroom',
+						lut: slot(9),
+						period: 5,
+						bendScale: 1.2,
+						squashScale: 0.175,
+						twistScale: 3,
+						phaseRandom: 0.785,
+						speedRandom: 0.235,
+						maskPow: 1,
+					},
+					emission: {
+						color: [3, 4, 0],
+						source: 'mask',
+						maskChannel: 3,
+						channels: null,
+						albedoAffect: 0,
+						ignorePostExposure: 1,
+						albedoTint: null,
+						pulse: null,
+						breath: null,
+						fresnel: {
+							color: [0.4, 0.2, 0.1],
+							bias: 0.41,
+							power: 3.75,
+							useVertexNormal: 1,
+							vertexGreen: 1,
+						},
+					},
+				}),
+			),
+		],
+	});
+	assert.notEqual(look.flags & LookFlags.FoliageLeaf, 0);
+	assert.notEqual(look.flags & LookFlags.ParallaxMap, 0);
+	assert.equal(look.textures[5], 9);
+	assert.equal(look.params[SwayRow.kind], 2);
+	assert.deepEqual(
+		[...look.params.subarray(SwayRow.sway, SwayRow.sway + 4)],
+		[0.2, 1.2, 0.175, 3].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(SwayRow.direction, SwayRow.direction + 4)],
+		[0.785, 0.235, 1, 0].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(LookRow.parallax, LookRow.parallax + 4)],
+		[0.41, 3.75, 1, 1].map(Math.fround),
+	);
+	assert.deepEqual(
+		[...look.params.subarray(LookRow.parallaxColor, LookRow.parallaxColor + 4)],
+		[0.4, 0.2, 0.1, 1].map(Math.fround),
+	);
+});
+
 test('a vertex offset takes the parallax slots and rows of an alpha-tested Lit surface', () => {
 	// M_cloth_map02_sfcanvas+1_001_01a: ribbons flapping along the world's axes, masked towards their tops
 	const slot = (texture: number): TextureSlot => ({ texture, uv: 0, scale: [1, 1], offset: [0, 0] });

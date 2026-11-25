@@ -1,5 +1,6 @@
 import type { MaterialCull } from '@endfield-noclip/package-format/materials';
 import type {
+	EmissiveFresnel,
 	GrassInputs,
 	LayerCoverage,
 	LeafInputs,
@@ -154,6 +155,9 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		if (emission.albedoTint !== null) {
 			params.set([...emission.albedoTint.color, emission.albedoTint.weight], LookRow.emissiveAlbedo);
 		}
+		if (emission.fresnel != null && surface.foliage !== null) {
+			emissiveFresnelParams(params, emission.fresnel);
+		}
 	}
 
 	if (surface.triChannel !== null) {
@@ -201,7 +205,7 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 	if (surface.keepsLitDecalsOff) {
 		params[LookRow.detail2 + 3] = 1;
 	}
-	if (surface.sway !== null && surface.foliage === null) {
+	if (surface.sway !== null && (surface.foliage === null || surface.sway.kind === 'mushroom')) {
 		swayParams(look, surface.sway);
 	}
 	if (surface.trunk !== null && surface.foliage === null) {
@@ -249,44 +253,72 @@ const fresnelParams = (params: Float32Array, fresnel: LitFresnel): void => {
 	params[LookRow.parallaxBright] = 1;
 };
 
+/**
+ * packs `HGRP/Foliage/MushroomAnimation`'s `_UseEmissiveNoMapFresnel` into the parallax rows (unused on
+ * foliage looks): `parallax` = `(bias, power, useVertexNormal, vertexGreen)`, `parallaxColor` = `(r, g, b,
+ * 1)`
+ */
+const emissiveFresnelParams = (params: Float32Array, fresnel: EmissiveFresnel): void => {
+	params.set([fresnel.bias, fresnel.power, fresnel.useVertexNormal, fresnel.vertexGreen], LookRow.parallax);
+	params.set([...fresnel.color, 1], LookRow.parallaxColor);
+};
+
 // #region vertex animation and pulse
 
-/**
- * where `_SIMPLE_VERTEXANIM`'s sway keeps its inputs: dedicated tail rows that never collide with foliage or
- * trunk parameters. surfaces/common.wgsl sways a vertex of a look that isn't foliage, erosion, unlit or an
- * effect when the intensity and the geometry's position W (the sway weight) are non-zero
- */
-export const SwayRow = {
-	/**
-	 * `_SimpleVertexAnimationWindIntensity`, `_SimpleVertexAnimationWindFreq`, then the cloth's soft factor and
-	 * `_Kite`, or the pendulum's `_Stability` and turn about +Y per unit of the wind clock
-	 */
-	sway: LookRow.sway,
-	/**
-	 * the cloth's `_DirectionTendency` or the pendulum's largest turn about +Y (radians), 1 for the material's
-	 * own direction (0: the wind's), that direction's X and Z
-	 */
-	direction: LookRow.sway + 4,
-	/** 1 for a pendulum (0: cloth), stored in `meta.y` */
-	kind: LookRow.meta + 1,
+/** values of {@link SwayRow.kind} (`meta.y` in `surfaces/common.wgsl`) */
+export const SwayKind = {
+	Cloth: 0,
+	Pendulum: 1,
+	Mushroom: 2,
 } as const;
 
 /**
- * `_SIMPLE_VERTEXANIM`'s sway in the wind (docs/game-data/materials.md#swaying-cloth,
- * docs/game-data/materials.md#swinging-pendulums)
+ * where vertex sway keeps its inputs: dedicated tail rows that never collide with foliage or trunk
+ * parameters. `surfaces/common.wgsl` sways cloth/pendulum vertices when the look isn't foliage, erosion,
+ * unlit or an effect, and mushroom vertices when `meta.y` is {@link SwayKind.Mushroom}
  */
+export const SwayRow = {
+	/**
+	 * cloth/pendulum: `_SimpleVertexAnimationWindIntensity`, `_SimpleVertexAnimationWindFreq`, then the cloth's
+	 * soft factor and `_Kite`, or the pendulum's `_Stability` and turn about +Y per unit of the wind clock.
+	 * mushroom: `1 / period`, `_SwayAnimationBendScale`, `_SwayAnimationSquashScale`,
+	 * `_SwayAnimationTwistScale`
+	 */
+	sway: LookRow.sway,
+	/**
+	 * cloth/pendulum: `_DirectionTendency` or pendulum spin range (radians), 1 for the material's own
+	 * direction, that direction's X and Z. mushroom: `_SwayAnimationPhaseRandom`, `_SwayAnimationSpeedRandom`,
+	 * `_SwayAnimationMaskPow`, 0
+	 */
+	direction: LookRow.sway + 4,
+	/** {@link SwayKind}, stored in `meta.y` */
+	kind: LookRow.meta + 1,
+} as const;
+
+/** vertex sway (`docs/game-data/materials.md#swaying-cloth`, `#swinging-pendulums`, `#mushroom-animation`) */
 const swayParams = (look: MaterialLook, sway: LitSway): void => {
-	const direction = [sway.direction === null ? 0 : 1, ...(sway.direction ?? [0, 0])];
 	switch (sway.kind) {
 		case 'cloth': {
+			const direction = [sway.direction === null ? 0 : 1, ...(sway.direction ?? [0, 0])];
 			look.params.set([sway.intensity, sway.frequency, sway.softness, sway.kite], SwayRow.sway);
 			look.params.set([sway.tendency, ...direction], SwayRow.direction);
 			break;
 		}
 		case 'pendulum': {
+			const direction = [sway.direction === null ? 0 : 1, ...(sway.direction ?? [0, 0])];
 			look.params.set([sway.intensity, sway.frequency, sway.stability, sway.spinFrequency], SwayRow.sway);
 			look.params.set([sway.spinRange, ...direction], SwayRow.direction);
-			look.params[SwayRow.kind] = 1;
+			look.params[SwayRow.kind] = SwayKind.Pendulum;
+			break;
+		}
+		case 'mushroom': {
+			setTexture(look, Slot.Parallax, sway.lut);
+			look.params.set(
+				[1 / Math.max(sway.period, 0.001), sway.bendScale, sway.squashScale, sway.twistScale],
+				SwayRow.sway,
+			);
+			look.params.set([sway.phaseRandom, sway.speedRandom, sway.maskPow, 0], SwayRow.direction);
+			look.params[SwayRow.kind] = SwayKind.Mushroom;
 			break;
 		}
 	}

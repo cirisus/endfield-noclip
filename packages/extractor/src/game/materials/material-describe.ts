@@ -37,7 +37,7 @@ import { describeDithered } from './surfaces/dithered.ts';
 import { describeErosion, describeErosionDynamic } from './surfaces/erosion.ts';
 import { describeFoliageGlow } from './surfaces/foliage-glow.ts';
 import { describeLitDecal } from './surfaces/lit-decal.ts';
-import { swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
+import { mushroomSwayOf, swayOf, vertexOffsetOf } from './surfaces/lit-sway.ts';
 import { describeLit } from './surfaces/lit.ts';
 import { describeMattePainting } from './surfaces/matte-painting.ts';
 import { describeSludge } from './surfaces/sludge.ts';
@@ -84,6 +84,7 @@ const DESCRIBERS: { readonly [F in ShaderFamily]?: Describer | ReadonlyMap<strin
 	grass: describeLit,
 	cardMesh: describeLit,
 	foliageGlow: describeFoliageGlow,
+	mushroom: describeLit,
 	hlod: describeLit,
 	terrain: describeLit,
 	mattePainting: describeMattePainting,
@@ -129,8 +130,22 @@ const UNDRAWN_SHADERS = new Set(['HGRP/Effect/VFXReflectionPass']);
  * @param shader its shader's entry
  * @returns its sway, or `null` when it keeps still
  */
-export const materialSway = (material: MaterialValues, shader: ShaderEntry): LitSway | null =>
-	shader.name === 'HGRP/Lit' && material.blend !== 'additive' ? swayOf(readerOf(material, shader)) : null;
+export const materialSway = (material: MaterialValues, shader: ShaderEntry): LitSway | null => {
+	if (material.blend === 'additive') {
+		return null;
+	}
+	switch (shader.name) {
+		case 'HGRP/Lit': {
+			return swayOf(readerOf(material, shader));
+		}
+		case 'HGRP/Foliage/MushroomAnimation': {
+			return mushroomSwayOf(readerOf(material, shader));
+		}
+		default: {
+			return null;
+		}
+	}
+};
 
 /**
  * the vertex animation the meshes a material draws are baked with, before the surfaces are described

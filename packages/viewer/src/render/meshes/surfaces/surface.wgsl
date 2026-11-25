@@ -114,7 +114,7 @@ fn layer_surface(
 // in the two-basemap layout 2 the normal map's B and 3 its alpha, with an MRO map 2 the base alpha and 3 the
 // MRO map's alpha (`mro`: whether the mask slot holds one, `has_mro`). maps still streaming read 0
 fn map_channel(flags: u32, mro: bool, channel: f32, base_a: f32, packed: vec4f, mask: vec4f) -> f32 {
-	if ((flags & NORMAL_OCCLUSION) != 0u) {
+	if ((flags & (NORMAL_OCCLUSION | NORMAL_ROUGHNESS)) != 0u) {
 		let has_normal = (flags & NORMAL_MAP) != 0u;
 		let b = select(0.0, packed.b, has_normal);
 		let a = select(0.0, packed.a, has_normal);
@@ -642,6 +642,18 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 		strength = saturate((map_channel(flags, mro, look.emissive2.y, base_a, packed, mask) - 0.05) / 0.9);
 		emission = emissive_color * strength;
 	}
+	// `HGRP/Foliage/MushroomAnimation`'s `_UseEmissiveNoMapFresnel`: rim glow added before albedo & exposure
+	if ((flags & FOLIAGE_LEAF) != 0u && look.parallax_color.w > 0.5) {
+		var vertex_n = n;
+		if (dot(in.normal, in.normal) > 1e-6) {
+			vertex_n = normalize(in.normal);
+		}
+		let fresnel_n = mix(n, vertex_n, look.parallax.z);
+		let v = normalize(-in.rel);
+		let f = 1.0 - pow(saturate(abs(dot(v, fresnel_n)) + look.parallax.x), look.parallax.y);
+		let vg = select(1.0, in.color.g, (flags & HAS_COLORS) != 0u);
+		emission += look.parallax_color.rgb * (f * mix(1.0, vg, look.parallax.w));
+	}
 	// a per-draw albedo tint darkens or tints the emitting parts, and so the emission that follows the albedo
 	let tinted = look.emissive_albedo.w * step(0.1, strength);
 	s.albedo *= vec3f(1.0 - tinted) + look.emissive_albedo.rgb * tinted;
@@ -664,7 +676,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	}
 
 	// the glow needs its pattern; without a noise map it marches a flat height field
-	if ((flags & (PARALLAX_MAP | LAYER_BLEND | VERTEX_OFFSET)) == PARALLAX_MAP && in.tangent.w != 0.0) {
+	if ((flags & (PARALLAX_MAP | LAYER_BLEND | VERTEX_OFFSET | FOLIAGE)) == PARALLAX_MAP && in.tangent.w != 0.0) {
 		let world_parallax = look.parallax_world[4].w > 0.5;
 		// the glow's mask uses the same channel numbering as the emission mask, one lower
 		let glow_mask = map_channel(flags, mro, look.parallax_color.w + 1.0, base_a, packed, mask);

@@ -1,4 +1,5 @@
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
+import { SwayKind, SwayRow } from '../../looks/lit-look.ts';
 import type { LookStencil } from '../../looks/look.ts';
 import type { DecodedGeometry } from '../../package/decode-protocol.ts';
 import type { Camera } from '../../scene/camera.ts';
@@ -81,6 +82,8 @@ interface PreparedDraw {
 	bands: readonly number[];
 	/** whether any instance in this draw is cross-fading (`MeshBucket.fading`) */
 	fading: boolean;
+	/** whether the vertex stage samples a material texture (`SwayKind.Mushroom`) in depth/shadow passes */
+	vertexTextured: boolean;
 }
 
 /** what {@link MeshRenderer} last bound while encoding a pass, so it binds only what changes */
@@ -709,6 +712,7 @@ export class MeshRenderer {
 				distances: bucket.distances,
 				bands: bucket.bands,
 				fading: bucket.fading,
+				vertexTextured: look.params[SwayRow.kind] === SwayKind.Mushroom,
 			};
 		} else {
 			draw.geometry = resident;
@@ -731,6 +735,7 @@ export class MeshRenderer {
 			draw.distances = bucket.distances;
 			draw.bands = bucket.bands;
 			draw.fading = bucket.fading;
+			draw.vertexTextured = look.params[SwayRow.kind] === SwayKind.Mushroom;
 		}
 		if (!bucket.castOnly && gpu === null) {
 			this.instanceCount += span.count;
@@ -951,7 +956,10 @@ export class MeshRenderer {
 			state.fading = useFade;
 			state.stencil = draw.stencil;
 		}
-		if ((phase.textured || state.material === null) && draw.material !== state.material) {
+		if (
+			(phase.textured || draw.vertexTextured || state.material === null) &&
+			draw.material !== state.material
+		) {
 			state.material = draw.material;
 			pass.setBindGroup(3, draw.material);
 		}

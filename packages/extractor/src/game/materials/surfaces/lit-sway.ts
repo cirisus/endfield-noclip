@@ -1,4 +1,9 @@
-import type { LitSway, LitVertexOffset } from '@endfield-noclip/package-format/surfaces';
+import type {
+	LitClothSway,
+	LitSway,
+	LitVertexOffset,
+	MushroomSway,
+} from '@endfield-noclip/package-format/surfaces';
 
 import type { MaterialReader } from '../material-values.ts';
 
@@ -19,7 +24,7 @@ export const swayOf = (reader: MaterialReader): LitSway | null => {
 	if (!has('_SIMPLE_VERTEXANIM') || !enabled) {
 		return null;
 	}
-	let direction: LitSway['direction'] = null;
+	let direction: LitClothSway['direction'] = null;
 	if (float('_Use_Custom_WindDir', 0) !== 0) {
 		// the shader approximates cos and sin by their Taylor series; at authored angles they agree to 1e-3
 		const angle = (float('_MainDirectionAngle', 0) * Math.PI) / 180;
@@ -60,6 +65,37 @@ export const swayOf = (reader: MaterialReader): LitSway | null => {
  */
 const pendulumGap = (reader: MaterialReader): boolean =>
 	reader.has('_SIMPLE_VERTEXANIM_USE_GRAVITY') || reader.float('_Use_Custom_Anchor', 0) !== 0;
+
+/**
+ * `HGRP/Foliage/MushroomAnimation`'s LUT-driven sway (`docs/game-data/materials.md#mushroom-animation`)
+ *
+ * @param reader an `HGRP/Foliage/MushroomAnimation` material's properties
+ * @returns its sway, or `null` without a LUT texture or when all deformation scales are zero
+ */
+export const mushroomSwayOf = (reader: MaterialReader): MushroomSway | null => {
+	const { float, slot } = reader;
+	const lut = slot('_SwayAnimationLUT');
+	if (lut === undefined) {
+		return null;
+	}
+	const bendScale = float('_SwayAnimationBendScale', 1);
+	const squashScale = float('_SwayAnimationSquashScale', 1);
+	const twistScale = float('_SwayAnimationTwistScale', 1);
+	if (bendScale === 0 && squashScale === 0 && twistScale === 0) {
+		return null;
+	}
+	return {
+		kind: 'mushroom',
+		lut: { texture: lut.texture, uv: 0, scale: [1, 1], offset: [0, 0] },
+		period: float('_SwayAnimationPeriod', 2.5),
+		bendScale,
+		squashScale,
+		twistScale,
+		phaseRandom: float('_SwayAnimationPhaseRandom', 1),
+		speedRandom: float('_SwayAnimationSpeedRandom', 0.15),
+		maskPow: float('_SwayAnimationMaskPow', 1),
+	};
+};
 
 /**
  * `_USE_VERTOFFSET`'s offset by a scrolling texture, with `_USE_VERTOFFSETMASK`'s mask

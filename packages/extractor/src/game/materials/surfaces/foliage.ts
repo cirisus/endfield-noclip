@@ -1,8 +1,14 @@
 /** the foliage shaders' inputs to the Lit model (`docs/game-data/materials.md#foliage`) */
 
-import type { GrassInputs, LeafInputs, TrunkInputs } from '@endfield-noclip/package-format/surfaces';
+import type {
+	EmissiveFresnel,
+	GrassInputs,
+	LeafInputs,
+	LitEmission,
+	TrunkInputs,
+} from '@endfield-noclip/package-format/surfaces';
 
-import { linearRgb, type MaterialReader } from '../material-values.ts';
+import { linearRgb, type MaterialReader, scaleRgb } from '../material-values.ts';
 
 /** `HGRP/Foliage/Leaf`'s inputs (`docs/game-data/materials.md#foliage`) */
 export const leafInputsOf = (reader: MaterialReader): LeafInputs => {
@@ -90,5 +96,59 @@ export const grassInputsOf = (reader: MaterialReader, card: boolean): GrassInput
 		subsurface: float('_SubsurfaceIntensity', 0),
 		ao: [ao[0], ao[1], 1 - ao[2]],
 		sunMask: [dir[0], dir[1], 1 - dir[2]],
+	};
+};
+
+/**
+ * `HGRP/Foliage/MushroomAnimation`'s no-map emission and optional Fresnel rim glow
+ * (`docs/game-data/materials.md#mushroom-animation`). scales both by the resting interactive intensity when
+ * `_EnableInteractiveEmissive` is set
+ *
+ * @param reader an `HGRP/Foliage/MushroomAnimation` material's properties
+ * @returns its emission, or `null` when both base and Fresnel colours are black
+ */
+export const mushroomEmissionOf = (reader: MaterialReader): LitEmission | null => {
+	const { float } = reader;
+	const restScale =
+		float('_EnableInteractiveEmissive', 0) > 0.5 ? float('_CharacterOutEmissiveIntensity', 0) : 1;
+	const baseColor = scaleRgb(reader.hdrColor('_NoMapEmissiveColor') ?? [0, 0, 0, 1], restScale);
+	const mode = float('_EmissiveNoMapMode', 0);
+	// mode 0 reads base alpha (channel 1); mode 2 reads normal alpha (channel 3); mode 1 (vertex colour) is
+	// unread and unused on map02
+	let maskChannel = 0;
+	if (mode < 0.5) {
+		maskChannel = 1;
+	} else if (mode >= 1.5) {
+		maskChannel = 3;
+	}
+	const hasBase = maskChannel > 0 && baseColor.some((value) => value !== 0);
+
+	let fresnel: EmissiveFresnel | null = null;
+	if (float('_UseEmissiveNoMapFresnel', 0) > 0.5) {
+		const color = scaleRgb(reader.hdrColor('_EmissiveNoMapFresnelColor') ?? [0, 0, 0, 1], restScale);
+		if (color.some((value) => value !== 0)) {
+			fresnel = {
+				color,
+				bias: float('_EmissiveNoMapFresnelBias', 0),
+				power: float('_EmissiveNoMapFresnelPower', 1),
+				useVertexNormal: float('_EmissiveNoMapFresnelUseVertexNormal', 0),
+				vertexGreen: float('_EmissiveNoMapFresnelVertexG', 0),
+			};
+		}
+	}
+	if (!hasBase && fresnel === null) {
+		return null;
+	}
+	return {
+		color: hasBase ? baseColor : [0, 0, 0],
+		source: 'mask',
+		maskChannel: hasBase ? maskChannel : 0,
+		channels: null,
+		albedoAffect: float('_NoMapAlbedoAffectEmissive', 1),
+		ignorePostExposure: float('_NoMapIgnorePostExposure', 1),
+		albedoTint: null,
+		pulse: null,
+		breath: null,
+		...(fresnel !== null ? { fresnel } : {}),
 	};
 };

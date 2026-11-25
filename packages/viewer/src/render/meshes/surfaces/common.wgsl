@@ -382,7 +382,7 @@ fn instance_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: Look) 
 	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
 	let rel = row_basis(row.t0, row.t1, row.t2, row.info) * p + origin;
 	let flags = bitcast<u32>(draw.offset.w);
-	return rel + grass_lean(flags, look, p.y) + sway_at(flags, look, p, position.w, rel, origin, frame.wind.x);
+	return rel + grass_lean(flags, look, p.y) + vertex_sway(flags, look, p, position.w, rel, origin, frame.eye.w, frame.wind.x);
 }
 
 // previous frame's camera-relative position (relative to this frame's eye) for GPU cloth and analytical sway
@@ -392,7 +392,49 @@ fn instance_prev_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: L
 	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
 	let rel = row_basis(row.t0, row.t1, row.t2, row.info) * p + origin;
 	let flags = bitcast<u32>(draw.offset.w);
-	return rel + grass_lean(flags, look, p.y) + sway_at(flags, look, p, position.w, rel, origin, frame.prev_time.y);
+	return rel + grass_lean(flags, look, p.y) + vertex_sway(flags, look, p, position.w, rel, origin, frame.prev_time.x, frame.prev_time.y);
+}
+
+fn vertex_sway(
+	flags: u32,
+	look: Look,
+	p: vec3f,
+	weight: f32,
+	rel: vec3f,
+	origin: vec3f,
+	time: f32,
+	wind_clock: f32,
+) -> vec3f {
+	if (look.misc.y > 1.5) {
+		return mushroom_sway_at(flags, look, weight, rel, origin, time);
+	}
+	return sway_at(flags, look, p, weight, rel, origin, wind_clock);
+}
+
+// `HGRP/Foliage/MushroomAnimation`'s LUT-driven sway (`swayParams` in lit-look.ts,
+// docs/game-data/materials.md#mushroom-animation): bends, squashes and twists each vertex around the object's
+// origin using the 1D curve LUT in `parallax_map`
+fn mushroom_sway_at(flags: u32, look: Look, weight: f32, rel: vec3f, origin: vec3f, time: f32) -> vec3f {
+	if ((flags & PARALLAX_MAP) == 0u) {
+		return vec3f(0.0);
+	}
+	let mask = max(pow(abs(weight), look.sway_direction.z), 0.01);
+	let world_origin = origin + frame.eye.xyz;
+	let hash = fract(dot(world_origin.xz, vec2f(0.7548776865005493, 0.5698403120040894)));
+	let phase = hash * look.sway_direction.x;
+	let speed_scale = 1.0 + (fract(hash * 1.6180340051651 + 0.3819660246372) * 2.0 - 1.0) * look.sway_direction.y;
+	let u = fract(time * speed_scale * look.sway.x + phase);
+	let lut = textureSampleLevel(parallax_map, parallax_sampler, vec2f(u, 0.5), 0.0);
+	let v = rel - origin;
+	let bend = lut.xy * look.sway.y * mask;
+	let bend_deg = length(bend);
+	let axis = vec3f(bend.y, 0.0, -bend.x) / max(bend_deg, 0.001);
+	var delta = cross(axis, v) * radians(bend_deg);
+	delta.y += v.y * lut.z * look.sway.z;
+	let twist_rad = radians(lut.w * look.sway.w * mask);
+	delta.x += v.z * twist_rad;
+	delta.z -= v.x * twist_rad;
+	return delta;
 }
 
 // `_SIMPLE_VERTEXANIM`'s world-space offset (`swayParams` in lit-look.ts,

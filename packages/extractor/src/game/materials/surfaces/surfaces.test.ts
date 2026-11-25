@@ -1134,7 +1134,7 @@ describe('the Lit model', () => {
 		const sway = (keywords: string[], floats: Record<string, number>, entry = shader) =>
 			lit(describeMaterial(values({ keywords, floats }), entry)).sway;
 		const swung = sway(cloth, kite);
-		assert.ok(swung !== null && swung.direction !== null);
+		assert.ok(swung !== null && swung.kind === 'cloth' && swung.direction !== null);
 		assert.deepEqual(
 			{ ...swung, direction: null },
 			{
@@ -1148,7 +1148,8 @@ describe('the Lit model', () => {
 			},
 		);
 		assert.ok(Math.abs(swung.direction[0]) < 1e-9 && swung.direction[1] === 1);
-		assert.equal(sway(cloth, { ...kite, _Use_Custom_WindDir: 0 })?.direction, null);
+		const windDriven = sway(cloth, { ...kite, _Use_Custom_WindDir: 0 });
+		assert.equal(windDriven?.kind === 'cloth' ? windDriven.direction : undefined, null);
 		assert.equal(sway(cloth, { ...kite, _SimpleVertexAnimationWindIntensity: 0 }), null);
 		// M_cloth_map02_sfcanvas+1_001_01's keywords: the banner has no simulation and sways like any cloth
 		assert.deepEqual(sway([...cloth, '_GPU_CLOTH'], kite), swung);
@@ -1346,6 +1347,83 @@ describe('the Lit model', () => {
 		// Lit has the keyword too, but only the trunk shader's is read
 		const litShader = shaderEntry({ name: 'HGRP/Lit', family: 'lit', floats });
 		assert.equal(lit(describeMaterial(values({ keywords: ['_FOLIAGE_TRUNK'] }), litShader)).trunk, null);
+	});
+
+	it('describes HGRP/Foliage/MushroomAnimation with leaf lighting, LUT sway, and no-map Fresnel emission', () => {
+		const shader = shaderEntry({
+			name: 'HGRP/Foliage/MushroomAnimation',
+			family: 'mushroom',
+			floats: {
+				_OcclusionStrength: 0.5,
+				_OcclusionShadow: 0,
+				_Transmission: 0.75,
+				_SubsurfaceIntensity: 0.725,
+				_StencilRef: 33,
+				_SwayAnimationPeriod: 5,
+				_SwayAnimationBendScale: 1.2,
+				_SwayAnimationSquashScale: 0.175,
+				_SwayAnimationTwistScale: 3,
+				_SwayAnimationPhaseRandom: 0.785,
+				_SwayAnimationSpeedRandom: 0.235,
+				_SwayAnimationMaskPow: 1,
+				_EmissiveNoMapMode: 2,
+				_NoMapAlbedoAffectEmissive: 0,
+				_NoMapIgnorePostExposure: 1,
+				_UseEmissiveNoMapFresnel: 1,
+				_EmissiveNoMapFresnelBias: 0.39,
+				_EmissiveNoMapFresnelPower: 70.4,
+				_EmissiveNoMapFresnelUseVertexNormal: 1,
+				_EmissiveNoMapFresnelVertexG: 1,
+				_EnableInteractiveEmissive: 1,
+				_CharacterOutEmissiveIntensity: 0.5,
+			},
+			colors: {
+				_NoMapEmissiveColor: [4, 2, 0, 1],
+				_EmissiveNoMapFresnelColor: [2, 1, 0, 1],
+			},
+		});
+		const surface = lit(
+			describeMaterial(
+				values({
+					keywords: ['_ALPHATEST_ON'],
+					slots: { _BaseColorMap: slot(1), _NormalMap: slot(2), _SwayAnimationLUT: slot(3) },
+				}),
+				shader,
+			),
+		);
+		assert.equal(surface.layout, 'roughnessInB');
+		assert.equal(surface.foliage?.kind, 'leaf');
+		assert.equal(surface.keepsLitDecalsOff, true);
+		assert.deepEqual(surface.sway, {
+			kind: 'mushroom',
+			lut: { texture: 3, uv: 0, scale: [1, 1], offset: [0, 0] },
+			period: 5,
+			bendScale: 1.2,
+			squashScale: 0.175,
+			twistScale: 3,
+			phaseRandom: 0.785,
+			speedRandom: 0.235,
+			maskPow: 1,
+		});
+		assert.deepEqual(surface.emission, {
+			color: [2, 1, 0],
+			source: 'mask',
+			maskChannel: 3,
+			channels: null,
+			albedoAffect: 0,
+			ignorePostExposure: 1,
+			albedoTint: null,
+			pulse: null,
+			breath: null,
+			fresnel: {
+				color: [1, 0.5, 0],
+				bias: 0.39,
+				power: 70.4,
+				useVertexNormal: 1,
+				vertexGreen: 1,
+			},
+		});
+		assert.deepEqual(keywordsNotDrawn('HGRP/Foliage/MushroomAnimation', ['_ALPHATEST_ON']), []);
 	});
 
 	it('rejects maps on UV sets past 1', () => {

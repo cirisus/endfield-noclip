@@ -25,9 +25,9 @@ import {
 	type Vec4,
 } from '../material-values.ts';
 
-import { grassInputsOf, leafInputsOf, trunkInputsOf } from './foliage.ts';
+import { grassInputsOf, leafInputsOf, mushroomEmissionOf, trunkInputsOf } from './foliage.ts';
 import { layerOf, parallaxGlowOf } from './lit-overlays.ts';
-import { swayOf, vertexOffsetOf } from './lit-sway.ts';
+import { mushroomSwayOf, swayOf, vertexOffsetOf } from './lit-sway.ts';
 
 /** shaders whose G-buffer pass writes the material's `_StencilRef` into the stencil */
 const STENCIL_REF_SHADERS = new Set([
@@ -39,6 +39,7 @@ const STENCIL_REF_SHADERS = new Set([
 	'HGRP/Foliage/TreeFoliageCardMeshLod',
 	'HGRP/Foliage/Grass Cardmesh Lod',
 	'HGRP/Foliage/Glow',
+	'HGRP/Foliage/MushroomAnimation',
 ]);
 
 /** the stencil bit `HGRP/DecalLit` draws only where clear */
@@ -88,7 +89,7 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 	// Lit's optional layers. LitEffect declares a subset of Lit's properties plus its dissolve and disturb
 	// effects, which aren't drawn; trunks and glass share only the texture layout
 	const lit = family === 'lit' || family === 'litEffect';
-	const foliage = family === 'leaf' || family === 'grass' || family === 'cardMesh';
+	const foliage = family === 'leaf' || family === 'grass' || family === 'cardMesh' || family === 'mushroom';
 	const count = material.baseTextureMapCount;
 
 	// the maps the material's layout and keywords sample; the geometry carries UV sets 0 and 1
@@ -135,7 +136,9 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 		material.blend === 'alphaBlend' || material.blend === 'premultiplied' ? material.blend : 'opaque';
 
 	let emission: LitEmission | null = null;
-	{
+	if (family === 'mushroom') {
+		emission = mushroomEmissionOf(reader);
+	} else {
 		const baseEmissive = reader.hdrColor('_EmissiveColor');
 		// the per-draw emission override (`_m7`, written via `SetCustomPerDrawData`) is already linear, so mix it
 		// after `hdrColor` linearizes any `[Gamma]` `_EmissiveColor`; keep the material's alpha (pulse/sweep depth)
@@ -264,7 +267,7 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 	let f0 = 0.08 * float('_Specular', 0.5);
 	let transmission = foliage ? float('_Transmission', 0.2) : 0;
 	let foliageInputs: LitSurface['foliage'] = null;
-	if (family === 'leaf') {
+	if (family === 'leaf' || family === 'mushroom') {
 		f0 = reflectanceF0(float('_Reflectance', 0));
 		foliageInputs = leafInputsOf(reader);
 	} else if (family === 'grass' || shader.name === GRASS_CARD_SHADER) {
@@ -332,7 +335,7 @@ export const describeLit = (reader: MaterialReader): LitSurface | UnsupportedSur
 		overlay,
 		foliage: foliageInputs,
 		trunk: family === 'trunk' ? trunkInputsOf(reader) : null,
-		sway: shader.name === 'HGRP/Lit' ? swayOf(reader) : null,
+		sway: shader.name === 'HGRP/Lit' ? swayOf(reader) : family === 'mushroom' ? mushroomSwayOf(reader) : null,
 		vertexOffset: shader.name === 'HGRP/Lit' ? vertexOffsetOf(reader) : null,
 		keepsLitDecalsOff:
 			STENCIL_REF_SHADERS.has(shader.name) && (float('_StencilRef', 0) & LIT_DECAL_STENCIL_BIT) !== 0,

@@ -64,6 +64,7 @@ const DRAWN_KEYWORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 		'HGRP/Foliage/TreeFoliageCardMeshLod': [...SURFACE_KEYWORDS, '_NORMAL_MAP'],
 		// its blend into the terrain beneath (`_TERRAIN_BLEND`) isn't drawn, as Lit's isn't
 		'HGRP/Foliage/Glow': ['_DISTORTION_FLOW'],
+		'HGRP/Foliage/MushroomAnimation': ['_ALPHATEST_ON'],
 		'HGRP/LitHLOD': SURFACE_KEYWORDS,
 		'HGRP/MattePainting': SURFACE_KEYWORDS,
 		'HGRP/Erosion': SURFACE_KEYWORDS,
