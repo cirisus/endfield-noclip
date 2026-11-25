@@ -90,6 +90,8 @@ export interface RendererDraw {
 	lodMinSquared: number;
 	/** LOD level of this draw, from {@link Component.LodRanges} */
 	lod: number;
+	/** grass draw density multiplier (`GrassRendererInfo.sparsity`); absent on non-grass draws */
+	sparsity?: number;
 }
 
 /** what a static entity draws */

@@ -36,6 +36,8 @@ export type FoliageGridType = (typeof FoliageGridType)[keyof typeof FoliageGridT
 export interface FoliageCluster {
 	/** world bounds of the instances */
 	bounds: Aabb;
+	/** half-size of the foliage renderer for screen-size LOD culling, from {@link Component.LodInfo} or bounds */
+	rendererHalfSize: number;
 	/** draws with mesh and material keys resolved through the batch table; LOD levels follow the thresholds */
 	renderer: StaticRenderer;
 	/** packed column-major 4×4 object-to-world matrices, 16 floats per instance */
@@ -75,6 +77,7 @@ const TREE_INSTANCE = 80;
 /** a column-major object-to-world matrix and two vec4 parameters */
 const INSTANCE_SIZE = 96;
 const DRAW_INFO_SIZE = 24;
+const LOD_INFO_SIZE = 20;
 
 /**
  * @param init an InitChunkData FlatBuffer (after `unpackHgPayload`)
@@ -216,6 +219,8 @@ const readArchetypes = (
 		const columns = new Map(parsed.map((column) => [column.id, column]));
 
 		const boundsColumns = Array.from({ length: 6 }, (_, c) => columns.get(Component.BoundsCenterX + c));
+		const lodInfoColumn = columns.get(Component.LodInfo);
+		const hasLodInfo = lodInfoColumn !== undefined && lodInfoColumn.stride === LOD_INFO_SIZE;
 		let drawColumn: { id: number; stride: number; offset: number } | undefined;
 		let instanceColumn: { id: number; stride: number; offset: number } | undefined;
 		for (const [column, layout] of columns) {
@@ -257,6 +262,9 @@ const readArchetypes = (
 				center: [f(boundsColumns[0]), f(boundsColumns[1]), f(boundsColumns[2])],
 				extents: [f(boundsColumns[3]), f(boundsColumns[4]), f(boundsColumns[5])],
 			};
+			const rendererHalfSize = hasLodInfo
+				? Math.sqrt(Math.max(0, view.f32(lodInfoColumn.offset + e * LOD_INFO_SIZE + 12)))
+				: Math.max(bounds.extents[0], bounds.extents[1], bounds.extents[2]);
 			const draws = readDraws(view, drawColumn.offset + e * drawColumn.stride, capacity, {
 				type,
 				batches,
@@ -281,7 +289,7 @@ const readArchetypes = (
 				out.set(view.subarray(first + k * INSTANCE_SIZE, 64), k * 64);
 			}
 			const lodCount = new Set(draws.map((draw) => draw.lod)).size;
-			clusters.push({ bounds, renderer: { draws, lodCount }, instances, instanceCount });
+			clusters.push({ bounds, rendererHalfSize, renderer: { draws, lodCount }, instances, instanceCount });
 		}
 	}
 	return clusters;
@@ -303,10 +311,12 @@ const readDraws = (
 		const lod = at + 4 + capacity * DRAW_INFO_SIZE + d * 8;
 		let batch: Batch | undefined;
 		let flags: number;
+		let sparsity: number | undefined;
 		// the info names its batch entry instead of holding asset keys: grass by the entry's key, trees by its
 		// index
 		if (grid.type === FoliageGridType.Grass) {
 			batch = grid.byKey.get(view.u32(info + 4));
+			sparsity = view.f32(info + 8);
 			flags = view.u32(info + 12);
 		} else {
 			batch = grid.batches[view.u32(info + 12)];
@@ -323,6 +333,7 @@ const readDraws = (
 			lodMaxSquared: view.f32(lod),
 			lodMinSquared: view.f32(lod + 4),
 			lod: 0,
+			...(sparsity !== undefined ? { sparsity } : {}),
 		});
 	}
 	// grids carry no LOD-range column; a draw's LOD is the rank of its upper threshold

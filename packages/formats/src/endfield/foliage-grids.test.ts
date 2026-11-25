@@ -94,7 +94,10 @@ const chunk = (gridType: number, gridProperties: [number, Value][]): Uint8Array 
  * one archetype of one grass cluster: bounds, two draws (a lit LOD 0 by batch key 0xbeef, a LOD 1 by key
  * 0xcafe) and two instances in a K4 cluster column
  */
-const grassArchetype = (options: { drawKey?: number }): { descriptors: Uint8Array; blob: Uint8Array } => {
+const grassArchetype = (options: {
+	drawKey?: number;
+	lodHalfSizeSq?: number;
+}): { descriptors: Uint8Array; blob: Uint8Array } => {
 	const columns: [number, number][] = [
 		[0, 4],
 		[1, 4],
@@ -102,6 +105,7 @@ const grassArchetype = (options: { drawKey?: number }): { descriptors: Uint8Arra
 		[3, 4],
 		[4, 4],
 		[5, 4],
+		...(options.lodHalfSizeSq !== undefined ? ([[6, 20]] as [number, number][]) : []),
 		[9, 68],
 		[37, 388],
 	];
@@ -114,27 +118,33 @@ const grassArchetype = (options: { drawKey?: number }): { descriptors: Uint8Arra
 	const blob = new Uint8Array(columns.reduce((sum, [, stride]) => sum + stride, 0));
 	const view = new DataView(blob.buffer);
 	[10, 20, 30, 1, 2, 3].forEach((v, i) => view.setFloat32(i * 4, v, true));
-	// draw infos at 24: count, two GrassRendererInfos, then two (max², min²) pairs
-	view.setUint32(24, 2, true);
-	view.setUint32(28 + 4, options.drawKey ?? 0xbeef, true);
-	view.setFloat32(28 + 8, 2, true);
-	view.setUint32(28 + 12, 0x3f80000, true);
-	view.setUint32(52 + 4, 0xcafe, true);
-	view.setUint32(52 + 12, 0x3f80400, true);
-	[FLT_MAX, 0.2, 0.2, -0.0002].forEach((v, i) => view.setFloat32(76 + i * 4, v, true));
-	// the cluster at 92: count, then column-major matrices translated to (11, 20, 30) and (12, 20, 30)
-	view.setUint32(92, 2, true);
+	let at = 24;
+	if (options.lodHalfSizeSq !== undefined) {
+		view.setFloat32(at + 12, options.lodHalfSizeSq, true);
+		at += 20;
+	}
+	// draw infos at `at`: count, two GrassRendererInfos, then two (max², min²) pairs
+	view.setUint32(at, 2, true);
+	view.setUint32(at + 4 + 4, options.drawKey ?? 0xbeef, true);
+	view.setFloat32(at + 4 + 8, 2, true);
+	view.setUint32(at + 4 + 12, 0x3f80000, true);
+	view.setUint32(at + 28 + 4, 0xcafe, true);
+	view.setUint32(at + 28 + 12, 0x3f80400, true);
+	[FLT_MAX, 0.2, 0.2, -0.0002].forEach((v, i) => view.setFloat32(at + 52 + i * 4, v, true));
+	// the cluster at `at + 68`: count, then column-major matrices translated to (11, 20, 30) and (12, 20, 30)
+	const clusterAt = at + 68;
+	view.setUint32(clusterAt, 2, true);
 	[11, 12].forEach((x, k) => {
-		const at = 96 + k * 96;
-		[0, 5, 10, 15].forEach((d) => view.setFloat32(at + d * 4, 1, true));
-		view.setFloat32(at + 48, x, true);
-		view.setFloat32(at + 52, 20, true);
-		view.setFloat32(at + 56, 30, true);
+		const rowAt = clusterAt + 4 + k * 96;
+		[0, 5, 10, 15].forEach((d) => view.setFloat32(rowAt + d * 4, 1, true));
+		view.setFloat32(rowAt + 48, x, true);
+		view.setFloat32(rowAt + 52, 20, true);
+		view.setFloat32(rowAt + 56, 30, true);
 	});
 	return { descriptors, blob };
 };
 
-const grassProperties = (options: { drawKey?: number } = {}): [number, Value][] => {
+const grassProperties = (options: { drawKey?: number; lodHalfSizeSq?: number } = {}): [number, Value][] => {
 	const { descriptors, blob } = grassArchetype(options);
 	return [
 		[0xff000000, { code: 2, int: 1 }],
@@ -170,6 +180,7 @@ test('readFoliageGrids decodes a grass grid through its batch table', () => {
 	assert.equal(grid.clusters.length, 1);
 	const [cluster] = grid.clusters;
 	assert.deepEqual(cluster.bounds, { center: [10, 20, 30], extents: [1, 2, 3] });
+	assert.equal(cluster.rendererHalfSize, 3);
 	assert.equal(cluster.instanceCount, 2);
 	assert.equal(cluster.instances.length, 32);
 	assert.deepEqual(
@@ -185,18 +196,23 @@ test('readFoliageGrids decodes a grass grid through its batch table', () => {
 	);
 	assert.equal(cluster.renderer.lodCount, 2);
 	assert.deepEqual(
-		cluster.renderer.draws.map(({ meshHash, materialHash, submesh, flags, lod }) => ({
+		cluster.renderer.draws.map(({ meshHash, materialHash, submesh, flags, lod, sparsity }) => ({
 			meshHash,
 			materialHash,
 			submesh,
 			flags,
 			lod,
+			sparsity,
 		})),
 		[
-			{ meshHash: 0x444n, materialHash: 0x222n, submesh: 1, flags: 0x3f80000, lod: 0 },
-			{ meshHash: 0x333n, materialHash: 0x111n, submesh: 0, flags: 0x3f80400, lod: 1 },
+			{ meshHash: 0x444n, materialHash: 0x222n, submesh: 1, flags: 0x3f80000, lod: 0, sparsity: 2 },
+			{ meshHash: 0x333n, materialHash: 0x111n, submesh: 0, flags: 0x3f80400, lod: 1, sparsity: 0 },
 		],
 	);
+
+	const initWithLod = chunk(FoliageGridType.Grass, grassProperties({ lodHalfSizeSq: 2.25 }));
+	const [gridWithLod] = readFoliageGrids(initWithLod, streaming);
+	assert.equal(gridWithLod.clusters[0].rendererHalfSize, 1.5);
 });
 
 test('readFoliageGrids skips other proxies and rejects draws outside the batch table', () => {
