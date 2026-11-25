@@ -528,12 +528,13 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 
 ## renderer and performance
 
-- **viewpoints**: game [teleport points](game-data/world.md#teleport-points) and
-  [named places](game-data/world.md#named-places) are not packed.
-- **CPU selection**: mesh selection takes ~50% of frame time over dense foliage; GPU-culled buckets
+- **viewpoints**: game [teleport points](game-data/world.md#teleport-points) are not packed
+  ([named places](game-data/world.md#named-places) from region toasts are packed in
+  `manifest.places` and shown in the levels panel).
+- **CPU selection**: `.fol` foliage blocks use a whole-block GPU-cull fast path; GPU-culled buckets
   still emit one encoded draw each ([performance](viewer/performance.md#optimization-candidates)).
-- **shadows**: layers redraw whole on selection changes (no tiled far-map cache or small-caster
-  cull, [performance](viewer/performance.md#optimization-candidates)).
+- **shadows**: layers redraw whole on selection changes (no tiled far-map cache,
+  [performance](viewer/performance.md#optimization-candidates)).
 - **geometry pools**: never shrink, leaving spare capacity outside the stream budget
   ([GPU resources](viewer/gpu-resources.md#buffers-and-pools)).
 - **profiling & budgets**: close-up terrain blending and timestamp-query overhead are unprofiled;
@@ -542,10 +543,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   newly uncovered surfaces briefly (vs game's CPU estimate). glass, effects, shadow-only casters,
   parallax/layer slots, and feedback-incapable devices fall back to instance screen size. textures
   and meshes share one budget (game budgets textures alone).
-- **TAA** ([frame](viewer/frame.md)): no sharpening (game uses 0.3); dynamic motion vectors cover
-  GPU cloth, cloth/pendulum/mushroom sway, vertex-offset meshes, and sludge waves, while
-  skinned/VAT, spinning/riding instances, particles, and transparent effects still reproject by
-  static depth.
+- **TAA** ([frame](viewer/frame.md)): dynamic motion vectors cover GPU cloth,
+  cloth/pendulum/mushroom sway, vertex-offset meshes, and sludge waves, while skinned/VAT,
+  spinning/riding instances, particles, and transparent effects still reproject by static depth.
 
 ## packaging
 
@@ -553,8 +553,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   cached.
 - **duplicate asset IDs** ([conversion](extraction.md#asset-conversion-and-workers)): assets reached
   both by path hash (static) and object (prefab) convert and store twice.
-- **prefab LODGroups**: switch on per-renderer bounds rather than LODGroup size/reference point,
-  without cross-fade or game LOD bias.
+- **prefab LODGroups**: switch on packed `LODG` reference spheres without cross-fade or game LOD
+  bias.
 - **textures**: formats without WebGPU equivalents fail
   ([asset classes](extraction.md#asset-classes)).
 - **instance blocks**: full f32 rows could shrink ~50% with meshopt filters or quantization
@@ -588,24 +588,17 @@ entries once resolved or ruled out.
 
 ### possible bugs
 
-- `formats/src/unity/animation-clip.ts`: `readClipActivity` skips the `m_ValueArrayDelta` total
-  check (`readClipEndPose` has it); `readAclMotion` doesn't skip `isPPtrCurve` bindings
-  (`readClipMotion` does).
 - `extractor/src/game/prefabs/animator-defaults.ts` `transitionHolds`: mode 5 (exit time) holds,
   while conditionless transitions wait on exit time and are never taken.
-- `extractor/src/game/dynamic/cabins.ts`: `cabinLevel` defaults to `levels[0]` (assumes min level is
-  1; `undefined` if empty).
 - `extractor/src/game/interactives/bridges.ts` `telescopicPieces`: undocumented 64-piece cap.
 - `extractor/src/game/materials/surfaces/dithered.ts`: drops dither test for `_USE_MAIN2`, though
   the game's depth pass still dithers.
 - `extractor/src/game/effects/particle-system.ts`: speed-modifier curve + drag + force fields
   without speed limit stands in, though the stepped path supports it.
-- `extractor/src/game/materials/surfaces/surface-keywords.ts`: `LIT_KEYWORDS` omits
-  `_EMISSIVE_ANIM_SWEEP` even though `describeLit` reads it (intentional to flag undrawn band?);
-  lists unused `_NORMAL_MAP` for foliage shaders.
+- `extractor/src/game/materials/surfaces/surface-keywords.ts`: lists unused `_NORMAL_MAP` for
+  foliage shaders.
 - `extractor/src/pack/tables/water.ts` `volumeSurface`: hardcodes `meshNormals: false` where
   `surfaceEntry` gives `true` for proxy surfaces (equivalent on flat polygons).
-- `viewer/src/looks/effects/effect-look.ts`: `EffectRow` entries are out of offset order.
 - `extractor/src/game/interactives/template-data.ts`: `state` lookup falls back saved → config →
   temporary, whereas [interactives](game-data/interactives.md) describes `saveProperties` alone.
 
@@ -625,12 +618,9 @@ entries once resolved or ruled out.
 - **extractor materials**: `_USE_MAIN2` check and `_MainTex2Color` read duplicated in
   `surfaces/dithered.ts` and `effects/dither-effect.ts`.
 - **extractor pack**: `assetNames` (`commands/world.ts`) looks up assets twice.
-- **formats**: record guard in `level-interactives.ts`, `level-locks.ts`, `level-splines.ts` vs
-  `isMemoryPackObject`; `expect`/`count`/`list`/`bool` redefined 3× in `interactive-model.ts`;
-  `present(VertexAttribute.BlendIndices)` called twice in `decodeMesh`; `stream-area.test.ts` has
-  its own FlatBuffer writer; `level-config.test.ts` holds a string pool test.
-- **viewer**: reflection march duplicated in `water/ssr-trace.wgsl` and `fs_march`
-  (`post/ssr.wgsl`).
+- **formats**: `expect`/`count`/`list`/`bool` redefined 3× in `interactive-model.ts`;
+  `stream-area.test.ts` has its own FlatBuffer writer; `level-config.test.ts` holds a string pool
+  test.
 
 ### CLI candidates
 
