@@ -36,10 +36,11 @@ export interface FoliageCluster {
  * packed foliage instances (24 bytes each):
  *
  * - `posQ`: `u16×3` (`unorm16` within cluster `[center - halfExtents, center + halfExtents]`)
- * - `rotScaleQ`: `u16×3` (quantized orientation + uniform scale)
- * - `sparsity`: `f32`
+ * - `rotQ`: `u16×3` (smallest-three unit quaternion: 15-bit components in low bits; high bits carry the 2-bit
+ *   largest-component index and 1-bit mirrored-handedness flag)
+ * - `scaleH`: `f16×3` (non-uniform 3D scale, non-negative; handedness lives in `rotQ`)
  * - `param0`: `u8×4` (`unorm8x4` shader custom param 0)
- * - `param1`: `u8×4` (`unorm8x4` shader custom param 1)
+ * - `reserved`: `u16` (0)
  */
 export interface FoliageBlock {
 	origin: Vec3;
@@ -52,6 +53,290 @@ export interface FoliageBlock {
 
 /** byte size of one packed foliage instance record */
 export const FOLIAGE_INSTANCE_BYTES = 24;
+
+const SQRT2 = Math.SQRT2;
+const Q15_MAX = 32_767;
+const U16_MAX = 65_535;
+
+const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * packs one column-major 4×4 object-to-world matrix into a 24-byte foliage instance record
+ *
+ * @param out destination byte buffer (at least `offset + 24` bytes)
+ * @param offset byte offset within `out`
+ * @param matrix 16-float column-major object-to-world matrix
+ * @param origin block world origin subtracted from translation
+ * @param center cluster AABB centre relative to `origin`
+ * @param halfExtents cluster AABB half-extents
+ */
+export const packFoliageInstance = (
+	out: Uint8Array,
+	offset: number,
+	matrix: ArrayLike<number>,
+	origin: Vec3,
+	center: Vec3,
+	halfExtents: Vec3,
+): void => {
+	const view = viewOf(out);
+	const tx = matrix[12] - origin[0];
+	const ty = matrix[13] - origin[1];
+	const tz = matrix[14] - origin[2];
+	const px =
+		halfExtents[0] > 0
+			? clamp(Math.round((((tx - center[0]) / halfExtents[0]) * 0.5 + 0.5) * U16_MAX), 0, U16_MAX)
+			: 32_768;
+	const py =
+		halfExtents[1] > 0
+			? clamp(Math.round((((ty - center[1]) / halfExtents[1]) * 0.5 + 0.5) * U16_MAX), 0, U16_MAX)
+			: 32_768;
+	const pz =
+		halfExtents[2] > 0
+			? clamp(Math.round((((tz - center[2]) / halfExtents[2]) * 0.5 + 0.5) * U16_MAX), 0, U16_MAX)
+			: 32_768;
+	view.setUint16(offset, px, true);
+	view.setUint16(offset + 2, py, true);
+	view.setUint16(offset + 4, pz, true);
+
+	let c0x = matrix[0];
+	let c0y = matrix[1];
+	let c0z = matrix[2];
+	const c1x = matrix[4];
+	const c1y = matrix[5];
+	const c1z = matrix[6];
+	const c2x = matrix[8];
+	const c2y = matrix[9];
+	const c2z = matrix[10];
+
+	const sx = Math.hypot(c0x, c0y, c0z);
+	const sy = Math.hypot(c1x, c1y, c1z);
+	const sz = Math.hypot(c2x, c2y, c2z);
+	const det = (c0y * c1z - c0z * c1y) * c2x + (c0z * c1x - c0x * c1z) * c2y + (c0x * c1y - c0y * c1x) * c2z;
+	const mirrored = det < 0 ? 1 : 0;
+	if (mirrored !== 0) {
+		c0x = -c0x;
+		c0y = -c0y;
+		c0z = -c0z;
+	}
+
+	const r00 = sx > 1e-8 ? c0x / sx : 1;
+	const r10 = sx > 1e-8 ? c0y / sx : 0;
+	const r20 = sx > 1e-8 ? c0z / sx : 0;
+	const r01 = sy > 1e-8 ? c1x / sy : 0;
+	const r11 = sy > 1e-8 ? c1y / sy : 1;
+	const r21 = sy > 1e-8 ? c1z / sy : 0;
+	const r02 = sz > 1e-8 ? c2x / sz : 0;
+	const r12 = sz > 1e-8 ? c2y / sz : 0;
+	const r22 = sz > 1e-8 ? c2z / sz : 1;
+
+	let qx: number;
+	let qy: number;
+	let qz: number;
+	let qw: number;
+	const trace = r00 + r11 + r22;
+	if (trace > 0) {
+		const s = Math.sqrt(trace + 1) * 2;
+		qw = 0.25 * s;
+		qx = (r21 - r12) / s;
+		qy = (r02 - r20) / s;
+		qz = (r10 - r01) / s;
+	} else if (r00 > r11 && r00 > r22) {
+		const s = Math.sqrt(Math.max(0, 1 + r00 - r11 - r22)) * 2;
+		qw = (r21 - r12) / s;
+		qx = 0.25 * s;
+		qy = (r01 + r10) / s;
+		qz = (r02 + r20) / s;
+	} else if (r11 > r22) {
+		const s = Math.sqrt(Math.max(0, 1 + r11 - r00 - r22)) * 2;
+		qw = (r02 - r20) / s;
+		qx = (r01 + r10) / s;
+		qy = 0.25 * s;
+		qz = (r12 + r21) / s;
+	} else {
+		const s = Math.sqrt(Math.max(0, 1 + r22 - r00 - r11)) * 2;
+		qw = (r10 - r01) / s;
+		qx = (r02 + r20) / s;
+		qy = (r12 + r21) / s;
+		qz = 0.25 * s;
+	}
+	const qLen = Math.hypot(qx, qy, qz, qw);
+	if (qLen > 0) {
+		qx /= qLen;
+		qy /= qLen;
+		qz /= qLen;
+		qw /= qLen;
+	} else {
+		qx = 0;
+		qy = 0;
+		qz = 0;
+		qw = 1;
+	}
+
+	const ax = Math.abs(qx);
+	const ay = Math.abs(qy);
+	const az = Math.abs(qz);
+	const aw = Math.abs(qw);
+	let largest = 3;
+	let maxAbs = aw;
+	if (ax > maxAbs) {
+		largest = 0;
+		maxAbs = ax;
+	}
+	if (ay > maxAbs) {
+		largest = 1;
+		maxAbs = ay;
+	}
+	if (az > maxAbs) {
+		largest = 2;
+	}
+
+	let a: number;
+	let b: number;
+	let c: number;
+	let sign: number;
+	switch (largest) {
+		case 0: {
+			sign = qx < 0 ? -1 : 1;
+			a = qy * sign;
+			b = qz * sign;
+			c = qw * sign;
+			break;
+		}
+		case 1: {
+			sign = qy < 0 ? -1 : 1;
+			a = qx * sign;
+			b = qz * sign;
+			c = qw * sign;
+			break;
+		}
+		case 2: {
+			sign = qz < 0 ? -1 : 1;
+			a = qx * sign;
+			b = qy * sign;
+			c = qw * sign;
+			break;
+		}
+		default: {
+			sign = qw < 0 ? -1 : 1;
+			a = qx * sign;
+			b = qy * sign;
+			c = qz * sign;
+			break;
+		}
+	}
+	const q15 = (v: number): number => clamp(Math.round((v * SQRT2 * 0.5 + 0.5) * Q15_MAX), 0, Q15_MAX);
+	view.setUint16(offset + 6, q15(a) | ((largest & 1) << 15), true);
+	view.setUint16(offset + 8, q15(b) | (((largest >> 1) & 1) << 15), true);
+	view.setUint16(offset + 10, q15(c) | (mirrored << 15), true);
+
+	view.setFloat16(offset + 12, sx, true);
+	view.setFloat16(offset + 14, sy, true);
+	view.setFloat16(offset + 16, sz, true);
+	view.setUint32(offset + 18, 0, true);
+	view.setUint16(offset + 22, 0, true);
+};
+
+/**
+ * unpacks a 24-byte foliage instance record into a 12-float row-major 3×4 transform relative to the block
+ * origin
+ *
+ * @param data packed instances buffer
+ * @param offset byte offset of the record within `data`
+ * @param center cluster AABB centre relative to the block origin
+ * @param halfExtents cluster AABB half-extents
+ * @param out destination float array
+ * @param outOffset float index in `out` where the 12-float row-major 3×4 transform is written
+ * @returns whether the transform is mirrored (negative 3×3 determinant)
+ */
+export const unpackFoliageInstance = (
+	data: Uint8Array,
+	offset: number,
+	center: Vec3,
+	halfExtents: Vec3,
+	out: Float32Array,
+	outOffset: number,
+): boolean => {
+	const view = viewOf(data);
+	const tx = center[0] + ((view.getUint16(offset, true) / U16_MAX) * 2 - 1) * halfExtents[0];
+	const ty = center[1] + ((view.getUint16(offset + 2, true) / U16_MAX) * 2 - 1) * halfExtents[1];
+	const tz = center[2] + ((view.getUint16(offset + 4, true) / U16_MAX) * 2 - 1) * halfExtents[2];
+
+	const u0 = view.getUint16(offset + 6, true);
+	const u1 = view.getUint16(offset + 8, true);
+	const u2 = view.getUint16(offset + 10, true);
+	const largest = ((u0 >>> 15) & 1) | (((u1 >>> 15) & 1) << 1);
+	const mirrored = ((u2 >>> 15) & 1) !== 0;
+	const a = ((u0 & Q15_MAX) / Q15_MAX - 0.5) * SQRT2;
+	const b = ((u1 & Q15_MAX) / Q15_MAX - 0.5) * SQRT2;
+	const c = ((u2 & Q15_MAX) / Q15_MAX - 0.5) * SQRT2;
+	const d = Math.sqrt(Math.max(0, 1 - a * a - b * b - c * c));
+
+	let qx: number;
+	let qy: number;
+	let qz: number;
+	let qw: number;
+	switch (largest) {
+		case 0: {
+			qx = d;
+			qy = a;
+			qz = b;
+			qw = c;
+			break;
+		}
+		case 1: {
+			qx = a;
+			qy = d;
+			qz = b;
+			qw = c;
+			break;
+		}
+		case 2: {
+			qx = a;
+			qy = b;
+			qz = d;
+			qw = c;
+			break;
+		}
+		default: {
+			qx = a;
+			qy = b;
+			qz = c;
+			qw = d;
+			break;
+		}
+	}
+
+	const sx = view.getFloat16(offset + 12, true) * (mirrored ? -1 : 1);
+	const sy = view.getFloat16(offset + 14, true);
+	const sz = view.getFloat16(offset + 16, true);
+
+	const xx = qx * qx;
+	const yy = qy * qy;
+	const zz = qz * qz;
+	const xy = qx * qy;
+	const xz = qx * qz;
+	const yz = qy * qz;
+	const wx = qw * qx;
+	const wy = qw * qy;
+	const wz = qw * qz;
+
+	out[outOffset] = (1 - 2 * (yy + zz)) * sx;
+	out[outOffset + 1] = 2 * (xy - wz) * sy;
+	out[outOffset + 2] = 2 * (xz + wy) * sz;
+	out[outOffset + 3] = tx;
+
+	out[outOffset + 4] = 2 * (xy + wz) * sx;
+	out[outOffset + 5] = (1 - 2 * (xx + zz)) * sy;
+	out[outOffset + 6] = 2 * (yz - wx) * sz;
+	out[outOffset + 7] = ty;
+
+	out[outOffset + 8] = 2 * (xz - wy) * sx;
+	out[outOffset + 9] = 2 * (yz + wx) * sy;
+	out[outOffset + 10] = (1 - 2 * (xx + yy)) * sz;
+	out[outOffset + 11] = tz;
+
+	return mirrored;
+};
 
 const MAGIC = fourcc('EFFL');
 const MAJOR_VERSION = 2;
