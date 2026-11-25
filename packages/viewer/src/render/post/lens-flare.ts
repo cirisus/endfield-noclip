@@ -3,6 +3,7 @@ import type { Vec2 } from '@endfield-noclip/package-format/values';
 import { type LensFlareLook, lensFlareTextures } from '../../environment/lens-flare-look.ts';
 import { ADD, ALPHA_OVER, PREMULTIPLIED_OVER } from '../../gfx/blend.ts';
 import { createUniformBuffer } from '../../gfx/buffers.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_CLAMP_MIPMAPPED, sampler } from '../../gfx/samplers.ts';
 import type { Camera } from '../../scene/camera.ts';
@@ -32,6 +33,7 @@ const BLENDS: GPUBlendComponent[] = [
 /** owns the flare's pipelines, quad buffer and texture bindings */
 export class LensFlares {
 	#device: GPUDevice;
+	#pipelines: PipelineCache;
 	#frame: GPUBuffer;
 	#frameData = new Float32Array(FRAME_BYTES / 4);
 	#quads: GPUBuffer;
@@ -41,8 +43,8 @@ export class LensFlares {
 	#textureLayout: GPUBindGroupLayout;
 	/** group 1 for circles, which sample nothing */
 	#blankGroup: GPUBindGroup;
-	/** per shape, per blend mode */
-	#pipelines: Record<'image' | 'circle', GPURenderPipeline[]>;
+	/** pipeline cache keys per shape, per blend mode */
+	#pipelineKeys: Record<'image' | 'circle', string[]>;
 	#look: LensFlareLook | null = null;
 	/** the texture-table ids the look's images sample */
 	#textureIds: number[] = [];
@@ -56,10 +58,14 @@ export class LensFlares {
 	/** the frame group and the scene the flare draws onto, once sized */
 	#sized: { frame: GPUBindGroup; target: GPUTextureView } | null = null;
 
-	/** @param device the device */
-	constructor(device: GPUDevice) {
+	/**
+	 * @param device the device
+	 * @param pipelines the pipeline cache
+	 */
+	constructor(device: GPUDevice, pipelines: PipelineCache) {
 		this.#device = device;
-		const module = device.createShaderModule({ label: 'lens flare', code: lensFlareWgsl });
+		this.#pipelines = pipelines;
+		const module = pipelines.module('lens flare', lensFlareWgsl);
 		const visibility = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
 		this.#frameLayout = device.createBindGroupLayout({
 			label: 'lens flare frame',
@@ -80,10 +86,10 @@ export class LensFlares {
 			label: 'lens flare',
 			bindGroupLayouts: [this.#frameLayout, this.#textureLayout],
 		});
-		const pipelines = (shape: 'image' | 'circle'): GPURenderPipeline[] =>
-			BLENDS.map((blend, blendMode) =>
-				device.createRenderPipeline({
-					label: `lens flare ${shape}/${blendMode}`,
+		const prepareShape = (shape: 'image' | 'circle'): string[] =>
+			BLENDS.map((blend, blendMode) => {
+				const key = `lens flare ${shape}/${blendMode}`;
+				void pipelines.prepare(key, () => ({
 					layout,
 					vertex: { module, entryPoint: 'vs_flare' },
 					fragment: {
@@ -98,9 +104,10 @@ export class LensFlares {
 						],
 					},
 					primitive: { topology: 'triangle-strip' },
-				}),
-			);
-		this.#pipelines = { image: pipelines('image'), circle: pipelines('circle') };
+				}));
+				return key;
+			});
+		this.#pipelineKeys = { image: prepareShape('image'), circle: prepareShape('circle') };
 		this.#frame = createUniformBuffer(device, 'lens flare frame', FRAME_BYTES);
 		this.#quads = device.createBuffer({
 			label: 'lens flare quads',
@@ -231,13 +238,17 @@ export class LensFlares {
 			if (group === undefined) {
 				continue;
 			}
+			const keys = this.#pipelineKeys[quad.texture === null ? 'circle' : 'image'];
+			const pipeline = this.#pipelines.get(keys[quad.blendMode] ?? keys[0]);
+			if (pipeline === undefined) {
+				continue;
+			}
 			const o = count * QUAD_FLOATS;
 			f.set(quad.data0, o);
 			f.set(quad.data2, o + 4);
 			f.set(quad.color, o + 8);
 			f.set(quad.data3, o + 12);
-			const pipelines = this.#pipelines[quad.texture === null ? 'circle' : 'image'];
-			this.#drawPipelines[count] = pipelines[quad.blendMode] ?? pipelines[0];
+			this.#drawPipelines[count] = pipeline;
 			this.#drawGroups[count] = group;
 			count++;
 		}

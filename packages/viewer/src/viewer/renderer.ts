@@ -195,6 +195,7 @@ export class Renderer {
 		});
 		this.weather = new WeatherRenderer(
 			device,
+			this.pipelines,
 			layouts.frame,
 			format.depth,
 			this.composer.fogInputs,

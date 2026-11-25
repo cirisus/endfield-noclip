@@ -1,6 +1,7 @@
 import type { RainConfig, SnowConfig, WeatherAssets } from '@endfield-noclip/package-format/environment';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_REPEAT, sampler } from '../../gfx/samplers.ts';
 import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
@@ -121,6 +122,12 @@ const writeCylinderBasis = (
 	out[offset + 10] = (t * az * az + c) * radius;
 };
 
+const RAIN_PIPELINE = 'weather scene effect rain';
+const SNOW_PIPELINE = 'weather scene effect snow';
+const FAR_RAIN_PIPELINE = 'weather far rain';
+const SPLASH_PIPELINE = 'weather rain splash';
+const SCREEN_DROP_PIPELINE = 'weather screen rain drop';
+
 type DrawKind = 'rain' | 'farRain' | 'splash' | 'snow';
 
 interface PlannedDraw {
@@ -134,6 +141,7 @@ interface PlannedDraw {
  */
 export class WeatherRenderer {
 	readonly #device: GPUDevice;
+	readonly #pipelines: PipelineCache;
 	readonly #verticalOcclusion: VerticalOcclusionMap;
 	readonly #fogInputs: { uniforms: GPUBuffer; froxels: GPUTextureView; sampler: GPUSampler };
 	readonly #postFogLayout: GPUBindGroupLayout;
@@ -143,7 +151,6 @@ export class WeatherRenderer {
 	readonly #screenDropUniforms: GPUBuffer;
 	readonly #screenDropData = new Float32Array(SCREEN_DROP_FLOATS);
 	readonly #screenDropLayout: GPUBindGroupLayout;
-	readonly #screenDropPipeline: GPURenderPipeline;
 	readonly #screenDrops: ScreenDropState[] = Array.from({ length: MAX_SCREEN_DROPS }, () => ({
 		active: false,
 		x: 0,
@@ -160,10 +167,6 @@ export class WeatherRenderer {
 	readonly #rainMesh: WeatherMesh;
 	readonly #splashMesh: WeatherMesh;
 	readonly #farRainMesh: WeatherMesh;
-	readonly #rainPipeline: GPURenderPipeline;
-	readonly #snowPipeline: GPURenderPipeline;
-	readonly #farRainPipeline: GPURenderPipeline;
-	readonly #splashPipeline: GPURenderPipeline;
 
 	#postFogGroup: GPUBindGroup | null = null;
 	#sceneVersion = -1;
@@ -193,6 +196,7 @@ export class WeatherRenderer {
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param frameLayout group 0 (`frame`) layout
 	 * @param depthFormat the main pass's depth-stencil format
 	 * @param fogInputs the post chain's uniforms, froxels and clamping sampler
@@ -200,12 +204,14 @@ export class WeatherRenderer {
 	 */
 	constructor(
 		device: GPUDevice,
+		pipelines: PipelineCache,
 		frameLayout: GPUBindGroupLayout,
 		depthFormat: GPUTextureFormat,
 		fogInputs: { uniforms: GPUBuffer; froxels: GPUTextureView; sampler: GPUSampler },
 		verticalOcclusion: VerticalOcclusionMap,
 	) {
 		this.#device = device;
+		this.#pipelines = pipelines;
 		this.#fogInputs = fogInputs;
 		this.#verticalOcclusion = verticalOcclusion;
 		this.#repeatSampler = sampler(device, LINEAR_REPEAT);
@@ -303,67 +309,70 @@ export class WeatherRenderer {
 			},
 		];
 
-		const makePipeline = (
-			label: string,
+		const preparePipeline = (
+			key: string,
 			code: string,
 			vs: string,
 			fs: string,
 			buffers: GPUVertexBufferLayout[],
-		): GPURenderPipeline => {
-			const module = device.createShaderModule({ label, code });
-			return device.createRenderPipeline({
-				label,
-				layout: pipelineLayout,
-				vertex: { module, entryPoint: vs, buffers },
-				fragment: { module, entryPoint: fs, targets: [{ format: HDR_FORMAT, blend }] },
-				primitive: { topology: 'triangle-list', cullMode: 'none' },
-				depthStencil,
+		): void => {
+			void pipelines.prepare(key, () => {
+				const module = pipelines.module(key, code);
+				return {
+					layout: pipelineLayout,
+					vertex: { module, entryPoint: vs, buffers },
+					fragment: { module, entryPoint: fs, targets: [{ format: HDR_FORMAT, blend }] },
+					primitive: { topology: 'triangle-list', cullMode: 'none' },
+					depthStencil,
+				};
 			});
 		};
 
-		this.#rainPipeline = makePipeline(
-			'weather scene effect rain',
+		preparePipeline(
+			RAIN_PIPELINE,
 			[FRAME_WGSL, postSrc, sceneEffectRainWgsl].join('\n'),
 			'vs_rain',
 			'fs_rain',
 			sceneEffectBuffers,
 		);
-		this.#snowPipeline = makePipeline(
-			'weather scene effect snow',
+		preparePipeline(
+			SNOW_PIPELINE,
 			[FRAME_WGSL, postSrc, sceneEffectSnowWgsl].join('\n'),
 			'vs_snow',
 			'fs_snow',
 			sceneEffectBuffers,
 		);
-		this.#farRainPipeline = makePipeline(
-			'weather far rain',
+		preparePipeline(
+			FAR_RAIN_PIPELINE,
 			[FRAME_WGSL, postSrc, fogSrc, farRainWgsl].join('\n'),
 			'vs_far_rain',
 			'fs_far_rain',
 			farRainBuffers,
 		);
-		this.#splashPipeline = makePipeline(
-			'weather rain splash',
+		preparePipeline(
+			SPLASH_PIPELINE,
 			[FRAME_WGSL, postSrc, rainSplashWgsl].join('\n'),
 			'vs_splash',
 			'fs_splash',
 			splashBuffers,
 		);
 		{
-			const module = device.createShaderModule({
-				label: 'weather screen rain drop',
-				code: [FRAME_WGSL, postSrc, screenRainDropWgsl].join('\n'),
+			const screenDropLayout = device.createPipelineLayout({
+				label: SCREEN_DROP_PIPELINE,
+				bindGroupLayouts: [frameLayout, this.#postFogLayout, this.#screenDropLayout],
 			});
-			this.#screenDropPipeline = device.createRenderPipeline({
-				label: 'weather screen rain drop',
-				layout: device.createPipelineLayout({
-					label: 'weather screen rain drop',
-					bindGroupLayouts: [frameLayout, this.#postFogLayout, this.#screenDropLayout],
-				}),
-				vertex: { module, entryPoint: 'vs_screen_drop' },
-				fragment: { module, entryPoint: 'fs_screen_drop', targets: [{ format: HDR_FORMAT, blend }] },
-				primitive: { topology: 'triangle-list', cullMode: 'none' },
-				depthStencil: { format: depthFormat, depthWriteEnabled: false, depthCompare: 'always' },
+			void pipelines.prepare(SCREEN_DROP_PIPELINE, () => {
+				const module = pipelines.module(
+					SCREEN_DROP_PIPELINE,
+					[FRAME_WGSL, postSrc, screenRainDropWgsl].join('\n'),
+				);
+				return {
+					layout: screenDropLayout,
+					vertex: { module, entryPoint: 'vs_screen_drop' },
+					fragment: { module, entryPoint: 'fs_screen_drop', targets: [{ format: HDR_FORMAT, blend }] },
+					primitive: { topology: 'triangle-list', cullMode: 'none' },
+					depthStencil: { format: depthFormat, depthWriteEnabled: false, depthCompare: 'always' },
+				};
 			});
 		}
 
@@ -865,33 +874,37 @@ export class WeatherRenderer {
 		let lastKind: DrawKind | null = null;
 		for (const draw of draws) {
 			if (draw.kind !== lastKind) {
-				lastKind = draw.kind;
+				let pipeline: GPURenderPipeline | undefined;
+				let mesh: WeatherMesh;
 				switch (draw.kind) {
 					case 'rain': {
-						pass.setPipeline(this.#rainPipeline);
-						pass.setVertexBuffer(0, this.#rainMesh.vertex);
-						pass.setIndexBuffer(this.#rainMesh.index, 'uint16');
+						pipeline = this.#pipelines.get(RAIN_PIPELINE);
+						mesh = this.#rainMesh;
 						break;
 					}
 					case 'farRain': {
-						pass.setPipeline(this.#farRainPipeline);
-						pass.setVertexBuffer(0, this.#farRainMesh.vertex);
-						pass.setIndexBuffer(this.#farRainMesh.index, 'uint16');
+						pipeline = this.#pipelines.get(FAR_RAIN_PIPELINE);
+						mesh = this.#farRainMesh;
 						break;
 					}
 					case 'splash': {
-						pass.setPipeline(this.#splashPipeline);
-						pass.setVertexBuffer(0, this.#splashMesh.vertex);
-						pass.setIndexBuffer(this.#splashMesh.index, 'uint16');
+						pipeline = this.#pipelines.get(SPLASH_PIPELINE);
+						mesh = this.#splashMesh;
 						break;
 					}
 					case 'snow': {
-						pass.setPipeline(this.#snowPipeline);
-						pass.setVertexBuffer(0, this.#rainMesh.vertex);
-						pass.setIndexBuffer(this.#rainMesh.index, 'uint16');
+						pipeline = this.#pipelines.get(SNOW_PIPELINE);
+						mesh = this.#rainMesh;
 						break;
 					}
 				}
+				if (pipeline === undefined) {
+					continue;
+				}
+				lastKind = draw.kind;
+				pass.setPipeline(pipeline);
+				pass.setVertexBuffer(0, mesh.vertex);
+				pass.setIndexBuffer(mesh.index, 'uint16');
 			}
 			const offset = draw.slot * SLOT_BYTES;
 			switch (draw.kind) {
@@ -919,10 +932,13 @@ export class WeatherRenderer {
 			encoded++;
 		}
 		if (this.#activeScreenDrops > 0) {
-			pass.setPipeline(this.#screenDropPipeline);
-			pass.setBindGroup(2, this.#screenDropGroup);
-			pass.draw(6, this.#activeScreenDrops);
-			encoded++;
+			const screenDrop = this.#pipelines.get(SCREEN_DROP_PIPELINE);
+			if (screenDrop !== undefined) {
+				pass.setPipeline(screenDrop);
+				pass.setBindGroup(2, this.#screenDropGroup);
+				pass.draw(6, this.#activeScreenDrops);
+				encoded++;
+			}
 		}
 		return encoded;
 	}

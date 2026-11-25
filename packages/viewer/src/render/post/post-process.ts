@@ -35,7 +35,7 @@ export class PostProcess {
 
 	/**
 	 * @param device the device
-	 * @param pipelines the pipeline cache, which compiles the auto exposure's histogram pass
+	 * @param pipelines the pipeline cache, which compiles the auto exposure and lens flare passes
 	 * @param options swapchain format, shared `Post` uniform buffer, clamping sampler, and starting environment
 	 */
 	constructor(
@@ -51,7 +51,7 @@ export class PostProcess {
 		const { swapchainFormat, postUniforms, sampler, environment } = options;
 		this.#autoExposure = new AutoExposure(device, pipelines);
 		this.#lightShafts = new LightShafts(device, postUniforms);
-		this.#lensFlares = new LensFlares(device);
+		this.#lensFlares = new LensFlares(device, pipelines);
 		this.#taa = new TemporalAA(device, postUniforms);
 		this.#bloom = new Bloom(device, postUniforms, sampler);
 		this.#tonemap = new Tonemap(device, postUniforms, sampler, swapchainFormat);
