@@ -1,7 +1,5 @@
-import {
-	readLevelInteractives,
-	UnsupportedLevelData,
-} from '@endfield-noclip/formats/endfield/level-interactives';
+import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
+import { readLevelDataInteractives } from '@endfield-noclip/formats/endfield/level-interactives';
 import { parseSparkTable } from '@endfield-noclip/formats/hg/spark-buffer';
 
 import { definite } from '@mary-ext/array-fns';
@@ -432,14 +430,8 @@ const readInteractives = async (
 	if (entries.length === 0) {
 		throw new Error(`no LevelData files found for ${target}`);
 	}
-	const pool = await context.world.stringPool();
-	const resolveString = (id: number): string | null => {
-		try {
-			return pool.get(id) ?? null;
-		} catch {
-			return null;
-		}
-	};
+	const reader = await context.memoryPack();
+	const fields = new Set(['interactives']);
 
 	const multiLevel = levels.length > 1;
 	const matched: object[] = [];
@@ -449,9 +441,10 @@ const readInteractives = async (
 		const bytes = await context.vfs.read(VfsGroup.JsonData, name);
 		let rows;
 		try {
-			rows = readLevelInteractives(bytes, resolveString);
+			const data = reader.decodeFields(bytes, 'Beyond_Gameplay_LevelDataForMemoryPack', fields);
+			rows = readLevelDataInteractives(data).interactives;
 		} catch (error) {
-			if (error instanceof UnsupportedLevelData) {
+			if (error instanceof FormatError) {
 				skipped.push(`${name}: ${errorText(error)}`);
 				continue;
 			}

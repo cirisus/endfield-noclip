@@ -1,8 +1,5 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
-import {
-	readLevelInteractives,
-	UnsupportedLevelData,
-} from '@endfield-noclip/formats/endfield/level-interactives';
+import { readLevelDataInteractives } from '@endfield-noclip/formats/endfield/level-interactives';
 import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
 import type {
 	ControlDriver,
@@ -835,6 +832,9 @@ export const loadLevelScripts = async (
 	return { scripts: [...scripts.values()], ownLevels, undecoded };
 };
 
+const LEVEL_DATA_ROOT = 'Beyond_Gameplay_LevelDataForMemoryPack';
+const LEVEL_INTERACTIVES_FIELD = new Set(['interactives']);
+
 /**
  * finds what shows and hides a scene's script-controlled entities, and what runs other actions
  *
@@ -846,7 +846,7 @@ export const loadLevelScripts = async (
  * @returns drivers by entity id and action target, and activation rules by entity id
  */
 export const loadScriptDrivers = async (
-	context: Pick<Context, 'vfs' | 'world'>,
+	context: Pick<Context, 'vfs' | 'world' | 'memoryPack'>,
 	levelScripts: LevelScripts,
 	entities: ReadonlySet<string>,
 	actions: readonly ScriptAction[],
@@ -857,8 +857,7 @@ export const loadScriptDrivers = async (
 
 	// #region where things are: LevelData placements for interactives named by logic id
 	const placements = new Map<string, { template: string; position: Vec3 }>();
-	const pool = await world.stringPool();
-	const pathOf = await world.pathLookup();
+	const [reader, pathOf] = await Promise.all([context.memoryPack(), world.pathLookup()]);
 	for (const config of (await world.levelConfigs()).values()) {
 		if (!ownLevels.has(config.id)) {
 			continue;
@@ -869,12 +868,13 @@ export const loadScriptDrivers = async (
 				continue;
 			}
 			try {
-				// oxlint-disable-next-line no-await-in-loop -- level files are released after their prefix is decoded
-				for (const row of readLevelInteractives(await read(path), (id) => pool.get(id))) {
+				// oxlint-disable-next-line no-await-in-loop -- level files are released after decoding
+				const data = reader.decodeFields(await read(path), LEVEL_DATA_ROOT, LEVEL_INTERACTIVES_FIELD);
+				for (const row of readLevelDataInteractives(data).interactives) {
 					placements.set(row.id.toString(), { template: row.template, position: row.position });
 				}
 			} catch (error) {
-				if (!(error instanceof UnsupportedLevelData)) {
+				if (!(error instanceof FormatError)) {
 					throw error;
 				}
 			}

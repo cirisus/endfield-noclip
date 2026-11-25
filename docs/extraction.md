@@ -233,10 +233,9 @@ decoders for [water data](game-data/water.md):
   ([surface `WaterConfig`](game-data/water.md#surface-waterconfig)). global water configs keep
   sectors with `sectorDataExists`, parse `(x, z)` from the path (`…/Sector/T_<x>_<z>.asset`) rather
   than array index, and convert signed `sectorDataAssetHashes` to unsigned 64-bit keys.
-- **volumes**: decoded whole from LevelData via the [MemoryPack schema](#memorypack-data)
-  (`waterVolumes` sits past the interactives prefix), along with floaters (interactives with
-  component 39). skips files the schema can't decode whole (only Dijiang's, whose spaceship data
-  contains an unwrapped tuple).
+- **volumes**: decoded from LevelData via the [MemoryPack schema](#memorypack-data), along with
+  floaters (interactives with component 39). skips files the schema can't decode (only Dijiang's,
+  whose spaceship data contains an unwrapped tuple).
 - **scripted fills**: extracts constant target fills (and the fill speed set immediately before a
   smooth move) from level scripts decoded for
   [script groups](extraction/scene-controls.md#script-groups). runtime-computed actions are skipped
@@ -265,11 +264,8 @@ package storage is in [irradiance cells](package-format.md#irradiance-cells).
 
 decodes [level scripts](game-data/scene-states.md#level-scripts), interactive templates, and
 LevelData using the runtime schema from IL2CPP metadata and `GameAssembly.dll`
-([MemoryPack](game-data/containers.md#memorypack)). every level script and interactive template in
-the client decodes to exact EOF.
-
-LevelData files with populated blackbox settings (factory puzzles) are skipped and listed in
-`unsupported-interactives.json`.
+([MemoryPack](game-data/containers.md#memorypack)). every level script, interactive template, and
+LevelData interactive list in the client decodes cleanly.
 
 ## pack
 

@@ -450,9 +450,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   by one per-level "created during play" toggle (default off).
 - **unsupported interactives** (`debug/unsupported-interactives.json`): missing model IDs, data-less
   templates (weapon-wall racks, some doors), ambiguous variant positions, ambiguous door open-idle
-  states, and unimplemented LevelData fields (blackbox settings; full-file decode for locks/splines
-  fails on Dijiang). missing template/model → [stand-ins](package-format.md#stand-ins); rest
-  omitted.
+  states, and unimplemented LevelData fields (locks/splines decode fails on Dijiang). missing
+  template/model → [stand-ins](package-format.md#stand-ins); rest omitted.
 - **skeletons & animators** ([animation](game-data/animation.md)):
   - unposable skeletons and nonzero blend shapes → stand-ins; character skeletal animation unplayed.
   - [scenery animators](game-data/animation.md#scenery-animators): blend trees, additive/partial

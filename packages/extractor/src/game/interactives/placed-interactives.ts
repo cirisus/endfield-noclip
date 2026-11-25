@@ -1,8 +1,7 @@
 import { FormatError } from '@endfield-noclip/formats/binary/binary-reader';
 import {
 	type LevelInteractive,
-	readLevelDataPrefix,
-	UnsupportedLevelData,
+	readLevelDataInteractives,
 } from '@endfield-noclip/formats/endfield/level-interactives';
 import { InteractiveUnlockType, readLevelLocks } from '@endfield-noclip/formats/endfield/level-locks';
 import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
@@ -34,6 +33,9 @@ export interface Placements {
 	/** by level id, its LevelData files */
 	levelDataPaths: Map<string, string[]>;
 }
+
+/** only the LevelData fields interactive placement reads */
+const LEVEL_INTERACTIVE_FIELDS = new Set(['interactives', 'functionArea']);
 
 /**
  * reads the interactive lists of a map's or a level's LevelData files. files the reader can't decode, and
@@ -69,24 +71,27 @@ export const collectPlacements = async (
 				throw new FormatError(`missing LevelData path ${hash}`);
 			}
 			levelDataPaths.getOrInsertComputed(config.id, () => []).push(path);
-			let prefix;
+			let decoded;
 			try {
-				// oxlint-disable-next-line no-await-in-loop -- level files are released after their prefix is decoded
-				prefix = readLevelDataPrefix(await sources.read(path), (id) => sources.string(id));
+				// oxlint-disable-next-line no-await-in-loop -- level files are released after decoding
+				const bytes = await sources.read(path);
+				decoded = readLevelDataInteractives(
+					sources.memoryPack.decodeFields(bytes, LEVEL_DATA_ROOT, LEVEL_INTERACTIVE_FIELDS),
+				);
 			} catch (error) {
-				if (!(error instanceof UnsupportedLevelData)) {
+				if (!(error instanceof FormatError)) {
 					throw error;
 				}
 				sources.report(path, error.message);
 				continue;
 			}
-			if (prefix.hideByTypeAreas > 0) {
+			if (decoded.hideByTypeAreas > 0) {
 				sources.report(
 					path,
-					`${prefix.hideByTypeAreas} function areas that hide entities by type aren't applied`,
+					`${decoded.hideByTypeAreas} function areas that hide entities by type aren't applied`,
 				);
 			}
-			for (const row of prefix.interactives) {
+			for (const row of decoded.interactives) {
 				if (row.createState !== 0) {
 					later.push({ path, levelId: config.id, levelTag, row, created: `created:${config.id}` });
 					continue;
