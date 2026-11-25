@@ -1,3 +1,5 @@
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
+
 import type { Environment } from '../../environment/environment.ts';
 import type { LensFlareLook } from '../../environment/lens-flare-look.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
@@ -9,6 +11,7 @@ import { AutoExposure } from './auto-exposure.ts';
 import { Bloom } from './bloom.ts';
 import { LensFlares } from './lens-flare.ts';
 import { LightShafts } from './light-shafts.ts';
+import { PhotoParticles } from './photo-particles.ts';
 import { type PostSettings, effectiveSettings, postExposure } from './settings.ts';
 import { TemporalAA } from './temporal-aa.ts';
 import { Tonemap } from './tonemap.ts';
@@ -17,6 +20,8 @@ import { Tonemap } from './tonemap.ts';
 interface Sized {
 	version: number;
 	historyViews: [GPUTextureView, GPUTextureView];
+	composited: GPUTextureView;
+	depth: GPUTextureView;
 }
 
 /**
@@ -24,12 +29,14 @@ interface Sized {
  * tonemapping to the swapchain
  */
 export class PostProcess {
+	#device: GPUDevice;
 	#lightShafts: LightShafts;
 	#lensFlares: LensFlares;
 	#taa: TemporalAA;
 	#autoExposure: AutoExposure;
 	#bloom: Bloom;
 	#tonemap: Tonemap;
+	#photoParticles: PhotoParticles | null = null;
 	#sized: Sized | null = null;
 	#environment: Environment;
 
@@ -56,6 +63,32 @@ export class PostProcess {
 		this.#bloom = new Bloom(device, pipelines, postUniforms, sampler);
 		this.#tonemap = new Tonemap(device, pipelines, postUniforms, sampler, swapchainFormat);
 		this.#environment = environment;
+		this.#device = device;
+	}
+
+	/**
+	 * @param filter selected look
+	 * @param strength contribution of the look's LUT
+	 */
+	setPhotoLut(filter: PhotoFilter | null, strength: number): void {
+		this.#tonemap.setPhotoLut(filter, strength);
+	}
+
+	/**
+	 * @param filter selected look
+	 * @param camera the camera pose used to anchor photo effects
+	 * @param time the current animation clock
+	 */
+	setPhotoEffects(filter: PhotoFilter | null, camera: Camera, time: number): void {
+		if (this.#photoParticles === null && (filter?.effects?.length ?? 0) > 0) {
+			this.#photoParticles = new PhotoParticles(this.#device);
+		}
+		this.#photoParticles?.set(filter, camera, time);
+	}
+
+	/** @returns whether the selected photo look needs animation frames */
+	get photoEffectsActive(): boolean {
+		return this.#photoParticles?.active ?? false;
 	}
 
 	/** @returns bytes of the post chain's render targets */
@@ -218,7 +251,7 @@ export class PostProcess {
 		this.#lensFlares.resize({ scene, composited });
 		this.#bloom.resize({ histories, outputWidth, outputHeight });
 		this.#tonemap.resize({ histories, bloom: this.#bloom.result });
-		this.#sized = { version: scene.version, historyViews };
+		this.#sized = { version: scene.version, historyViews, composited, depth: scene.depth };
 		return { resized: true, historyViews };
 	}
 
@@ -233,6 +266,7 @@ export class PostProcess {
 		encoder: GPUCommandEncoder,
 		input: {
 			swapchain: GPUTextureView;
+			time: number;
 			camera: Camera;
 			width: number;
 			height: number;
@@ -249,6 +283,14 @@ export class PostProcess {
 			return;
 		}
 		if (settings.debugView === 'lit') {
+			this.#photoParticles?.encode(encoder, {
+				time: input.time,
+				target: sized.composited,
+				depth: sized.depth,
+				camera,
+				aspect: width / height,
+				exposure: postExposure(settings, this.#autoExposure),
+			});
 			this.#lightShafts.encode(encoder, { camera, aspect: width / height, look: environment.lightShaft });
 			// the game draws the flare after the shafts, which don't see it
 			this.#lensFlares.encode(encoder, { camera, width, height });
@@ -269,6 +311,8 @@ export class PostProcess {
 
 	/** frees the post chain's GPU resources */
 	destroy(): void {
+		this.#tonemap.destroy();
+		this.#photoParticles?.destroy();
 		this.#bloom.destroy();
 		this.#autoExposure.destroy();
 		this.#taa.destroy();

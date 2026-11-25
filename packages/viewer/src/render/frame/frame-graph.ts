@@ -588,6 +588,7 @@ export const encodeFrame = (
 		}
 	}
 	post.encode(encoder, {
+		time: context.time,
 		swapchain: targets.swapchainView(),
 		camera,
 		width,

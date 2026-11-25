@@ -1,3 +1,5 @@
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
+
 import {
 	type FullscreenPass,
 	type FullscreenPipeline,
@@ -8,6 +10,7 @@ import {
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import colorWgsl from '../shaders/common/color.wgsl?raw';
 
+import { PhotoLut } from './photo-filters.ts';
 import { postShaderModule } from './shader-source.ts';
 import tonemapWgsl from './tonemap.wgsl?raw';
 
@@ -18,6 +21,9 @@ export class Tonemap {
 	#sampler: GPUSampler;
 	#pipeline: FullscreenPipeline;
 	#postGroup: GPUBindGroup | null = null;
+	#photoLut: PhotoLut | null = null;
+	#filter: PhotoFilter | null = null;
+	#strength = 1;
 	/** per temporal history: the pass reading it */
 	#passes: [FullscreenPass, FullscreenPass] | null = null;
 
@@ -58,16 +64,23 @@ export class Tonemap {
 			return {
 				label: 'tonemap',
 				pipeline: this.#pipeline,
-				bind: (compiled) => [
-					(this.#postGroup ??= autoBindGroup(this.#device, compiled, 0, {
-						0: { buffer: this.#postUniforms },
-					})),
-					autoBindGroup(this.#device, compiled, 1, {
-						0: historyView,
-						1: bloomView,
-						2: this.#sampler,
-					}),
-				],
+				bind: (compiled) => {
+					if (this.#photoLut === null) {
+						this.#photoLut = new PhotoLut(this.#device, compiled.getBindGroupLayout(2));
+						this.#photoLut.set(this.#filter, this.#strength);
+					}
+					return [
+						(this.#postGroup ??= autoBindGroup(this.#device, compiled, 0, {
+							0: { buffer: this.#postUniforms },
+						})),
+						autoBindGroup(this.#device, compiled, 1, {
+							0: historyView,
+							1: bloomView,
+							2: this.#sampler,
+						}),
+						this.#photoLut.group,
+					];
+				},
 				targets: [],
 			};
 		};
@@ -85,5 +98,29 @@ export class Tonemap {
 		const pass = this.#passes[input.history];
 		pass.targets[0] = input.swapchain;
 		encodeFullscreen(encoder, pass);
+	}
+
+	/**
+	 * @param filter selected look
+	 * @param strength contribution of the look's LUT
+	 */
+	setPhotoLut(filter: PhotoFilter | null, strength: number): void {
+		if (filter?.lut && !this.#device.features.has('texture-compression-bc')) {
+			throw new Error('photo LUTs require BC texture support');
+		}
+		const current = this.#photoLut?.group;
+		this.#photoLut?.set(filter, strength);
+		this.#filter = filter;
+		this.#strength = strength;
+		if (this.#photoLut?.group !== current && this.#passes !== null) {
+			for (const pass of this.#passes) {
+				delete pass.groups;
+			}
+		}
+	}
+
+	/** frees photography GPU resources */
+	destroy(): void {
+		this.#photoLut?.destroy();
 	}
 }

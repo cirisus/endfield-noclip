@@ -7,6 +7,7 @@ import { run } from '@optique/run';
 import { auditParser } from './cli/commands/audit/parser.ts';
 import { bundleParser } from './cli/commands/bundle/parser.ts';
 import { dataParser } from './cli/commands/data/parser.ts';
+import { filtersParser } from './cli/commands/filters/parser.ts';
 import { initParser } from './cli/commands/init/parser.ts';
 import { inspectParser } from './cli/commands/inspect/parser.ts';
 import { packParser } from './cli/commands/pack/parser.ts';
@@ -32,6 +33,9 @@ const rootParser = or(
 	}),
 	command('data', dataParser, {
 		brief: message`search asset paths, resolve hashes, and read SparkBuffer tables & level data`,
+	}),
+	command('filters', filtersParser, {
+		brief: message`export the install's photo filters and LUTs`,
 	}),
 	command('init', initParser, {
 		brief: message`derive and validate install keys, then write the local config`,
@@ -68,6 +72,11 @@ const parsed = run(rootParser, {
 
 try {
 	switch (parsed.command) {
+		case 'filters': {
+			const { runFilters } = await import('./cli/commands/filters/run.ts');
+			await runFilters(parsed);
+			break;
+		}
 		case 'init': {
 			const { runInit } = await import('./cli/commands/init/run.ts');
 			await runInit(parsed);

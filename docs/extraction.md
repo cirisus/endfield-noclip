@@ -36,6 +36,11 @@ install. every install-reading command accepts `--config <file>` (default `endfi
 | `vfs`     | lists VFS groups/files and extracts logical files                                          |
 | `bundle`  | inspects bundle headers, dumps objects, extracts `.resS` streams, and searches bundles     |
 
+to preview the install's photography looks, run
+`pnpm extract filters -o packages/viewer/public/photo-filters.local.json` and open the viewer
+with `?filters=/photo-filters.local.json` (or a URL serving that file). the filter library is
+generated from local data and is independent of the scene package.
+
 only `init` and `pack` are needed to build packages; the rest are for research and debugging. run
 `pnpm extract <command> [subcommand] --help` for full flags, choices, and defaults.
 

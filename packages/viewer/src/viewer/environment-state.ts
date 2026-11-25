@@ -1,5 +1,6 @@
 import type { EnvironmentProfile, RainConfig, SnowConfig } from '@endfield-noclip/package-format/environment';
 import type { LevelEnvironment } from '@endfield-noclip/package-format/manifest';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import {
@@ -44,14 +45,16 @@ export interface BlendInput {
 	loaded: readonly boolean[];
 	/** seconds since the last update, which time-faded volumes advance by */
 	dt: number;
+	/** selected photography look applied after volume blending */
+	photoFilter?: PhotoFilter | null;
 }
 
 /**
  * @param profile a blended profile, or `null` for the defaults
  * @returns what the renderers take from it
  */
-const lookOf = (profile: EnvironmentProfile | null): EnvironmentLook => ({
-	environment: deriveEnvironment(profile),
+const lookOf = (profile: EnvironmentProfile | null, filter: PhotoFilter | null = null): EnvironmentLook => ({
+	environment: deriveEnvironment(profile, filter),
 	celestial: celestialLook(profile),
 	lensFlare: lensFlareLook(profile),
 	wetness: wetnessParams(profile?.rain),
@@ -79,6 +82,7 @@ export class EnvironmentState {
 	#loaded: readonly boolean[] = [];
 	/** whether {@link look} matches {@link applied} for the current base; `false` forces a re-blend */
 	#valid = false;
+	#photoFilter: PhotoFilter | null = null;
 
 	/**
 	 * sets the environment the volumes blend over, keeping the fades, which follow the camera rather than the
@@ -97,10 +101,12 @@ export class EnvironmentState {
 	 * @returns the new look, or `null` when it didn't change
 	 */
 	update(input: BlendInput, options: { force: boolean }): EnvironmentLook | null {
-		const { eye } = input;
+		const { eye, photoFilter = null } = input;
+		const filterChanged = photoFilter !== this.#photoFilter;
 		const last = this.#eye;
 		if (
 			!options.force &&
+			!filterChanged &&
 			input.volumes === this.#volumes &&
 			input.pinnedPhase === this.#pinnedPhase &&
 			input.loaded === this.#loaded &&
@@ -128,13 +134,14 @@ export class EnvironmentState {
 						{ fades: this.fades, dt: input.dt },
 					);
 		const applied = plan?.applied ?? [];
-		const unchanged = this.#valid && sameApplied(this.applied, applied);
+		const unchanged = this.#valid && !filterChanged && sameApplied(this.applied, applied);
+		this.#photoFilter = photoFilter;
 		this.applied = applied;
 		if (unchanged) {
 			return null;
 		}
 		this.#valid = true;
-		this.look = lookOf(plan === null ? null : applyBlend(plan));
+		this.look = lookOf(plan === null ? null : applyBlend(plan), photoFilter);
 		return this.look;
 	}
 }

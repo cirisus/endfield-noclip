@@ -1,4 +1,5 @@
 import type { LevelInfo, PackageManifest } from '@endfield-noclip/package-format/manifest';
+import type { PhotoFilter } from '@endfield-noclip/package-format/photo-filters';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 import type { WaterSurfaceEntry } from '@endfield-noclip/package-format/water';
 
@@ -51,6 +52,7 @@ export class Viewer {
 	readonly camera = new Camera();
 	readonly controls: NoclipControls;
 	readonly options: ViewerOptions = structuredClone(DEFAULT_OPTIONS);
+	#photoFilters: readonly PhotoFilter[] = [];
 	stats: ViewerStats;
 	/** bumped when the package, the options or the current level change; a cheap snapshot for the UI */
 	stateRevision = 0;
@@ -371,6 +373,7 @@ export class Viewer {
 				eye: this.camera.position,
 				volumes: this.options.environmentVolumes,
 				pinnedPhase: this.options.environmentPin,
+				photoFilter: this.#photoFilters.find((filter) => filter.id === this.options.photoFilter) ?? null,
 				loaded: this.#sceneState.conditionResults,
 				dt,
 			},
@@ -631,8 +634,35 @@ export class Viewer {
 
 	// #region options and stats
 
+	/** @returns the installed photography filter library */
+	get photoFilters(): readonly PhotoFilter[] {
+		return this.#photoFilters;
+	}
+
+	/** @param filters the replacement photography filter library */
+	setPhotoFilters(filters: readonly PhotoFilter[]): void {
+		this.#photoFilters = filters;
+		this.setOptions({ photoFilter: null });
+	}
+
 	/** @param patch options to change */
 	setOptions(patch: Partial<ViewerOptions>): void {
+		if (patch.photoFilter !== undefined || patch.photoLutStrength !== undefined) {
+			const id = patch.photoFilter === undefined ? this.options.photoFilter : patch.photoFilter;
+			const filter = this.#photoFilters.find((entry) => entry.id === id) ?? null;
+			const strength = patch.photoLutStrength ?? this.options.photoLutStrength;
+			if (id !== null && filter === null) {
+				throw new Error(`unknown photo filter ${id}`);
+			}
+			if (!Number.isFinite(strength) || strength < 0 || strength > 1) {
+				throw new RangeError('photo LUT contribution must be between 0 and 1');
+			}
+			this.#renderer.post.setPhotoLut(filter, strength);
+			if (patch.photoFilter !== undefined && id !== this.options.photoFilter) {
+				this.#renderer.post.setPhotoEffects(filter, this.camera, this.#time);
+				this.#renderer.post.resetAntialiasing();
+			}
+		}
 		Object.assign(this.options, patch);
 		let dirty = this.#dirtyOptions | OptionDirty.Shadows;
 		if (patch.renderScale !== undefined) {
@@ -771,7 +801,11 @@ export class Viewer {
 			resized ||
 			options.continuous ||
 			compiled ||
-			(options.animate && (traversal.fadingShown || renderer.cloth.active || weatherAnimated)) ||
+			(options.animate &&
+				(traversal.fadingShown ||
+					renderer.cloth.active ||
+					weatherAnimated ||
+					renderer.post.photoEffectsActive)) ||
 			(scene !== null && scene.stream.version !== traversal.seenVersion) ||
 			// a local light's shadow tile waits for its casters to be selected and drawn
 			renderer.lights.shadows.pending;

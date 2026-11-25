@@ -3,6 +3,10 @@ import type { PostSettings, Tonemapper } from '../render/post/settings.ts';
 
 /** user-facing switches */
 export interface ViewerOptions {
+	/** selected authored photography look, or null for scene grading */
+	photoFilter: string | null;
+	/** contribution of the selected look's LUT */
+	photoLutStrength: number;
 	terrain: boolean;
 	/** draw the terrain's baked albedo and normal pages; off (or without BC textures) shows stand-in colours */
 	terrainSurface: boolean;
@@ -109,6 +113,8 @@ export interface ViewerOptions {
 
 /** defaults for {@link ViewerOptions} */
 export const DEFAULT_OPTIONS: ViewerOptions = {
+	photoFilter: null,
+	photoLutStrength: 1,
 	terrain: true,
 	terrainSurface: true,
 	terrainSplat: true,

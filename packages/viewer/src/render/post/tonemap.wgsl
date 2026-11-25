@@ -134,6 +134,21 @@ fn cas_compress(c: vec3f) -> vec3f {
 	return c / (1.0 + max(c.r, max(c.g, c.b)));
 }
 
+@group(2) @binding(0) var photo_lut: texture_2d<f32>;
+@group(2) @binding(1) var photo_sampler: sampler;
+@group(2) @binding(2) var<uniform> photo: vec4f;
+
+// the external colour cube is a horizontal strip; interpolate between its two blue slices in sRGB.
+fn photo_lookup(color: vec3f) -> vec3f {
+	let size = photo.x;
+	let c = clamp(color, vec3f(0.0), vec3f(1.0)) * (size - 1.0);
+	let slice = floor(c.b);
+	let uv = (c.rg + vec2f(0.5) + vec2f(slice * size, 0.0)) / vec2f(size * size, size);
+	let a = textureSampleLevel(photo_lut, photo_sampler, uv, 0.0).rgb;
+	let b = textureSampleLevel(photo_lut, photo_sampler, uv + vec2f(select(1.0 / size, 0.0, slice >= size - 1.0), 0.0), 0.0).rgb;
+	return mix(color, mix(a, b, fract(c.b)), photo.y);
+}
+
 @fragment
 fn fs_tonemap(in: FullscreenOut) -> @location(0) vec4f {
 	let px = vec2i(in.position.xy);
@@ -192,5 +207,9 @@ fn fs_tonemap(in: FullscreenOut) -> @location(0) vec4f {
 	}
 	// ±half a step of dither against banding in the sky
 	let noise = (gradient_noise(in.position.xy + post.eye.w * 5.588238) - 0.5) / 255.0;
-	return vec4f(srgb_encode(color) + noise, 1.0);
+	var display = srgb_encode(color);
+	if (photo.y > 0.0) {
+		display = photo_lookup(display);
+	}
+	return vec4f(display + noise, 1.0);
 }
