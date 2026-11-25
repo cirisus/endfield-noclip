@@ -2,14 +2,15 @@ import type { MaterialCull, TextureSlot } from '@endfield-noclip/package-format/
 import type { EffectTexture } from '@endfield-noclip/package-format/surfaces';
 import type { TextureRef } from '@endfield-noclip/package-format/textures';
 
+/** number of texture slots bound by effect pipelines (slots 0..6) */
+export const EFFECT_SLOT_COUNT = 7;
+
 /**
- * the texture slots the mesh shader samples, in binding order. the frame group leaves seven sampled textures
- * of WebGPU's default sixteen, so slots are shared where materials rarely use both: the third holds `_MROMap`
- * in the MRO layout and the tri-channel `_MaskMap` otherwise ({@link LookFlags.TriChannelMask}), which under
- * an MRO map moves to the emissive slot (`TRI_CHANNEL_IN_EMISSIVE_SLOT` in lit-look.ts), and looks with
- * {@link LookFlags.LayerBlend} put the layer's `_Layer1BaseMap` and `_Layer1BumpMap` in the parallax slots
- * (no map02 material has both keywords) and its `_LayerBlendMaskMap` in the emissive slot. looks with
- * {@link LookFlags.VertexOffset} put `_OffsetTex` and `_OffsetMaskTex` in the parallax slots
+ * the texture slots the mesh shader samples, in binding order. slots 0..6 are shared with scene effects
+ * ({@link EFFECT_SLOT_COUNT}); slots 7..8 give mesh materials dedicated tri-channel and overlay mask slots so
+ * `_TRI_CHANNEL_MASK`, `_LAYERBLEND_MASK` and `_PARALLAX_MAP_WORLDSPACE` never collide with `_MROMap` or
+ * `_EmissiveMap`. looks with {@link LookFlags.LayerBlend} put `_Layer1BaseMap` and `_Layer1BumpMap` in the
+ * parallax slots, and looks with {@link LookFlags.VertexOffset} put `_OffsetTex` and `_OffsetMaskTex` there
  */
 export const SLOTS = [
 	'_BaseColorMap',
@@ -19,22 +20,46 @@ export const SLOTS = [
 	'_DetailMap',
 	'_ParallaxMap',
 	'_ParallaxNoiseMap',
+	'_TriMaskMap',
+	'_OverlayMaskMap',
 ] as const;
 
 /** each {@link SLOTS} entry's index, its binding in the mesh families' material group */
 export const Slot = {
 	Base: 0,
 	Normal: 1,
-	/** `_MROMap`, or the tri-channel `_MaskMap` */
+	/** `_MROMap` */
 	Mask: 2,
 	Emissive: 3,
 	Detail: 4,
 	Parallax: 5,
 	ParallaxNoise: 6,
+	/** `_TRI_CHANNEL_MASK`'s `_MaskMap` */
+	TriMask: 7,
+	/** `_LAYERBLEND_MASK`'s `_LayerBlendMaskMap` or `_PARALLAX_MAP_WORLDSPACE`'s `_ParallaxMaskMap` */
+	OverlayMask: 8,
 } as const;
 
-/** a slot samples UV set 1 when bit `UV1_SHIFT + slot` of {@link MaterialLook.flags} is set, else UV set 0 */
+/**
+ * a slot 0..6 samples UV set 1 when bit `UV1_SHIFT + slot` of {@link MaterialLook.flags} is set, else UV set
+ * 0
+ */
 export const UV1_SHIFT = 18;
+
+/**
+ * an extra mesh slot (`>= EFFECT_SLOT_COUNT`) samples UV set 1 when bit `EXTRA_UV1_SHIFT + (slot -
+ * EFFECT_SLOT_COUNT)` of {@link MaterialLook.extraFlags} is set, else UV set 0
+ */
+export const EXTRA_UV1_SHIFT = 2;
+
+/** {@link MaterialLook.extraFlags} bits (packed into the high 16 bits of `Draw.scale.w`) */
+export const ExtraLookFlags = {
+	TriMaskMap: 1 << 0,
+	OverlayMaskMap: 1 << 1,
+} as const;
+
+/** the slot flags of {@link ExtraLookFlags} by extra slot index (`slot - EFFECT_SLOT_COUNT`) */
+export const EXTRA_SLOT_FLAGS = [ExtraLookFlags.TriMaskMap, ExtraLookFlags.OverlayMaskMap];
 
 /** {@link MaterialLook.flags} bits, matching `mesh.wgsl` */
 export const LookFlags = {
@@ -139,8 +164,10 @@ export interface MaterialLook {
 	uvScales: number[];
 	/** a 3D texture an effect samples besides its slots (the mist boxes' noise), or `null` */
 	volumeTexture: TextureRef;
-	/** {@link LookFlags}, with every slot that has a texture set */
+	/** {@link LookFlags}, with every slot 0..6 that has a texture set */
 	flags: number;
+	/** {@link ExtraLookFlags}, with every extra mesh slot (`>= EFFECT_SLOT_COUNT`) that has a texture set */
+	extraFlags: number;
 	/** {@link LOOK_FLOATS} draw parameters */
 	params: Float32Array;
 	/** the stencil test and write of effects that mask each other, or `null` for the rest */
@@ -341,6 +368,17 @@ export const LookRow = {
 	 * colour, weight
 	 */
 	emissiveAlbedo: 140,
+	/**
+	 * mesh metadata row: x = 1 when the material has gaps ({@link GAPS_FLOAT}), y = 1 when sway is a pendulum,
+	 * z = 1 for premultiplied transparent blending
+	 */
+	meta: 144,
+	/** UV transforms for the extra mesh slots ({@link Slot.TriMask}, {@link Slot.OverlayMask}) */
+	extraUv: 168,
+	/** `_EMISSIVE_ANIM` pulse and per-draw breathing (`EmissivePulseRow` in lit-look.ts) */
+	emissivePulse: 176,
+	/** `_SIMPLE_VERTEXANIM` cloth/pendulum sway (`SwayRow` in lit-look.ts) */
+	sway: 184,
 } as const;
 
 /**
@@ -354,17 +392,20 @@ export const alphaTextureOf = (look: MaterialLook): TextureRef =>
 export type LookSlots = Pick<MaterialLook, 'textures' | 'uvScales' | 'volumeTexture' | 'params'>;
 
 /**
- * @returns new slots, one per {@link SLOTS} entry, with no textures and identity UV transforms, and
- *   parameters zeroed otherwise
+ * @param count number of texture slots (defaults to {@link EFFECT_SLOT_COUNT} for effect looks)
+ * @returns new slots with no textures and identity UV transforms, and parameters zeroed otherwise
  */
-export const emptySlots = (): LookSlots => {
+export const emptySlots = (count: number = EFFECT_SLOT_COUNT): LookSlots => {
 	const params = new Float32Array(LOOK_FLOATS);
-	for (let i = 0; i < SLOTS.length; i++) {
+	for (let i = 0; i < Math.min(count, EFFECT_SLOT_COUNT); i++) {
 		params.set([1, 1, 0, 0], LookRow.uv + i * 4);
 	}
+	for (let i = EFFECT_SLOT_COUNT; i < count; i++) {
+		params.set([1, 1, 0, 0], LookRow.extraUv + (i - EFFECT_SLOT_COUNT) * 4);
+	}
 	return {
-		textures: SLOTS.map(() => null),
-		uvScales: SLOTS.map(() => 1),
+		textures: Array.from({ length: count }, () => null),
+		uvScales: Array.from({ length: count }, () => 1),
 		volumeTexture: null,
 		params,
 	};
@@ -382,16 +423,17 @@ export const emptyLook = ({ drawn }: { drawn: boolean }): MaterialLook => ({
 	cull: 'none',
 	castsShadows: true,
 	readsBackground: false,
-	...emptySlots(),
+	...emptySlots(SLOTS.length),
 	flags: 0,
+	extraFlags: 0,
 	stencil: null,
 	gaps: [],
 	motion: null,
 });
 
 /**
- * binds a texture to slot `i` with its UV transform (the slot's row of {@link LookRow.uv}, which effect looks
- * share), streamed for the larger of its scales
+ * binds a texture to slot `i` with its UV transform (the slot's row of {@link LookRow.uv} for slots 0..6 or
+ * {@link LookRow.extraUv} for extra mesh slots), streamed for the larger of its scales
  *
  * @param look the look to change
  * @param i the slot
@@ -404,7 +446,8 @@ export const placeTexture = (
 ): void => {
 	look.textures[i] = texture.texture;
 	look.uvScales[i] = Math.max(Math.abs(texture.scale[0]), Math.abs(texture.scale[1]), 1e-3);
-	look.params.set([...texture.scale, ...texture.offset], LookRow.uv + i * 4);
+	const row = i < EFFECT_SLOT_COUNT ? LookRow.uv + i * 4 : LookRow.extraUv + (i - EFFECT_SLOT_COUNT) * 4;
+	look.params.set([...texture.scale, ...texture.offset], row);
 };
 
 /**
@@ -416,5 +459,10 @@ export const placeTexture = (
  */
 export const setTexture = (look: MaterialLook, i: number, slot: TextureSlot): void => {
 	placeTexture(look, i, slot);
-	look.flags |= SLOT_FLAGS[i] | (slot.uv << (UV1_SHIFT + i));
+	if (i < EFFECT_SLOT_COUNT) {
+		look.flags |= SLOT_FLAGS[i] | (slot.uv << (UV1_SHIFT + i));
+	} else {
+		const extra = i - EFFECT_SLOT_COUNT;
+		look.extraFlags |= EXTRA_SLOT_FLAGS[extra] | (slot.uv << (EXTRA_UV1_SHIFT + extra));
+	}
 };

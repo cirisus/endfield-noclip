@@ -393,6 +393,7 @@ const effectMaterialLook = (
 	uvScales: effect.uvScales,
 	volumeTexture: effect.volumeTexture,
 	flags: LookFlags.Effect,
+	extraFlags: 0,
 	params: effect.params,
 	stencil,
 	gaps: [],

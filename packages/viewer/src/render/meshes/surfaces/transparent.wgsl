@@ -31,7 +31,7 @@ fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @
 	if (look.parallax_bright.y > 0.5 && (flags & HAS_COLORS) != 0u) {
 		alpha *= in.color.r;
 	}
-	let premul = look.detail2.z > 0.5;
+	let premul = look.misc.z > 0.5;
 	// discard zero-opacity fragments so depth-writing transparents (`_Zwrite`) don't leave invisible occluders
 	if (!premul && alpha < 0.01) {
 		discard;
@@ -42,7 +42,7 @@ fn fs_transparent(in: VertexOut, @builtin(front_facing) front_facing: bool) -> @
 		alpha *= (1.0 - look.parallax.w) + f.x * look.parallax.w;
 	}
 	alpha *= fade_opacity(in.fade);
-	// premultiplied glass (detail2.z) adds its whole radiance and lets its opacity only dim what's behind
+	// premultiplied glass (meta.z) adds its whole radiance and lets its opacity only dim what's behind
 	let color = radiance * select(alpha, 1.0, premul);
 	let uv = in.position.xy / frame.render_size.xy;
 	return vec4f(fog_premultiplied(color, alpha, in.rel, uv), alpha);

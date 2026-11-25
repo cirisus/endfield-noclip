@@ -82,7 +82,19 @@ struct Look {
 	emissive_channels: array<vec4f, 3>,
 	// the per-draw albedo tint where the emission's strength is at least 0.1: linear colour, w = weight
 	emissive_albedo: vec4f,
-	effect_only: array<vec4f, 12>,
+	// float 144: x = 1 when the material has gaps (GAPS_FLOAT), y = 1 when sway is a pendulum (SwayRow.kind),
+	// z = 1 for premultiplied transparent blending
+	misc: vec4f,
+	// floats 148..167: `_PARALLAX_MAP_WORLDSPACE` (ParallaxWorldRow)
+	parallax_world: array<vec4f, 5>,
+	// floats 168..175: UV transforms for extra mesh slots (TriMask, OverlayMask)
+	extra_uv: array<vec4f, 2>,
+	// floats 176..183: `_EMISSIVE_ANIM` pulse and per-draw breathing (EmissivePulseRow)
+	emissive_pulse: vec4f,
+	emissive_pulse_strength: vec4f,
+	// floats 184..191: `_SIMPLE_VERTEXANIM` cloth/pendulum sway (SwayRow)
+	sway: vec4f,
+	sway_direction: vec4f,
 }
 
 const BASE_MAP = 1u;
@@ -154,10 +166,23 @@ const LAYER_SLOT = 5u;
 // written once per material, when it's first drawn
 @group(2) @binding(5) var<storage, read> looks: array<Look>;
 
+// extra mesh slot flags packed into the high 16 bits of `Draw.scale.w` (`ExtraLookFlags` in look.ts)
+const EXTRA_TRI_MASK_MAP = 1u;
+const EXTRA_OVERLAY_MASK_MAP = 2u;
+const EXTRA_UV1_SHIFT = 2u;
+const EXTRA_TRI_MASK_SLOT = 0u;
+const EXTRA_OVERLAY_MASK_SLOT = 1u;
+
 // a draw's index into `looks`
 fn look_slot(draw: Draw) -> u32 {
-	return bitcast<u32>(draw.scale.w);
+	return bitcast<u32>(draw.scale.w) & 0xffffu;
 }
+
+// a draw's extra mesh flags (resident and UV1 bits for slots 7+)
+fn extra_flags(draw: Draw) -> u32 {
+	return bitcast<u32>(draw.scale.w) >> 16u;
+}
+
 @group(3) @binding(0) var base_map: texture_2d<f32>;
 @group(3) @binding(1) var normal_map: texture_2d<f32>;
 @group(3) @binding(2) var mask_map: texture_2d<f32>;
@@ -165,12 +190,14 @@ fn look_slot(draw: Draw) -> u32 {
 @group(3) @binding(4) var detail_map: texture_2d<f32>;
 @group(3) @binding(5) var parallax_map: texture_2d<f32>;
 @group(3) @binding(6) var parallax_noise_map: texture_2d<f32>;
-@group(3) @binding(7) var base_sampler: sampler;
-@group(3) @binding(8) var detail_sampler: sampler;
-@group(3) @binding(9) var parallax_sampler: sampler;
+@group(3) @binding(7) var tri_mask_map: texture_2d<f32>;
+@group(3) @binding(8) var overlay_mask_map: texture_2d<f32>;
+@group(3) @binding(9) var base_sampler: sampler;
+@group(3) @binding(10) var detail_sampler: sampler;
+@group(3) @binding(11) var parallax_sampler: sampler;
 // the noise slot's own sampler, for the vertex offset's mask and a dithered look's; the glow and the layers
 // sample the slot with the parallax slot's
-@group(3) @binding(10) var noise_sampler: sampler;
+@group(3) @binding(12) var noise_sampler: sampler;
 
 struct VertexIn {
 	@location(0) position: vec4f,
@@ -330,20 +357,20 @@ fn instance_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: Look) 
 // docs/game-data/materials.md#swaying-cloth). `weight` is the vertex colour's alpha, which the geometry carries
 // in position W
 fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f) -> vec3f {
-	let intensity = look.foliage2.x;
+	let intensity = look.sway.x;
 	if (weight == 0.0 || intensity == 0.0 || (flags & (FOLIAGE | EROSION | UNLIT | EFFECT)) != 0u) {
 		return vec3f(0.0);
 	}
-	let frequency = look.foliage2.y;
-	let along = select(frame.wind.zw, look.canopy_color.zw, look.canopy_color.y > 0.5);
+	let frequency = look.sway.y;
+	let along = select(frame.wind.zw, look.sway_direction.zw, look.sway_direction.y > 0.5);
 	let x0 = origin.x + frame.eye.x;
 	let phase = frame.wind.x * frequency + x0;
-	if (look.canopy.x > 0.5) {
+	if (look.misc.y > 0.5) {
 		return pendulum(look, weight, rel - origin, along, phase, x0);
 	}
-	let softness = look.foliage2.z;
-	let kite = look.foliage2.w;
-	let tendency = look.canopy_color.x;
+	let softness = look.sway.z;
+	let kite = look.sway.w;
+	let tendency = look.sway_direction.x;
 	var s: f32;
 	var amplitude: f32;
 	if (kite != 0.0) {
@@ -361,16 +388,16 @@ fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f
 // from the object's origin swings about an axis across `along`, then turns about +Y, both by sines of the
 // wind clock with the object's world X `x0` as their phase; `phase` is the swing's
 fn pendulum(look: Look, weight: f32, v: vec3f, along: vec2f, phase: f32, x0: f32) -> vec3f {
-	let intensity = look.foliage2.x;
+	let intensity = look.sway.x;
 	// the game's axis from its direction (x, 0, z) is (0 − z, −x, x), which still air leaves undefined
 	let across = vec3f(-along.y, -along.x, along.x);
 	var swung = v;
 	if (dot(across, across) > 1e-12) {
 		swung = rotate_about(normalize(across), sin(phase) * intensity * 0.05, v);
 	}
-	let spin = sin(frame.wind.x * look.foliage2.w + x0) * look.canopy_color.x;
+	let spin = sin(frame.wind.x * look.sway.w + x0) * look.sway_direction.x;
 	let turned = rotate_about(vec3f(0.0, 1.0, 0.0), spin, swung);
-	let follow = mix(weight * intensity * 0.5, 1.0, look.foliage2.z);
+	let follow = mix(weight * intensity * 0.5, 1.0, look.sway.z);
 	return (turned - v) * follow * weight;
 }
 
@@ -517,6 +544,13 @@ fn slot_set(uv: vec4f, flags: u32, slot: u32) -> vec2f {
 fn slot_uv(look_id: u32, uv: vec4f, flags: u32, slot: u32) -> vec2f {
 	let t = looks[look_id].slot_uv[slot];
 	return slot_set(uv, flags, slot) * t.xy + t.zw;
+}
+
+// UV coordinates for an extra mesh slot (0 = TriMask, 1 = OverlayMask)
+fn extra_slot_uv(look_id: u32, uv: vec4f, extra: u32, extra_slot: u32) -> vec2f {
+	let t = looks[look_id].extra_uv[extra_slot];
+	let use_uv1 = (extra & (1u << (EXTRA_UV1_SHIFT + extra_slot))) != 0u;
+	return select(uv.xy, uv.zw, use_uv1) * t.xy + t.zw;
 }
 
 // samples a material slot with explicit screen-space derivatives (already scaled by exp2(bias)), so optional

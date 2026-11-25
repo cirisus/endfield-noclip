@@ -278,7 +278,7 @@ fn vs_effect(v: EffectIn, @builtin(instance_index) ii: u32) -> EffectOut {
 	let scale = effect_draws[draw_id][1];
 	let uv0 = effect_draws[draw_id][2];
 	let uv1 = effect_draws[draw_id][3];
-	let id = bitcast<u32>(scale.w);
+	let id = bitcast<u32>(scale.w) & 0xffffu;
 	var p = offset.xyz + v.position.xyz * scale.xyz;
 	if (fx_row(id, FX_UNFOGGED).y == FX_KIND_BEAM) {
 		p = beam_vertex(id, p);

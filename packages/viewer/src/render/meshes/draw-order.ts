@@ -36,8 +36,9 @@ const COMPLEX_OPAQUE_FLAGS =
  */
 const isSimpleOpaqueLit = (look: MaterialLook): boolean =>
 	(look.flags & COMPLEX_OPAQUE_FLAGS) === 0 &&
+	look.extraFlags === 0 &&
 	look.stencil === null &&
-	look.params[LookRow.parallax + 2] === 0 &&
+	look.params[LookRow.emissivePulse + 2] === 0 &&
 	look.params[LookRow.foliage + 3] === 0 &&
 	look.params[LookRow.canopy + 3] === 0 &&
 	look.params[GAPS_FLOAT] === 0;

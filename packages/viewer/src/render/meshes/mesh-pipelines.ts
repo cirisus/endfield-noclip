@@ -1,6 +1,6 @@
 import { ADD, ALPHA_OVER, KEEP, PREMULTIPLIED_OVER } from '../../gfx/blend.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
-import { type LookStencil, SLOTS, Slot } from '../../looks/look.ts';
+import { EFFECT_SLOT_COUNT, type LookStencil, SLOTS, Slot } from '../../looks/look.ts';
 import type { BindLayouts } from '../frame/bind-layouts.ts';
 import { FRAME_CORE_WGSL, FRAME_WGSL } from '../frame/frame-uniforms.ts';
 import {
@@ -133,13 +133,13 @@ const createEffectLayout = (device: GPUDevice): GPUBindGroupLayout => {
 	return device.createBindGroupLayout({
 		label: 'effect materials',
 		entries: [
-			...SLOTS.map((_, binding) => ({
+			...Array.from({ length: EFFECT_SLOT_COUNT }, (_, binding) => ({
 				binding,
 				visibility: slotStages,
 				texture: { sampleType: 'float' as const },
 			})),
-			...SLOTS.map((_, i) => ({
-				binding: SLOTS.length + i,
+			...Array.from({ length: EFFECT_SLOT_COUNT }, (_, i) => ({
+				binding: EFFECT_SLOT_COUNT + i,
 				visibility: slotStages,
 				sampler: { type: 'filtering' as const },
 			})),

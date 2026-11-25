@@ -16,11 +16,10 @@ import {
 	LayerSource,
 	LeafBlendRow,
 	SwayRow,
-	TRI_CHANNEL_IN_EMISSIVE_SLOT,
 	TrunkRow,
 	VertexOffsetRow,
 } from './lit-look.ts';
-import { GAPS_FLOAT, LookFlags, LookRow, UV1_SHIFT } from './look.ts';
+import { EXTRA_UV1_SHIFT, ExtraLookFlags, GAPS_FLOAT, LookFlags, LookRow, Slot, UV1_SHIFT } from './look.ts';
 import { materialLooks } from './material-looks.ts';
 import { described } from './test-materials.ts';
 
@@ -61,12 +60,12 @@ test('glass is transparent and shadowless with its blending flag', () => {
 		],
 	});
 	assert.deepEqual(
-		[blended.queue, blended.castsShadows, blended.params[LookRow.detail2 + 2]],
+		[blended.queue, blended.castsShadows, blended.params[LookRow.meta + 2]],
 		['transparent', false, 0],
 	);
 	assert.equal(blended.params[LookRow.emissive2 + 3], 0.5);
 	assert.notEqual(blended.flags & LookFlags.AlphaNormal, 0);
-	assert.deepEqual([premultiplied.queue, premultiplied.params[LookRow.detail2 + 2]], ['transparent', 1]);
+	assert.deepEqual([premultiplied.queue, premultiplied.params[LookRow.meta + 2]], ['transparent', 1]);
 	assert.equal(depthWriting.queue, 'transparentDepthWrite');
 	// `_SUBSURFACE` forces dielectric shading and populates `LookRow.foliage` / `LookRow.foliageAo`
 	assert.equal(depthWriting.params[LookRow.surface + 2], 0);
@@ -262,14 +261,14 @@ test('a vertex offset takes the parallax slots and rows of an alpha-tested Lit s
 		(1 << (UV1_SHIFT + 6));
 	assert.equal(look.queue, 'cutout');
 	assert.equal(look.flags & offsetFlags, offsetFlags);
-	assert.deepEqual(look.textures.slice(5), [13, 14]);
+	assert.deepEqual(look.textures.slice(5, 7), [13, 14]);
 	assert.deepEqual(row(look.params, LookRow.uv + 5 * 4), [1, 1.3, 0, 0].map(Math.fround));
 	assert.deepEqual(row(look.params, LookRow.uv + 6 * 4), [1, 1, 0, 1]);
 	assert.deepEqual(row(look.params, VertexOffsetRow.direction), [2, 2, 2, 1]);
 	assert.deepEqual(row(look.params, VertexOffsetRow.shape), [0.4, 0, 0, 1].map(Math.fround));
 	assert.deepEqual(row(look.params, VertexOffsetRow.scroll), [-1, -2, 0, 0]);
 
-	assert.deepEqual(unmasked.textures.slice(5), [13, null]);
+	assert.deepEqual(unmasked.textures.slice(5, 7), [13, null]);
 	assert.equal(unmasked.flags & LookFlags.ParallaxNoiseMap, 0);
 	assert.equal(unmasked.params[VertexOffsetRow.shape + 3], 0);
 	assert.equal(object.params[VertexOffsetRow.direction + 3], 0);
@@ -335,15 +334,20 @@ test('pulsing emission takes the free parallax rows; a surface with a glow keeps
 	assert.equal(pulsing.flags & (LookFlags.ParallaxMap | LookFlags.LayerBlend), 0);
 	// the glow's rows: three steps, a pulse between 0.2 and 1, the HDR colour as stored
 	const row = (at: number) => Array.from(glowing.params.subarray(at, at + 4));
-	assert.deepEqual(glowing.textures.slice(5), [6, 7]);
+	assert.deepEqual(glowing.textures.slice(5, 7), [6, 7]);
 	assert.deepEqual(row(LookRow.uv + 5 * 4), [2, 2, 0, 0]);
 	assert.deepEqual(row(LookRow.uv + 6 * 4), [3, 3, 0, 0]);
 	assert.deepEqual(row(LookRow.parallax), [0.314, 3, 1, 0.4].map(Math.fround));
 	assert.equal(glowing.params[LookRow.parallax2 + 3], Math.fround(0.6));
 	assert.deepEqual(row(LookRow.parallaxColor), [2.8, 0.7, 0, 2].map(Math.fround));
 	assert.deepEqual(row(LookRow.parallaxBright).slice(0, 3), [25, 3, 20]);
+	// emission pulse now has dedicated tail rows, so glowing surfaces keep pulsing too
+	assert.deepEqual(
+		Array.from(glowing.params.subarray(EmissivePulseRow.pulse, EmissivePulseRow.pulse + 4)),
+		[1 / Math.PI, 0, 1, 0].map(Math.fround),
+	);
 
-	// world-space parallax places `_ParallaxMaskMap` in the free mask slot and its rows in the tail
+	// world-space parallax places `_ParallaxMaskMap` in the dedicated overlay mask slot and its rows in the tail
 	const [world] = materialLooks({
 		entries: [
 			described(
@@ -370,8 +374,8 @@ test('pulsing emission takes the free parallax rows; a surface with a glow keeps
 			),
 		],
 	});
-	assert.equal(world.textures[2], 8);
-	assert.notEqual(world.flags & LookFlags.MaskMap, 0);
+	assert.equal(world.textures[Slot.OverlayMask], 8);
+	assert.notEqual(world.extraFlags & ExtraLookFlags.OverlayMaskMap, 0);
 	assert.deepEqual(row(148).length, 4);
 	assert.deepEqual(Array.from(world.params.subarray(148, 152)), [-327, -482, 1 / 62, 30].map(Math.fround));
 	assert.deepEqual(Array.from(world.params.subarray(164, 168)), [1, 1.5, 2, 1].map(Math.fround));
@@ -499,27 +503,27 @@ test('Lit slots: UV set 1 maps, the tri-channel mask in the mask slot or under a
 			},
 		],
 	});
-	assert.deepEqual(crystal.textures, [1, 2, 4, null, 5, null, null]);
+	assert.deepEqual(crystal.textures, [1, 2, null, null, 5, null, null, 4, null]);
 	assert.notEqual(crystal.flags & LookFlags.TriChannelMask, 0);
+	assert.notEqual(crystal.extraFlags & ExtraLookFlags.TriMaskMap, 0);
 	assert.notEqual(crystal.flags & LookFlags.NormalOcclusion, 0);
 	// base and detail sample UV set 1
 	assert.equal((crystal.flags >> UV1_SHIFT) & 0x7f, 0b10001);
 	const row = (at: number) => Array.from(crystal.params.subarray(at, at + 4));
 	assert.deepEqual(row(LookRow.maskAlbedo), [1, 0.214, 0, 0.5].map(Math.fround));
 	assert.equal(crystal.params[LookRow.maskAlbedo + 4 + 3], 0);
-	assert.equal(crystal.params[TRI_CHANNEL_IN_EMISSIVE_SLOT], 0);
-	// the MRO map takes the mask slot, so the tri-channel mask moves to the emissive slot
-	assert.deepEqual(mro.textures, [1, 2, 3, 4, null, null, null]);
+	// the tri-channel mask has its own dedicated slot, so it coexists with both MRO and emissive maps
+	assert.deepEqual(mro.textures, [1, 2, 3, null, null, null, null, 4, null]);
 	assert.notEqual(mro.flags & LookFlags.TriChannelMask, 0);
-	assert.equal(mro.params[TRI_CHANNEL_IN_EMISSIVE_SLOT], 1);
-	assert.equal((mro.flags >> UV1_SHIFT) & 0x7f, 0b01001);
+	assert.notEqual(mro.extraFlags & ExtraLookFlags.TriMaskMap, 0);
+	assert.notEqual(mro.extraFlags & (1 << EXTRA_UV1_SHIFT), 0);
+	assert.equal((mro.flags >> UV1_SHIFT) & 0x7f, 0b00001);
 	assert.notEqual(mro.flags & LookFlags.NormalRag, 0);
-	// an emissive map keeps its slot, and the mask isn't drawn
-	assert.deepEqual(glowing.textures, [1, 2, 3, 6, null, null, null]);
-	assert.equal(glowing.flags & LookFlags.TriChannelMask, 0);
-	assert.equal(glowing.params[TRI_CHANNEL_IN_EMISSIVE_SLOT], 0);
-	// which the gaps view shows, after what the package says the surface leaves out
-	assert.deepEqual(glowing.gaps, ['_TERRAIN_BLEND', 'tri-channel mask: no free slot']);
+	assert.deepEqual(glowing.textures, [1, 2, 3, 6, null, null, null, 4, null]);
+	assert.notEqual(glowing.flags & LookFlags.TriChannelMask, 0);
+	assert.notEqual(glowing.extraFlags & ExtraLookFlags.TriMaskMap, 0);
+	// only the package's own gap remains
+	assert.deepEqual(glowing.gaps, ['_TERRAIN_BLEND']);
 	assert.equal(glowing.params[GAPS_FLOAT], 1);
 	assert.deepEqual([mro.gaps, mro.params[GAPS_FLOAT]], [[], 0]);
 });
@@ -559,7 +563,7 @@ test('moss rock: the top layer takes the parallax slots and rows, its own tiling
 			),
 		],
 	});
-	assert.deepEqual(look.textures, [null, 1, null, null, null, 2, 3]);
+	assert.deepEqual(look.textures, [null, 1, null, null, null, 2, 3, null, null]);
 	assert.notEqual(look.flags & LookFlags.LayerBlend, 0);
 	const row = (at: number) => Array.from(look.params.subarray(at, at + 4));
 	assert.deepEqual(row(LookRow.uv + 5 * 4), [2, 2, 0.25, 0.5]);
@@ -600,19 +604,20 @@ test('moss mounds: the mask layer takes its mask map into the emissive slot, unt
 			described(litSurface({ textures: { base, normal: null, mro: null, emissive }, overlay: maskLayer })),
 		],
 	});
-	assert.deepEqual(mound.textures, [0, null, null, 4, null, 2, 3]);
+	assert.deepEqual(mound.textures, [0, null, null, null, null, 2, 3, null, 4]);
 	assert.notEqual(mound.flags & LookFlags.LayerBlend, 0);
-	assert.notEqual(mound.flags & LookFlags.EmissiveMap, 0);
-	assert.notEqual(mound.flags & (1 << (UV1_SHIFT + 3)), 0);
+	assert.notEqual(mound.extraFlags & ExtraLookFlags.OverlayMaskMap, 0);
+	assert.notEqual(mound.extraFlags & (1 << (EXTRA_UV1_SHIFT + 1)), 0);
 	const row = (at: number) => Array.from(mound.params.subarray(at, at + 4));
-	assert.deepEqual(row(LookRow.uv + 3 * 4), [1, 1, 0, 0]);
+	assert.deepEqual(row(LookRow.extraUv + 4), [1, 1, 0, 0]);
 	assert.equal(row(LayerBlendRow.height)[3], LayerSource.MaskMap);
 	assert.deepEqual(row(LayerBlendRow.fuzzy), [0.2, 0, 0.01, 0].map(Math.fround));
 	assert.deepEqual(row(LayerBlendRow.fuzzy2), [0, 0.1, 6, 0].map(Math.fround));
 	assert.equal(channel.params[LayerBlendRow.height + 3], LayerSource.BaseAlpha);
-	assert.equal(channel.textures[3], null);
-	assert.equal(emissiveMapped.flags & LookFlags.LayerBlend, 0);
-	assert.deepEqual(emissiveMapped.textures.slice(3), [5, null, null, null]);
+	assert.equal(channel.textures[Slot.OverlayMask], null);
+	// mask layers now coexist with emissive maps in their dedicated overlay mask slot
+	assert.notEqual(emissiveMapped.flags & LookFlags.LayerBlend, 0);
+	assert.deepEqual(emissiveMapped.textures.slice(3), [5, null, 2, 3, null, 4]);
 });
 
 test("a trunk's vertex AO and ramp fill the rows leaves keep their canopy ramp in", () => {

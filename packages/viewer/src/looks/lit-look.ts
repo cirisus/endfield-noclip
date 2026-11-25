@@ -26,19 +26,11 @@ import {
 } from './look.ts';
 
 /**
- * the float of a look's parameters that is 1 when the tri-channel mask sits in the emissive slot, under an
- * MRO map in the mask slot: the fourth of the mask offsets' row, which has three channels
- */
-export const TRI_CHANNEL_IN_EMISSIVE_SLOT = LookRow.maskOffset + 3;
-
-/**
- * the Lit model ({@link LitSurface}). slots are shared where materials rarely use both (`SLOTS`): the MRO
- * layout's map takes the tri-channel mask's slot, so the mask moves to the emissive slot there and isn't
- * drawn when that's taken too, and a mask layer's mask map takes the emissive map's, so mask layers on
- * emissive-mapped materials aren't drawn. `_EMISSIVE_ANIM`'s pulse keeps its inputs in the parallax rows, so
- * it stays still on surfaces with a parallax glow or a layer. a vertex offset's textures take the parallax
- * slots, so it isn't drawn on those surfaces either, nor on ones that aren't alpha-tested or that offset
- * along the normal (docs/viewer/materials.md#vertex-offset)
+ * the Lit model ({@link LitSurface}). tri-channel masks ({@link Slot.TriMask}) and overlay masks
+ * ({@link Slot.OverlayMask}) have dedicated slots so they never collide with `_MROMap` or `_EmissiveMap`;
+ * emission pulse/breathing and cloth/pendulum sway have dedicated rows in the look tail. a vertex offset's
+ * textures still share the parallax slots, so it isn't drawn alongside a parallax glow or layer, nor on
+ * surfaces that aren't alpha-tested or that offset along the normal (docs/viewer/materials.md#vertex-offset)
  *
  * @param surface the surface
  * @param cull the faces the material culls
@@ -61,21 +53,8 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 	if (textures.emissive !== null) {
 		setTexture(look, Slot.Emissive, textures.emissive);
 	}
-	// the tri-channel mask takes the mask slot, or under an MRO map the emissive slot, unless an emissive map
-	// or a mask layer's mask map holds that
-	let triChannel: LitSurface['triChannel'] = null;
 	if (surface.triChannel !== null) {
-		const maskLayer = overlay?.kind === 'layer' && overlay.coverage.kind === 'maskMap';
-		if (textures.mro === null) {
-			triChannel = surface.triChannel;
-			setTexture(look, Slot.Mask, triChannel.mask);
-		} else if (textures.emissive === null && !maskLayer) {
-			triChannel = surface.triChannel;
-			setTexture(look, Slot.Emissive, triChannel.mask);
-			params[TRI_CHANNEL_IN_EMISSIVE_SLOT] = 1;
-		} else {
-			look.gaps.push('tri-channel mask: no free slot');
-		}
+		setTexture(look, Slot.TriMask, surface.triChannel.mask);
 	}
 	if (surface.detail !== null) {
 		setTexture(look, Slot.Detail, surface.detail.texture);
@@ -117,7 +96,7 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		look.queue = surface.writesDepth ? 'transparentDepthWrite' : 'transparent';
 		look.castsShadows = false;
 		params[LookRow.emissive2 + 3] = surface.opacity;
-		params[LookRow.detail2 + 2] = surface.blend === 'premultiplied' ? 1 : 0;
+		params[LookRow.meta + 2] = surface.blend === 'premultiplied' ? 1 : 0;
 		if (surface.vertexRedOpacity) {
 			params[LookRow.parallaxBright + 1] = 1;
 		}
@@ -177,9 +156,9 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		}
 	}
 
-	if (triChannel !== null) {
+	if (surface.triChannel !== null) {
 		look.flags |= LookFlags.TriChannelMask;
-		triChannel.channels.forEach((channel, i) => {
+		surface.triChannel.channels.forEach((channel, i) => {
 			params.set([...channel.albedo, channel.strength], LookRow.maskAlbedo + i * 4);
 			params[LookRow.maskRoughness + i] = channel.roughness;
 			params[LookRow.maskMetallic + i] = channel.metallic;
@@ -195,12 +174,12 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		params.set([...detail.overlay, detail.overlayCover], LookRow.detailOverlay);
 	}
 
-	// the glow, the layer, and transparent Fresnel take the parallax rows, which the pulse has otherwise
-	let parallaxRowsFree = surface.fresnel == null;
+	// the glow, the layer, and transparent Fresnel take the parallax slots/rows, which vertex offset shares
+	let parallaxSlotsFree = surface.fresnel == null;
 	switch (overlay?.kind) {
 		case 'parallax': {
-			parallaxParams(look, overlay, textures.mro === null && triChannel === null);
-			parallaxRowsFree = false;
+			parallaxParams(look, overlay);
+			parallaxSlotsFree = false;
 			break;
 		}
 		case 'flowGlow': {
@@ -208,13 +187,8 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 			break;
 		}
 		case 'layer': {
-			// a mask layer's mask map would take the emissive map's slot
-			if (overlay.coverage.kind !== 'maskMap' || textures.emissive === null) {
-				layerBlendParams(look, overlay, LAYER_SOURCES[overlay.coverage.kind]);
-				parallaxRowsFree = false;
-			} else {
-				look.gaps.push('mask layer: the emissive map holds its mask map’s slot');
-			}
+			layerBlendParams(look, overlay, LAYER_SOURCES[overlay.coverage.kind]);
+			parallaxSlotsFree = false;
 			break;
 		}
 		default: {
@@ -222,21 +196,13 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		}
 	}
 	if (emission !== null && (emission.pulse !== null || emission.breath !== null)) {
-		if (parallaxRowsFree) {
-			emissivePulseParams(look, emission.pulse, emission.breath);
-		} else {
-			look.gaps.push('emission pulse: a glow or layer holds its rows');
-		}
+		emissivePulseParams(look, emission.pulse, emission.breath);
 	}
 	if (surface.keepsLitDecalsOff) {
 		params[LookRow.detail2 + 3] = 1;
 	}
 	if (surface.sway !== null && surface.foliage === null) {
-		if (surface.trunk !== null) {
-			look.gaps.push('sway: a trunk holds its rows');
-		} else {
-			swayParams(look, surface.sway);
-		}
+		swayParams(look, surface.sway);
 	}
 	if (surface.trunk !== null && surface.foliage === null) {
 		trunkParams(look, surface.trunk);
@@ -248,7 +214,7 @@ export const litLook = (surface: LitSurface, cull: MaterialCull): MaterialLook =
 		if (
 			vertexOffset.space !== 'normal' &&
 			surface.foliage === null &&
-			parallaxRowsFree &&
+			parallaxSlotsFree &&
 			look.queue === 'cutout'
 		) {
 			vertexOffsetParams(look, vertexOffset);
@@ -286,24 +252,23 @@ const fresnelParams = (params: Float32Array, fresnel: LitFresnel): void => {
 // #region vertex animation and pulse
 
 /**
- * where `_SIMPLE_VERTEXANIM`'s sway keeps its inputs: rows only leaves, grass and trunks use otherwise, and
- * dithered looks the kind's (`DitherRow`), with a zero intensity. mesh.wgsl sways a vertex of a look that
- * isn't foliage, erosion, unlit or an effect when the intensity and the geometry's position W (the sway
- * weight) are non-zero
+ * where `_SIMPLE_VERTEXANIM`'s sway keeps its inputs: dedicated tail rows that never collide with foliage or
+ * trunk parameters. surfaces/common.wgsl sways a vertex of a look that isn't foliage, erosion, unlit or an
+ * effect when the intensity and the geometry's position W (the sway weight) are non-zero
  */
 export const SwayRow = {
 	/**
 	 * `_SimpleVertexAnimationWindIntensity`, `_SimpleVertexAnimationWindFreq`, then the cloth's soft factor and
 	 * `_Kite`, or the pendulum's `_Stability` and turn about +Y per unit of the wind clock
 	 */
-	sway: LookRow.foliage2,
+	sway: LookRow.sway,
 	/**
 	 * the cloth's `_DirectionTendency` or the pendulum's largest turn about +Y (radians), 1 for the material's
 	 * own direction (0: the wind's), that direction's X and Z
 	 */
-	direction: LookRow.canopyColor,
-	/** 1 for a pendulum (0: cloth) */
-	kind: LookRow.canopy,
+	direction: LookRow.sway + 4,
+	/** 1 for a pendulum (0: cloth), stored in `meta.y` */
+	kind: LookRow.meta + 1,
 } as const;
 
 /**
@@ -363,15 +328,15 @@ const vertexOffsetParams = (look: MaterialLook, offset: LitVertexOffset): void =
 };
 
 /**
- * where `_EMISSIVE_ANIM`'s pulse and per-draw breathing keep their inputs. a look without parallax or layer
- * maps leaves their rows free; mesh.wgsl pulses emission when the interval is positive and breathes it when
- * the breathing frequency is positive
+ * where `_EMISSIVE_ANIM`'s pulse and per-draw breathing keep their inputs: dedicated tail rows that never
+ * collide with parallax, layer blend or Fresnel parameters. surfaces/surface.wgsl pulses emission when the
+ * interval is positive and breathes it when the breathing frequency is positive
  */
 export const EmissivePulseRow = {
 	/** pulse cycles per second, phase offset (`_EmissiveAnimRandom`), interval, minimum brightness */
-	pulse: LookRow.parallax,
+	pulse: LookRow.emissivePulse,
 	/** how much the pulse dims the emission (`_EmissiveColor.a`), followed by breathing frequency and intensity */
-	strength: LookRow.parallax2,
+	strength: LookRow.emissivePulse + 4,
 } as const;
 
 /** `_EMISSIVE_ANIM`'s pulse and per-draw breathing (docs/game-data/materials.md#emission) */
@@ -496,7 +461,7 @@ export const ParallaxWorldRow = {
 } as const;
 
 /** `_PARALLAX_MAP`'s glow (`docs/game-data/materials.md#lit-layers`), in the parallax slots and rows */
-const parallaxParams = (look: MaterialLook, glow: ParallaxGlow, maskSlotFree: boolean): void => {
+const parallaxParams = (look: MaterialLook, glow: ParallaxGlow): void => {
 	const params = look.params;
 	// without a noise map the noise flag stays clear, and the march reads height 0
 	setTexture(look, Slot.Parallax, glow.pattern);
@@ -517,12 +482,8 @@ const parallaxParams = (look: MaterialLook, glow: ParallaxGlow, maskSlotFree: bo
 
 	const { worldMask } = glow;
 	if (worldMask !== null) {
-		if (worldMask.mask !== null && !maskSlotFree) {
-			look.gaps.push('world-space parallax mask: no free slot');
-			return;
-		}
 		if (worldMask.mask !== null) {
-			setTexture(look, Slot.Mask, worldMask.mask);
+			setTexture(look, Slot.OverlayMask, worldMask.mask);
 		}
 		params.set(
 			[worldMask.center[0], worldMask.center[1], 1 / worldMask.scale, worldMask.lerpSchedule],
@@ -638,7 +599,7 @@ const layerBlendParams = (look: MaterialLook, layer: LitLayer, source: LayerSour
 	const params = look.params;
 	look.flags |= LookFlags.LayerBlend;
 	if (layer.coverage.kind === 'maskMap') {
-		setTexture(look, Slot.Emissive, layer.coverage.map);
+		setTexture(look, Slot.OverlayMask, layer.coverage.map);
 	}
 	setTexture(look, Slot.Parallax, layer.base);
 	setTexture(look, Slot.ParallaxNoise, layer.bump);

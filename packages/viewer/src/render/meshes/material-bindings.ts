@@ -1,7 +1,14 @@
 import { BindGroupCache } from '../../gfx/bind-group-cache.ts';
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_CLAMP, LINEAR_REPEAT_MIPMAPPED, sampler } from '../../gfx/samplers.ts';
-import { LookFlags, type MaterialLook, SLOTS, SLOT_FLAGS } from '../../looks/look.ts';
+import {
+	EFFECT_SLOT_COUNT,
+	EXTRA_SLOT_FLAGS,
+	LookFlags,
+	type MaterialLook,
+	SLOTS,
+	SLOT_FLAGS,
+} from '../../looks/look.ts';
 import type { TextureBinding, TextureStore } from '../textures/texture-store.ts';
 
 /** the main pass's outputs that scene effects read, as `SceneTextures` holds them */
@@ -26,8 +33,10 @@ export interface MaterialState extends EffectMaterial {
 	slots: (TextureBinding | null)[];
 	/** the look's 3D texture's binding, `null` where it has none or it hasn't streamed in */
 	volume: TextureBinding | null;
-	/** the look's flags without the flags of slots that aren't bound */
+	/** the look's flags without the flags of slots 0..6 that aren't bound */
 	flags: number;
+	/** the look's extraFlags without the flags of extra mesh slots that aren't bound */
+	extraFlags: number;
 	/** the material group; `null` for effects, whose group also binds the main pass's outputs */
 	group: GPUBindGroup | null;
 	/** whether the texture holding the alpha is bound, so alpha testing can run */
@@ -45,7 +54,7 @@ export interface EffectMaterial {
 
 /** @returns whether none of a look's textures' bindings changed since the store's `version` */
 const texturesUnchanged = (look: MaterialLook, textures: TextureStore, version: number): boolean => {
-	for (let i = 0; i < SLOTS.length; i++) {
+	for (let i = 0; i < look.textures.length; i++) {
 		const texture = look.textures[i];
 		if (texture !== null && !textures.unchangedSince(texture, version)) {
 			return false;
@@ -73,7 +82,7 @@ export class MaterialBindings {
 	#versions: number[] = SLOTS.map(() => -1);
 	/** effect bind groups by material id, over their slots' and volume's binding versions and the inputs' */
 	#effectGroups = new BindGroupCache<number>();
-	#effectParts: number[] = [...SLOTS.map(() => -1), -1, -1];
+	#effectParts: number[] = [...Array.from({ length: EFFECT_SLOT_COUNT }, () => -1), -1, -1];
 	/** stands in for the main pass's outputs while effects draw into them, as opaque layers do */
 	readonly mainPassStandIns: EffectInputs;
 
@@ -134,13 +143,18 @@ export class MaterialBindings {
 		}
 		const slots: (TextureBinding | null)[] = [];
 		let flags = look.flags;
+		let extraFlags = look.extraFlags;
 		let complete = true;
-		for (let i = 0; i < SLOTS.length; i++) {
+		for (let i = 0; i < look.textures.length; i++) {
 			const texture = look.textures[i];
 			const binding = texture === null ? null : textures.binding(texture);
 			slots.push(binding);
 			if (binding === null) {
-				flags &= ~SLOT_FLAGS[i];
+				if (i < EFFECT_SLOT_COUNT) {
+					flags &= ~SLOT_FLAGS[i];
+				} else {
+					extraFlags &= ~EXTRA_SLOT_FLAGS[i - EFFECT_SLOT_COUNT];
+				}
 				complete &&= texture === null;
 			}
 		}
@@ -152,6 +166,7 @@ export class MaterialBindings {
 			slots,
 			volume,
 			flags,
+			extraFlags,
 			group: (look.flags & LookFlags.Effect) !== 0 ? null : this.#materialGroup(material, slots),
 			alphaReady: slots[(look.flags & LookFlags.AlphaNormal) !== 0 ? 1 : 0] !== null,
 			complete,
@@ -191,20 +206,23 @@ export class MaterialBindings {
 	effectGroup({ material, slots, volume }: EffectMaterial, inputs: EffectInputs): GPUBindGroup {
 		// the slots' versions, then the volume's and the inputs'
 		const parts = this.#effectParts;
-		for (let i = 0; i < slots.length; i++) {
+		for (let i = 0; i < EFFECT_SLOT_COUNT; i++) {
 			parts[i] = slots[i]?.version ?? -1;
 		}
-		parts[slots.length] = volume?.version ?? -1;
-		parts[slots.length + 1] = inputs.version;
+		parts[EFFECT_SLOT_COUNT] = volume?.version ?? -1;
+		parts[EFFECT_SLOT_COUNT + 1] = inputs.version;
 		return this.#effectGroups.get(material, parts, () =>
 			this.#device.createBindGroup({
 				label: `effect material ${material}`,
 				layout: this.#effectLayout,
 				entries: [
-					...slots.map((slot, i) => ({ binding: i, resource: slot?.view ?? this.#white })),
-					...slots.map((slot, i) => ({
-						binding: SLOTS.length + i,
-						resource: slot?.sampler ?? this.#defaultSampler,
+					...Array.from({ length: EFFECT_SLOT_COUNT }, (_, i) => ({
+						binding: i,
+						resource: slots[i]?.view ?? this.#white,
+					})),
+					...Array.from({ length: EFFECT_SLOT_COUNT }, (_, i) => ({
+						binding: EFFECT_SLOT_COUNT + i,
+						resource: slots[i]?.sampler ?? this.#defaultSampler,
 					})),
 					{ binding: 14, resource: inputs.depth },
 					{ binding: 15, resource: inputs.gbufferB },

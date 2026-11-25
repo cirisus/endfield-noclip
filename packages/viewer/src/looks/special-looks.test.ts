@@ -189,7 +189,7 @@ test('a dithered surface tests its mask from the noise slot, which its shading n
 		],
 	});
 	assert.equal(reed.queue, 'cutout');
-	assert.deepEqual(reed.textures, [10, 12, null, null, null, null, 11]);
+	assert.deepEqual(reed.textures.slice(0, 7), [10, 12, null, null, null, null, 11]);
 	// no slot flag, so the surface's shading doesn't take it for a vertex offset's or a layer's texture
 	assert.equal(reed.flags & LookFlags.ParallaxNoiseMap, 0);
 	assert.equal(
@@ -312,7 +312,7 @@ test('erosion rock: its maps tile by their own scales on UV set 0, the ramp stre
 		},
 	});
 	const [look] = materialLooks({ entries: [entry] });
-	assert.deepEqual(look.textures, [null, 1, 2, 3, 4, 5, 5]);
+	assert.deepEqual(look.textures.slice(0, 7), [null, 1, 2, 3, 4, 5, 5]);
 	assert.equal(look.flags & (0x7f << UV1_SHIFT), 0);
 	assert.notEqual(look.flags & LookFlags.Erosion, 0);
 	assert.equal(look.uvScales[3], 0);
@@ -399,7 +399,7 @@ test('dynamic erosion: packs all seven maps, streams 1D LUTs whole and marks the
 		},
 	});
 	const [look] = materialLooks({ entries: [entry] });
-	assert.deepEqual(look.textures, [1, 2, 3, 4, 5, 6, 7]);
+	assert.deepEqual(look.textures.slice(0, 7), [1, 2, 3, 4, 5, 6, 7]);
 	assert.notEqual(look.flags & LookFlags.Erosion, 0);
 	assert.equal(look.uvScales[0], 0);
 	assert.equal(look.uvScales[3], 0);
@@ -465,7 +465,7 @@ test('sludge: uses cutout queue, streams heightmap whole and unpacks clip planes
 	});
 	const [look] = materialLooks({ entries: [entry] });
 	assert.equal(look.queue, 'cutout');
-	assert.deepEqual(look.textures, [1, 2, 3, 4, 5, null, 6]);
+	assert.deepEqual(look.textures.slice(0, 7), [1, 2, 3, 4, 5, null, 6]);
 	assert.equal(look.uvScales[6], 0);
 	assert.equal(look.params[SludgeRow.mode + 3], 2);
 	assert.deepEqual(Array.from(look.params.subarray(SludgeRow.clip0, SludgeRow.clip0 + 4)), [0, 0, 0, 1]);

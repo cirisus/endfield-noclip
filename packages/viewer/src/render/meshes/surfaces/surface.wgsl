@@ -123,20 +123,17 @@ fn map_channel(flags: u32, mro: bool, channel: f32, base_a: f32, packed: vec4f, 
 	return mix(base_a, select(0.0, mask.a, mro), saturate(channel - 2.0));
 }
 
-// whether the mask slot holds a bound MRO map rather than the tri-channel mask (which under an MRO map sits
-// in the emissive slot) or `_PARALLAX_MAP_WORLDSPACE`'s mask map
-fn has_mro(flags: u32, look: Look) -> bool {
-	return (flags & MASK_MAP) != 0u
-		&& look.effect_only[5].w < 0.5
-		&& ((flags & TRI_CHANNEL_MASK) == 0u || look.mask_offset.w > 0.5);
+// whether the mask slot holds a bound MRO map
+fn has_mro(flags: u32) -> bool {
+	return (flags & MASK_MAP) != 0u;
 }
 
 
 // `_EMISSIVE_ANIM`'s pulse (`EmissivePulseRow` in lit-look.ts, docs/game-data/materials.md#emission): each cycle
 // rises from the minimum brightness to 1 and back over the interval's share of it, then stays at the minimum
 fn emissive_pulse(look: Look) -> f32 {
-	let x = saturate(fract(frame.eye.w * look.parallax.x + look.parallax.y) * look.parallax.z) * 2.0 - 1.0;
-	let low = min(look.parallax.w, 0.999);
+	let x = saturate(fract(frame.eye.w * look.emissive_pulse.x + look.emissive_pulse.y) * look.emissive_pulse.z) * 2.0 - 1.0;
+	let low = min(look.emissive_pulse.w, 0.999);
 	let x2 = x * x;
 	return (2.0 * abs(x2 * x) - 3.0 * x2 + 0.5 + 0.5 * (1.0 + low) / (1.0 - low)) * (1.0 - low);
 }
@@ -232,12 +229,13 @@ fn parallax_glow(
 }
 
 // `_PARALLAX_MAP_WORLDSPACE` (`ParallaxWorldRow` in lit-look.ts, docs/game-data/materials.md#lit-layers):
-// projects `_ParallaxMaskMap` (in `mask_map`) over world XZ around `center`, blends between two pattern
+// projects `_ParallaxMaskMap` (in `overlay_mask_map`) over world XZ around `center`, blends between two pattern
 // colours past `lerp_schedule`, and adds the optional object-height highlight
 fn parallax_world_glow(
 	look: Look,
 	in: VertexOut,
 	flags: u32,
+	extra: u32,
 	v: vec3f,
 	n: vec3f,
 	has_noise: bool,
@@ -254,11 +252,11 @@ fn parallax_world_glow(
 	let base_glow = parallax_radiance(look, in, v, n, base_color);
 
 	let world = in.rel + frame.eye.xyz;
-	let wp = look.effect_only[1];
-	let rot = look.effect_only[2];
-	let pat_bright = look.effect_only[3];
-	let pat_dark = look.effect_only[4];
-	let add_col = look.effect_only[5];
+	let wp = look.parallax_world[0];
+	let rot = look.parallax_world[1];
+	let pat_bright = look.parallax_world[2];
+	let pat_dark = look.parallax_world[3];
+	let add_col = look.parallax_world[4];
 
 	let delta_xz = world.xz - wp.xy;
 	let scaled = delta_xz * wp.z;
@@ -268,8 +266,8 @@ fn parallax_world_glow(
 	let geom_ny = select(0.0, saturate(abs(normalize(in.normal).y)), dot(in.normal, in.normal) > 1e-6);
 	let mask_sample = select(
 		vec3f(0.0),
-		textureSampleLevel(mask_map, detail_sampler, mask_uv, mix(3.0, 0.0, geom_ny)).rgb,
-		(flags & MASK_MAP) != 0u,
+		textureSampleLevel(overlay_mask_map, detail_sampler, mask_uv, mix(3.0, 0.0, geom_ny)).rgb,
+		(extra & EXTRA_OVERLAY_MASK_MAP) != 0u,
 	);
 	let tinted = base_glow * base_color * mask_sample;
 	let lerp_t = saturate((length(delta_xz) + pattern.x * 20.0) - wp.w);
@@ -367,6 +365,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	ev.unlit_color = vec3f(0.0);
 	let draw = draws[in.draw];
 	let flags = bitcast<u32>(draw.offset.w);
+	let extra = extra_flags(draw);
 	let id = look_slot(draw);
 	let look = looks[id];
 	// derivatives (and implicit-LOD sampling) must happen in uniform control flow
@@ -380,6 +379,18 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	let mask = textureSampleBias(mask_map, detail_sampler, slot_uv(id, in.uv, flags, MASK_SLOT), bias);
 	let glow = textureSampleBias(emissive_map, base_sampler, slot_uv(id, in.uv, flags, EMISSIVE_SLOT), bias);
 	let detail = textureSampleBias(detail_map, detail_sampler, slot_uv(id, in.uv, flags, DETAIL_SLOT), bias);
+	let tri_mask = textureSampleBias(
+		tri_mask_map,
+		detail_sampler,
+		extra_slot_uv(id, in.uv, extra, EXTRA_TRI_MASK_SLOT),
+		bias,
+	);
+	let overlay_mask = textureSampleBias(
+		overlay_mask_map,
+		detail_sampler,
+		extra_slot_uv(id, in.uv, extra, EXTRA_OVERLAY_MASK_SLOT),
+		bias,
+	);
 	let gradient_scale = exp2(bias);
 	let uv0_dx = dpdx(in.uv.xy) * gradient_scale;
 	let uv0_dy = dpdy(in.uv.xy) * gradient_scale;
@@ -389,7 +400,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	// the gaps view (`DEBUG_VIEWS` in debug-views.ts): a material drawn without something the game draws
 	// (`GAPS_FLOAT` in look.ts) shows amber and black stripes, 25 cm wide in world space, over its base map's
 	// brightness
-	if (frame.flags.y == 6u && look.effect_only[0].x > 0.5) {
+	if (frame.flags.y == 6u && look.misc.x > 0.5) {
 		let world = in.rel + frame.eye.xyz;
 		let stripe = fract((world.x + world.y + world.z) * 2.0) < 0.5;
 		let shape = select(1.0, dot(base.rgb, LUMINANCE_ROUNDED), (flags & BASE_MAP) != 0u);
@@ -486,8 +497,6 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	let layered = (flags & LAYER_BLEND) != 0u && (flags & layer_maps) == layer_maps;
 	let cover_source = look.parallax2.w;
 	let top_layer = layered && cover_source == LAYER_SOURCE_TOP;
-	// the mask map sits in the emissive slot and reads 0 while streaming
-	let layer_mask_map = layered && cover_source == LAYER_SOURCE_MASK_MAP;
 	var layer = vec4f(0.0);
 	var layer_bump = vec4f(0.0);
 	if (layered) {
@@ -506,7 +515,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	var raw_cover = 0.0;
 	var cover = 0.0;
 	if (layered && !top_layer) {
-		let mask_r = select(0.0, glow.r, (flags & EMISSIVE_MAP) != 0u);
+		let mask_r = select(0.0, overlay_mask.r, (extra & EXTRA_OVERLAY_MASK_MAP) != 0u);
 		let normal_a = select(0.0, packed.a, has_normal);
 		raw_cover = mask_coverage(cover_source, mask_r, layer_bump.a, base_a, normal_a);
 		cover = layer_coverage(look, raw_cover, layer.a);
@@ -579,10 +588,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	if ((flags & (NORMAL_MAP | NORMAL_OCCLUSION)) == (NORMAL_MAP | NORMAL_OCCLUSION)) {
 		s.occlusion = mix(1.0, packed.a, look.surface2.x);
 	}
-	// the tri-channel mask sits in the mask slot, or under an MRO map in the emissive slot
-	// (`TRI_CHANNEL_IN_EMISSIVE_SLOT` in lit-look.ts)
-	let tri_in_glow = look.mask_offset.w > 0.5;
-	let mro = has_mro(flags, look);
+	let mro = has_mro(flags);
 	if (mro) {
 		s.metallic = mask.r;
 		s.roughness = mix(look.surface.x, look.surface.y, mask.g);
@@ -594,12 +600,10 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 		s.roughness = mix(s.roughness, mix(detail.a, detail.b, look.detail.x), detail_pbr);
 		s.occlusion *= mix(1.0, mix(1.0, detail.a, look.detail.x), detail_pbr);
 	}
-	let tri_flags = TRI_CHANNEL_MASK | select(MASK_MAP, EMISSIVE_MAP, tri_in_glow);
-	if ((flags & tri_flags) == tri_flags) {
+	if ((flags & TRI_CHANNEL_MASK) != 0u && (extra & EXTRA_TRI_MASK_MAP) != 0u) {
 		// each channel, remapped by its contrast and offset, blends toward its own surface, B first and R last
 		let scale = look.mask_scale.xyz;
-		let tri = select(mask.rgb, glow.rgb, tri_in_glow);
-		let w = saturate(scale * 0.5 + mix(-scale, vec3f(1.0), tri + look.mask_offset.xyz)) *
+		let w = saturate(scale * 0.5 + mix(-scale, vec3f(1.0), tri_mask.rgb + look.mask_offset.xyz)) *
 			vec3f(look.mask_albedo[0].w, look.mask_albedo[1].w, look.mask_albedo[2].w);
 		let roughnesses = look.mask_roughness;
 		let metallics = look.mask_metallic;
@@ -612,17 +616,18 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	}
 
 	var emission = vec3f(0.0);
-	// transparent Fresnel (`transparent && look.parallax_bright.x > 0.5`) holds the parallax rows; a vertex offset's
-	// textures in the parallax slots leave the pulse and breathing their rows
 	let has_fresnel = transparent && look.parallax_bright.x > 0.5;
-	let pulse_rows = !has_fresnel && ((flags & (PARALLAX_MAP | LAYER_BLEND)) == 0u || (flags & VERTEX_OFFSET) != 0u);
 	var emissive_color = look.emissive.rgb;
-	if (pulse_rows && look.parallax2.y > 0.0) {
-		emissive_color *= mix(1.0, cos(frame.eye.w * look.parallax2.y * 6.2831853) * 0.5 + 0.5, look.parallax2.z);
+	if (look.emissive_pulse_strength.y > 0.0) {
+		emissive_color *= mix(
+			1.0,
+			cos(frame.eye.w * look.emissive_pulse_strength.y * 6.2831853) * 0.5 + 0.5,
+			look.emissive_pulse_strength.z,
+		);
 	}
 	// the emission's strength: the map's R or the remapped mask channel
 	var strength = 0.0;
-	if ((flags & EMISSIVE_MAP) != 0u && !layer_mask_map && !tri_in_glow) {
+	if ((flags & EMISSIVE_MAP) != 0u) {
 		// R scales the emissive colour; G, B and A add colours of their own (zero unless `_EmissiveType` is set)
 		let channels = look.emissive_channels;
 		strength = glow.r;
@@ -640,8 +645,8 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 	// (docs/game-data/materials.md#emission)
 	let tint = mix(s.albedo, vec3f(1.0), look.emissive2.x);
 	s.emission = emission * tint * mix(1.0, frame.ambient.y, look.emissive2.z);
-	if (pulse_rows && look.parallax.z > 0.0) {
-		s.emission *= mix(1.0, emissive_pulse(look), look.parallax2.x);
+	if (look.emissive_pulse.z > 0.0) {
+		s.emission *= mix(1.0, emissive_pulse(look), look.emissive_pulse_strength.x);
 	}
 
 	// `HGRP/Foliage/Glow`'s flowing glow: the noise map alone in the parallax slots
@@ -656,7 +661,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 
 	// the glow needs its pattern; without a noise map it marches a flat height field
 	if ((flags & (PARALLAX_MAP | LAYER_BLEND | VERTEX_OFFSET)) == PARALLAX_MAP && in.tangent.w != 0.0) {
-		let world_parallax = look.effect_only[5].w > 0.5;
+		let world_parallax = look.parallax_world[4].w > 0.5;
 		// the glow's mask uses the same channel numbering as the emission mask, one lower
 		let glow_mask = map_channel(flags, mro, look.parallax_color.w + 1.0, base_a, packed, mask);
 		if (world_parallax || glow_mask > 0.01) {
@@ -671,6 +676,7 @@ fn eval_surface(in: VertexOut, transparent: bool, front: bool) -> SurfaceEval {
 					look,
 					in,
 					flags,
+					extra,
 					v,
 					n,
 					has_noise,

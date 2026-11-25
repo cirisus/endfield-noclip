@@ -651,7 +651,7 @@ export class MeshRenderer {
 		params[at + 4] = ps[0];
 		params[at + 5] = ps[1];
 		params[at + 6] = ps[2];
-		words[at + 7] = lookSlot;
+		words[at + 7] = lookSlot | (state.extraFlags << 16);
 		const uv0 = resident.uvTransforms[0];
 		params[at + 8] = uv0[0];
 		params[at + 9] = uv0[1];
