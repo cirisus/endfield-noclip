@@ -18,6 +18,7 @@ import { SHADOW_LAYERS, type ShadowMap } from '../shadows/shadow-map.ts';
 import type { VolumetricFog } from '../sky/volumetric-fog.ts';
 import type { TerrainRenderer } from '../terrain/terrain-renderer.ts';
 import type { WaterRenderer } from '../water/water-renderer.ts';
+import type { VerticalOcclusionMap } from '../weather/vertical-occlusion.ts';
 
 import type { DebugView } from './debug-views.ts';
 import type { RenderTargets } from './render-targets.ts';
@@ -99,6 +100,8 @@ export interface FrameContext {
 	shadowOffsets: readonly number[];
 	/** the uniforms offset of the local-light shadow tile drawn this frame, or `null` for none */
 	lightShadowOffset: number | null;
+	/** the uniforms offset of the vertical occlusion pass drawn this frame, or `null` for none */
+	verticalOcclusionOffset: number | null;
 	/** the frame counter, which the fog's noise steps by */
 	index: number;
 	/** the animation clock, s */
@@ -119,6 +122,7 @@ export interface FrameSystems {
 	shadowMap: ShadowMap;
 	shadowLayers: ShadowLayerCache;
 	lightShadows: LightShadows;
+	verticalOcclusion: VerticalOcclusionMap;
 	terrain: TerrainRenderer;
 	instances: InstanceRenderer;
 	cloth: ClothSimulator;
@@ -328,6 +332,31 @@ export const encodeFrame = (
 				(settings.terrain ? systems.terrain.encodeLightShadow(pass, far) : 0) +
 				meshes.encodeLightShadow(pass, far),
 		);
+	}
+
+	// top-down vertical occlusion depth map for rain wetness, falling rain, splashes, and snow
+	const verticalOcclusionOffset = context.verticalOcclusionOffset;
+	if (verticalOcclusionOffset !== null) {
+		const far = SHADOW_LAYERS - 1;
+		const pass = beginPass(
+			encoder,
+			{
+				label: 'vertical occlusion',
+				colorAttachments: [],
+				depthStencilAttachment: {
+					view: systems.verticalOcclusion.view,
+					depthClearValue: 1,
+					depthLoadOp: 'clear',
+					depthStoreOp: 'store',
+				},
+			},
+			{ group: context.frameCore.group, offset: verticalOcclusionOffset },
+		);
+		if (settings.terrain) {
+			draws += systems.terrain.encodeLightShadow(pass, far);
+		}
+		draws += meshes.encodeLightShadow(pass, far);
+		pass.end();
 	}
 
 	// after the shadow maps, which it reads

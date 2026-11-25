@@ -1,4 +1,4 @@
-import type { EnvironmentProfile } from '@endfield-noclip/package-format/environment';
+import type { EnvironmentProfile, RainConfig, SnowConfig } from '@endfield-noclip/package-format/environment';
 import type { LevelEnvironment } from '@endfield-noclip/package-format/manifest';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
@@ -24,6 +24,10 @@ export interface EnvironmentLook {
 	lensFlare: LensFlareLook | null;
 	/** `Frame.wetness` */
 	wetness: Float32Array;
+	/** blended `rainConfig`, or `null` when absent */
+	rain: RainConfig | null;
+	/** blended `snowConfig`, or `null` when absent */
+	snow: SnowConfig | null;
 }
 
 /** what {@link EnvironmentState.update} blends at */
@@ -50,6 +54,8 @@ const lookOf = (profile: EnvironmentProfile | null): EnvironmentLook => ({
 	celestial: celestialLook(profile),
 	lensFlare: lensFlareLook(profile),
 	wetness: wetnessParams(profile?.rain),
+	rain: profile?.rain ?? null,
+	snow: profile?.snow ?? null,
 });
 
 /**

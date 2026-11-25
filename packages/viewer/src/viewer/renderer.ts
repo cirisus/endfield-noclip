@@ -33,6 +33,7 @@ import { SHADOW_LAYERS, ShadowMap } from '../render/shadows/shadow-map.ts';
 import { VolumetricFog } from '../render/sky/volumetric-fog.ts';
 import { TerrainRenderer } from '../render/terrain/terrain-renderer.ts';
 import { WaterRenderer } from '../render/water/water-renderer.ts';
+import { VerticalOcclusionMap } from '../render/weather/vertical-occlusion.ts';
 import type { Camera } from '../scene/camera.ts';
 
 import type { EnvironmentLook } from './environment-state.ts';
@@ -76,6 +77,7 @@ export class Renderer {
 	readonly targets: RenderTargets;
 	readonly pipelines: PipelineCache;
 	readonly shadows: ShadowMap;
+	readonly verticalOcclusion: VerticalOcclusionMap;
 	/** the loaded package's irradiance volume; an empty one without a package */
 	readonly irradiance: IrradianceVolume;
 	readonly lights: LocalLights;
@@ -122,14 +124,15 @@ export class Renderer {
 		});
 		this.#layouts = createBindLayouts(device);
 		this.pipelines = new PipelineCache(device);
-		// the main pass's frame, one per shadow layer and one for a local light's shadow tile
+		// the main pass's frame, one per shadow layer, one for a local light's shadow tile, and one for vertical occlusion
 		const alignment = device.limits.minUniformBufferOffsetAlignment;
 		this.#ring = new UniformRing(
 			device,
-			Math.ceil(FRAME_UNIFORM_BYTES / alignment) * alignment * (2 + SHADOW_LAYERS),
+			Math.ceil(FRAME_UNIFORM_BYTES / alignment) * alignment * (3 + SHADOW_LAYERS),
 			3,
 		);
 		this.shadows = new ShadowMap(device, { depthClipControl: gfx.features.depthClipControl });
+		this.verticalOcclusion = new VerticalOcclusionMap(device);
 		this.irradiance = new IrradianceVolume(device, this.pipelines);
 		this.lights = new LocalLights(device);
 		this.reflectionProbes = new ReflectionProbes(device, { bc: gfx.features.textureCompressionBc });
@@ -180,6 +183,7 @@ export class Renderer {
 			shadowMap: this.shadows,
 			shadowLayers: new ShadowLayerCache(),
 			lightShadows: this.lights.shadows,
+			verticalOcclusion: this.verticalOcclusion,
 			terrain: this.terrain,
 			instances: this.instances,
 			cloth: this.cloth,
@@ -197,9 +201,10 @@ export class Renderer {
 			this.fog,
 			this.shadows,
 			this.lights.shadows,
+			this.verticalOcclusion,
 			this.reflectionProbes,
 		];
-		this.#histories = [this.post, this.fog, this.meshes, this.#frameHistory];
+		this.#histories = [this.post, this.fog, this.meshes, this.verticalOcclusion, this.#frameHistory];
 		this.#owned = [
 			this.post,
 			this.fog,
@@ -211,6 +216,7 @@ export class Renderer {
 			this.cloth,
 			this.instances,
 			this.terrain,
+			this.verticalOcclusion,
 			this.shadows,
 			this.targets,
 		];
@@ -323,6 +329,26 @@ export class Renderer {
 			block.f32.set(lightShadows.request.render, FrameOffsets.viewProj);
 			lightShadowOffset = block.offset;
 		}
+		const weatherNeedsOcclusion =
+			settings.scene &&
+			settings.lit &&
+			((look.rain !== null &&
+				((look.rain.enableWetness && look.rain.wetness > 0) ||
+					(look.rain.enable && look.rain.intensity > 0))) ||
+				(look.snow !== null && look.snow.enable && look.snow.intensity > 0));
+		let verticalOcclusionOffset: number | null = null;
+		if (
+			this.verticalOcclusion.update(camera.position, {
+				needed: weatherNeedsOcclusion,
+				contentVersion: input.content.version,
+				compiling,
+			})
+		) {
+			const block = ring.allocate(FRAME_UNIFORM_BYTES);
+			block.f32.set(uniforms.f32);
+			block.f32.set(this.verticalOcclusion.render, FrameOffsets.viewProj);
+			verticalOcclusionOffset = block.offset;
+		}
 		ring.flush();
 		times.span('uniforms');
 
@@ -339,6 +365,7 @@ export class Renderer {
 				frame: { group: this.bindings.main, offset: uniforms.offset },
 				shadowOffsets: cascadeOffsets,
 				lightShadowOffset,
+				verticalOcclusionOffset,
 				index: input.index,
 				time: input.time,
 				dt: input.dt,
