@@ -1,3 +1,5 @@
+import { pointInPolygon } from './volumes.ts';
+
 /**
  * the game's stream areas: sets of static scenery that load by where the streaming centre is. entering a
  * trigger zone replaces the areas shown outside every zone (`rootVisible`) with the zone's own list; inside
@@ -45,16 +47,7 @@ export const footprintContains = (trigger: StreamAreaTriggerInfo, point: readonl
 	if (x < trigger.min[0] || x > trigger.max[0] || z < trigger.min[1] || z > trigger.max[1]) {
 		return false;
 	}
-	const ring = trigger.polygon;
-	let inside = false;
-	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-		const [ax, az] = ring[i];
-		const [bx, bz] = ring[j];
-		if (az > z !== bz > z && x < ((bx - ax) * (z - az)) / (bz - az) + ax) {
-			inside = !inside;
-		}
-	}
-	return inside;
+	return pointInPolygon(trigger.polygon, x, z);
 };
 
 /**
