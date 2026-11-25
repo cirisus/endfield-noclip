@@ -208,10 +208,37 @@ authored field rules:
 - wetness (`enableWetness`, `wetness`) is independent and can stay on in dry phases.
 - art-named phases carry weather too (e.g. Marker Stone dam-area art phases enable heavy rain on the
   lake islet and disable it at outposts); phase names do not indicate weather state.
-- `rainConfig` also stores falling-rain look parameters (not detailed here): speed, streak length,
-  horizontal rain level, far-rain alpha multiplier, rain-wave alpha, screen-drop count, and splash
-  count (e.g. `5.85, 1.11, 0.22, 0.58, 0.97, 5, 1000` on the lake islet; `6, 0.7` and zeros in
-  `Env_map02_lv003_xiaozuquan_01` at intensity 50).
+- `rainConfig` also stores falling-rain look parameters: `speed`, `color`, `streakLength`,
+  `rainDirection` / `middleRainDirection` / `farRainDirection`, `sceneEffectRainJitterLevel`,
+  `sceneEffectRainWidthScale`, `sceneEffectRainLightingPercent`, `middleRain*`, `farRain*`,
+  `rainWave*`, `rainSplash*`, and wetness-detail fields (`verticalFlow*`, `ripple*`).
+- `snowConfig` stores falling-snow parameters: `enable`, `intensity` (0–100), `speed` (`Vec2`),
+  `color`, `snowSizeRange`, `snowTrailLength`, `snowJitterLevel`, `snowLightingPercent`,
+  `snowCollisionFadeTimeScale`, and `snowDirection`.
+- **blending (`HGRainConfig.Lerp`, `HGSnowConfig.Lerp`)**: when both sides enable precipitation,
+  fields lerp (directions slerp). when only one side enables it, the result copies that side's
+  settings with `intensity` fading from 0. `enableWetness` blends independently with the same
+  one-sided rule on `wetness`.
+- **presetting assets**: `HGRenderPipelineAsset` references `HGRainPresettingAsset` and
+  `HGSnowPresettingAsset` (in `initial/`), supplying global ranges/heights (`rainOcclusionMapRange`
+  100 m, `rainOcclusionMapHeight` 128 m, `maxRainHeight` 150 m, `sceneEffectRainRange` 30 m,
+  `middleRainDistance` 15 m, `farRainDistance` 30 m, `rainWaveDistance` 100 m, `rainSplashRange` 15
+  m, `maxSnowHeight` 20 m, `snowRange` 50 m), UV scales, occlusion sample bias/jitter, and the 7
+  weather textures (`T_screenraindrop_01_M`, `T_rainwave_02_M`, `T_verticalflow_01_M`,
+  `T_rainripple_01_M`, `T_rainsplashesflipbook_01_M`, `PerlinNoise32RGB`, `T_SnowFlake`).
+- **rendering passes**:
+  - `HGVerticalOcclusionMapManager` renders a top-down 512² orthographic depth map around the camera
+    (±100 m XZ, 256 m vertical span) shared by wetness, rain, splashes, and snow.
+  - `HGSceneEffectRainRenderer` draws up to 4 nested quad-cloud layers (`[1.0, 0.5, 0.4, 0.6]` ×
+    `sceneEffectRainRange`) with `HGRP/Rain/SceneEffectRain`.
+  - `HGFarRainRenderer` draws 3 concentric cylinders (`middleRainDistance`, `farRainDistance`,
+    `rainWaveDistance`) with `HGRP/Rain/FarRain` (procedural streaks for middle/far, scrolling
+    `T_rainwave_02_M` for rain wave, soft depth fade, occlusion, and fog).
+  - `HGRainSplashRenderer` projects up to 1024 animated 6×6 flipbook quads onto exposed surfaces by
+    reconstructing surface height from the vertical occlusion depth map (`HGRP/Rain/RainSplash`).
+  - `HGSceneEffectSnowRenderer` draws up to 6 nested layers (`[1.0, 0.5, 0.4, 0.6, 0.3, 0.2]` ×
+    `snowRange`) with `SNOW_FLAKE` + `SNOW_COLLISION`, colliding and fading against the vertical
+    occlusion depth map.
 
 in map02 chunk volumes, `rainConfig` is active in over ⅓ of phases (~2 dozen enable rain) and
 `snowConfig` in a few dozen (nearly all enabling snow, some at intensity 0):
@@ -262,11 +289,12 @@ per-material porosity used by [wetness decals](materials.md#wetness-decals).
   upward-facing ground with high material occlusion turns its normal straight up and cuts roughness
   to 0.1 (near mirror for SSR), fading out over 15–80 m view depth.
 
-a top-down rain occlusion depth map (shared with snow, 100 m extent;
-[quality settings](quality-settings.md#values-by-level)) keeps sheltered surfaces at
-`baseWetnessLevel`. the coverage range comes from an unlocated rain presetting asset (inferred to
-equal 100 m). the shader also breaks up coverage edges with 3D jitter noise, adds animated rain
-ripples (ripple normal atlas + wave term), splashes, wall streaks, and floods normal-mapped dips via
+a top-down rain occlusion depth map (`HGVerticalOcclusionMapManager`, shared with snow, 100 m
+half-extent; [quality settings](quality-settings.md#values-by-level)) keeps sheltered surfaces at
+`baseWetnessLevel`. the coverage range, normal/depth bias, and jitter levels come from
+`HGRainPresettingAsset`. the shader breaks up coverage edges with 3D jitter noise
+(`PerlinNoise32RGB`), adds animated rain ripples (`T_rainripple_01_M` 4×4 normal atlas + orthogonal
+wave terms), biplanar wall runoff streaks (`T_verticalflow_01_M`), and floods normal-mapped dips via
 a geometric-flatness test. Marker Stone's dam-side volumes keep wetness at 0.5–1 in both dry and
 rainy phases.
 
@@ -274,7 +302,6 @@ rainy phases.
 
 - what switches story-state chunk volumes, their initial states, and which volumes are permanent vs
   story state.
-- falling-rain transitions between enabled and disabled sections.
 - quest-driven weather: what starts dynamic-rain level scripts, how their properties are
   initialised, and whether lake-islet / Snowy Forest cave boundaries are purely spatial in game.
 - where `volumeType` 4 (cylinder) stores its shape.

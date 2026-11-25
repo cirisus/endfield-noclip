@@ -25,6 +25,7 @@ the extractor reads these `HGEnvironmentPhase` sections and renames them in the 
 | `celestialConfig`     | `celestial`     |
 | `starConfig`          | `star`          |
 | `rainConfig`          | `rain`          |
+| `snowConfig`          | `snow`          |
 | `lensFlareConfig`     | `lensFlare`     |
 
 the `light` section omits fields the game derives from others (precomputed intensities,
@@ -48,7 +49,8 @@ flare data are dropped.
   ([lens flare data](../extraction.md#asset-classes)), with each image as a texture-table id.
 
 the pipeline's `HeightFogFlowNoise` texture ([flow noise](../game-data/sky-and-fog.md#flow-noise))
-is packed once as `flowNoise` on the environment table.
+is packed once as `flowNoise` on the environment table, and its `HGRainPresettingAsset` and
+`HGSnowPresettingAsset` (parameters and 7 weather textures) are packed as `weather`.
 
 ## blend schema
 

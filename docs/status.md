@@ -113,7 +113,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **environment phases** ([game-data](game-data/environment.md#environment-phases),
   [viewer](viewer/environment.md#environment-phases)):
   - `windConfig` drives only the [wind clock](viewer/materials.md#swaying-cloth) (wind motors
-    unread); `snowConfig`, `volumetricCloudConfig`, and other sections are not extracted.
+    unread); `volumetricCloudConfig` and other sections are not extracted.
   - blending rules for directions, integers, and deferred Rayleigh scale are the viewer's; cloud
     shadow crossfade and weighted `drawCloudAfterPlanet` are skipped
     ([blending](viewer/environment.md#blending-at-the-camera)).
@@ -121,11 +121,12 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     1 + `skyboxCubeMap` (boss phases), `reflectionType`, and `heightFogConfig.enableVolumetricFog`
     (PC path uses `volumetricFogConfig.enable` alone).
 - **weather** ([game-data](game-data/environment.md#weather),
-  [wetness](viewer/environment.md#wetness)):
-  - quest-driven rain (LevelData dynamic volumes), snow, and falling precipitation (streaks,
-    splashes, ripples) are not extracted/rendered.
-  - rain wetness ignores shelter (no rain occlusion map) and lacks jittered coverage edges, wall
-    runoff, and flooded normal-map dips.
+  [viewer](viewer/environment.md#weather)):
+  - quest-driven rain (LevelData dynamic volumes) and screen-space camera lens raindrops
+    (`ScreenRainDropFX`) are not extracted/rendered.
+  - vertical occlusion map, high-quality wetness (jitter, ripples, wall runoff), falling rain, far
+    rain curtains/waves, rain splashes, and falling snow with collision are implemented and verified
+    on Marker Stone and Snowy Forest (unverified against an in-game video).
 - **sky** ([viewer](viewer/sky-and-fog.md#sky)):
   - sky-view LUT ground bounce not drawn; PC cloud-alpha path selection unchecked.
   - Power Plateau overcast reads 15–20 sRGB levels brighter with lighter/thinner clouds than in game

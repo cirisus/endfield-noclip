@@ -44,10 +44,9 @@ is a phase plus post profile, not a Unity `VolumeProfile`.
 - **time fades.** time-mode factors snap on camera moves > 5 m in a frame.
 - **field blending.** factor ≥ 1 copies the section; below 1, fields follow the environment table's
   `schema` ([schema](../extraction/environments.md#blend-schema)): lerp, lerp+round, or switch at ½.
-  cloud panorama, height-fog flow noise, lens flare, and rain wetness follow the game's special
-  cases. divergences: cloud shadow fields lerp/switch by schema instead of crossfading;
-  `drawCloudAfterPlanet` switches at ½ instead of blending as a weight; falling rain isn't drawn;
-  snow isn't packed.
+  cloud panorama, height-fog flow noise, lens flare, rain, and snow follow the game's special cases.
+  divergences: cloud shadow fields lerp/switch by schema instead of crossfading;
+  `drawCloudAfterPlanet` switches at ½ instead of blending as a weight.
 - **inferred lerps.** where the game's lerp is unknown
   ([blending](../game-data/environment.md#blending-at-the-camera)), directions lerp in pitch and
   shortest-arc yaw (staying unit vectors), integer counts round (`round`), and negative
@@ -69,15 +68,25 @@ volumes, which diverges where the game keeps them off
 
 ## weather
 
-rain sections apply wherever their chunk or prefab volumes apply (e.g. Marker Stone's lake islet).
-quest-driven rain lives in unextracted LevelData dynamic volumes. falling rain and snow are not
-drawn, and `snowConfig` is not packed.
+rain and snow sections apply wherever their chunk or prefab volumes apply (e.g. Marker Stone's lake
+islet and dam stairs for rain; Snowy Forest for snow). quest-driven rain lives in unextracted
+LevelData dynamic volumes.
+
+- **vertical occlusion map**: a 512² `depth32float` top-down orthographic pass renders terrain and
+  far-layer shadow casters around the camera (±100 m XZ, 256 m vertical span, snapped to whole
+  texels in XZ and 1 m in Y), redrawing only when the snapped box, streamed content, or compiling
+  state changes.
+- **precipitation**: `WeatherRenderer` draws over the composited HDR scene after transparents:
+  4-layer near rain streaks (`SceneEffectRain`), tilted middle/far procedural rain curtains and
+  distant scrolling rain waves (`FarRain`, depth-faded and fogged), up to 1024 vertical-occlusion
+  projected 6×6 flipbook ground splashes (`RainSplash`), and 6-layer falling snow with wind flutter
+  and vertical-occlusion ground collision (`SceneEffectSnow`). screen-space camera raindrop FX
+  (`HGRP/Rain/ScreenRainDropFX`) is not drawn.
 
 ### wetness
 
-mesh and terrain surfaces (including standing water) are wetted matching the
-[game's deferred lighting](../game-data/environment.md#wetness), using a one-sided `enableWetness`
-blend (profiles without a rain section count as dry).
-
-divergences: no rain occlusion map (all surfaces count as open to the sky over the 100 m range), no
-coverage-edge jitter, no ripples or splashes, no wall streaks, and no flooded normal-map dips.
+mesh and terrain surfaces (including standing water) are wetted in deferred lighting matching the
+[game's high-quality wetness](../game-data/environment.md#wetness): one-sided `enableWetness`
+blending, vertical occlusion sheltering with 3D Perlin jitter (`PerlinNoise32RGB`), geometric
+flatness flooding, biplanar wall runoff streaks (`T_verticalflow_01_M`), and animated 4×4 standing
+water ripples plus orthogonal wind waves (`T_rainripple_01_M`).
