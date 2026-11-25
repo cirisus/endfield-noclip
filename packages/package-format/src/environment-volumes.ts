@@ -8,7 +8,12 @@ import type { Rect, Vec3 } from './values.ts';
  * shape order among equal priorities, by volume type (prism is `PolyArea`, 3). the game's order among equal
  * priorities isn't known; this is an assumption
  */
-const SHAPE_ORDER: Record<EnvironmentVolumeShape['kind'], number> = { global: 0, box: 1, prism: 3 };
+const SHAPE_ORDER: Record<EnvironmentVolumeShape['kind'], number> = {
+	global: 0,
+	box: 1,
+	sphere: 2,
+	prism: 3,
+};
 
 /**
  * orders two volumes as they stack: ascending priority, then shape kind (global, box, prism). volumes that
@@ -45,6 +50,9 @@ export const distanceInsideVolume = (shape: EnvironmentVolumeShape, [x, y, z]: R
 			}
 			return inside;
 		}
+		case 'sphere': {
+			return shape.radius - Math.hypot(x - shape.center[0], y - shape.center[1], z - shape.center[2]);
+		}
 		case 'prism': {
 			if (y < shape.bottom || y > shape.top) {
 				return 0;
@@ -68,6 +76,9 @@ export const volumeFootprintContains = (shape: EnvironmentVolumeShape, x: number
 		}
 		case 'box': {
 			return distanceInsideVolume(shape, [x, shape.center[1], z]) >= 0;
+		}
+		case 'sphere': {
+			return Math.hypot(x - shape.center[0], z - shape.center[2]) <= shape.radius;
 		}
 		case 'prism': {
 			return distanceInPolygon(shape.points, x, z) > 0;
@@ -95,6 +106,11 @@ export const volumeReaches = (shape: EnvironmentVolumeShape, rect: Rect): boolea
 				z + radius >= rect.minZ &&
 				z - radius <= rect.maxZ
 			);
+		}
+		case 'sphere': {
+			const [x, , z] = shape.center;
+			const r = shape.radius;
+			return x + r >= rect.minX && x - r <= rect.maxX && z + r >= rect.minZ && z - r <= rect.maxZ;
 		}
 		case 'prism': {
 			const xs = shape.points.map(([x]) => x);

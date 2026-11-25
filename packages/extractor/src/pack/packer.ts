@@ -169,7 +169,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				scene.partition?.levels ?? [],
 				defaultSceneStates(scene.sceneStates, scene.game),
 				entities.chunkVolumes,
-				entities.placedVolumes,
+				[...entities.placedVolumes, ...entities.dynamicVolumes],
 				cache,
 			),
 			planWater(context, {

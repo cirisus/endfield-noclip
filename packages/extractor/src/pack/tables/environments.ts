@@ -145,7 +145,12 @@ export interface EnvironmentPlan {
 	 * per volume: its level's tag, the MapConfig scene state indices that load it (empty if always loaded) and,
 	 * for prefab volumes, their placement's load condition
 	 */
-	volumeOwners: { levelTag: number; sceneStates: number[]; condition: Visibility | null }[];
+	volumeOwners: {
+		levelTag: number;
+		sceneStates: number[];
+		condition: Visibility | null;
+		dynamic?: boolean;
+	}[];
 	/** textures the phases reference; slots index this list */
 	textures: LocatedObject[];
 	/** index into {@link textures} of the height fog's flow noise, or `null` if the install lacks it */
@@ -327,6 +332,10 @@ const findWeatherAssets = async (
 				rainOcclusionSampleNoiseScale: numberField(p, 'rainOcclusionSampleNoiseScale'),
 				rainOcclusionSampleHorizontalJitterLevel: numberField(p, 'rainOcclusionSampleHorizontalJitterLevel'),
 				rainOcclusionSampleVerticalJitterLevel: numberField(p, 'rainOcclusionSampleVerticalJitterLevel'),
+				screenDropScatterParam: readVec2(p.screenDropScatterParam),
+				screenDropFXShadingSize: numberField(p, 'screenDropFXShadingSize'),
+				screenDropNoiseLevel: numberField(p, 'screenDropNoiseLevel'),
+				screenDropFXNoiseTexST: readVec4(p.screenDropFXNoiseTex_ST),
 			};
 		}
 	}
@@ -396,10 +405,11 @@ export const planEnvironments = async (
 			levels: levels.map(({ id, tag }) => [id, tag]),
 			// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
 			enabled: [...enabled].sort(compareNumbers),
-			volumes: volumes.environment.map(({ tag, sceneStates, condition, volume, phaseObject }) => ({
+			volumes: volumes.environment.map(({ tag, sceneStates, condition, volume, phaseObject, dynamic }) => ({
 				tag,
 				sceneStates,
 				condition,
+				dynamic: dynamic ?? false,
 				id: volume.id,
 				name: volume.name,
 				envPhase: volume.envPhase,
@@ -510,7 +520,7 @@ export const planEnvironments = async (
 		}
 		const phaseIndex = new Map<string, number>();
 		const volumeIndex = new Map<EnvironmentVolume, number>();
-		for (const [i, { tag, sceneStates, condition, volume }] of volumes.environment.entries()) {
+		for (const [i, { tag, sceneStates, condition, volume, dynamic }] of volumes.environment.entries()) {
 			const name = volume.name.replace(/#.*$/, '');
 			const shape = environmentVolumeShape(volume);
 			if (typeof shape === 'string') {
@@ -546,7 +556,7 @@ export const planEnvironments = async (
 				priority: volume.priority,
 				phase: index,
 			});
-			plan.volumeOwners.push({ levelTag: tag, sceneStates, condition });
+			plan.volumeOwners.push({ levelTag: tag, sceneStates, condition, dynamic: dynamic ?? false });
 		}
 
 		const postIndex = new Map<string, number>();
@@ -1248,7 +1258,7 @@ const objectAt = (root: PlainObject, path: readonly string[]): PlainObject => {
  */
 export const gateEnvironments = (plan: EnvironmentPlan, controls: ControlRegistry): void => {
 	for (const [i, volume] of plan.volumes.entries()) {
-		const { levelTag, sceneStates, condition } = plan.volumeOwners[i];
+		const { levelTag, sceneStates, condition, dynamic } = plan.volumeOwners[i];
 		// a prefab volume loads with its placement; chunk volumes with the scene states of their files
 		const loads = condition ?? (sceneStates.length === 0 ? null : controls.stateVisibility(sceneStates));
 		if (volume.phase === null) {
@@ -1256,7 +1266,7 @@ export const gateEnvironments = (plan: EnvironmentPlan, controls: ControlRegistr
 			continue;
 		}
 		// the volume's control index is known once the package's controls are (see `indexEnvironmentControls`)
-		const control = environmentVolumeControl(i, volume);
+		const control = environmentVolumeControl(i, volume, dynamic ?? false);
 		controls.add(control);
 		const on = [[{ control: control.id, mask: 2 }]];
 		volume.group = controls.groupOf(levelTag, {
@@ -1300,17 +1310,25 @@ export const indexEnvironmentControls = (
  * @returns the control that switches it: on by default, except a scripted (mode 3) volume, whose script isn't
  *   followed
  */
-const environmentVolumeControl = (index: number, volume: EnvironmentVolumeInfo): DraftControl =>
-	sceneControl({
+const environmentVolumeControl = (
+	index: number,
+	volume: EnvironmentVolumeInfo,
+	dynamic: boolean,
+): DraftControl => {
+	const scripted = volume.blend.kind === 'scripted';
+	const offByDefault = scripted || dynamic;
+	return sceneControl({
 		kind: 'environmentVolume',
 		id: environmentVolumeControlId(index),
 		name: volume.name,
 		values: SWITCH_VALUES,
-		default: volume.blend.kind === 'scripted' ? 0 : 1,
-		assumption:
-			volume.blend.kind === 'scripted'
-				? 'off: a level script fades it in, which isn’t followed; on previews it at full strength'
+		default: offByDefault ? 0 : 1,
+		assumption: scripted
+			? 'off: a level script fades it in, which isn’t followed; on previews it at full strength'
+			: dynamic
+				? 'off: a level script enables it, which isn’t followed; on previews it where it holds the camera'
 				: 'on: it applies wherever it holds the camera',
 	});
+};
 
 // #endregion

@@ -108,6 +108,10 @@ export interface RainPresetting {
 	rainOcclusionSampleNoiseScale: number;
 	rainOcclusionSampleHorizontalJitterLevel: number;
 	rainOcclusionSampleVerticalJitterLevel: number;
+	screenDropScatterParam?: Vec2;
+	screenDropFXShadingSize?: number;
+	screenDropNoiseLevel?: number;
+	screenDropFXNoiseTexST?: Vec4;
 }
 
 /** `SnowCommonPreSettingParam`: render-pipeline defaults and textures for falling snow */
@@ -184,6 +188,8 @@ export type EnvironmentVolumeShape =
 	 * `±halfExtents`. `toBox` is a rotation, row-major
 	 */
 	| { kind: 'box'; center: Vec3; toBox: Mat3; halfExtents: Vec3 }
+	/** a sphere of `radius` m centred at `center` */
+	| { kind: 'sphere'; center: Vec3; radius: number }
 	/** a vertical prism over a closed polygon in world x, z, from `bottom` to `top` (world y) */
 	| { kind: 'prism'; points: Vec2[]; bottom: number; top: number };
 
@@ -692,6 +698,15 @@ export interface RainConfig {
 	rainSplashAlpha?: number;
 	rainSplashMinMaxSize?: Vec2;
 	rainSplashLightingPercent?: number;
+	screenDropColor?: Color;
+	screenDropMaxCountLim?: number;
+	screenDropMinMaxLifeTime?: Vec2;
+	screenDropMinMaxSize?: Vec2;
+	screenDropCentroidFadeParam?: Vec2;
+	screenDropFlowPercent?: number;
+	screenDropMinMaxSpeed?: Vec2;
+	screenDropJitterSpeedScale?: number;
+	screenRainDropEdgeSharpness?: number;
 	enableWetness: boolean;
 	enableWetnessAffectSSR: boolean;
 	/** 0–1, how wet surfaces get */

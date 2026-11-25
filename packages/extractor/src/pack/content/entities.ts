@@ -1,6 +1,7 @@
 import type { ClothGroup } from '@endfield-noclip/formats/endfield/cloth-groups';
 
 import type { Context } from '../../context.ts';
+import { readDynamicEnvironmentVolumes } from '../../game/dynamic-environment.ts';
 import { poseDecorationModels } from '../../game/dynamic/decoration-animators.ts';
 import { type DynamicStructures, loadDynamicStructures } from '../../game/dynamic/dynamic-structures.ts';
 import type { SceneEnvironmentVolume, SceneVolumes } from '../../game/environment.ts';
@@ -41,6 +42,8 @@ export interface SceneEntities extends Pick<
 	clothGroups: ClothGroup[];
 	/** environment volumes that placed prefabs carry */
 	placedVolumes: SceneEnvironmentVolume[];
+	/** script-activated dynamic environment volumes from LevelData */
+	dynamicVolumes: SceneEnvironmentVolume[];
 	/** Dijiang's cabin slots, with the group that shows their built cabin */
 	cabinRooms: CabinRoomGroup[];
 	/** gameplay water volumes, and the LevelData files they couldn't be read from */
@@ -56,6 +59,7 @@ export interface SceneEntities extends Pick<
  * @returns what the later phases need
  */
 const WATER_VOLUMES_ENTRY = new URL('../../game/water/water-volumes.ts', import.meta.url);
+const DYNAMIC_ENV_ENTRY = new URL('../../game/dynamic-environment.ts', import.meta.url);
 
 export const collectEntities = async (
 	context: Context,
@@ -104,6 +108,28 @@ export const collectEntities = async (
 	const { roots } = sources;
 	await placePrefabs(context.world, roots, content, sources.placements, floaterVolume, cache);
 	const placedVolumes = await collectPlacedVolumes(roots, content, sources.placements, progressions, cache);
+	let dynamicVolumes: SceneEnvironmentVolume[] | undefined;
+	let dynamicEnvMemoKey: string | null = null;
+	if (cache !== null) {
+		const [fp, jsonHash] = await Promise.all([
+			cache.fingerprint(DYNAMIC_ENV_ENTRY),
+			context.vfs.group(VfsGroup.JsonData).then((g) => g.catalogHash),
+		]);
+		dynamicEnvMemoKey = cache.keyWith(fp, {
+			kind: 'dynamicEnvVolumes',
+			scene: scene.id,
+			level: scene.level,
+			jsonHash,
+		});
+		dynamicVolumes = await cache.recallValue<SceneEnvironmentVolume[]>(dynamicEnvMemoKey);
+	}
+	if (dynamicVolumes === undefined) {
+		dynamicVolumes = await readDynamicEnvironmentVolumes(context, scene.id, scene.level, scene.partition);
+		if (dynamicEnvMemoKey !== null && cache !== null) {
+			await cache.rememberValue(dynamicEnvMemoKey, dynamicVolumes);
+		}
+	}
+	content.count('dynamicEnvironmentVolumes', dynamicVolumes.length);
 	content.count('unsupportedPrefabs', content.unsupportedPrefabs.length);
 	content.count('standIns', content.standInReports().length);
 	return {
@@ -117,6 +143,7 @@ export const collectEntities = async (
 		sceneWater,
 		clothGroups,
 		placedVolumes,
+		dynamicVolumes,
 		cabinRooms: cabinRooms.map(({ control, levelTag, position, roomType }) => ({
 			group: controls.group(levelTag, controls.condition({ alternatives: [[{ control, mask: 2 }]] })),
 			position,

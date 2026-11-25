@@ -64,6 +64,8 @@ export interface SceneEnvironmentVolume extends TaggedVolume<EnvironmentVolume> 
 	condition: Visibility | null;
 	/** whether {@link condition} holds under the default scene values; true without one */
 	loadedByDefault: boolean;
+	/** true for LevelData dynamic environment volumes enabled by level scripts (`EnvironmentEnable`) */
+	dynamic?: boolean;
 }
 
 /** every environment and post-processing volume of a scene's default stream area, in any scene state */
@@ -358,6 +360,15 @@ export const environmentVolumeShape = (volume: EnvironmentVolume): EnvironmentVo
 			return transform === null
 				? 'box volume without a transform'
 				: unitCubeShape(transform.position, transform.rotation, transform.scale);
+		}
+		case EnvironmentVolumeType.Sphere: {
+			const transform = volume.transform;
+			if (transform === null) {
+				return 'sphere volume without a transform';
+			}
+			const [sx, sy, sz] = transform.scale;
+			const radius = Math.max(Math.abs(sx), Math.abs(sy), Math.abs(sz)) / 2;
+			return radius > 0 ? { kind: 'sphere', center: [...transform.position], radius } : 'zero-radius sphere';
 		}
 		case EnvironmentVolumeType.PolyArea: {
 			const shape = volume.shape;
