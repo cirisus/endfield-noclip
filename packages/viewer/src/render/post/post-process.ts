@@ -1,3 +1,5 @@
+import type { RainConfig, RainPresetting } from '@endfield-noclip/package-format/environment';
+
 import type { CelestialLook, CelestialTextureSlot } from '../../environment/celestial-look.ts';
 import type { Environment } from '../../environment/environment.ts';
 import type { LensFlareLook } from '../../environment/lens-flare-look.ts';
@@ -14,6 +16,7 @@ import { CelestialLayer } from '../sky/celestial.ts';
 import type { VolumetricFog } from '../sky/volumetric-fog.ts';
 import type { TextureBinding } from '../textures/texture-store.ts';
 import type { WaterContext, WaterRenderer } from '../water/water-renderer.ts';
+import type { VerticalOcclusionMap } from '../weather/vertical-occlusion.ts';
 
 import { AmbientOcclusion } from './ambient-occlusion.ts';
 import { AutoExposure } from './auto-exposure.ts';
@@ -95,6 +98,8 @@ export class PostProcess {
 	 * @param swapchainFormat the canvas format the final pass writes
 	 * @param environment the environment to start with
 	 * @param fog the volumetric fog, which the caller encodes before {@link encodeComposite}
+	 * @param frameLayout group 0 (`frame`) bind group layout
+	 * @param verticalOcclusion the top-down vertical occlusion depth map for rain wetness
 	 */
 	constructor(
 		device: GPUDevice,
@@ -103,6 +108,7 @@ export class PostProcess {
 		environment: Environment,
 		fog: VolumetricFog,
 		frameLayout: GPUBindGroupLayout,
+		verticalOcclusion: VerticalOcclusionMap,
 	) {
 		this.#device = device;
 		this.#fog = fog;
@@ -168,6 +174,7 @@ export class PostProcess {
 				device,
 				{ frame: frameLayout, postUniforms: uniforms },
 				postUniforms,
+				verticalOcclusion,
 			);
 		}
 	}
@@ -203,9 +210,40 @@ export class PostProcess {
 		this.#lensFlares.setTextures(textures.lensFlare);
 	}
 
+	/**
+	 * binds the rain wetness textures (3D jitter noise, ripple flipbook, wall vertical flow) as they stream in
+	 *
+	 * @param textures the wetness textures, `null` when not resident
+	 */
+	setWetnessTextures(textures: {
+		noise: TextureBinding | null;
+		ripple: TextureBinding | null;
+		flow: TextureBinding | null;
+	}): void {
+		this.#deferred.setWetnessTextures(textures);
+	}
+
+	/**
+	 * uploads this frame's high-quality rain wetness uniforms
+	 *
+	 * @param rain the blended rain config, or `null` when dry
+	 * @param presetting the package's rain presetting asset, or `null` when absent
+	 * @param occlusion the vertical occlusion map as fitted for this frame
+	 * @param time the viewer's animation clock, s
+	 */
+	updateWetness(
+		rain: RainConfig | null,
+		presetting: RainPresetting | null,
+		occlusion: VerticalOcclusionMap,
+		time: number,
+	): void {
+		this.#deferred.updateWetness(rain, presetting, occlusion, time);
+	}
+
 	/** unbinds the sky's textures, before the store that holds them is destroyed */
 	clearSkyTextures(): void {
 		this.setSkyTextures({ cloud: null, flowNoise: null, celestial: () => null, lensFlare: () => null });
+		this.setWetnessTextures({ noise: null, ripple: null, flow: null });
 	}
 
 	/**
@@ -532,6 +570,7 @@ export class PostProcess {
 		this.#bloom.destroy();
 		this.#uniforms.destroy();
 		this.#celestial.destroy();
+		this.#deferred.destroy();
 		this.#autoExposure.destroy();
 		this.#taa.destroy();
 		this.#reflections.destroy();

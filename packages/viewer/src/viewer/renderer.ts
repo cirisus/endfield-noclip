@@ -1,3 +1,4 @@
+import type { WeatherAssets } from '@endfield-noclip/package-format/environment';
 import type { IrradianceRegionInfo, IrradianceTable } from '@endfield-noclip/package-format/irradiance';
 import type { TerrainInfo } from '@endfield-noclip/package-format/terrain';
 
@@ -60,6 +61,8 @@ export interface RenderInput {
 	windClock: number;
 	/** the loaded package's terrain, `null` or `undefined` for none */
 	terrain: TerrainInfo | null | undefined;
+	/** the loaded package's weather presetting assets, or `null` when absent */
+	weather: WeatherAssets | null;
 	revealRadii: FrameUniformInputs['revealRadii'];
 	options: FrameUniformInputs['options'];
 	/**
@@ -168,6 +171,7 @@ export class Renderer {
 			look.environment,
 			this.fog,
 			layouts.frame,
+			this.verticalOcclusion,
 		);
 		this.meshes = new MeshRenderer(device, layouts, this.pipelines, {
 			instances: this.instances,
@@ -340,6 +344,7 @@ export class Renderer {
 		if (
 			this.verticalOcclusion.update(camera.position, {
 				needed: weatherNeedsOcclusion,
+				range: input.weather?.rain?.rainOcclusionMapRange,
 				contentVersion: input.content.version,
 				compiling,
 			})
@@ -349,6 +354,7 @@ export class Renderer {
 			block.f32.set(this.verticalOcclusion.render, FrameOffsets.viewProj);
 			verticalOcclusionOffset = block.offset;
 		}
+		this.post.updateWetness(look.rain, input.weather?.rain ?? null, this.verticalOcclusion, input.time);
 		ring.flush();
 		times.span('uniforms');
 

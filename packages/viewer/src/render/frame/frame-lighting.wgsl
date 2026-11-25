@@ -206,53 +206,6 @@ fn sun_look(shadow: f32) -> vec3f {
 
 // #endregion
 
-// the game's rain wetness on a surface at a camera-relative position (docs/game-data/environment.md#wetness).
-// the rain occlusion map isn't rendered, so everything counts as open to the sky
-fn rain_wet_surface(s_in: Surface, rel: vec3f) -> Surface {
-	let p0 = frame.wetness[0];
-	if (p0.x <= 0.0) {
-		return s_in;
-	}
-	let p1 = frame.wetness[1];
-	let threshold = frame.wetness[2].x;
-	var s = s_in;
-	let up = saturate(s.normal.y);
-	let facing = mix(p1.w, 1.0, up);
-	let d = max(abs(rel.x), abs(rel.z));
-	// sheltered surfaces (none here) take the sheltered wetness inside the occlusion range
-	let open = mix(facing, 1.0, smoothstep(0.7 * p0.w, 0.75 * p0.w, d));
-	let near = mix(p1.z * facing, 1.0, open);
-	let coverage = mix(near, p1.y, smoothstep(p0.w, p1.x * p0.w, d));
-
-	// standing water: on surfaces facing straight up, fading out between 15 and about 80 m of view depth
-	var standing = 0.0;
-	if (threshold > 0.0) {
-		let flat = smoothstep(min(threshold, 0.99), threshold, smoothstep(0.97, 0.99, up));
-		let r = s.roughness;
-		let level = r * 0.3 * saturate((r - 0.1) * 100.0) * s.occlusion;
-		let fill = smoothstep(min(level, 0.99), saturate(level + 0.6), threshold);
-		let fade = 1.0 - saturate((dot(rel, frame.view_forward.xyz) - 15.0) * 0.015);
-		let wet = p0.x * flat;
-		let depth = saturate(mix(threshold * 0.5, 1.0, fill) + smoothstep(0.6, 1.0, threshold) * 0.6);
-		standing = smoothstep(0.0, max(s.occlusion * 0.2, 1e-4), wet * depth) * open * fade;
-		s.normal = normalize(mix(s.normal, vec3f(0.0, 1.0, 0.0), saturate(wet * fill * open * fade)));
-	}
-
-	let smoothness = 1.0 - s.roughness;
-	let porosity = mix(saturate(saturate(smoothness * p0.z + p0.y) + standing * 0.1 * s.roughness), 1.0, s.metallic);
-	let not_down = 1.0 - smoothstep(0.2, 0.5, -s.normal.y);
-	let darken = mix(1.0, 0.25, p0.x * porosity * (1.0 - s.metallic) * not_down);
-	let wet_smoothness = min(
-		max(saturate(mix(0.9, 0.6, porosity) + mix(-0.6, 0.4, sqrt(smoothness))), smoothness),
-		0.99,
-	);
-	let k = p0.x * saturate(2.0 - p0.x) * not_down * coverage;
-	let wet_roughness = (1.0 - mix(smoothness, wet_smoothness, k)) * mix(1.0, 0.1, standing);
-	s.roughness = mix(s.roughness, wet_roughness, coverage);
-	s.albedo *= mix(1.0, darken, coverage);
-	return s;
-}
-
 // Unity's ShadeSH9: the probe's irradiance over π, ready to multiply by albedo
 fn ambient_probe(n: vec3f) -> vec3f {
 	let n4 = vec4f(n, 1.0);

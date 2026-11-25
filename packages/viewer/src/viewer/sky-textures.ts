@@ -1,3 +1,5 @@
+import type { RainConfig, WeatherAssets } from '@endfield-noclip/package-format/environment';
+
 import { type CelestialLook, celestialTextures } from '../environment/celestial-look.ts';
 import type { Environment } from '../environment/environment.ts';
 import type { FrameBindings, FrameTextureSlot } from '../render/frame/frame-bindings.ts';
@@ -26,21 +28,26 @@ const FRAME_TEXTURES: readonly FrameTexture[] = [
 ];
 
 /**
- * streams the environment's sky textures whole (cloud panorama, flow noise, celestial layers, lens flare
- * images, reflection cubemap, shadow ramp, cloud shadow) and binds them as they arrive. call once per
- * traversal.
+ * streams the environment's sky and wetness textures whole (cloud panorama, flow noise, celestial layers,
+ * lens flare images, reflection cubemap, shadow ramp, cloud shadow, and rain wetness textures) and binds them
+ * as they arrive. call once per traversal.
  *
- * @param source the loaded package's stream and texture store, and its flow noise texture
- * @param look the environment shown, its celestial layers, and whether drifting fog is on
+ * @param source the loaded package's stream and texture store, its flow noise texture, and its weather assets
+ * @param look the environment shown, its celestial layers, whether drifting fog is on, and the rain config
  * @param targets where the textures bind
  */
 export const updateSkyTextures = (
-	source: { stream: TextureStream; textures: TextureStore; flowNoise: number | null },
-	look: { environment: Environment; celestial: CelestialLook; flowNoise: boolean },
+	source: {
+		stream: TextureStream;
+		textures: TextureStore;
+		flowNoise: number | null;
+		weather: WeatherAssets | null;
+	},
+	look: { environment: Environment; celestial: CelestialLook; flowNoise: boolean; rain: RainConfig | null },
 	targets: { post: PostProcess; bindings: FrameBindings },
 ): void => {
 	const { stream, textures } = source;
-	const { environment } = look;
+	const { environment, rain } = look;
 	const whole = (id: number | null, kind: TextureKind): StreamedTexture | null =>
 		streamWholeTexture({ stream, textures, id, kind, priority: SKY_PRIORITY });
 
@@ -54,6 +61,14 @@ export const updateSkyTextures = (
 		flowNoise: flowNoise?.binding ?? null,
 		celestial: (slot) => whole(celestialIds[slot], '2d')?.binding ?? null,
 		lensFlare: (id) => whole(id, '2d'),
+	});
+
+	const wetnessActive = rain !== null && rain.enableWetness && rain.wetness > 0;
+	const rainAssets = wetnessActive ? (source.weather?.rain ?? null) : null;
+	targets.post.setWetnessTextures({
+		noise: rainAssets === null ? null : (whole(rainAssets.rainOcclusionSampleNoise, '3d')?.binding ?? null),
+		ripple: rainAssets === null ? null : (whole(rainAssets.rippleTexture, '2d')?.binding ?? null),
+		flow: rainAssets === null ? null : (whole(rainAssets.verticalFlowTexture, '2d')?.binding ?? null),
 	});
 
 	const reflection = whole(environment.reflection, 'cube');

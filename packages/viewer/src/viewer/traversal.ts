@@ -173,8 +173,13 @@ export class Traversal {
 		this.particlesShown = meshSelection?.particles ?? false;
 		times.span('mesh select');
 		updateSkyTextures(
-			{ stream, textures: scene.textures, flowNoise: scene.pkg.environment.flowNoise },
-			{ environment, celestial, flowNoise: options.flowNoise },
+			{
+				stream,
+				textures: scene.textures,
+				flowNoise: scene.pkg.environment.flowNoise,
+				weather: scene.pkg.environment.weather ?? null,
+			},
+			{ environment, celestial, flowNoise: options.flowNoise, rain: input.look.rain },
 			{ post: renderer.post, bindings: renderer.bindings },
 		);
 		const windNoiseId = scene.pkg.cloth?.windNoiseTexture ?? null;

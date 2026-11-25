@@ -778,6 +778,7 @@ export class Viewer {
 				dt: options.animate ? dt : 0,
 				windClock: this.#windClock,
 				terrain: scene?.pkg.manifest.terrain,
+				weather: scene?.pkg.environment.weather ?? null,
 				revealRadii: revealRadii(scene?.pkg.manifest.fireSeed ?? null, this.#sceneState.values),
 				content: { version: scene?.stream.version ?? 0, idle: scene?.stream.idle ?? true },
 				options,
