@@ -17,7 +17,7 @@ import { DEBUG_VIEWS, type DebugView } from './debug-views.ts';
 import type { FrameBindings } from './frame-bindings.ts';
 
 /** byte size of `Frame` */
-export const FRAME_UNIFORM_BYTES = 1008;
+export const FRAME_UNIFORM_BYTES = 1104;
 
 /** float offsets of `Frame` fields */
 export const FrameOffsets = {
@@ -65,6 +65,12 @@ export const FrameOffsets = {
 	reflectionProbeSh: 244,
 	/** local reflection probes: active count, max mip level, unused, unused */
 	reflectionProbes: 248,
+	/** last frame's unjittered view-projection (16 floats) */
+	prevViewProj: 252,
+	/** this frame's eye minus last frame's (m), w = 1 when no previous frame */
+	prevEyeDelta: 268,
+	/** last frame's animation time (s), last frame's wind clock, unused, unused */
+	prevTime: 272,
 } as const;
 
 /** what {@link writeFrameUniforms} packs */
@@ -104,6 +110,12 @@ export interface FrameUniformInputs {
 	reflectionProbes: Readonly<ReflectionProbeFrame>;
 	/** the global reveal radii the player's fire seed sets (`FireSeedInfo.radii`), `Frame.render_size.zw` */
 	revealRadii: readonly [inner: number, outer: number];
+	/** previous frame's camera history (20 floats from `CameraHistory`) and clocks, for dynamic motion vectors */
+	previous?: {
+		history: Float32Array;
+		time: number;
+		windClock: number;
+	};
 	options: {
 		minBoxPixels: number;
 		outlineMetres: number;
@@ -157,6 +169,18 @@ export const writeFrameUniforms = (f32: Float32Array, u32: Uint32Array, inputs: 
 		f32[FrameOffsets.reflectionProbes + 1] = inputs.reflectionProbes.maxMip;
 		f32[FrameOffsets.reflectionProbes + 2] = 0;
 		f32[FrameOffsets.reflectionProbes + 3] = 0;
+		const prev = inputs.previous;
+		if (prev !== undefined) {
+			f32.set(prev.history, FrameOffsets.prevViewProj);
+			f32[FrameOffsets.prevTime] = prev.time;
+			f32[FrameOffsets.prevTime + 1] = prev.windClock;
+			f32[FrameOffsets.prevTime + 2] = 0;
+			f32[FrameOffsets.prevTime + 3] = 0;
+		} else {
+			f32[FrameOffsets.prevEyeDelta + 3] = 1;
+			f32[FrameOffsets.prevTime] = inputs.time;
+			f32[FrameOffsets.prevTime + 1] = inputs.windClock;
+		}
 		f32[FrameOffsets.ambient] = environment.indirectSpecular;
 		// emitters marked `_IgnorePostExposure` divide out the post exposure (the game's adapted exposure)
 		// the post chain applies, which debug views turn off

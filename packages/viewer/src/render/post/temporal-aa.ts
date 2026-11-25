@@ -117,13 +117,14 @@ export class TemporalAA {
 	resize(input: {
 		scene: GPUTextureView;
 		depth: GPUTextureView;
+		velocity: GPUTextureView;
 		width: number;
 		height: number;
 		outputWidth: number;
 		outputHeight: number;
 	}): void {
 		this.#release();
-		const { scene, depth, width, height, outputWidth, outputHeight } = input;
+		const { scene, depth, velocity, width, height, outputWidth, outputHeight } = input;
 		const history = (i: number): GPUTexture =>
 			this.#targets.create({
 				label: `taa history ${i}`,
@@ -139,6 +140,7 @@ export class TemporalAA {
 				2: depth,
 				3: read,
 				4: this.#sampler,
+				5: velocity,
 			});
 		this.#sized = {
 			width,

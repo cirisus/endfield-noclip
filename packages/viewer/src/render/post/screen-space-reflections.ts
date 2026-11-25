@@ -167,6 +167,7 @@ export class ScreenSpaceReflections {
 					2: scene.gbufferB,
 					3: previousScene,
 					4: this.#sampler,
+					13: scene.velocity,
 				}),
 			],
 			targets: [
@@ -196,6 +197,7 @@ export class ScreenSpaceReflections {
 							6: marchWeight.createView(),
 							7: marchFade.createView(),
 							8: mip(pyramids[1 - i], 0),
+							13: scene.velocity,
 						}),
 					],
 					targets: [mip(pyramid, 0)],

@@ -70,7 +70,7 @@ export class InstanceRenderer {
 	#rowsVersion = -1;
 	#placementsVersion = -1;
 	#clothVersion = -1;
-	#clothSkeletons: () => { buffer: GPUBuffer; version: number };
+	#clothSkeletons: () => { buffer: GPUBuffer; prevBuffer: GPUBuffer; version: number };
 	#pool: GrowableBuffer;
 	/** the resident blocks' rect decal placements, each block's run starting at its block table entry's w */
 	#placements: GrowableBuffer;
@@ -104,7 +104,7 @@ export class InstanceRenderer {
 		pipelines: PipelineCache,
 		format: MainPassFormat,
 		maxRows: number,
-		clothSkeletons: () => { buffer: GPUBuffer; version: number },
+		clothSkeletons: () => { buffer: GPUBuffer; prevBuffer: GPUBuffer; version: number },
 	) {
 		this.#device = device;
 		this.#pipelines = pipelines;
@@ -181,6 +181,7 @@ export class InstanceRenderer {
 				{ binding: 2, resource: { buffer: this.#list } },
 				{ binding: 3, resource: { buffer: this.#placements.buffer } },
 				{ binding: 4, resource: { buffer: cloth.buffer } },
+				{ binding: 5, resource: { buffer: cloth.prevBuffer } },
 			],
 		});
 	}

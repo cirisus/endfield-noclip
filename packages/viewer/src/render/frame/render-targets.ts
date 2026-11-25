@@ -43,9 +43,12 @@ export const GBUFFER_C_FORMAT: GPUTextureFormat = 'rgba8unorm-srgb';
 /** wetness decals' mask (`rg8unorm`, blended with `max` before deferred lighting) */
 export const WETNESS_MASK_FORMAT: GPUTextureFormat = 'rg8unorm';
 
+/** dynamic object screen-space velocity delta (`dyn_prev_uv - static_prev_uv`, 0 on static pixels) */
+export const VELOCITY_FORMAT: GPUTextureFormat = 'rg16float';
+
 /**
- * the main pass's G-buffer targets, in `@location` order: HDR emission (`rgba16float`, 8 B), G-buffer A/B/C
- * (4 B each), and mip feedback (`r32uint`, 4 B). 24 bytes per sample total — within WebGPU's default 32 B/px
+ * the main pass's G-buffer targets, in `@location` order: HDR emission (`rgba16float`), G-buffer A/B/C, mip
+ * feedback (`r32uint`), and dynamic velocity (`rg16float`). 40 bytes/sample in WebGPU's attachment budget
  */
 const MAIN_TARGETS: GPUColorTargetState[] = [
 	{ format: HDR_FORMAT },
@@ -53,6 +56,7 @@ const MAIN_TARGETS: GPUColorTargetState[] = [
 	{ format: GBUFFER_B_FORMAT },
 	{ format: GBUFFER_C_FORMAT },
 	{ format: MIP_FEEDBACK_FORMAT },
+	{ format: VELOCITY_FORMAT },
 ];
 
 /**
@@ -101,6 +105,8 @@ export interface SceneTextures {
 	waterDepth: GPUTextureView;
 	/** the meshes' mip feedback (`pack_mip_feedback` in frame.wgsl) */
 	mipFeedback: GPUTextureView;
+	/** dynamic object screen-space velocity delta (`VELOCITY_FORMAT`, 0 on static pixels) */
+	velocity: GPUTextureView;
 	/** bumped whenever the views or the output size change (resize, render scale) */
 	version: number;
 }
@@ -262,6 +268,7 @@ export class RenderTargets {
 			}),
 			create({ label: 'gbuffer C', size: [width, height], format: GBUFFER_C_FORMAT, usage }),
 			create({ label: 'mip feedback', size: [width, height], format: MIP_FEEDBACK_FORMAT, usage }),
+			create({ label: 'velocity', size: [width, height], format: VELOCITY_FORMAT, usage }),
 		];
 		this.#lit = create({
 			label: 'lit scene',
@@ -299,6 +306,7 @@ export class RenderTargets {
 			depth: this.#depth.createView({ aspect: 'depth-only' }),
 			waterDepth: this.#waterDepth.createView(),
 			mipFeedback: this.#colors[4].createView(),
+			velocity: this.#colors[5].createView(),
 			version: this.#version,
 		};
 		return true;
@@ -308,10 +316,10 @@ export class RenderTargets {
 	get bytes(): number {
 		// depth with stencil is commonly stored as 8 bytes
 		const depth = this.format.stencil ? 8 : 4;
-		// G-buffer (24 B) + lit (8 B) + wetnessMask (2 B) + waterDepth (4 B) + optional copies
+		// G-buffer + velocity (28 B) + lit (8 B) + wetnessMask (2 B) + waterDepth (4 B) + optional copies
 		const copies = (this.#depthCopy !== null ? depth : 0) + (this.#gbufferACopy !== null ? 8 : 0);
 		return (
-			this.width * this.height * (depth + 24 + 8 + 2 + 4 + copies) +
+			this.width * this.height * (depth + 28 + 8 + 2 + 4 + copies) +
 			this.outputWidth * this.outputHeight * 4 * 2
 		);
 	}

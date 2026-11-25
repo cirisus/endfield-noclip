@@ -73,8 +73,8 @@ cutout-depth, and shadow passes.
   stream. skinned geometry drops the weight (swaying animated meshes stay still).
 - wind clock advances with the animation clock at the blended environment's
   [wind](../game-data/environment.md#wind) rate (one clock for all placements; still air without an
-  environment; pauses when idle). `_DisableAnimateVert` is 0; no motion vectors (previous offset
-  omitted).
+  environment; pauses when idle). `_DisableAnimateVert` is 0; writes dynamic motion vectors from the
+  previous wind clock.
 - pendulums use exact sin/cos instead of Taylor series (within 10⁻³); the packer grows bounds by
   turn reach on all axes. pendulums with gravity, custom anchor, or no swing (none on map02) stay
   still and record a gap.
@@ -83,8 +83,9 @@ cutout-depth, and shadow passes.
   `dt = 0.023333333 s` (up to 2 substeps) over all cloths in the package's `.clth` blob using
   `WindNoiseTex` and the blended environment's wind intensity/direction. the mesh vertex stage
   (`vs_main`, `vs_depth`, `vs_depth_fade`, `vs_cutout_depth`) binds vertex colour (stream 5) and
-  skins object-space positions from the resulting 3×4 skeleton buffer before sway. omits character
-  capsule colliders and motion vectors.
+  skins object-space positions from the resulting 3×4 skeleton buffer before sway, also reading the
+  previous frame's skeleton buffer (`@group(1) @binding(5)`) to emit dynamic motion vectors for TAA
+  and SSR. omits character capsule colliders.
 
 ## vertex animation textures
 

@@ -160,6 +160,7 @@ const LAYER_SLOT = 5u;
 @group(1) @binding(1) var<storage, read> blocks: array<vec4f>;
 @group(1) @binding(2) var<storage, read> list: array<u32>;
 @group(1) @binding(4) var<storage, read> cloth_skeletons: array<vec4f>;
+@group(1) @binding(5) var<storage, read> prev_cloth_skeletons: array<vec4f>;
 @group(2) @binding(0) var<storage, read> draws: array<Draw>;
 // per visible-list entry: its index into `draws`
 @group(2) @binding(1) var<storage, read> draw_ids: array<u32>;
@@ -231,6 +232,8 @@ struct VertexOut {
 	@location(9) @interpolate(flat) fade: u32,
 	// 1 when the instance matrix has a negative determinant (inverted triangle winding)
 	@location(10) @interpolate(flat) mirrored: u32,
+	// previous frame's camera-relative position (relative to this frame's eye), for dynamic motion vectors
+	@location(11) prev_rel: vec3f,
 }
 
 @vertex
@@ -265,10 +268,13 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 		out.origin = origin;
 		out.fade = list_fade(entry);
 		out.mirrored = select(0u, 1u, mirrored);
+		out.prev_rel = sv.prev_rel;
 		return out;
 	}
 	// as vs_cutout_depth computes it, so alpha-tested depth matches exactly where they're shaded
 	let rel = instance_rel(v.position, v.color, ii, draw, look) + vertex_offset(flags, look, m, uv, v.position.w);
+	let prev_rel = instance_prev_rel(v.position, v.color, ii, draw, look) +
+		vertex_offset_at(flags, look, m, uv, v.position.w, frame.prev_time.x);
 	// no normals in the mesh: zero here, faceted in the fragment shader
 	var n = vec3f(0.0);
 	if ((flags & HAS_NORMALS) != 0u) {
@@ -295,6 +301,7 @@ fn vs_main(v: VertexIn, @builtin(instance_index) ii: u32) -> VertexOut {
 	out.origin = origin;
 	out.fade = list_fade(entry);
 	out.mirrored = select(0u, 1u, mirrored);
+	out.prev_rel = prev_rel;
 	return out;
 }
 
@@ -343,6 +350,31 @@ fn cloth_skin(p: vec3f, color: vec4f, row: InstanceRow) -> vec3f {
 	return mix(a, b, color.b);
 }
 
+fn prev_cloth_bone_pos(bone: u32, p: vec4f) -> vec3f {
+	let base = bone * 3u;
+	return vec3f(
+		dot(prev_cloth_skeletons[base], p),
+		dot(prev_cloth_skeletons[base + 1u], p),
+		dot(prev_cloth_skeletons[base + 2u], p),
+	);
+}
+
+fn cloth_skin_prev(p: vec3f, color: vec4f, row: InstanceRow) -> vec3f {
+	if ((row.info & ROW_CLOTH) == 0u) {
+		return p;
+	}
+	let offset = row.custom.x;
+	let p4 = vec4f(p, 1.0);
+	let r = u32(round(color.r * 255.0));
+	let g = u32(round(color.g * 255.0));
+	if (row.custom.y != 0u) {
+		return prev_cloth_bone_pos(offset + r * 256u + g, p4);
+	}
+	let a = prev_cloth_bone_pos(offset + r, p4);
+	let b = prev_cloth_bone_pos(offset + g, p4);
+	return mix(a, b, color.b);
+}
+
 // the camera-relative position of a vertex of list entry `ii`; `position.w` is the geometry's sway weight
 fn instance_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: Look) -> vec3f {
 	let row = rows[list_row(list[ii])];
@@ -350,13 +382,23 @@ fn instance_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: Look) 
 	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
 	let rel = row_basis(row.t0, row.t1, row.t2, row.info) * p + origin;
 	let flags = bitcast<u32>(draw.offset.w);
-	return rel + grass_lean(flags, look, p.y) + sway(flags, look, p, position.w, rel, origin);
+	return rel + grass_lean(flags, look, p.y) + sway_at(flags, look, p, position.w, rel, origin, frame.wind.x);
+}
+
+// previous frame's camera-relative position (relative to this frame's eye) for GPU cloth and analytical sway
+fn instance_prev_rel(position: vec4f, color: vec4f, ii: u32, draw: Draw, look: Look) -> vec3f {
+	let row = rows[list_row(list[ii])];
+	let p = cloth_skin_prev(draw.offset.xyz + position.xyz * draw.scale.xyz, color, row);
+	let origin = vec3f(row.t0.w, row.t1.w, row.t2.w) + blocks[row_block(row.block)].xyz;
+	let rel = row_basis(row.t0, row.t1, row.t2, row.info) * p + origin;
+	let flags = bitcast<u32>(draw.offset.w);
+	return rel + grass_lean(flags, look, p.y) + sway_at(flags, look, p, position.w, rel, origin, frame.prev_time.y);
 }
 
 // `_SIMPLE_VERTEXANIM`'s world-space offset (`swayParams` in lit-look.ts,
 // docs/game-data/materials.md#swaying-cloth). `weight` is the vertex colour's alpha, which the geometry carries
 // in position W
-fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f) -> vec3f {
+fn sway_at(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f, wind_clock: f32) -> vec3f {
 	let intensity = look.sway.x;
 	if (weight == 0.0 || intensity == 0.0 || (flags & (FOLIAGE | EROSION | UNLIT | EFFECT)) != 0u) {
 		return vec3f(0.0);
@@ -364,9 +406,9 @@ fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f
 	let frequency = look.sway.y;
 	let along = select(frame.wind.zw, look.sway_direction.zw, look.sway_direction.y > 0.5);
 	let x0 = origin.x + frame.eye.x;
-	let phase = frame.wind.x * frequency + x0;
+	let phase = wind_clock * frequency + x0;
 	if (look.misc.y > 0.5) {
-		return pendulum(look, weight, rel - origin, along, phase, x0);
+		return pendulum_at(look, weight, rel - origin, along, phase, x0, wind_clock);
 	}
 	let softness = look.sway.z;
 	let kite = look.sway.w;
@@ -387,7 +429,7 @@ fn sway(flags: u32, look: Look, p: vec3f, weight: f32, rel: vec3f, origin: vec3f
 // `_SIMPLE_VERTEXANIM_PENDULUM`'s offset (docs/game-data/materials.md#swinging-pendulums): the vertex at `v`
 // from the object's origin swings about an axis across `along`, then turns about +Y, both by sines of the
 // wind clock with the object's world X `x0` as their phase; `phase` is the swing's
-fn pendulum(look: Look, weight: f32, v: vec3f, along: vec2f, phase: f32, x0: f32) -> vec3f {
+fn pendulum_at(look: Look, weight: f32, v: vec3f, along: vec2f, phase: f32, x0: f32, wind_clock: f32) -> vec3f {
 	let intensity = look.sway.x;
 	// the game's axis from its direction (x, 0, z) is (0 − z, −x, x), which still air leaves undefined
 	let across = vec3f(-along.y, -along.x, along.x);
@@ -395,7 +437,7 @@ fn pendulum(look: Look, weight: f32, v: vec3f, along: vec2f, phase: f32, x0: f32
 	if (dot(across, across) > 1e-12) {
 		swung = rotate_about(normalize(across), sin(phase) * intensity * 0.05, v);
 	}
-	let spin = sin(frame.wind.x * look.sway.w + x0) * look.sway_direction.x;
+	let spin = sin(wind_clock * look.sway.w + x0) * look.sway_direction.x;
 	let turned = rotate_about(vec3f(0.0, 1.0, 0.0), spin, swung);
 	let follow = mix(weight * intensity * 0.5, 1.0, look.sway.z);
 	return (turned - v) * follow * weight;
@@ -414,6 +456,10 @@ fn rotate_about(axis: vec3f, angle: f32, v: vec3f) -> vec3f {
 // only their depth and shadow passes read the UV sets and textures (vs_cutout_depth): a look's draws are
 // alpha-tested exactly while the map holding its alpha is bound. the offset waits for its own textures too
 fn vertex_offset(flags: u32, look: Look, basis: mat3x3f, uv: vec4f, weight: f32) -> vec3f {
+	return vertex_offset_at(flags, look, basis, uv, weight, frame.eye.w);
+}
+
+fn vertex_offset_at(flags: u32, look: Look, basis: mat3x3f, uv: vec4f, weight: f32, time: f32) -> vec3f {
 	let alpha_map = select(BASE_MAP, NORMAL_MAP, (flags & ALPHA_NORMAL) != 0u);
 	let needed = VERTEX_OFFSET | PARALLAX_MAP | alpha_map;
 	let shape = look.parallax_dark;
@@ -422,7 +468,7 @@ fn vertex_offset(flags: u32, look: Look, basis: mat3x3f, uv: vec4f, weight: f32)
 		return vec3f(0.0);
 	}
 	let direction = look.parallax_color;
-	let scroll = look.parallax_bright * frame.eye.w;
+	let scroll = look.parallax_bright * time;
 	// both textures sample one UV set, each through its own transform
 	let source = slot_set(uv, flags, PARALLAX_SLOT);
 	let noise_t = look.slot_uv[PARALLAX_SLOT];
@@ -627,6 +673,7 @@ fn dither_vertex_color(look: Look, flags: u32, color: vec4f) -> vec3f {
 
 struct SludgeVertex {
 	rel: vec3f,
+	prev_rel: vec3f,
 	normal: vec3f,
 	tangent: vec4f,
 	color: vec4f,
@@ -664,10 +711,23 @@ fn sludge_vertex(uv: vec2f, origin: vec3f, m: mat3x3f, look: Look) -> SludgeVert
 	let coverage = hm.w;
 	let center = vec3f(sludge_size * 0.5, size_y * 0.5, sludge_size * 0.5);
 	let cov2 = coverage * 2.0;
-	let wave_phase = look.parallax2 * distance(local, center) - look.parallax_color * frame.eye.w;
+	let dist_center = distance(local, center);
+	let radial = normalize(local - center + vec3f(1e-6));
 	let wave_amp = look.parallax * vec4f(saturate(cov2 - 1.0), saturate(cov2), 0.1, 0.0);
+
+	let prev_phase = look.parallax2 * dist_center - look.parallax_color * frame.prev_time.x;
+	let prev_wave_y = dot(sin(prev_phase) + vec4f(1.0), wave_amp);
+	var prev_wave_xz = radial * dot(cos(prev_phase) + vec4f(1.0), wave_amp);
+	prev_wave_xz.y = 0.0;
+	var prev_local = local;
+	prev_local.y += prev_wave_y;
+	prev_local += (ln + prev_wave_xz) * look.surface2.z;
+	prev_local += clip0.xyz * max(-dot(clip0, vec4f(prev_local, 1.0)), 0.0);
+	prev_local += clip1.xyz * max(-dot(clip1, vec4f(prev_local, 1.0)), 0.0);
+
+	let wave_phase = look.parallax2 * dist_center - look.parallax_color * frame.eye.w;
 	let wave_y = dot(sin(wave_phase) + vec4f(1.0), wave_amp);
-	var wave_xz = normalize(local - center + vec3f(1e-6)) * dot(cos(wave_phase) + vec4f(1.0), wave_amp);
+	var wave_xz = radial * dot(cos(wave_phase) + vec4f(1.0), wave_amp);
 	wave_xz.y = 0.0;
 	local.y += wave_y;
 	let anim_n = ln + wave_xz;
@@ -680,6 +740,7 @@ fn sludge_vertex(uv: vec2f, origin: vec3f, m: mat3x3f, look: Look) -> SludgeVert
 	let fwd_u = m[2] / sludge_size;
 	let world_n = normalize(right_u * anim_n.x + up_u * anim_n.y + fwd_u * anim_n.z);
 	out.rel = origin + right_u * local.x + up_u * local.y + fwd_u * local.z;
+	out.prev_rel = origin + right_u * prev_local.x + up_u * prev_local.y + fwd_u * prev_local.z;
 	out.normal = world_n;
 	out.tangent = vec4f(normalize(cross(world_n, fwd_u) + vec3f(1e-6)), 1.0);
 	out.color = vec4f(coverage, 1.0 - wave_y, 0.0, 1.0);

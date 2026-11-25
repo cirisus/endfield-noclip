@@ -51,6 +51,8 @@ fn fs_opaque_lit(in: VertexOut, @builtin(front_facing) front_facing: bool) -> GB
 	if ((flags & (NORMAL_MAP | NORMAL_OCCLUSION)) == (NORMAL_MAP | NORMAL_OCCLUSION)) {
 		s.occlusion = mix(1.0, packed.a, look.surface2.x);
 	}
-	return pack_gbuffer(s, look.detail2.w > 0.5, feedback);
+	var out = pack_gbuffer(s, look.detail2.w > 0.5, feedback);
+	out.velocity = dynamic_velocity(in.rel, in.prev_rel);
+	return out;
 }
 

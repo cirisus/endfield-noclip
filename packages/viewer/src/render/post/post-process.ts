@@ -329,7 +329,15 @@ export class PostProcess {
 				GPUTextureUsage.COPY_DST,
 		});
 		const sceneView = sceneTexture.createView();
-		this.#taa.resize({ scene: sceneView, depth: scene.depth, width, height, outputWidth, outputHeight });
+		this.#taa.resize({
+			scene: sceneView,
+			depth: scene.depth,
+			velocity: scene.velocity,
+			width,
+			height,
+			outputWidth,
+			outputHeight,
+		});
 		const histories = this.#taa.histories;
 		const historyViews: [GPUTextureView, GPUTextureView] = [
 			histories[0].createView(),

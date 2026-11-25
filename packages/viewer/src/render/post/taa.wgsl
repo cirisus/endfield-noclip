@@ -20,6 +20,7 @@ struct Taa {
 @group(1) @binding(2) var depth_texture: texture_depth_2d;
 @group(1) @binding(3) var history_texture: texture_2d<f32>;
 @group(1) @binding(4) var linear_sampler: sampler;
+@group(1) @binding(5) var velocity_texture: texture_2d<f32>;
 
 // how far out the reconstruction filter reaches: a Gaussian fit to Blackman-Harris over output pixels
 const FILTER = 2.29;
@@ -89,6 +90,7 @@ fn fs_taa(in: FullscreenOut) -> @location(0) vec4f {
 	var lo = vec3f(1e9);
 	var hi = vec3f(-1e9);
 	var nearest_depth = 0.0;
+	var nearest_px = center;
 	for (var y = -1; y <= 1; y++) {
 		for (var x = -1; x <= 1; x++) {
 			let px = clamp(center + vec2i(x, y), vec2i(0), size - 1);
@@ -104,12 +106,16 @@ fn fs_taa(in: FullscreenOut) -> @location(0) vec4f {
 			lo = min(lo, ycocg);
 			hi = max(hi, ycocg);
 			// reversed-Z: the largest depth is the nearest surface
-			nearest_depth = max(nearest_depth, textureLoad(depth_texture, px, 0));
+			let sample_depth = textureLoad(depth_texture, px, 0);
+			if (sample_depth > nearest_depth) {
+				nearest_depth = sample_depth;
+				nearest_px = px;
+			}
 		}
 	}
 	let current = sum / max(weight, 1e-6);
 
-	// reproject through the nearest depth around the pixel, so the history follows the edges of what's in front
+	// reproject through the nearest depth around the pixel, adding any dynamic object velocity delta
 	let ndc = vec2f(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
 	var previous_clip: vec4f;
 	if (nearest_depth <= 0.0) {
@@ -120,7 +126,9 @@ fn fs_taa(in: FullscreenOut) -> @location(0) vec4f {
 		previous_clip = taa.previous_view_proj * vec4f(rel + taa.eye_delta.xyz, 1.0);
 	}
 	let previous_ndc = previous_clip.xy / previous_clip.w;
-	let previous_uv = vec2f(previous_ndc.x * 0.5 + 0.5, 0.5 - previous_ndc.y * 0.5);
+	let static_prev_uv = vec2f(previous_ndc.x * 0.5 + 0.5, 0.5 - previous_ndc.y * 0.5);
+	let dyn_delta = select(vec2f(0.0), textureLoad(velocity_texture, nearest_px, 0).rg, nearest_depth > 0.0);
+	let previous_uv = static_prev_uv + dyn_delta;
 	let offscreen = any(previous_uv < vec2f(0.0)) || any(previous_uv > vec2f(1.0));
 	if (taa.eye_delta.w > 0.5 || previous_clip.w <= 0.0 || offscreen) {
 		return vec4f(expand(current), 1.0);

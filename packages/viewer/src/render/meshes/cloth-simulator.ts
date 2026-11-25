@@ -41,6 +41,9 @@ export class ClothSimulator {
 	#cache: GPUBuffer | null = null;
 	#nodes: GPUBuffer | null = null;
 	#skeletons: GPUBuffer | null = null;
+	#prevSkeletons: GPUBuffer | null = null;
+	#skeletonBytes = 0;
+	#prevDirty = false;
 	#bindGroup: GPUBindGroup | null = null;
 	#version = 0;
 
@@ -113,6 +116,11 @@ export class ClothSimulator {
 		return this.#skeletons ?? this.#dummySkeletons;
 	}
 
+	/** the previous frame's skeleton buffer bound at `@group(1) @binding(5)`, for dynamic motion vectors */
+	get prevSkeletonBuffer(): GPUBuffer {
+		return this.#prevSkeletons ?? this.#dummySkeletons;
+	}
+
 	/** increments whenever {@link skeletonBuffer} changes */
 	get version(): number {
 		return this.#version;
@@ -168,10 +176,18 @@ export class ClothSimulator {
 		}
 		this.#skeletons = createBufferWithData(device, {
 			label: 'cloth skeletons',
-			usage: GPUBufferUsage.STORAGE,
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
 			data: initSkel,
 			minSize: 48,
 		});
+		this.#prevSkeletons = createBufferWithData(device, {
+			label: 'cloth prev skeletons',
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+			data: initSkel,
+			minSize: 48,
+		});
+		this.#skeletonBytes = Math.max(initSkel.byteLength, 48);
+		this.#prevDirty = false;
 		this.#accumulator = 0;
 		this.#windTime = 0;
 		this.#windNoiseU = 0;
@@ -231,7 +247,15 @@ export class ClothSimulator {
 			this.#accumulator -= loopNum * CLOTH_DT;
 		}
 		if (loopNum === 0) {
+			if (this.#prevDirty && this.#skeletons !== null && this.#prevSkeletons !== null) {
+				encoder.copyBufferToBuffer(this.#skeletons, 0, this.#prevSkeletons, 0, this.#skeletonBytes);
+				this.#prevDirty = false;
+			}
 			return false;
+		}
+		if (this.#skeletons !== null && this.#prevSkeletons !== null) {
+			encoder.copyBufferToBuffer(this.#skeletons, 0, this.#prevSkeletons, 0, this.#skeletonBytes);
+			this.#prevDirty = true;
 		}
 
 		const u = this.#uniformData;
@@ -271,11 +295,15 @@ export class ClothSimulator {
 		this.#cache?.destroy();
 		this.#nodes?.destroy();
 		this.#skeletons?.destroy();
+		this.#prevSkeletons?.destroy();
 		this.#meta = null;
 		this.#batches = null;
 		this.#cache = null;
 		this.#nodes = null;
 		this.#skeletons = null;
+		this.#prevSkeletons = null;
+		this.#skeletonBytes = 0;
+		this.#prevDirty = false;
 		this.#bindGroup = null;
 		if (this.#clothCount > 0) {
 			this.#clothCount = 0;

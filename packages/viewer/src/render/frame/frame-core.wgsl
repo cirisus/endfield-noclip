@@ -76,19 +76,46 @@ struct Frame {
 	// local reflection probes: x = active count (0..32), y = cube-array max mip level, zw unused
 	reflection_probes: vec4f,
 	// #endregion
+	// #region previous frame (dynamic motion vectors)
+	// last frame's unjittered camera-relative view-projection
+	prev_view_proj: mat4x4f,
+	// this frame's eye minus last frame's (m); w = 1 when there's no previous frame (first frame, cut)
+	prev_eye_delta: vec4f,
+	// x = last frame's animation time (s), y = last frame's wind clock, zw unused
+	prev_time: vec4f,
+	// #endregion
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 
-// G-buffer outputs of the main geometry pass (`MAIN_TARGETS` in render-targets.ts, 24 bytes/sample):
-// emission (`rgba16float`), gbuffer_a (`rgb10a2unorm`), gbuffer_b (`rgb10a2unorm`), gbuffer_c (`rgba8unorm-srgb`)
-// and mip_feedback (`r32uint`)
+// G-buffer outputs of the main geometry pass (`MAIN_TARGETS` in render-targets.ts):
+// emission (`rgba16float`), gbuffer_a (`rgb10a2unorm`), gbuffer_b (`rgb10a2unorm`), gbuffer_c (`rgba8unorm-srgb`),
+// mip_feedback (`r32uint`), and velocity (`rg16float`: `dyn_prev_uv - static_prev_uv`, 0 on static pixels)
 struct GBufferOut {
 	@location(0) emission: vec4f,
 	@location(1) gbuffer_a: vec4f,
 	@location(2) gbuffer_b: vec4f,
 	@location(3) gbuffer_c: vec4f,
 	@location(4) mip_feedback: u32,
+	@location(5) velocity: vec2f,
+}
+
+// dynamic screen-space velocity delta (`dyn_prev_uv - static_prev_uv`) for a vertex that moved between frames;
+// returns (0, 0) on static geometry or when there is no valid previous frame
+fn dynamic_velocity(curr_rel: vec3f, prev_rel: vec3f) -> vec2f {
+	if (frame.prev_eye_delta.w > 0.5 || all(curr_rel == prev_rel)) {
+		return vec2f(0.0);
+	}
+	let s_clip = frame.prev_view_proj * vec4f(curr_rel + frame.prev_eye_delta.xyz, 1.0);
+	let d_clip = frame.prev_view_proj * vec4f(prev_rel + frame.prev_eye_delta.xyz, 1.0);
+	if (s_clip.w <= 0.0 || d_clip.w <= 0.0) {
+		return vec2f(0.0);
+	}
+	let s_ndc = s_clip.xy / s_clip.w;
+	let d_ndc = d_clip.xy / d_clip.w;
+	let s_uv = vec2f(s_ndc.x * 0.5 + 0.5, 0.5 - s_ndc.y * 0.5);
+	let d_uv = vec2f(d_ndc.x * 0.5 + 0.5, 0.5 - d_ndc.y * 0.5);
+	return d_uv - s_uv;
 }
 
 // a mesh pixel's report to the texture streaming (`MipFeedback`, mip-feedback.wgsl): the material's slot in the
@@ -176,6 +203,7 @@ fn pack_gbuffer(s: Surface, no_lit_decals: bool, mip_feedback: u32) -> GBufferOu
 	let flags = GBUFFER_VALID | select(0u, GBUFFER_NO_LIT_DECALS, no_lit_decals);
 	out.gbuffer_b = pack_gbuffer_b(s.normal, s.roughness, flags);
 	out.mip_feedback = mip_feedback;
+	out.velocity = vec2f(0.0);
 	if (s.foliage) {
 		let sub = round(clamp(s.subsurface, 0.0, 1.0) * 127.0);
 		let f0_code = round(clamp(s.f0 / 0.16, 0.0, 1.0) * 15.0);
@@ -214,6 +242,7 @@ fn pack_gbuffer_unlit(color: vec3f, mip_feedback: u32) -> GBufferOut {
 	out.gbuffer_b = vec4f(0.0);
 	out.gbuffer_c = vec4f(0.0);
 	out.mip_feedback = mip_feedback;
+	out.velocity = vec2f(0.0);
 	return out;
 }
 

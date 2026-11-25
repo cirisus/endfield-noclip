@@ -313,11 +313,15 @@ struct SurfaceEval {
 	unlit_color: vec3f,
 }
 
-fn eval_to_gbuffer(ev: SurfaceEval, no_lit_decals: bool, feedback: u32) -> GBufferOut {
+fn eval_to_gbuffer(ev: SurfaceEval, no_lit_decals: bool, feedback: u32, velocity: vec2f) -> GBufferOut {
+	var out: GBufferOut;
 	if (ev.unlit) {
-		return pack_gbuffer_unlit(ev.unlit_color, feedback);
+		out = pack_gbuffer_unlit(ev.unlit_color, feedback);
+	} else {
+		out = pack_gbuffer(ev.surface, no_lit_decals, feedback);
 	}
-	return pack_gbuffer(ev.surface, no_lit_decals, feedback);
+	out.velocity = velocity;
+	return out;
 }
 
 @fragment
@@ -325,7 +329,7 @@ fn fs_opaque(in: VertexOut, @builtin(front_facing) front_facing: bool) -> GBuffe
 	let look = look_slot(draws[in.draw]);
 	let feedback = pack_mip_feedback(look, in.uv, in.rel, frame.params.y);
 	let ev = eval_surface(in, false, is_front_face(front_facing, in.mirrored));
-	return eval_to_gbuffer(ev, looks[look].detail2.w > 0.5, feedback);
+	return eval_to_gbuffer(ev, looks[look].detail2.w > 0.5, feedback, dynamic_velocity(in.rel, in.prev_rel));
 }
 
 // alpha-tested surfaces that don't write depth (`HGRP/Lit` `_ZWRITE_OFF`, e.g. floor/wall mesh decals):
@@ -355,7 +359,7 @@ fn fs_cutout_overlay(in: VertexOut, @builtin(front_facing) front_facing: bool) -
 	}
 	let feedback = pack_mip_feedback(id, in.uv, in.rel, frame.params.y);
 	let ev = eval_surface(in, false, is_front_face(front_facing, in.mirrored));
-	return eval_to_gbuffer(ev, look.detail2.w > 0.5, feedback);
+	return eval_to_gbuffer(ev, look.detail2.w > 0.5, feedback, dynamic_velocity(in.rel, in.prev_rel));
 }
 
 

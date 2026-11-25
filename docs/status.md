@@ -183,9 +183,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   mesh, so meshes shared by different animations hold still (map02 `s_zmdmachinevat_lod*` and one
   Hongshan waterway mesh). frames interpolate (game steps); unverified in game.
 - **cloth simulation** ([game-data](game-data/materials.md#cloth-simulation),
-  [viewer](viewer/materials.md#swaying-cloth)): runs `ClothSingleDispatchCS` physics and vertex
-  skinning across all passes; omits character capsule colliders and motion vectors (Qingbo Stockade
-  red emblem banners verified animating; unverified against an in-game video).
+  [viewer](viewer/materials.md#swaying-cloth)): runs `ClothSingleDispatchCS` physics, vertex
+  skinning across all passes, and dynamic motion vectors; omits character capsule colliders (Qingbo
+  Stockade red emblem banners verified animating; unverified against an in-game video).
 - **Lit vertex offset (`_USE_VERTOFFSET`)** ([game-data](game-data/materials.md#vertex-offset)):
   alpha-tested materials only (all 4 on map02). opaque, normal-direction, parallax/layered, and
   alpha-weighted animated meshes hold still. clock assumed seconds; unverified in game beyond
@@ -539,8 +539,9 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   newly uncovered surfaces briefly (vs game's CPU estimate). glass, effects, shadow-only casters,
   parallax/layer slots, and feedback-incapable devices fall back to instance screen size. textures
   and meshes share one budget (game budgets textures alone).
-- **TAA** ([frame](viewer/frame.md)): no sharpening (game uses 0.3) and no motion vectors (moving
-  objects, particles, and scrolling/transparent effects reproject by static depth behind them).
+- **TAA** ([frame](viewer/frame.md)): no sharpening (game uses 0.3); dynamic motion vectors cover
+  GPU cloth, cloth/pendulum sway, vertex-offset meshes, and sludge waves, while skinned/VAT,
+  spinning/riding instances, particles, and transparent effects still reproject by static depth.
 
 ## packaging
 

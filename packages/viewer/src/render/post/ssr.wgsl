@@ -38,6 +38,8 @@ struct Ssr {
 // fs_resolve: this frame's pyramid and view depth pyramid, all mips
 @group(1) @binding(11) var pyramid: texture_2d<f32>;
 @group(1) @binding(12) var depth_pyramid: texture_2d<f32>;
+// dynamic object screen-space velocity delta (`dyn_prev_uv - static_prev_uv`)
+@group(1) @binding(13) var velocity_texture: texture_2d<f32>;
 
 // the view depth stored where nothing was drawn; any real surface is nearer
 const SKY_DEPTH = 60000.0;
@@ -86,7 +88,9 @@ fn motion_at(uv: vec2f) -> vec2f {
 		return vec2f(0.0);
 	}
 	let unjittered = uv + vec2f(-post.jitter.x, post.jitter.y) * 0.5;
-	return unjittered - previous_uv(unproject(uv, depth));
+	let px = clamp(vec2i(uv * post.viewport.xy), vec2i(0), vec2i(post.viewport.xy) - 1);
+	let dyn_delta = textureLoad(velocity_texture, px, 0).rg;
+	return unjittered - (previous_uv(unproject(uv, depth)) + dyn_delta);
 }
 
 // Karis' tonemap-like weighting the game keeps the hit colours in until the resolve

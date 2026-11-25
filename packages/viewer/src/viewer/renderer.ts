@@ -27,6 +27,7 @@ import { type LocalLightFrame, LocalLights } from '../render/lighting/local-ligh
 import { ReflectionProbes } from '../render/lighting/reflection-probes.ts';
 import { ClothSimulator } from '../render/meshes/cloth-simulator.ts';
 import { MeshRenderer } from '../render/meshes/mesh-renderer.ts';
+import { CAMERA_HISTORY_FLOATS, CameraHistory } from '../render/post/camera-history.ts';
 import { PostProcess } from '../render/post/post-process.ts';
 import { SHADOW_LAYERS, ShadowMap } from '../render/shadows/shadow-map.ts';
 import { VolumetricFog } from '../render/sky/volumetric-fog.ts';
@@ -101,6 +102,11 @@ export class Renderer {
 	readonly #owned: readonly { destroy(): void }[];
 	/** each shadow layer's uniforms offset this frame */
 	readonly #cascadeOffsets: number[] = [];
+	/** previous frame's unjittered camera and clocks, for dynamic object motion vectors */
+	readonly #frameHistory = new CameraHistory();
+	readonly #previous = new Float32Array(CAMERA_HISTORY_FLOATS);
+	#prevTime = 0;
+	#prevWindClock = 0;
 
 	/**
 	 * @param gfx the device
@@ -147,6 +153,7 @@ export class Renderer {
 		this.cloth = new ClothSimulator(device, this.pipelines);
 		this.instances = new InstanceRenderer(device, layouts, this.pipelines, format, INSTANCE_ROWS, () => ({
 			buffer: this.cloth.skeletonBuffer,
+			prevBuffer: this.cloth.prevSkeletonBuffer,
 			version: this.cloth.version,
 		}));
 		this.fog = new VolumetricFog(device, this.pipelines, layouts.frame);
@@ -192,7 +199,7 @@ export class Renderer {
 			this.lights.shadows,
 			this.reflectionProbes,
 		];
-		this.#histories = [this.post, this.fog, this.meshes];
+		this.#histories = [this.post, this.fog, this.meshes, this.#frameHistory];
 		this.#owned = [
 			this.post,
 			this.fog,
@@ -266,6 +273,7 @@ export class Renderer {
 		}
 		const uniforms = ring.allocate(FRAME_UNIFORM_BYTES);
 		const jitter = this.post.nextJitter(width, height, outputHeight);
+		this.#frameHistory.write(this.#previous, camera, width / height);
 		writeFrameUniforms(uniforms.f32, uniforms.u32, {
 			camera,
 			jitter,
@@ -287,8 +295,16 @@ export class Renderer {
 			lights,
 			reflectionProbes: this.reflectionProbes.frame(),
 			revealRadii: input.revealRadii,
+			previous: {
+				history: this.#previous,
+				time: this.#prevTime,
+				windClock: this.#prevWindClock,
+			},
 			options: input.options,
 		});
+		this.#frameHistory.advance();
+		this.#prevTime = input.time;
+		this.#prevWindClock = input.windClock;
 		// each cascade's frame: the main one with the cascade's view-projection
 		const cascadeOffsets = this.#cascadeOffsets;
 		cascadeOffsets.length = 0;

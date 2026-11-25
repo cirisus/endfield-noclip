@@ -43,16 +43,17 @@ for pass details.
   `depth32float-stencil8` when supported (clear 0, used only by effect
   [portals](effects.md#portals); post reads depth aspect only). all rendering is camera-relative:
   instance block origins rebase to the eye in f64 on the CPU each frame.
-- **main pass (G-buffer).** 1 sample/pixel into 5 targets (36 B/sample WebGPU colour attachment
+- **main pass (G-buffer).** 1 sample/pixel into 6 targets (40 B/sample WebGPU colour attachment
   budget): HDR emission (`rgba16float`), G-buffer A (`rgb10a2unorm`: metallic/AO/porosity or
   foliage/subsurface terms + 2-bit shading model), G-buffer B (`rgb10a2unorm`: 10+10-bit octahedral
   world normal, roughness, valid/decal-reject flags), G-buffer C (`rgba8unorm-srgb`: albedo +
-  foliage AO/subsurface amount), and [mip feedback](streaming.md#mip-feedback) (`r32uint`). depth is
-  stored for decals, AO, SSR, deferred lighting, and post. draw order: opaque mesh depth →
-  alpha-tested cut-out depth → terrain → opaque meshes (depth-equal) → alpha-tested meshes
-  (depth-equal) → non-depth-writing alpha-tested overlays (`_ZWRITE_OFF` mesh decals,
-  `greater-equal`) → opaque [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only portal masks
-  → instance boxes → box outlines (> `outlineMetres`) → terrain wireframe.
+  foliage AO/subsurface amount), [mip feedback](streaming.md#mip-feedback) (`r32uint`), and dynamic
+  velocity (`rg16float`: `dyn_prev_uv − static_prev_uv`, 0 on static pixels). depth is stored for
+  decals, AO, SSR, deferred lighting, and post. draw order: opaque mesh depth → alpha-tested cut-out
+  depth → terrain → opaque meshes (depth-equal) → alpha-tested meshes (depth-equal) →
+  non-depth-writing alpha-tested overlays (`_ZWRITE_OFF` mesh decals, `greater-equal`) → opaque
+  [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only portal masks → instance boxes → box
+  outlines (> `outlineMetres`) → terrain wireframe.
 - **decals & wetness.** `lit decals` blends `HGRP/DecalLit` boxes directly into the G-buffer before
   AO, SSR, and deferred lighting (reading copies of G-buffer A/B for normal/roughness/PBR blending
   and using hardware premultiplied-over blending on G-buffer C). `wetness decals` writes
@@ -78,8 +79,9 @@ for pass details.
 - **antialiasing.** temporal with upsampling (no MSAA, matching the game). Halton (2, 3) subpixel
   jitter (8 positions/cycle, more when upsampling) offsets the main projection; post passes undo it
   when reconstructing rays. `taa` reconstructs from a 3×3 render-size Gaussian fit to
-  Blackman-Harris, reprojects history via depth + previous camera (no motion vectors, so moving
-  particles/cloth/animated/spinning geometry reprojects as static) with Catmull-Rom, clips in YCoCg,
+  Blackman-Harris, reprojects history via depth + previous camera plus the G-buffer velocity delta
+  for GPU cloth, cloth/pendulum sway, vertex-offset meshes, and sludge waves (skinned/VAT, spinning,
+  particles, and transparent effects still reproject as static) with Catmull-Rom, clips in YCoCg,
   and blends 10% new frame (less when upsampling leaves no nearby sample), weighted by
   `1 / (1 + luminance · exposure)`. alternates two output-size histories; cuts (new package, first
   pose, debug view, or AA toggle) drop history. below output size, material textures use mip bias

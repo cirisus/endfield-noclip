@@ -107,13 +107,14 @@ export const createBindLayouts = (device: GPUDevice): BindLayouts => {
 	});
 	const instances = device.createBindGroupLayout({
 		label: 'instances',
-		// rows, block table, visible list, decal placements, cloth skeletons
+		// rows, block table, visible list, decal placements, cloth skeletons, previous-frame cloth skeletons
 		entries: [
 			storage(0, VERTEX),
 			storage(1, VERTEX),
 			storage(2, VERTEX),
 			storage(3, VERTEX),
 			storage(4, VERTEX),
+			storage(5, VERTEX),
 		],
 	});
 	const draw = device.createBindGroupLayout({
