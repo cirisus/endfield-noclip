@@ -78,15 +78,20 @@ material or textures, and a missing flow noise texture.
 
 not packed:
 
-- cylinder volumes (`volumeType` 4): only global, box, and prism shapes are supported
+- cylinder volumes (`volumeType` 4): only global, box, sphere, and prism shapes are supported
 - prefabs containing a prism volume under a non-identity placement: all of that prefab's volumes are
   skipped and logged in `debug/unsupported-prefabs.json`
-- LevelData's dynamic `environmentVolumes` (framed and skipped by the interactives reader)
 - local post `Volume`s (read, but only global ones become post profiles)
 
+LevelData's dynamic `environmentVolumes` (box, sphere, and prism shapes) are read alongside each
+level's entities and packed as normal environment volumes with `(dynamic)` in their label. they
+default off (`default: 0`) in `environmentVolume` controls because their `EnvironmentEnable` scripts
+aren't evaluated, and are excluded from the level base-environment vote.
+
 each packed volume with a phase gets an `environmentVolume` scene control required by its visibility
-group. it defaults on, except for manual-blend volumes (`blend.kind === 'scripted'`), whose scripts
-aren't followed ([activation](../game-data/environment.md#activation)).
+group. it defaults on, except for manual-blend volumes (`blend.kind === 'scripted'`) and LevelData
+dynamic volumes, whose scripts aren't followed
+([activation](../game-data/environment.md#activation)).
 
 a scene with no levels gets an empty environment plan.
 

@@ -17,10 +17,11 @@ cloud panorama is static, and PC volumetric fog switches on `volumetricFogConfig
 a level's initial viewpoint is nudged along its view line until the base volume holds it fully and
 no neighbouring level's volume overlaps it.
 
-the viewer blends only the chunk and [prefab](../game-data/environment.md#prefab-volumes) volumes in
-the package. omitted ([volumes](../extraction/environments.md#volumes)): cylinder volumes, moved
-prefab prism volumes, LevelData dynamic volumes, and local post `Volume`s (each level uses its
-global post profile only). a scene without levels has no environment.
+the viewer blends the chunk, [prefab](../game-data/environment.md#prefab-volumes), and LevelData
+dynamic volumes in the package (global, box, sphere, and prism shapes). omitted
+([volumes](../extraction/environments.md#volumes)): cylinder volumes, moved prefab prism volumes,
+and local post `Volume`s (each level uses its global post profile only). a scene without levels has
+no environment.
 
 ## scene states
 
@@ -38,8 +39,8 @@ is a phase plus post profile, not a Unity `VolumeProfile`.
 - **caching.** active volumes, factors, and a cache key are re-planned only when eye, volume
   settings, condition results, or fades change; sections re-blend and derive a new look only when
   the key changes.
-- **order.** volumes sort by ascending priority, then shape kind (global, box, prism), then list
-  order (tie-break among equal priorities is assumed), shared with the extractor's
+- **order.** volumes sort by ascending priority, then shape kind (global, box, sphere, prism), then
+  list order (tie-break among equal priorities is assumed), shared with the extractor's
   [base-environment vote](../extraction/environments.md#the-levels-base-environment).
 - **time fades.** time-mode factors snap on camera moves > 5 m in a frame.
 - **field blending.** factor ≥ 1 copies the section; below 1, fields follow the environment table's
@@ -61,16 +62,17 @@ including overlapping neighbours).
 
 each volume's visibility group requires its `environmentVolume` control alongside its scene states,
 so volume checkboxes behave like standard scene controls (picks, "Reset", level listing).
-manual-blend volumes (`blend.kind === 'scripted'`) default off because scripts aren't evaluated, and
-apply at full strength when toggled on. all other volumes default on — including story-state chunk
-volumes, which diverges where the game keeps them off
+manual-blend volumes (`blend.kind === 'scripted'`) and LevelData dynamic volumes default off because
+scripts aren't evaluated; manual-blend volumes apply at full strength when toggled on, while dynamic
+volumes blend by their authored time fade. all other volumes default on — including story-state
+chunk volumes, which diverges where the game keeps them off
 ([activation](../game-data/environment.md#activation)).
 
 ## weather
 
-rain and snow sections apply wherever their chunk or prefab volumes apply (e.g. Marker Stone's lake
-islet and dam stairs for rain; Snowy Forest for snow). quest-driven rain lives in unextracted
-LevelData dynamic volumes.
+rain and snow sections apply wherever their chunk, prefab, or toggled LevelData dynamic volumes
+apply (e.g. Marker Stone's lake islet and dam stairs, Marker Stone's quest-driven dam outpost rain,
+and Snowy Forest snow).
 
 - **vertical occlusion map**: a 512² `depth32float` top-down orthographic pass renders terrain and
   far-layer shadow casters around the camera (±100 m XZ, 256 m vertical span, snapped to whole
@@ -79,9 +81,10 @@ LevelData dynamic volumes.
 - **precipitation**: `WeatherRenderer` draws over the composited HDR scene after transparents:
   4-layer near rain streaks (`SceneEffectRain`), tilted middle/far procedural rain curtains and
   distant scrolling rain waves (`FarRain`, depth-faded and fogged), up to 1024 vertical-occlusion
-  projected 6×6 flipbook ground splashes (`RainSplash`), and 6-layer falling snow with wind flutter
-  and vertical-occlusion ground collision (`SceneEffectSnow`). screen-space camera raindrop FX
-  (`HGRP/Rain/ScreenRainDropFX`) is not drawn.
+  projected 6×6 flipbook ground splashes (`RainSplash`), 6-layer falling snow with wind flutter and
+  vertical-occlusion ground collision (`SceneEffectSnow`), and up to 30 screen-space camera lens
+  raindrops (`ScreenRainDropFX`) with noise distortion, downward wind slide, and vertical-occlusion
+  sheltering.
 
 ### wetness
 

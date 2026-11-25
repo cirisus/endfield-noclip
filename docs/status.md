@@ -122,11 +122,12 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     (PC path uses `volumetricFogConfig.enable` alone).
 - **weather** ([game-data](game-data/environment.md#weather),
   [viewer](viewer/environment.md#weather)):
-  - quest-driven rain (LevelData dynamic volumes) and screen-space camera lens raindrops
-    (`ScreenRainDropFX`) are not extracted/rendered.
   - vertical occlusion map, high-quality wetness (jitter, ripples, wall runoff), falling rain, far
-    rain curtains/waves, rain splashes, and falling snow with collision are implemented and verified
-    on Marker Stone and Snowy Forest (unverified against an in-game video).
+    rain curtains/waves, rain splashes, falling snow with collision, screen-space camera lens
+    raindrops (`ScreenRainDropFX`), and LevelData dynamic environment volumes (default off,
+    toggleable under scene controls) are implemented and verified on Marker Stone and Snowy Forest
+    (unverified against an in-game video; `EnvironmentEnable` script triggers are not evaluated
+    automatically).
 - **sky** ([viewer](viewer/sky-and-fog.md#sky)):
   - sky-view LUT ground bounce not drawn; PC cloud-alpha path selection unchecked.
   - Power Plateau overcast reads 15–20 sRGB levels brighter with lighter/thinner clouds than in game

@@ -239,6 +239,11 @@ authored field rules:
   - `HGSceneEffectSnowRenderer` draws up to 6 nested layers (`[1.0, 0.5, 0.4, 0.6, 0.3, 0.2]` ×
     `snowRange`) with `SNOW_FLAKE` + `SNOW_COLLISION`, colliding and fading against the vertical
     occlusion depth map.
+  - `HGScreenRainDropFXRenderer` draws up to 30 screen-space camera lens raindrops
+    (`HGRP/Rain/ScreenRainDropFX`) scattered radially with Gaussian distribution
+    (`screenDropScatterParam`), sliding downward with camera-right wind drift, distorted by
+    `T_screenraindrop_01_M`, and occluded when the camera is sheltered under the vertical occlusion
+    map.
 
 in map02 chunk volumes, `rainConfig` is active in over ⅓ of phases (~2 dozen enable rain) and
 `snowConfig` in a few dozen (nearly all enabling snow, some at intensity 0):
@@ -258,7 +263,10 @@ weather uses two mechanisms:
   lake islet and dam stairs; Snowy Forest snow with dry cave overrides).
 - **dynamic volumes**: LevelData's environment-volume table (phase path, bounds, transform,
   priority, blend mode, fades), loaded/unloaded by volume id via `EnvironmentEnable` script actions.
-  these never appear in chunk data; several exist in map02 LevelData (not a full census).
+  these never appear in chunk data; 23 exist across the install (`map02`: 12, `map01`: 8,
+  `dung02_swdg001`: 1, `dung02_rdg001`: 1, `dung02_bdg003`: 1) — 15 spheres (`volumeType` 2, mostly
+  `Env_EnergyPoint_*` with radius 40 m), 4 boxes (`volumeType` 1), and 4 prisms (`volumeType` 3),
+  all using time blend (`blendMode` 2).
 
 example — Marker Stone dam outpost (`map02_lv004_lv_data_sub_f1m19d2`): two dynamic volumes share
 one 6-point, 100 m tall polygon applying `DynamicEnvironment/env_map02_lv004_daba7_JUDIAN_rain`
