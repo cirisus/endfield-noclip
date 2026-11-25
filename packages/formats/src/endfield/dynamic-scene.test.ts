@@ -183,9 +183,11 @@ const build = (
 		2,
 	];
 	w.link(grid.get(3)!, w.structs(4, [[42], [701]]));
-	const models = w.structs(96, [[], [], []]);
+	const models = w.structs(104, [[], [], []]);
 	w.view.setFloat32(models + 4 + 16, 12.5, true);
 	w.view.setBigUint64(models + 4 + 64, 0x123456789n, true);
+	w.view.setFloat32(models + 4 + 104 + 16, -3.5, true);
+	w.view.setBigUint64(models + 4 + 104 + 64, 0x987654321n, true);
 	w.link(grid.get(7)!, models);
 	const effects = w.structs(144, [[]]);
 	w.view.setFloat32(effects + 4 + 16, -7, true);
@@ -303,6 +305,8 @@ test('dynamic resources preserve both visibility gates and exact model/ECS refer
 	const grid = result.grids[0];
 	assert.equal(grid.models[0].pathHash, 0x123456789n);
 	assert.deepEqual(grid.models[0].position, [12.5, 0, 0]);
+	assert.equal(grid.models[1].pathHash, 0x987654321n);
+	assert.deepEqual(grid.models[1].position, [-3.5, 0, 0]);
 	assert.deepEqual(grid.ecs, [{ chunk: 123, index: 7, sceneIndex: 2 }]);
 	assert.deepEqual(grid.effects, [
 		{ pathHash: 0xabcdefn, position: [0, -7, 0], rotation: [0, 0, 0], scale: [2, 0, 0], lodGrids: [0, 0] },

@@ -285,7 +285,7 @@ const Slot = {
 /** record strides, in bytes */
 const Width = {
 	DataIndex: 16,
-	Model: 96,
+	Model: 104,
 	Effect: 144,
 	Ecs: 36,
 	ResourceGroupWithStateDesc: 88,

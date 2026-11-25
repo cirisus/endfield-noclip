@@ -360,7 +360,11 @@ export const readLevelDataPrefix = (
 		nullable(30, () => {
 			entity();
 			empty();
-			nullable(19, () => {
+			const bornMembers = r.u8();
+			if (bornMembers !== 255) {
+				if (bornMembers !== 19 && bornMembers !== 20) {
+					throw new FormatError(`invalid LevelData ${field} member count ${bornMembers}`);
+				}
 				bool();
 				r.f32();
 				str();
@@ -382,7 +386,10 @@ export const readLevelDataPrefix = (
 				list(() => {
 					str();
 				});
-			});
+				if (bornMembers === 20) {
+					bool();
+				}
+			}
 			str();
 			// spawner buffs: (blackboard of key, useString, float, string), buff id
 			list(() =>
@@ -493,36 +500,44 @@ export const readLevelDataPrefix = (
 	field = 'factoryPredefineData';
 	nullable(1, empty);
 	field = 'factoryRegions';
-	list(() =>
-		nullable(26, () => {
-			entity();
-			list(area);
-			empty();
-			list(() =>
-				nullable(6, () => {
-					r.skip(12);
-					bool();
-					str();
-					str();
-					r.skip(24);
-				}),
-			);
-			list(area);
-			empty();
-			empty();
-			bool();
-			list(mine);
-			r.i32();
-			str();
-			empty();
-			list(() =>
-				nullable(2, () => {
-					str();
-					list(bound);
-				}),
-			);
-		}),
-	);
+	list(() => {
+		const members = r.u8();
+		if (members === 255) {
+			return;
+		}
+		if (members !== 26 && members !== 27) {
+			throw new FormatError(`invalid LevelData ${field} member count ${members}`);
+		}
+		entity();
+		list(area);
+		empty();
+		list(() =>
+			nullable(6, () => {
+				r.skip(12);
+				bool();
+				str();
+				str();
+				r.skip(24);
+			}),
+		);
+		list(area);
+		if (members === 27) {
+			r.u64();
+		}
+		empty();
+		empty();
+		bool();
+		list(mine);
+		r.i32();
+		str();
+		empty();
+		list(() =>
+			nullable(2, () => {
+				str();
+				list(bound);
+			}),
+		);
+	});
 	const lang = (): void => {
 		nullable(1, () => {
 			str();
