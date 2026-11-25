@@ -128,6 +128,7 @@ export class Renderer {
 		this.lights = new LocalLights(device);
 		this.reflectionProbes = new ReflectionProbes(device, { bc: gfx.features.textureCompressionBc });
 		this.bindings = new FrameBindings(device, {
+			coreLayout: this.#layouts.frameCore,
 			layout: this.#layouts.frame,
 			uniforms: this.#ring.buffer,
 			shadows: this.shadows,
@@ -318,10 +319,10 @@ export class Renderer {
 				height,
 				outputWidth,
 				outputHeight,
+				frameCore: { group: this.bindings.core, offset: uniforms.offset },
 				frame: { group: this.bindings.main, offset: uniforms.offset },
-				shadowFrame: { group: this.bindings.shadow, offsets: cascadeOffsets },
-				lightShadowFrame:
-					lightShadowOffset === null ? null : { group: this.bindings.shadow, offset: lightShadowOffset },
+				shadowOffsets: cascadeOffsets,
+				lightShadowOffset,
 				index: input.index,
 				time: input.time,
 				dt: input.dt,

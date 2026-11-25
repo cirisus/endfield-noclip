@@ -91,12 +91,14 @@ export interface FrameContext {
 	/** the output (canvas) size, px */
 	outputWidth: number;
 	outputHeight: number;
-	/** the main pass's frame group */
+	/** the uniform-only frame group (G-buffer, depth, shadow, decal, foam and screen-effect passes) */
+	frameCore: FrameGroup;
+	/** the full lighting frame group (deferred lighting, fog, water, transparents, lit effects) */
 	frame: FrameGroup;
-	/** the shadow passes' frame group, and each shadow layer's uniforms offset (none when shadows are off) */
-	shadowFrame: { group: GPUBindGroup; offsets: readonly number[] };
-	/** the frame group of the local-light shadow tile drawn this frame, or `null` for none */
-	lightShadowFrame: FrameGroup | null;
+	/** each shadow layer's uniforms offset (empty when shadows are off); bound with `frameCore.group` */
+	shadowOffsets: readonly number[];
+	/** the uniforms offset of the local-light shadow tile drawn this frame, or `null` for none */
+	lightShadowOffset: number | null;
 	/** the frame counter, which the fog's noise steps by */
 	index: number;
 	/** the animation clock, s */
@@ -140,6 +142,13 @@ const MAIN_PASS: readonly MainPassStep[] = [
 	(pass, { instances }) => instances.encode(pass),
 	(pass, { instances }) => instances.encodeOutlines(pass),
 	(pass, { terrain }, { settings }) => (settings.wireframe ? terrain.encodeWireframe(pass) : 0),
+	(pass, { meshes }, { frame }) => {
+		if (!meshes.has('effectOpaque')) {
+			return 0;
+		}
+		pass.setBindGroup(0, frame.group, [frame.offset]);
+		return meshes.encodePass('effectOpaque', pass);
+	},
 ];
 
 /** frames the far layer may keep casters that changed before it's drawn again with them */
@@ -261,6 +270,7 @@ export const encodeFrame = (
 ): number => {
 	const { targets, meshes, post, water } = systems;
 	const { camera, width, height, outputWidth, outputHeight, settings } = context;
+	const sceneCore = settings.scene ? context.frameCore : null;
 	const sceneFrame = settings.scene ? context.frame : null;
 	let draws = 0;
 
@@ -281,7 +291,7 @@ export const encodeFrame = (
 		compiling: context.compiling,
 	});
 	if (drawShadows.includes(true)) {
-		context.shadowFrame.offsets.forEach((offset, i) => {
+		context.shadowOffsets.forEach((offset, i) => {
 			if (!drawShadows[i]) {
 				return;
 			}
@@ -297,7 +307,7 @@ export const encodeFrame = (
 						depthStoreOp: 'store',
 					},
 				},
-				{ group: context.shadowFrame.group, offset },
+				{ group: context.frameCore.group, offset },
 			);
 			if (settings.terrain) {
 				draws += systems.terrain.encodeShadow(pass, i);
@@ -308,12 +318,12 @@ export const encodeFrame = (
 	}
 
 	// one tile of the local lights' atlas, from the casters the far layer draws: static scenery
-	const lightShadowFrame = context.lightShadowFrame;
-	if (lightShadowFrame !== null) {
+	const lightShadowOffset = context.lightShadowOffset;
+	if (lightShadowOffset !== null) {
 		const far = SHADOW_LAYERS - 1;
 		draws += systems.lightShadows.encode(
 			encoder,
-			(pass) => pass.setBindGroup(0, lightShadowFrame.group, [lightShadowFrame.offset]),
+			(pass) => pass.setBindGroup(0, context.frameCore.group, [lightShadowOffset]),
 			(pass) =>
 				(settings.terrain ? systems.terrain.encodeLightShadow(pass, far) : 0) +
 				meshes.encodeLightShadow(pass, far),
@@ -336,7 +346,7 @@ export const encodeFrame = (
 		const pass = beginPass(
 			encoder,
 			{ label: 'main', colorAttachments: colors, depthStencilAttachment: depth },
-			sceneFrame,
+			sceneCore,
 		);
 		if (settings.scene) {
 			for (const step of MAIN_PASS) {
@@ -350,7 +360,7 @@ export const encodeFrame = (
 		meshes.encodeMipFeedback(encoder, { view: scene.mipFeedback, width, height }, context.index);
 	}
 	// `HGRP/DecalLit` boxes blend directly into the G-buffer before AO, SSR and deferred lighting
-	if (sceneFrame !== null && meshes.has('decals')) {
+	if (sceneCore !== null && meshes.has('decals')) {
 		const copies = targets.copyGBufferAB(encoder);
 		const pass = beginPass(
 			encoder,
@@ -363,7 +373,7 @@ export const encodeFrame = (
 					{ view: scene.gbufferC, loadOp: 'load', storeOp: 'store' },
 				],
 			},
-			sceneFrame,
+			sceneCore,
 		);
 		draws += meshes.encodeEffectPass('decals', pass, {
 			...scene,
@@ -376,7 +386,7 @@ export const encodeFrame = (
 	}
 	// `HGRP/WetnessDecal` boxes max-blend into `wetnessMask` (always cleared so deferred lighting reads 0 without them)
 	{
-		const hasWetness = sceneFrame !== null && meshes.has('wetnessDecals');
+		const hasWetness = sceneCore !== null && meshes.has('wetnessDecals');
 		const pass = beginPass(
 			encoder,
 			{
@@ -385,7 +395,7 @@ export const encodeFrame = (
 					{ view: scene.wetnessMask, clearValue: [0, 0, 0, 0], loadOp: 'clear', storeOp: 'store' },
 				],
 			},
-			hasWetness ? sceneFrame : null,
+			hasWetness ? sceneCore : null,
 		);
 		if (hasWetness) {
 			draws += meshes.encodeEffectPass('wetnessDecals', pass, scene);
@@ -415,7 +425,7 @@ export const encodeFrame = (
 	// the water and effects that refract read a copy of the composited scene
 	if (composited.water !== null) {
 		post.copyComposite(encoder, scene);
-		const foam = sceneFrame !== null && meshes.has('waterFoam');
+		const foam = sceneCore !== null && meshes.has('waterFoam');
 		if (foam) {
 			// the foam boxes project onto the water's own depth and are depth-tested against it, as the game tests
 			// them against its depth with the water in it
@@ -433,14 +443,14 @@ export const encodeFrame = (
 					],
 					depthStencilAttachment: targets.readOnlyWaterDepthAttachment(),
 				},
-				sceneFrame,
+				sceneCore,
 			);
 			draws += meshes.encodeEffectPass('waterFoam', pass, { ...scene, depth: scene.waterDepth });
 			pass.end();
 		}
 		water.encode(encoder, composited.target, { ...composited.water, foam });
 	}
-	if (sceneFrame !== null) {
+	if (sceneFrame !== null && sceneCore !== null) {
 		// as the game, glass and effects after the water, far to near over the scene, each fogging itself
 		if (meshes.has('transparent')) {
 			if (meshes.transparentReadsBackground) {
@@ -487,13 +497,13 @@ export const encodeFrame = (
 						colorAttachments: [{ view: composited.target, loadOp: 'load', storeOp: 'store' }],
 						depthStencilAttachment: targets.writableDepthAttachment(),
 					},
-					sceneFrame,
+					sceneCore,
 				);
 				draws += meshes.encodeEffectPass('refractOpaque', pass, inputs);
 				pass.end();
 			}
 			if (meshes.has('refract')) {
-				const pass = beginPass(encoder, over('effect refract'), sceneFrame);
+				const pass = beginPass(encoder, over('effect refract'), sceneCore);
 				draws += meshes.encodeEffectPass('refract', pass, inputs);
 				pass.end();
 			}

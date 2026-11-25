@@ -177,7 +177,7 @@ export const PHASES = {
 export type MeshPass = SurfacePass | EffectPass | 'shadow' | 'lightShadow';
 
 /** passes over the main pass's targets */
-export type SurfacePass = 'prepass' | 'main';
+export type SurfacePass = 'prepass' | 'main' | 'effectOpaque';
 
 /** passes of scene effects, which read the main pass's outputs */
 export type EffectPass =
@@ -194,14 +194,9 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 	// alpha-tested cut-outs lay down their depth before the terrain too, so it isn't shaded under leaves and grass
 	prepass: [PHASES.prepassLit, PHASES.prepass, PHASES.cutoutDepth],
 	// stencil masks after the surfaces they're tested against
-	main: [
-		PHASES.opaqueLit,
-		PHASES.opaque,
-		PHASES.cutoutShade,
-		PHASES.cutoutOverlay,
-		PHASES.effectOpaque,
-		PHASES.stencilMask,
-	],
+	main: [PHASES.opaqueLit, PHASES.opaque, PHASES.cutoutShade, PHASES.cutoutOverlay, PHASES.stencilMask],
+	// opaque VFXBaseV2 layers, drawn in the main pass with the full lighting frame group
+	effectOpaque: [PHASES.effectOpaque],
 	// `HGRP/DecalLit` boxes blended directly into the G-buffer after the main pass, before deferred lighting
 	decals: [PHASES.litDecal],
 	// `HGRP/WetnessDecal` boxes written with `max` blending into the wetness mask before deferred lighting

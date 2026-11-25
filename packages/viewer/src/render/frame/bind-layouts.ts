@@ -16,7 +16,9 @@ const storage = (binding: number, visibility: number): GPUBindGroupLayoutEntry =
 
 /** the layouts and the pipeline layouts built from them */
 export interface BindLayouts {
-	/** group 0: `Frame` uniforms at a dynamic offset into the uniform ring */
+	/** group 0 of G-buffer, depth, shadow, decal, foam and screen-effect passes: `Frame` uniforms only */
+	frameCore: GPUBindGroupLayout;
+	/** group 0 of lighting passes: `Frame` uniforms plus shadows, irradiance, local lights and probes */
 	frame: GPUBindGroupLayout;
 	/** group 1 of the terrain family: height pages, patch list, surface and splat pages, layer textures */
 	terrain: GPUBindGroupLayout;
@@ -39,6 +41,16 @@ export interface BindLayouts {
 export const createBindLayouts = (device: GPUDevice): BindLayouts => {
 	// the volumetric fog's compute pass lights froxels with the same frame
 	const lighting = FRAGMENT | GPUShaderStage.COMPUTE;
+	const frameCore = device.createBindGroupLayout({
+		label: 'frame core',
+		entries: [
+			{
+				binding: 0,
+				visibility: VERTEX | lighting,
+				buffer: { type: 'uniform', hasDynamicOffset: true },
+			},
+		],
+	});
 	const frame = device.createBindGroupLayout({
 		label: 'frame',
 		entries: [
@@ -118,14 +130,18 @@ export const createBindLayouts = (device: GPUDevice): BindLayouts => {
 		],
 	});
 	return {
+		frameCore,
 		frame,
 		terrain,
 		instances,
 		draw,
-		terrainPipeline: device.createPipelineLayout({ label: 'terrain', bindGroupLayouts: [frame, terrain] }),
+		terrainPipeline: device.createPipelineLayout({
+			label: 'terrain',
+			bindGroupLayouts: [frameCore, terrain],
+		}),
 		instancesPipeline: device.createPipelineLayout({
 			label: 'instances',
-			bindGroupLayouts: [frame, instances],
+			bindGroupLayouts: [frameCore, instances],
 		}),
 	};
 };
