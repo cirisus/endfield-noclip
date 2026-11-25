@@ -24,6 +24,7 @@ import {
 	MAX_LIGHT_CASTERS,
 	NO_BUCKET,
 	addItem,
+	addItemWithSlots,
 	addSlot,
 	gpuCullWork,
 	writeCullView,
@@ -204,6 +205,13 @@ interface SelectedBlock {
 	gpuRuns: Uint8Array;
 	/** per chain run: 1 when at least one shown slot casts shadows */
 	runCasts: Uint8Array;
+	/** per chain run: OR of segment handedness bits (1 = unmirrored, 2 = mirrored) */
+	runHandedness: Uint8Array;
+	/** per chain run: max and min row size across segments */
+	runMaxSize: Float32Array;
+	runMinSize: Float32Array;
+	/** whole-block bounding sphere `[cx, cy, cz, radius, maxRowRadius]` relative to block origin */
+	blockSphere: [number, number, number, number, number];
 	/** each group's rows split by chain run, from `groupSegmentsOf` */
 	segments: Float32Array;
 	/** per group, where its segments start; one more entry ends the last */
@@ -497,6 +505,11 @@ export class MeshSelector {
 				block.filter = filter;
 			}
 			const end = first + count;
+			if (foliageClusters !== null && view.gpuCulling) {
+				if (this.#cullFoliageBlock(instances, block, first, end, foliageClusters, foliageDensity)) {
+					continue;
+				}
+			}
 			if (foliageClusters !== null && foliageDensity < 1) {
 				for (let c = 0; c < foliageClusters.length; c += 3) {
 					const cFirst = foliageClusters[c];
@@ -588,6 +601,71 @@ export class MeshSelector {
 		// the worker bounded the rows; how far each group draws takes the chains' slots, which only this has
 		const { groups, mirrored, segments, groupSegments } = instances.bounds;
 		setGroupReaches(instances.bounds, runs, (chain) => this.#reach(chain));
+		const runHandedness = new Uint8Array(runCount);
+		const runMaxSize = new Float32Array(runCount);
+		const runMinSize = new Float32Array(runCount).fill(Infinity);
+		for (let at = 0; at < segments.length; at += SEGMENT_FLOATS) {
+			const r = segments[at + SegmentFloat.run];
+			runHandedness[r] |= segments[at + SegmentFloat.handedness];
+			const hi = segments[at + SegmentFloat.maxSize];
+			const lo = segments[at + SegmentFloat.minSize];
+			if (hi > runMaxSize[r]) {
+				runMaxSize[r] = hi;
+			}
+			if (lo < runMinSize[r]) {
+				runMinSize[r] = lo;
+			}
+		}
+		// whole-block bounding sphere enclosing every group sphere (used by the GPU foliage fast path)
+		let minX = Infinity;
+		let minY = Infinity;
+		let minZ = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+		let maxZ = -Infinity;
+		let maxRowRadius = 0;
+		for (let at = 0; at < groups.length; at += GROUP_FLOATS) {
+			const r = groups[at + GroupFloat.radius];
+			if (!Number.isFinite(r)) {
+				maxRowRadius = Infinity;
+				break;
+			}
+			const cx = groups[at + GroupFloat.center];
+			const cy = groups[at + GroupFloat.center + 1];
+			const cz = groups[at + GroupFloat.center + 2];
+			if (cx - r < minX) {
+				minX = cx - r;
+			}
+			if (cy - r < minY) {
+				minY = cy - r;
+			}
+			if (cz - r < minZ) {
+				minZ = cz - r;
+			}
+			if (cx + r > maxX) {
+				maxX = cx + r;
+			}
+			if (cy + r > maxY) {
+				maxY = cy + r;
+			}
+			if (cz + r > maxZ) {
+				maxZ = cz + r;
+			}
+			const rr = groups[at + GroupFloat.rowRadius];
+			if (rr > maxRowRadius) {
+				maxRowRadius = rr;
+			}
+		}
+		const blockSphere: [number, number, number, number, number] =
+			Number.isFinite(maxRowRadius) && minX <= maxX
+				? [
+						(minX + maxX) * 0.5,
+						(minY + maxY) * 0.5,
+						(minZ + maxZ) * 0.5,
+						Math.hypot((maxX - minX) * 0.5, (maxY - minY) * 0.5, (maxZ - minZ) * 0.5),
+						maxRowRadius,
+					]
+				: [0, 0, 0, Infinity, Infinity];
 		block = {
 			groups,
 			mirrored,
@@ -598,6 +676,10 @@ export class MeshSelector {
 			origins,
 			gpuRuns: new Uint8Array(runCount),
 			runCasts: new Uint8Array(runCount),
+			runHandedness,
+			runMaxSize,
+			runMinSize,
+			blockSphere,
 			segments,
 			groupSegments,
 		};
@@ -617,6 +699,199 @@ export class MeshSelector {
 			this.#reaches[chain] = reach;
 		}
 		return reach;
+	}
+
+	/**
+	 * whole-block GPU fast path for `.fol` grass blocks: tests the tile sphere once, checks each chain run's
+	 * geometry readiness and reserves its bucket once, then emits 64-row GPU cull items sharing one slot slice.
+	 * returns `false` if any run cannot use the GPU path (e.g. still streaming geometry with boxes enabled).
+	 */
+	#cullFoliageBlock(
+		instances: ResidentInstances,
+		block: SelectedBlock,
+		first: number,
+		end: number,
+		foliageClusters: Uint32Array,
+		foliageDensity: number,
+	): boolean {
+		const view = this.#view;
+		if (view === null) {
+			return false;
+		}
+		const [bcx, bcy, bcz, bRadius, maxRowRadius] = block.blockSphere;
+		if (!Number.isFinite(bRadius)) {
+			return false;
+		}
+		const bx = this.#ox + bcx;
+		const by = this.#oy + bcy;
+		const bz = this.#oz + bcz;
+		const centre = Math.hypot(bx, by, bz);
+		const nearest = Math.max(centre - bRadius, 0.1);
+		const { pixelFactor, viewportHeight, minPixels } = view;
+		if ((maxRowRadius * pixelFactor) / nearest < minPixels) {
+			return true;
+		}
+		const inView = sphereInPlanes(this.#planes, this.#planeFloats, bx, by, bz, bRadius);
+		if (
+			!inView &&
+			!inCasterVolume(this.#casterPlanes, this.#casterFloats, this.#lightCasters, bx, by, bz, bRadius)
+		) {
+			return true;
+		}
+		const blockLayer =
+			view.shadowLayers === null ? SHADOW_LAYERS : firstShadowLayer(view.shadowLayers, bx, by, bz, bRadius);
+		if (!inView && blockLayer === SHADOW_LAYERS) {
+			return true;
+		}
+		const runs = instances.runs;
+		const runCount = runs.length / 3;
+		for (let r = 0; r < runCount; r++) {
+			if (block.gpuRuns[r] === 0) {
+				return false;
+			}
+		}
+
+		const inside = inView && sphereInsidePlanes(this.#planes, this.#planeFloats, bx, by, bz, bRadius);
+		const castOnly = !inView;
+		const far = Math.max(centre + bRadius, 0.1);
+		const work = this.selection.gpu;
+		const frame = this.#frame;
+		const checkedFrame = this.#checkedFrame;
+		const readyArr = this.#ready;
+		const wantedArr = this.#wanted;
+		const candidates = this.#candidates;
+		const itemFlags = (inside ? ItemFlags.Inside : 0) | (this.#fade << ITEM_FADE_SHIFT);
+		const sparsityU32 = new Uint32Array(1);
+		const sparsityF32 = new Float32Array(sparsityU32.buffer);
+
+		for (let r = 0; r < runCount; r++) {
+			const runFirst = Math.max(first, runs[r * 3 + 1]);
+			const runEnd = Math.min(end, runs[r * 3 + 1] + runs[r * 3 + 2]);
+			if (runFirst >= runEnd) {
+				continue;
+			}
+			if (castOnly && block.runCasts[r] === 0) {
+				continue;
+			}
+			const largest = (2 * block.runMaxSize[r] * pixelFactor) / (nearest * viewportHeight);
+			const smallest = (2 * block.runMinSize[r] * pixelFactor) / (far * viewportHeight);
+			const high = largest * largest * BAND_SLACK;
+			if (castOnly && high <= minShadowLayerSquared(blockLayer)) {
+				continue;
+			}
+			const low = (smallest * smallest) / BAND_SLACK;
+			const scale = castOnly ? CASTER_PRIORITY : 1;
+			const priority = largest * viewportHeight * scale;
+			const slots = block.slots[r];
+			let count = 0;
+			let ready = true;
+			for (let i = 0; i < slots.length; i++) {
+				const slot = slots[i];
+				if (slot.maxSquared < low || slot.minSquared >= high || (castOnly && !slot.castsShadows)) {
+					continue;
+				}
+				candidates[count++] = slot;
+				const slotPriority = Math.min(priority, bandPixels(slot, viewportHeight) * scale);
+				const geom = slot.geometry;
+				if (checkedFrame[geom] === frame) {
+					if (slotPriority > wantedArr[geom]) {
+						wantedArr[geom] = slotPriority;
+					}
+					if (readyArr[geom] === 0) {
+						ready = false;
+					}
+				} else if (!this.#geometryReady(geom, slotPriority, frame)) {
+					ready = false;
+				}
+			}
+			if (count === 0) {
+				continue;
+			}
+			if (!ready) {
+				if (block.boxes[r] === 1 && !castOnly) {
+					this.#selectRows(instances, runFirst, runEnd, { inside, block });
+				}
+				continue;
+			}
+
+			// gather row spans for this run (single span at full density, thinned cluster spans when < 1)
+			const spans: number[] = [];
+			let totalRows = 0;
+			if (foliageDensity < 1) {
+				for (let c = 0; c < foliageClusters.length; c += 3) {
+					const cFirst = foliageClusters[c];
+					const cCount = foliageClusters[c + 1];
+					if (cFirst >= runEnd || cFirst + cCount <= runFirst) {
+						continue;
+					}
+					sparsityU32[0] = foliageClusters[c + 2];
+					const keepRatio = Math.min(1, Math.max(0.01, sparsityF32[0] * foliageDensity));
+					const keep = Math.min(cCount, Math.ceil(cCount * keepRatio));
+					const sFirst = Math.max(runFirst, cFirst);
+					const sEnd = Math.min(runEnd, cFirst + keep);
+					if (sFirst < sEnd) {
+						spans.push(sFirst, sEnd);
+						totalRows += sEnd - sFirst;
+					}
+				}
+			} else {
+				spans.push(runFirst, runEnd);
+				totalRows = runEnd - runFirst;
+			}
+			if (totalRows === 0) {
+				continue;
+			}
+
+			const segment = this.#segment;
+			segment.rows = totalRows;
+			segment.handedness = block.runHandedness[r];
+			segment.priority = priority;
+			segment.nearest = nearest;
+			segment.layer = blockLayer;
+			segment.high = high;
+
+			// emit the first chunk via addItem + #addSlot (reserving bucket room for all `totalRows`), then
+			// share its slot slice across all remaining 64-row chunks
+			const firstSpanStart = spans[0];
+			const firstSpanEnd = spans[1];
+			const firstChunk = Math.min(GROUP_ROWS, firstSpanEnd - firstSpanStart);
+			const itemIndex = work.itemCount;
+			addItem(work, instances.alloc.start + firstSpanStart, firstChunk, itemFlags);
+			for (let i = 0; i < count; i++) {
+				this.#addSlot(candidates[i], candidates[i]);
+			}
+			const slotFirst = work.items[itemIndex * ITEM_WORDS + 2];
+			const slotCount = work.items[itemIndex * ITEM_WORDS + 3];
+			if (slotCount === 0) {
+				work.itemCount--;
+				continue;
+			}
+			for (let pos = firstSpanStart + firstChunk; pos < firstSpanEnd; pos += GROUP_ROWS) {
+				addItemWithSlots(
+					work,
+					instances.alloc.start + pos,
+					Math.min(GROUP_ROWS, firstSpanEnd - pos),
+					itemFlags,
+					slotFirst,
+					slotCount,
+				);
+			}
+			for (let sp = 2; sp < spans.length; sp += 2) {
+				const sFirst = spans[sp];
+				const sEnd = spans[sp + 1];
+				for (let pos = sFirst; pos < sEnd; pos += GROUP_ROWS) {
+					addItemWithSlots(
+						work,
+						instances.alloc.start + pos,
+						Math.min(GROUP_ROWS, sEnd - pos),
+						itemFlags,
+						slotFirst,
+						slotCount,
+					);
+				}
+			}
+		}
+		return true;
 	}
 
 	/**

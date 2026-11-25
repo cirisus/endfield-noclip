@@ -168,6 +168,36 @@ export const addItem = (work: GpuCullWork, row: number, count: number, flags: nu
 };
 
 /**
+ * appends an item that reuses an already-written slice of `work.slots`
+ *
+ * @param work the frame's work, grown in place
+ * @param row the first row, global
+ * @param count rows, at most 255
+ * @param flags {@link ItemFlags}
+ * @param slotFirst index of the first shared slot in `work.slots`
+ * @param slotCount number of shared slots
+ */
+export const addItemWithSlots = (
+	work: GpuCullWork,
+	row: number,
+	count: number,
+	flags: number,
+	slotFirst: number,
+	slotCount: number,
+): void => {
+	const needed = (work.itemCount + 1) * ITEM_WORDS;
+	if (needed > work.items.length) {
+		work.items = withRoom(work.items, needed);
+	}
+	const at = work.itemCount * ITEM_WORDS;
+	work.items[at] = row;
+	work.items[at + 1] = count | flags;
+	work.items[at + 2] = slotFirst;
+	work.items[at + 3] = slotCount;
+	work.itemCount++;
+};
+
+/**
  * appends a slot to the last item
  *
  * @param work the frame's work, grown in place
