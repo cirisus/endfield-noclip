@@ -13,6 +13,7 @@ import farRainWgsl from './far-rain.wgsl?raw';
 import rainSplashWgsl from './rain-splash.wgsl?raw';
 import sceneEffectRainWgsl from './scene-effect-rain.wgsl?raw';
 import sceneEffectSnowWgsl from './scene-effect-snow.wgsl?raw';
+import screenRainDropWgsl from './screen-rain-drop.wgsl?raw';
 import type { VerticalOcclusionMap } from './vertical-occlusion.ts';
 import {
 	createFarRainMesh,
@@ -31,6 +32,22 @@ const SLOT_BYTES = 256;
 const SLOT_FLOATS = SLOT_BYTES / 4;
 /** max draws per frame: 4 rain + 3 far rain + 1 splash + 6 snow = 14 */
 const MAX_SLOTS = 16;
+/** max simultaneous screen-space lens raindrops (`HGScreenRainDropFXRenderer`) */
+const MAX_SCREEN_DROPS = 30;
+/** 6 header vec4f + 30 drop vec4f = 36 vec4f = 576 bytes */
+const SCREEN_DROP_BYTES = (6 + MAX_SCREEN_DROPS) * 16;
+const SCREEN_DROP_FLOATS = SCREEN_DROP_BYTES / 4;
+
+interface ScreenDropState {
+	active: boolean;
+	x: number;
+	y: number;
+	life: number;
+	size: number;
+	slideSpeed: number;
+	flowChance: number;
+	jitterTimer: number;
+}
 
 const srgbToLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 
@@ -40,6 +57,8 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
  * writes a 3×3 orientation matrix that rotates `(0, 1, 0)` onto `normalize(-dir)` and scales local X/Z by
  * `radius` and Y by `height` into 3 vec4f slots at `out[offset..offset + 12]`
  */
+const randRange = (lo: number, hi: number): number => lo + Math.random() * Math.max(0, hi - lo);
+
 const writeCylinderBasis = (
 	out: Float32Array,
 	offset: number,
@@ -121,6 +140,22 @@ export class WeatherRenderer {
 	readonly #weatherLayout: GPUBindGroupLayout;
 	readonly #uniforms: GPUBuffer;
 	readonly #uniformData = new Float32Array(MAX_SLOTS * SLOT_FLOATS);
+	readonly #screenDropUniforms: GPUBuffer;
+	readonly #screenDropData = new Float32Array(SCREEN_DROP_FLOATS);
+	readonly #screenDropLayout: GPUBindGroupLayout;
+	readonly #screenDropPipeline: GPURenderPipeline;
+	readonly #screenDrops: ScreenDropState[] = Array.from({ length: MAX_SCREEN_DROPS }, () => ({
+		active: false,
+		x: 0,
+		y: 0,
+		life: 0,
+		size: 0,
+		slideSpeed: 0,
+		flowChance: 0,
+		jitterTimer: 0,
+	}));
+	#screenDropGroup: GPUBindGroup;
+	#activeScreenDrops = 0;
 	readonly #repeatSampler: GPUSampler;
 	readonly #rainMesh: WeatherMesh;
 	readonly #splashMesh: WeatherMesh;
@@ -179,6 +214,11 @@ export class WeatherRenderer {
 			size: MAX_SLOTS * SLOT_BYTES,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		});
+		this.#screenDropUniforms = device.createBuffer({
+			label: 'weather screen drop uniforms',
+			size: SCREEN_DROP_BYTES,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+		});
 		this.#rainMesh = createSceneEffectMesh(device);
 		this.#splashMesh = createRainSplashMesh(device);
 		this.#farRainMesh = createFarRainMesh(device);
@@ -201,6 +241,17 @@ export class WeatherRenderer {
 				{ binding: 1, visibility: vf, texture: { sampleType: 'depth' } },
 				{ binding: 2, visibility: frag, sampler: { type: 'comparison' } },
 				{ binding: 3, visibility: vf, sampler: { type: 'non-filtering' } },
+				{ binding: 4, visibility: frag, texture: { sampleType: 'float' } },
+				{ binding: 5, visibility: frag, sampler: { type: 'filtering' } },
+			],
+		});
+		this.#screenDropLayout = device.createBindGroupLayout({
+			label: 'weather screen drops',
+			entries: [
+				{ binding: 0, visibility: vf, buffer: { type: 'uniform' } },
+				{ binding: 1, visibility: frag, texture: { sampleType: 'depth' } },
+				{ binding: 2, visibility: frag, sampler: { type: 'comparison' } },
+				{ binding: 3, visibility: frag, sampler: { type: 'non-filtering' } },
 				{ binding: 4, visibility: frag, texture: { sampleType: 'float' } },
 				{ binding: 5, visibility: frag, sampler: { type: 'filtering' } },
 			],
@@ -298,6 +349,23 @@ export class WeatherRenderer {
 			'fs_splash',
 			splashBuffers,
 		);
+		{
+			const module = device.createShaderModule({
+				label: 'weather screen rain drop',
+				code: [FRAME_WGSL, postSrc, screenRainDropWgsl].join('\n'),
+			});
+			this.#screenDropPipeline = device.createRenderPipeline({
+				label: 'weather screen rain drop',
+				layout: device.createPipelineLayout({
+					label: 'weather screen rain drop',
+					bindGroupLayouts: [frameLayout, this.#postFogLayout, this.#screenDropLayout],
+				}),
+				vertex: { module, entryPoint: 'vs_screen_drop' },
+				fragment: { module, entryPoint: 'fs_screen_drop', targets: [{ format: HDR_FORMAT, blend }] },
+				primitive: { topology: 'triangle-list', cullMode: 'none' },
+				depthStencil: { format: depthFormat, depthWriteEnabled: false, depthCompare: 'always' },
+			});
+		}
 
 		const black = placeholder(device, 'black', '2d');
 		this.#rainTexView = black;
@@ -308,16 +376,38 @@ export class WeatherRenderer {
 		this.#waveGroup = this.#buildWeatherGroup('weather wave', black);
 		this.#splashGroup = this.#buildWeatherGroup('weather splash', black);
 		this.#snowGroup = this.#buildWeatherGroup('weather snow', black);
+		this.#screenDropGroup = this.#buildScreenDropGroup(black);
 	}
 
 	/** @returns GPU buffer bytes owned by the weather renderer */
 	get bytes(): number {
-		return this.#uniforms.size + this.#rainMesh.bytes + this.#splashMesh.bytes + this.#farRainMesh.bytes;
+		return (
+			this.#uniforms.size +
+			this.#screenDropUniforms.size +
+			this.#rainMesh.bytes +
+			this.#splashMesh.bytes +
+			this.#farRainMesh.bytes
+		);
 	}
 
 	/** @returns whether any weather pass is planned to draw this frame */
 	get active(): boolean {
-		return this.#draws.length > 0;
+		return this.#draws.length > 0 || this.#activeScreenDrops > 0;
+	}
+
+	#buildScreenDropGroup(textureView: GPUTextureView): GPUBindGroup {
+		return this.#device.createBindGroup({
+			label: 'weather screen drops',
+			layout: this.#screenDropLayout,
+			entries: [
+				{ binding: 0, resource: { buffer: this.#screenDropUniforms } },
+				{ binding: 1, resource: this.#verticalOcclusion.view },
+				{ binding: 2, resource: this.#verticalOcclusion.compareSampler },
+				{ binding: 3, resource: this.#verticalOcclusion.rawSampler },
+				{ binding: 4, resource: textureView },
+				{ binding: 5, resource: this.#repeatSampler },
+			],
+		});
 	}
 
 	#buildWeatherGroup(label: string, textureView: GPUTextureView): GPUBindGroup {
@@ -358,6 +448,7 @@ export class WeatherRenderer {
 		if (rainView !== this.#rainTexView) {
 			this.#rainTexView = rainView;
 			this.#rainGroup = this.#buildWeatherGroup('weather rain', rainView);
+			this.#screenDropGroup = this.#buildScreenDropGroup(rainView);
 		}
 		if (waveView !== this.#waveTexView) {
 			this.#waveTexView = waveView;
@@ -387,11 +478,13 @@ export class WeatherRenderer {
 		rain: RainConfig | null;
 		snow: SnowConfig | null;
 		assets: WeatherAssets | null;
+		cameraRight: Vec3;
 		dt: number;
 		enabled: boolean;
 	}): void {
 		const draws = this.#draws;
 		draws.length = 0;
+		this.#activeScreenDrops = 0;
 		if (!input.enabled) {
 			return;
 		}
@@ -570,6 +663,15 @@ export class WeatherRenderer {
 				data[base + 20] = rain.rainSplashLightingPercent ?? 0.5;
 				draws.push({ kind: 'splash', slot: s });
 			}
+
+			// 1f. screen-space camera lens raindrops
+			const maxDrops = Math.min(
+				MAX_SCREEN_DROPS,
+				Math.floor((rain.screenDropMaxCountLim ?? 0) * intensity01),
+			);
+			if (this.#hasRainTex && maxDrops > 0) {
+				this.#updateScreenDrops(rain, rp, [rdx, rdy, rdz], input.cameraRight, maxDrops, dt);
+			}
 		}
 
 		// 2. falling snow layers
@@ -651,6 +753,101 @@ export class WeatherRenderer {
 		return this.#postFogGroup;
 	}
 
+	#updateScreenDrops(
+		rain: RainConfig,
+		rp: WeatherAssets['rain'],
+		rainDir: Vec3,
+		cameraRight: Vec3,
+		targetCount: number,
+		dt: number,
+	): void {
+		const [scatterMean, scatterStd] = rp?.screenDropScatterParam ?? [0.86, 0.27];
+		const [minLife, maxLife] = rain.screenDropMinMaxLifeTime ?? [1.5, 3.5];
+		const [minSize, maxSize] = rain.screenDropMinMaxSize ?? [0.06, 0.14];
+		const [minSpeed, maxSpeed] = rain.screenDropMinMaxSpeed ?? [0.05, 0.2];
+		const flowPercent = rain.screenDropFlowPercent ?? 0.35;
+		const jitterScale = rain.screenDropJitterSpeedScale ?? 0.15;
+		const dotRight = rainDir[0] * cameraRight[0] + rainDir[1] * cameraRight[1] + rainDir[2] * cameraRight[2];
+		const horizSign = dotRight >= 0 ? 1 : -1;
+		const horizMag = Math.min(1, Math.abs(dotRight));
+
+		const gaussian = (): number => {
+			const u1 = Math.max(1e-6, Math.random());
+			const u2 = Math.random();
+			return scatterMean + Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * scatterStd;
+		};
+
+		const sd = this.#screenDropData;
+		sd.fill(0);
+		sd.set(this.#verticalOcclusion.originAndInvSpan, 0);
+		sd.set(this.#verticalOcclusion.metrics, 4);
+		const col = rain.screenDropColor ?? rain.color ?? [0.85, 0.9, 0.95, 0.35];
+		sd[8] = srgbToLinear(col[0]);
+		sd[9] = srgbToLinear(col[1]);
+		sd[10] = srgbToLinear(col[2]);
+		sd[11] = col[3];
+		const [fadeLo, fadeHi] = rain.screenDropCentroidFadeParam ?? [0.15, 0.55];
+		sd[12] = rp?.screenDropFXShadingSize ?? 0.3;
+		sd[13] = rp?.screenDropNoiseLevel ?? 0.3;
+		sd[14] = fadeLo;
+		sd[15] = fadeHi;
+		sd[18] = rain.screenRainDropEdgeSharpness ?? 0.7;
+		sd.set(rp?.screenDropFXNoiseTexST ?? [3, 3, 0, 0], 20);
+
+		let activeCount = 0;
+		for (let i = 0; i < MAX_SCREEN_DROPS; i++) {
+			const drop = this.#screenDrops[i];
+			if (i < targetCount && !drop.active) {
+				const angle = Math.random() * Math.PI * 2;
+				const radius = Math.max(0.15, Math.min(1.35, gaussian()));
+				drop.active = true;
+				drop.x = Math.cos(angle) * radius;
+				drop.y = Math.sin(angle) * radius;
+				drop.life = randRange(minLife, maxLife) + 1;
+				drop.size = randRange(minSize, maxSize);
+				drop.slideSpeed = 0;
+				const r = Math.random();
+				drop.flowChance = r > 1 - flowPercent ? r : 0;
+				drop.jitterTimer = 0;
+			}
+			if (!drop.active) {
+				continue;
+			}
+			if (drop.life <= 0) {
+				drop.active = false;
+				continue;
+			}
+			if (drop.flowChance > 0) {
+				if (drop.slideSpeed <= 0) {
+					if (Math.random() > drop.flowChance) {
+						drop.slideSpeed = randRange(minSpeed, maxSpeed);
+					}
+				} else {
+					drop.slideSpeed = Math.max(0, drop.slideSpeed - dt);
+				}
+			}
+			let jitterSpeed = 0;
+			if (drop.jitterTimer < 0.5) {
+				jitterSpeed = Math.sin(drop.jitterTimer * Math.PI * 2) * jitterScale * (1 - drop.jitterTimer * 2);
+				drop.jitterTimer += dt;
+			}
+			drop.x += dt * drop.slideSpeed * horizSign * horizMag;
+			drop.y -= dt * (drop.slideSpeed + Math.max(0, jitterSpeed));
+			drop.life -= dt;
+			const base = 24 + activeCount * 4;
+			sd[base] = drop.x;
+			sd[base + 1] = drop.y;
+			sd[base + 2] = Math.max(0, Math.min(1, drop.life));
+			sd[base + 3] = drop.size;
+			activeCount++;
+		}
+		sd[17] = activeCount;
+		this.#activeScreenDrops = activeCount;
+		if (activeCount > 0) {
+			this.#device.queue.writeBuffer(this.#screenDropUniforms, 0, sd);
+		}
+	}
+
 	/**
 	 * encodes all active weather draws into the render pass over `composited.target`
 	 *
@@ -660,10 +857,11 @@ export class WeatherRenderer {
 	 */
 	encode(pass: GPURenderPassEncoder, scene: SceneTextures): number {
 		const draws = this.#draws;
-		if (draws.length === 0) {
+		if (draws.length === 0 && this.#activeScreenDrops === 0) {
 			return 0;
 		}
 		pass.setBindGroup(1, this.#ensurePostFogGroup(scene));
+		let encoded = 0;
 		let lastKind: DrawKind | null = null;
 		for (const draw of draws) {
 			if (draw.kind !== lastKind) {
@@ -718,8 +916,15 @@ export class WeatherRenderer {
 					break;
 				}
 			}
+			encoded++;
 		}
-		return draws.length;
+		if (this.#activeScreenDrops > 0) {
+			pass.setPipeline(this.#screenDropPipeline);
+			pass.setBindGroup(2, this.#screenDropGroup);
+			pass.draw(6, this.#activeScreenDrops);
+			encoded++;
+		}
+		return encoded;
 	}
 
 	/** resets animation clocks on a camera/level cut */
@@ -731,11 +936,16 @@ export class WeatherRenderer {
 		this.#rainWaveOffsetY = 0;
 		this.#rainSplashOffset = 0;
 		this.#snowOffset = [0, 0, 0];
+		this.#activeScreenDrops = 0;
+		for (const drop of this.#screenDrops) {
+			drop.active = false;
+		}
 	}
 
 	/** frees GPU buffers */
 	destroy(): void {
 		this.#uniforms.destroy();
+		this.#screenDropUniforms.destroy();
 		this.#rainMesh.vertex.destroy();
 		this.#rainMesh.index.destroy();
 		this.#splashMesh.vertex.destroy();

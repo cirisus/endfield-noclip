@@ -377,6 +377,7 @@ export class Renderer {
 			rain: look.rain,
 			snow: look.snow,
 			assets: input.weather,
+			cameraRight: camera.right(),
 			dt: input.dt,
 			enabled: settings.weather,
 		});
