@@ -31,7 +31,7 @@ import type {
 import type { TerrainPatch } from '../../streaming/selection.ts';
 import type { BindLayouts } from '../frame/bind-layouts.ts';
 import { describeFill, describeWire } from '../frame/fill-and-wire.ts';
-import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
+import { FRAME_CORE_WGSL } from '../frame/frame-uniforms.ts';
 import type { MainPassFormat } from '../frame/render-targets.ts';
 import { wgslConst } from '../shaders/wgsl-const.ts';
 import {
@@ -254,7 +254,7 @@ export class TerrainRenderer {
 		this.#layout = layouts.terrain;
 		this.#bindGroup = this.#createBindGroup();
 
-		const module = pipelines.module('terrain', FRAME_WGSL + LAYOUT_WGSL + '\n' + terrainWgsl);
+		const module = pipelines.module('terrain', FRAME_CORE_WGSL + '\n' + LAYOUT_WGSL + '\n' + terrainWgsl);
 		const layout = layouts.terrainPipeline;
 		const vertex = { module, entryPoint: 'vs_main' };
 		const targets = format.targets;

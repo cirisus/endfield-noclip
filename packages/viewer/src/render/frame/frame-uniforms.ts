@@ -16,20 +16,25 @@ import phaseWgsl from '../shaders/common/phase.wgsl?raw';
 import { wgslConst } from '../shaders/wgsl-const.ts';
 
 import brdfWgsl from './brdf.wgsl?raw';
-import frameWgsl from './frame.wgsl?raw';
+import frameCoreWgsl from './frame-core.wgsl?raw';
+import frameLightingWgsl from './frame-lighting.wgsl?raw';
 
-/** the TS constants frame.wgsl reads */
-const CONSTANTS_WGSL = [LOCAL_LIGHTS_WGSL, wgslConst('BLOCK_SLOT_BITS', 'u32', BLOCK_SLOT_BITS)].join('\n');
-
-/** WGSL source of the frame uniforms and shared lighting helpers, prepended to every family */
-export const FRAME_WGSL = [
-	CONSTANTS_WGSL,
-	brdfWgsl,
+/** WGSL source of the frame uniforms, instance row helpers and G-buffer packing (no lighting) */
+export const FRAME_CORE_WGSL = [
+	wgslConst('BLOCK_SLOT_BITS', 'u32', BLOCK_SLOT_BITS),
 	noiseWgsl,
 	luminanceWgsl,
-	phaseWgsl,
 	octahedralWgsl,
 	gbufferWgsl,
+	frameCoreWgsl,
+].join('\n');
+
+/** WGSL source of {@link FRAME_CORE_WGSL} plus the shared shadow, IBL, irradiance and local-light helpers */
+export const FRAME_WGSL = [
+	FRAME_CORE_WGSL,
+	LOCAL_LIGHTS_WGSL,
+	brdfWgsl,
+	phaseWgsl,
 	clipmapWgsl,
-	frameWgsl,
+	frameLightingWgsl,
 ].join('\n');

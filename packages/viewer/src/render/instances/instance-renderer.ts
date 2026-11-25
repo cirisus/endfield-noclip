@@ -29,7 +29,7 @@ import type { ResidentInstances } from '../../streaming/resident.ts';
 import type { InstanceRange } from '../../streaming/selection.ts';
 import type { BindLayouts } from '../frame/bind-layouts.ts';
 import { describeFill, describeWire } from '../frame/fill-and-wire.ts';
-import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
+import { FRAME_CORE_WGSL } from '../frame/frame-uniforms.ts';
 import type { MainPassFormat } from '../frame/render-targets.ts';
 
 import boxesWgsl from './instance-boxes.wgsl?raw';
@@ -136,7 +136,7 @@ export class InstanceRenderer {
 		});
 		this.#bindGroup = this.#createBindGroup();
 
-		const module = pipelines.module('instance-boxes', FRAME_WGSL + boxesWgsl);
+		const module = pipelines.module('instance-boxes', FRAME_CORE_WGSL + '\n' + boxesWgsl);
 		this.#keys = {
 			ranges: { fill: 'boxes/fill', wire: 'boxes/wire' },
 			list: { fill: 'boxes/list-fill', wire: 'boxes/list-wire' },
