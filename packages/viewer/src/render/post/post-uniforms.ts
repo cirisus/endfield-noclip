@@ -204,7 +204,7 @@ export const writeFrameUniforms = (out: Float32Array, input: FrameUniformsInput)
 	set(S.up, [...up, time]);
 	set(S.eye, [...camera.position, input.frame % 1024]);
 	set(S.viewport, [width, height, 1 / width, 1 / height]);
-	set(S.jitter, [...input.jitter, 0, 0]);
+	set(S.jitter, [...input.jitter, settings.sharpen, 0]);
 	const { bloom, ao, vignette } = environment.post;
 	set(S.ao, [ao?.radius ?? 1, 1, ao?.power ?? 1, settings.ao && ao !== null ? 1 : 0]);
 	set(S.grade, [

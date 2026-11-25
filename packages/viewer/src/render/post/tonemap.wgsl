@@ -130,10 +130,30 @@ fn srgb_encode(c: vec3f) -> vec3f {
 	return select(high, low, c <= vec3f(0.0031308));
 }
 
+fn cas_compress(c: vec3f) -> vec3f {
+	return c / (1.0 + max(c.r, max(c.g, c.b)));
+}
+
 @fragment
 fn fs_tonemap(in: FullscreenOut) -> @location(0) vec4f {
 	let px = vec2i(in.position.xy);
 	var color = textureLoad(scene_texture, px, 0).rgb;
+	// contrast-adaptive sharpening after TAA (game uses 0.3), evaluated in Reinhard-compressed space so HDR
+	// highlights do not ring
+	if (post.jitter.z > 0.0) {
+		let max_px = vec2i(textureDimensions(scene_texture, 0)) - vec2i(1);
+		let tc = cas_compress(color);
+		let tn = cas_compress(textureLoad(scene_texture, clamp(px + vec2i(0, -1), vec2i(0), max_px), 0).rgb);
+		let ts = cas_compress(textureLoad(scene_texture, clamp(px + vec2i(0, 1), vec2i(0), max_px), 0).rgb);
+		let tw = cas_compress(textureLoad(scene_texture, clamp(px + vec2i(-1, 0), vec2i(0), max_px), 0).rgb);
+		let te = cas_compress(textureLoad(scene_texture, clamp(px + vec2i(1, 0), vec2i(0), max_px), 0).rgb);
+		let mn = min(tc, min(min(tn, ts), min(tw, te)));
+		let mx = max(tc, max(max(tn, ts), max(tw, te)));
+		let amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3f(1e-4)), vec3f(0.0), vec3f(1.0)));
+		let w = amp * (-post.jitter.z * 0.25);
+		let sharp = clamp((tc + (tn + ts + tw + te) * w) / (1.0 + 4.0 * w), vec3f(0.0), vec3f(0.9999));
+		color = sharp / max(1.0 - max(sharp.r, max(sharp.g, sharp.b)), 1e-4);
+	}
 	color *= post.grade.x;
 	// the game's composite: adds the bloom scaled by its intensity; blend modes other than add take the
 	// scene's above-threshold part out by the same factor, add mode compresses bloom past 0.3 instead

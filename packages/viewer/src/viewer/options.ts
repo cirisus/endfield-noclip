@@ -175,5 +175,6 @@ export const postSettings = (options: ViewerOptions, scene: boolean): PostSettin
 	reflections: options.reflections,
 	bloom: options.bloom,
 	vignette: options.vignette,
+	sharpen: options.antialiasing ? 0.3 : 0,
 	debugView: options.debugView,
 });

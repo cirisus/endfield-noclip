@@ -28,6 +28,8 @@ export interface PostSettings {
 	reflections: boolean;
 	bloom: boolean;
 	vignette: boolean;
+	/** TAA contrast-adaptive sharpening strength (0 when AA is off or in debug views; 0.3 matching the game) */
+	sharpen: number;
 	/** anything but `lit` shows the main pass as it is: no exposure, tonemapping, effects or water */
 	debugView: DebugView;
 }
@@ -52,6 +54,7 @@ export const effectiveSettings = (settings: PostSettings): PostSettings => {
 		reflections: false,
 		bloom: false,
 		vignette: false,
+		sharpen: 0,
 	};
 };
 
