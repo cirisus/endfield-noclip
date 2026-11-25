@@ -1,6 +1,6 @@
 import { ADD, ALPHA_OVER, KEEP, PREMULTIPLIED_OVER } from '../../gfx/blend.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
-import { SLOTS, Slot } from '../../looks/look.ts';
+import { type LookStencil, SLOTS, Slot } from '../../looks/look.ts';
 import type { BindLayouts } from '../frame/bind-layouts.ts';
 import { FRAME_CORE_WGSL, FRAME_WGSL } from '../frame/frame-uniforms.ts';
 import {
@@ -37,6 +37,8 @@ import {
 	type UvFormat,
 	VARIANTS,
 	pipelineKey,
+	stencilPipelineKey,
+	withStencil,
 } from './pipeline-variants.ts';
 import meshCommonWgsl from './surfaces/common.wgsl?raw';
 import meshErosionWgsl from './surfaces/erosion.wgsl?raw';
@@ -63,10 +65,21 @@ export type PhaseDescriber = (
 	uvFormat: UvFormat,
 ) => GPURenderPipelineDescriptor;
 
-/** what {@link prepareMeshPipelines} sets up */
-interface MeshPipelines {
-	/** each phase's descriptor by key, from which its stencil variants are derived */
-	describers: Map<string, PhaseDescriber>;
+/**
+ * lazy pipeline store for all mesh and effect phases: compiles only the ~6 hottest Lit/depth/shadow variants
+ * up front and compiles every other `(phase, cull, positionFormat, uvFormat, stencil)` on first draw,
+ * collapsing UV-format duplicates on position-only phases
+ */
+export interface MeshPipelines {
+	/**
+	 * returns the compiled pipeline for a draw's phase and variant, or starts async compilation and returns
+	 * `undefined` until ready
+	 */
+	get(
+		phase: DrawPhase,
+		variant: number,
+		options?: { fade?: boolean; stencil?: LookStencil | null },
+	): GPURenderPipeline | undefined;
 	/**
 	 * group 3 of the mesh pipelines: the material's texture slots, then the samplers of its base, detail,
 	 * parallax and parallax noise slots
@@ -74,10 +87,17 @@ interface MeshPipelines {
 	materialLayout: GPUBindGroupLayout;
 	/**
 	 * group 3 of the effect pipelines: seven textures, their samplers, the main pass's depth, surfaces and
-	 * diffuse ambient, a 3D texture, and the composited scene's copy
+	 * G-buffer A, a 3D texture, and the composited scene's copy
 	 */
 	effectLayout: GPUBindGroupLayout;
 }
+
+/** phases paired with a prepass phase whose depth must match before either draws */
+const PAIRED_PREPASS: Partial<Record<string, DrawPhase>> = {
+	'mesh/opaque-lit': PHASES.prepassLit,
+	'mesh/opaque': PHASES.prepass,
+	'mesh/cutout-shade': PHASES.cutoutDepth,
+};
 
 /** @returns the layout of the mesh pipelines' group 3 */
 const createMaterialLayout = (device: GPUDevice): GPUBindGroupLayout => {
@@ -176,14 +196,15 @@ const meshVertex = (
 };
 
 /**
- * starts compiling every mesh phase's pipeline for each face culling and UV format, so streaming compiles
- * nothing; only stencil variants compile on first use
+ * registers every mesh and effect phase's pipeline descriptor and pre-warms the hottest opaque/shadow
+ * variants; all other combinations compile lazily on first draw
  *
  * @param device the device
  * @param layouts shared layouts
  * @param pipelines the cache to compile into
  * @param format the main pass's targets
- * @returns the phases' descriptors and the mesh and effect material layouts
+ * @param shadow sun shadow depth format and clip control
+ * @returns the lazy pipeline store and the mesh and effect material layouts
  */
 export const prepareMeshPipelines = (
 	device: GPUDevice,
@@ -193,13 +214,12 @@ export const prepareMeshPipelines = (
 	shadow: { format: GPUTextureFormat; unclippedDepth: boolean },
 ): MeshPipelines => {
 	const describers = new Map<string, PhaseDescriber>();
-	/** registers a phase's descriptor and compiles its pipeline for every face culling, position and UV format */
-	const describe = ({ key }: DrawPhase, describer: PhaseDescriber): void => {
-		describers.set(key, describer);
-		for (const { cull, positionFormat, uvFormat } of VARIANTS) {
-			void pipelines.prepare(pipelineKey(key, cull, positionFormat, uvFormat), () =>
-				describer(cull, positionFormat, uvFormat),
-			);
+	const positionOnly = new Set<string>();
+	/** registers a phase's descriptor; compilation happens lazily in `get()` */
+	const describe = (phase: DrawPhase, describer: PhaseDescriber): void => {
+		describers.set(phase.key, describer);
+		if (phase.streams === 'position') {
+			positionOnly.add(phase.key);
 		}
 	};
 
@@ -512,5 +532,60 @@ export const prepareMeshPipelines = (
 	);
 	// #endregion
 
-	return { describers, materialLayout, effectLayout };
+	const resolve = (
+		phaseKey: string,
+		variant: number,
+		stencil: LookStencil | null,
+	): GPURenderPipeline | undefined => {
+		const { cull, positionFormat, uvFormat } = VARIANTS[variant];
+		// position-only phases ignore UV format, halving their compiled pipeline variants
+		const effectiveUv: UvFormat = positionOnly.has(phaseKey) ? 'unorm16x2' : uvFormat;
+		const baseKey = pipelineKey(phaseKey, cull, positionFormat, effectiveUv);
+		const key = stencil === null ? baseKey : stencilPipelineKey(baseKey, stencil);
+		const ready = pipelines.get(key);
+		if (ready !== undefined) {
+			return ready;
+		}
+		const describer = describers.get(phaseKey);
+		if (describer === undefined) {
+			throw new Error(`phase ${phaseKey} has no pipeline descriptor`);
+		}
+		void pipelines.prepare(key, () => {
+			const desc = describer(cull, positionFormat, effectiveUv);
+			return stencil === null ? desc : withStencil(desc, stencil);
+		});
+		return undefined;
+	};
+
+	// pre-warm the hottest variants (~90% of meshes: back-culled unorm16x4 + unorm16x2)
+	const HOT_VARIANT = VARIANTS.findIndex(
+		({ cull, positionFormat, uvFormat }) =>
+			cull === 'back' && positionFormat === 'unorm16x4' && uvFormat === 'unorm16x2',
+	);
+	for (const phase of [
+		PHASES.prepass,
+		PHASES.opaqueLit,
+		PHASES.opaque,
+		PHASES.cutoutDepth,
+		PHASES.cutoutShade,
+		PHASES.shadowOpaque,
+	]) {
+		resolve(phase.key, HOT_VARIANT, null);
+	}
+
+	const get: MeshPipelines['get'] = (phase, variant, { fade = false, stencil = null } = {}) => {
+		const phaseKey = fade && phase.key === 'mesh/prepass' ? 'mesh/prepass-fade' : phase.key;
+		const pipeline = resolve(phaseKey, variant, stencil);
+		// depth-equal shading requires its paired prepass pipeline to be ready too
+		const paired = PAIRED_PREPASS[phaseKey];
+		if (paired !== undefined) {
+			const prepassKey = fade && paired.key === 'mesh/prepass' ? 'mesh/prepass-fade' : paired.key;
+			if (resolve(prepassKey, variant, null) === undefined) {
+				return undefined;
+			}
+		}
+		return pipeline;
+	};
+
+	return { get, materialLayout, effectLayout };
 };

@@ -1,6 +1,5 @@
-import { GrowableBuffer } from '../../gfx/growable-buffer.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
-import { LOOK_FLOATS, type LookStencil, type MaterialLook } from '../../looks/look.ts';
+import type { LookStencil } from '../../looks/look.ts';
 import type { DecodedGeometry } from '../../package/decode-protocol.ts';
 import type { Camera } from '../../scene/camera.ts';
 import { type GpuCullWork, INDIRECT_WORDS } from '../../streaming/gpu-cull-work.ts';
@@ -11,7 +10,7 @@ import type { MainPassFormat } from '../frame/render-targets.ts';
 import { LIST_CAPACITY, type ListedSpan } from '../instances/instance-renderer.ts';
 import { CAMERA_HISTORY_FLOATS, CameraHistory } from '../post/camera-history.ts';
 import { SHADOW_LAYERS } from '../shadows/shadow-map.ts';
-import { MIP_FEEDBACK_LOOKS, MipFeedback, type MipSteps } from '../textures/mip-feedback.ts';
+import { MipFeedback, type MipSteps } from '../textures/mip-feedback.ts';
 import type { TextureStore } from '../textures/texture-store.ts';
 
 import { DepthPyramid } from './depth-pyramid.ts';
@@ -23,7 +22,6 @@ import {
 	type DrawRangeInfo,
 	type EffectPass,
 	type MeshPass,
-	PAIRED_PASSES,
 	PASS_PHASES,
 	SORTED_RANGES,
 	type SurfacePass,
@@ -31,46 +29,30 @@ import {
 import { type GeometryIndices, GeometryPools, type GeometryVertices } from './geometry-pools.ts';
 import { releaseGeometry, uploadGeometry } from './geometry-residency.ts';
 import { type CullTargets, type CulledBucket, InstanceCuller, type Occlusion } from './instance-culler.ts';
+import { LookTable } from './look-table.ts';
 import {
 	type EffectInputs,
 	type EffectMaterial,
 	MaterialBindings,
 	type MaterialState,
 } from './material-bindings.ts';
-import { type PhaseDescriber, prepareMeshPipelines } from './mesh-pipelines.ts';
-import { VARIANTS, stencilPipelineKey, variantKeys, withStencil } from './pipeline-variants.ts';
+import { type MeshPipelines, prepareMeshPipelines } from './mesh-pipelines.ts';
 import { type ResidentSkin, SkinAnimator } from './skin-animation.ts';
 import { type SortedSource, mergeFarToNear } from './sorted-runs.ts';
 import { VertexBindings } from './vertex-bindings.ts';
 
 /**
- * floats of `Draw` in mesh.wgsl: the position and UV dequantizations, the flags and the material's slot in
- * the look table
+ * floats of `Draw` in surfaces/common.wgsl: the position and UV dequantizations, the flags and the material's
+ * slot in the look table
  */
 const DRAW_FLOATS = 16;
 /** draws per frame at most; buckets past it aren't drawn */
 const MAX_DRAWS = 16_384;
-/** bytes of a look table slot (`Look` in mesh.wgsl) */
-const LOOK_BYTES = LOOK_FLOATS * 4;
-/** look table slots to start with: a view draws a few thousand materials */
-const INITIAL_LOOKS = 4096;
-/** look table slots at most, more than a package has materials, and as many as the mip feedback can name */
-const MAX_LOOKS = MIP_FEEDBACK_LOOKS;
 /**
  * how far the eye may move between frames for last frame's depth to still stand for what hides rows, m; past
  * it (a jump), every row in view draws
  */
 const OCCLUSION_MAX_MOVE = 8;
-
-/** @returns an empty look table */
-const createLookTable = (device: GPUDevice): GrowableBuffer =>
-	new GrowableBuffer(device, {
-		label: 'mesh looks',
-		unitBytes: LOOK_BYTES,
-		initialUnits: INITIAL_LOOKS,
-		maxUnits: MAX_LOOKS,
-		usage: GPUBufferUsage.STORAGE,
-	});
 
 interface PreparedDraw {
 	geometry: ResidentGeometry;
@@ -104,7 +86,6 @@ interface PreparedDraw {
 /** what {@link MeshRenderer} last bound while encoding a pass, so it binds only what changes */
 interface EncodeState {
 	phase: DrawPhase | null;
-	keys: readonly string[];
 	variant: number;
 	fading: boolean;
 	stencil: LookStencil | null;
@@ -145,23 +126,14 @@ export class MeshRenderer {
 	transparentWritesDepth = false;
 
 	#device: GPUDevice;
-	#pipelines: PipelineCache;
 	#instances: { readonly bindGroup: GPUBindGroup };
 	#params: GPUBuffer;
 	#paramData = new Float32Array(MAX_DRAWS * DRAW_FLOATS);
 	#paramWords = new Uint32Array(this.#paramData.buffer);
 	#drawIds: GPUBuffer;
 	#drawIdData = new Uint32Array(LIST_CAPACITY);
-	/**
-	 * the look table: each drawn material's {@link LOOK_FLOATS} parameters, written once when it's first drawn,
-	 * at the slot draws index it by. looks don't change once built, so only the per-draw part is written every
-	 * frame
-	 */
-	#looks: GrowableBuffer;
-	/** per material id, its slot in {@link #looks} plus 1, 0 until it's written */
-	#lookSlots = new Uint32Array(0);
-	/** slots of {@link #looks} handed out so far: they're handed out in order */
-	#lookCount = 0;
+	/** the look table: each drawn material's parameters, uploaded once on first use */
+	#looks: LookTable;
 	/** which mip levels the main pass sampled of each look slot's textures */
 	#mips: MipFeedback;
 	/**
@@ -170,16 +142,11 @@ export class MeshRenderer {
 	 */
 	readonly mips: MipSteps = {
 		steps: (material, set) => {
-			const slot = this.#lookSlots[material] ?? 0;
-			return slot === 0 ? -1 : this.#mips.steps(slot - 1, set);
+			const slot = this.#looks.slotOf(material);
+			return slot < 0 ? -1 : this.#mips.steps(slot, set);
 		},
 	};
-	/** the parameters of the materials first drawn this frame and their slots, uploaded by {@link #flushLooks} */
-	#newLooks: Float32Array[] = [];
-	#newLookSlots: number[] = [];
-	/** {@link #newLooks} laid out by slot for the upload, reused */
-	#lookStaging = new Float32Array(0);
-	/** the {@link GrowableBuffer.version} of {@link #looks} that {@link #drawGroup} binds */
+	/** the {@link LookTable.version} that {@link #drawGroup} binds */
 	#looksVersion = -1;
 	#layouts: BindLayouts;
 	#fog: { uniforms: GPUBuffer; froxels: GPUTextureView; sampler: GPUSampler };
@@ -216,19 +183,11 @@ export class MeshRenderer {
 	#merged: number[] = [];
 	/** whether the depth buffer has a stencil; without one, draws that use it are skipped */
 	#stencil: boolean;
-	/** each phase's pipeline descriptor by face culling and UV format, for its stencil variants */
-	#describers: Map<string, PhaseDescriber>;
-	/** each phase's variant keys by phase key */
-	#phaseKeys = new Map<string, readonly string[]>();
-	/** variant keys for the fading opaque depth prepass (`mesh/prepass-fade`) */
-	readonly #prepassFadeKeys = variantKeys('mesh/prepass-fade');
-	/** the passes whose pipelines have all compiled */
-	#compiledPasses = new Set<MeshPass>();
+	/** lazy pipeline store for all mesh and effect phases */
+	#meshPipelines: MeshPipelines;
 	#skins: SkinAnimator;
 	/** the animations of this frame's draws, which are skinned before they draw */
 	#drawnSkins = new Set<ResidentSkin>();
-	/** the looks of this frame's draws that a looping clip keeps changing, by material id */
-	#movingLooks = new Map<number, MaterialLook>();
 	/** culls the GPU-culled buckets' rows; `null` without `indirect-first-instance` */
 	#culler: InstanceCuller | null;
 	/** last frame's depth, which rows in view are tested against */
@@ -276,7 +235,6 @@ export class MeshRenderer {
 		},
 	) {
 		this.#device = device;
-		this.#pipelines = pipelines;
 		this.#instances = instances;
 		this.#stencil = format.stencil;
 		this.#skins = new SkinAnimator(device, pipelines);
@@ -294,22 +252,19 @@ export class MeshRenderer {
 		});
 		this.#layouts = layouts;
 		this.#fog = fog;
-		this.#looks = createLookTable(device);
+		this.#looks = new LookTable(device);
 		this.#drawGroup = this.#createDrawGroup();
 		this.#culler = features.indirectFirstInstance
 			? new InstanceCuller(device, pipelines, () => ({ ...instances.buffers, drawIds: this.#drawIds }))
 			: null;
 		this.#pyramid = new DepthPyramid(device, pipelines);
 		this.#mips = new MipFeedback(device, pipelines);
-		const { describers, materialLayout, effectLayout } = prepareMeshPipelines(
+		this.#meshPipelines = prepareMeshPipelines(device, layouts, pipelines, format, shadow);
+		this.#materials = new MaterialBindings(
 			device,
-			layouts,
-			pipelines,
-			format,
-			shadow,
+			this.#meshPipelines.materialLayout,
+			this.#meshPipelines.effectLayout,
 		);
-		this.#describers = describers;
-		this.#materials = new MaterialBindings(device, materialLayout, effectLayout);
 	}
 
 	// #region residency
@@ -341,12 +296,7 @@ export class MeshRenderer {
 	/** forgets material bind groups and the look table (when a package is unloaded) */
 	releaseMaterials(): void {
 		this.#materials.release();
-		// the next package's material ids name other looks; the old table may still be bound by work in flight,
-		// which destroy waits for
-		this.#looks.destroy();
-		this.#looks = createLookTable(this.#device);
-		this.#lookSlots = new Uint32Array(0);
-		this.#lookCount = 0;
+		this.#looks.reset();
 		this.#mips.reset();
 		this.#drawGroup = this.#createDrawGroup();
 	}
@@ -425,13 +375,7 @@ export class MeshRenderer {
 	 * @returns whether a drawn geometry moved, so the shadows it casts must be drawn again
 	 */
 	animate(encoder: GPUCommandEncoder, time: number): boolean {
-		for (const [material, look] of this.#movingLooks) {
-			const slot = this.#lookSlots[material] ?? 0;
-			// a look first drawn this frame is uploaded with the rest, already moved
-			if (look.motion?.advance(time) === true && slot !== 0 && !this.#newLooks.includes(look.params)) {
-				this.#device.queue.writeBuffer(this.#looks.buffer, (slot - 1) * LOOK_BYTES, look.params);
-			}
-		}
+		this.#looks.advance(time);
 		return this.#skins.encode(encoder, this.#drawnSkins, time);
 	}
 
@@ -490,7 +434,7 @@ export class MeshRenderer {
 		feedback: { view: GPUTextureView; width: number; height: number },
 		frame: number,
 	): void {
-		this.#mips.encode(encoder, feedback, this.#lookCount, frame);
+		this.#mips.encode(encoder, feedback, this.#looks.count, frame);
 	}
 
 	/** starts the readbacks of the frame just submitted */
@@ -512,7 +456,7 @@ export class MeshRenderer {
 		this.transparentReadsBackground = false;
 		this.transparentWritesDepth = false;
 		this.#drawnSkins.clear();
-		this.#movingLooks.clear();
+		this.#looks.clearFrame();
 	}
 
 	/**
@@ -597,7 +541,7 @@ export class MeshRenderer {
 		}
 		this.#drawCount = d;
 		this.#prepareSorted();
-		this.#flushLooks();
+		this.#looks.flush();
 		if (this.#looks.version !== this.#looksVersion) {
 			this.#drawGroup = this.#createDrawGroup();
 		}
@@ -655,62 +599,6 @@ export class MeshRenderer {
 		}
 	}
 
-	/**
-	 * @returns the look table slot of a material, handed out with its look queued for {@link #flushLooks} on
-	 *   first use, or -1 when the table is full
-	 */
-	#lookSlot(material: number, params: Float32Array): number {
-		if (material >= this.#lookSlots.length) {
-			const grown = new Uint32Array(Math.max(material + 1, this.#lookSlots.length * 2, 1024));
-			grown.set(this.#lookSlots);
-			this.#lookSlots = grown;
-		}
-		const known = this.#lookSlots[material];
-		if (known !== 0) {
-			return known - 1;
-		}
-		const allocation = this.#looks.allocate(1);
-		if (allocation === null) {
-			return -1;
-		}
-		this.#lookSlots[material] = allocation.start + 1;
-		this.#lookCount = Math.max(this.#lookCount, allocation.start + 1);
-		this.#newLooks.push(params);
-		this.#newLookSlots.push(allocation.start);
-		return allocation.start;
-	}
-
-	/** uploads the looks of the materials first drawn this frame, one write per run of consecutive slots */
-	#flushLooks(): void {
-		const looks = this.#newLooks;
-		const slots = this.#newLookSlots;
-		if (looks.length === 0) {
-			return;
-		}
-		if (this.#lookStaging.length < looks.length * LOOK_FLOATS) {
-			this.#lookStaging = new Float32Array(looks.length * LOOK_FLOATS * 2);
-		}
-		const staging = this.#lookStaging;
-		const queue = this.#device.queue;
-		// slots are handed out in order, so a frame's new looks are almost always one run
-		let runStart = 0;
-		for (let i = 0; i < looks.length; i++) {
-			staging.set(looks[i], i * LOOK_FLOATS);
-			if (i + 1 === looks.length || slots[i + 1] !== slots[i] + 1) {
-				queue.writeBuffer(
-					this.#looks.buffer,
-					slots[runStart] * LOOK_BYTES,
-					staging,
-					runStart * LOOK_FLOATS,
-					(i + 1 - runStart) * LOOK_FLOATS,
-				);
-				runStart = i + 1;
-			}
-		}
-		looks.length = 0;
-		slots.length = 0;
-	}
-
 	/** @returns the prepared range of a draw range */
 	#range(range: DrawRange): PreparedRange {
 		const prepared = this.#rangeOf.get(range);
@@ -738,13 +626,9 @@ export class MeshRenderer {
 			return false;
 		}
 		const look = bucket.look;
-		const known = this.#lookSlots[bucket.material];
-		const lookSlot = known > 0 ? known - 1 : this.#lookSlot(bucket.material, look.params);
+		const lookSlot = this.#looks.ensure(bucket.material, look);
 		if (lookSlot < 0) {
 			return false;
-		}
-		if (look.motion !== null) {
-			this.#movingLooks.set(bucket.material, look);
 		}
 		if (look.readsBackground && SORTED_RANGES.has(info.range)) {
 			this.transparentReadsBackground = true;
@@ -958,46 +842,12 @@ export class MeshRenderer {
 		return this.#encode('lightShadow', pass, layer);
 	}
 
-	/** @returns the cache keys of a phase's pipeline variants, by {@link variantOf} */
-	#variantKeys(phase: DrawPhase): readonly string[] {
-		return this.#phaseKeys.getOrInsertComputed(phase.key, variantKeys);
-	}
-
-	/** @returns whether every pipeline of a pass's phases is compiled; once they are, they stay */
-	#compiled(which: MeshPass): boolean {
-		if (this.#compiledPasses.has(which)) {
-			return true;
-		}
-		for (const phase of PASS_PHASES[which]) {
-			for (const key of this.#variantKeys(phase)) {
-				if (this.#pipelines.get(key) === undefined) {
-					return false;
-				}
-			}
-		}
-		if (which === 'prepass') {
-			for (const key of this.#prepassFadeKeys) {
-				if (this.#pipelines.get(key) === undefined) {
-					return false;
-				}
-			}
-		}
-		this.#compiledPasses.add(which);
-		return true;
-	}
-
 	/**
-	 * encodes a pass's phases in order; nothing if any of its or its paired pass's pipelines isn't ready.
+	 * encodes a pass's phases in order; draws whose pipeline is still compiling are skipped until ready.
 	 * `layer` limits each draw to the rows that shadow layer draws, or is -1 for all of them
 	 */
 	#encode(which: MeshPass, pass: GPURenderPassEncoder, layer: number): number {
 		if (this.#drawCount === 0) {
-			return 0;
-		}
-		// cutout depth and depth-equal shading must rasterize identically, so nothing draws until every variant
-		// is ready
-		const paired = PAIRED_PASSES[which];
-		if (!this.#compiled(which) || (paired !== undefined && !this.#compiled(paired))) {
 			return 0;
 		}
 		pass.setBindGroup(1, this.#instances.bindGroup);
@@ -1005,7 +855,6 @@ export class MeshRenderer {
 		this.#vertexBindings.reset();
 		const state: EncodeState = {
 			phase: null,
-			keys: [],
 			variant: -1,
 			fading: false,
 			stencil: null,
@@ -1020,15 +869,15 @@ export class MeshRenderer {
 			const runs = this.#sortedRuns;
 			for (let r = 0; r < runs.length; r += 4) {
 				const draw = this.#draws[runs[r]];
-				const drawn = this.#encodeDraw(pass, state, phases[runs[r + 3]], draw, {
-					first: draw.first + runs[r + 1],
-					count: runs[r + 2],
-					layer,
-				});
-				if (drawn === null) {
-					return draws;
+				if (
+					this.#encodeDraw(pass, state, phases[runs[r + 3]], draw, {
+						first: draw.first + runs[r + 1],
+						count: runs[r + 2],
+						layer,
+					})
+				) {
+					draws++;
 				}
-				draws += drawn ? 1 : 0;
 			}
 			return draws;
 		}
@@ -1047,11 +896,9 @@ export class MeshRenderer {
 				} else {
 					count = draw.layerRooms[layer] ?? 0;
 				}
-				const drawn = this.#encodeDraw(pass, state, phase, draw, { first: draw.first, count, layer });
-				if (drawn === null) {
-					return draws;
+				if (this.#encodeDraw(pass, state, phase, draw, { first: draw.first, count, layer })) {
+					draws++;
 				}
-				draws += drawn ? 1 : 0;
 			}
 		}
 		return draws;
@@ -1063,7 +910,7 @@ export class MeshRenderer {
 	 * @param first the first row's list offset
 	 * @param count how many rows from it, for listed rows
 	 * @param layer the shadow layer, -1 for the rows in view
-	 * @returns whether it drew, or `null` when the phase's pipeline isn't compiled, which ends the pass
+	 * @returns whether it drew
 	 */
 	#encodeDraw(
 		pass: GPURenderPassEncoder,
@@ -1071,7 +918,7 @@ export class MeshRenderer {
 		phase: DrawPhase,
 		draw: PreparedDraw,
 		{ first, count, layer }: { first: number; count: number; layer: number },
-	): boolean | null {
+	): boolean {
 		// only an effect drawn outside its pass would lack its group
 		if (draw.material === null || count === 0) {
 			return false;
@@ -1079,7 +926,6 @@ export class MeshRenderer {
 		// each phase has its own pipelines and reads its own vertex streams
 		if (phase !== state.phase) {
 			state.phase = phase;
-			state.keys = this.#variantKeys(phase);
 			state.variant = -1;
 			state.fading = false;
 			state.stencil = null;
@@ -1088,25 +934,18 @@ export class MeshRenderer {
 		}
 		const useFade = phase.key === 'mesh/prepass' && draw.fading;
 		if (draw.variant !== state.variant || useFade !== state.fading || draw.stencil !== state.stencil) {
-			const keys = useFade ? this.#prepassFadeKeys : state.keys;
-			if (draw.stencil === null) {
-				const pipeline = this.#pipelines.get(keys[draw.variant]);
-				if (pipeline === undefined) {
-					return null;
-				}
-				pass.setPipeline(pipeline);
-			} else {
-				// a variant still compiling skips its draws; the next draw picks a pipeline again
-				const pipeline = this.#stencilPipeline(phase, keys, draw.variant, draw.stencil);
-				if (pipeline === undefined) {
-					state.variant = -1;
-					return false;
-				}
-				pass.setPipeline(pipeline);
-				if (draw.stencil.reference !== state.reference) {
-					state.reference = draw.stencil.reference;
-					pass.setStencilReference(state.reference);
-				}
+			const pipeline = this.#meshPipelines.get(phase, draw.variant, {
+				fade: useFade,
+				stencil: draw.stencil,
+			});
+			if (pipeline === undefined) {
+				state.variant = -1;
+				return false;
+			}
+			pass.setPipeline(pipeline);
+			if (draw.stencil !== null && draw.stencil.reference !== state.reference) {
+				state.reference = draw.stencil.reference;
+				pass.setStencilReference(state.reference);
 			}
 			state.variant = draw.variant;
 			state.fading = useFade;
@@ -1133,34 +972,6 @@ export class MeshRenderer {
 			pass.drawIndexedIndirect(this.#culler.indirect, draw.indirect + (layer < 0 ? 0 : (1 + layer) * 20));
 		}
 		return true;
-	}
-
-	/**
-	 * @param phase the phase
-	 * @param keys the phase's variant keys
-	 * @param variant the draw's variant
-	 * @param stencil the draw's stencil state
-	 * @returns the phase's pipeline variant for the stencil state, or `undefined` while it compiles (compiling
-	 *   starts on the first call)
-	 */
-	#stencilPipeline(
-		phase: DrawPhase,
-		keys: readonly string[],
-		variant: number,
-		stencil: LookStencil,
-	): GPURenderPipeline | undefined {
-		const key = stencilPipelineKey(keys[variant], stencil);
-		const pipeline = this.#pipelines.get(key);
-		if (pipeline !== undefined) {
-			return pipeline;
-		}
-		const describer = this.#describers.get(phase.key);
-		if (describer === undefined) {
-			throw new Error(`phase ${phase.key} has no pipeline descriptor`);
-		}
-		const { cull, positionFormat, uvFormat } = VARIANTS[variant];
-		void this.#pipelines.prepare(key, () => withStencil(describer(cull, positionFormat, uvFormat), stencil));
-		return undefined;
 	}
 
 	// #endregion

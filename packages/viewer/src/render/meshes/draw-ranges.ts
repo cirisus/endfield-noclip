@@ -236,9 +236,3 @@ export const PASS_PHASES: Record<MeshPass, readonly DrawPhase[]> = {
 export const SORTED_RANGES: ReadonlySet<DrawRange> = new Set(
 	PASS_PHASES.transparent.map(({ range }) => range),
 );
-
-/**
- * passes that draw only once another's pipelines are ready too: the shading only shows where the prepass
- * drew, so neither draws until both can
- */
-export const PAIRED_PASSES: Partial<Record<MeshPass, MeshPass>> = { prepass: 'main', main: 'prepass' };
