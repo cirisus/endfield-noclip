@@ -153,62 +153,17 @@ fn fs_march(in: FullscreenOut) -> March {
 		return out;
 	}
 	let end = ssr_project(end_rel);
-	let start_ndc = vec2f(start.x * 2.0 - 1.0, 1.0 - start.y * 2.0);
-	var delta = vec3f((end.x - start.x) * 2.0, (start.y - end.y) * 2.0, end.z - start.z);
-	{
-		let half_length = max(0.5 * length(delta.xy), 1e-9);
-		let scale =
-			1.0 - max(abs(delta.xy + start_ndc * half_length) - half_length, vec2f(0.0)) / max(abs(delta.xy), vec2f(1e-9));
-		delta *= min(scale.x, scale.y) / half_length;
-	}
-	let tolerance = max(abs(delta.z) / steps, 1e-4);
-	let step = vec3f(delta.x * 0.5, -delta.y * 0.5, delta.z) / steps;
-	var offset: f32;
-	{
-		let pixels = abs(step.xy * ssr.size.xy);
-		let longest = max(pixels.x, pixels.y);
-		if (longest < 1.0) {
-			offset = 1.0 / (longest + 0.001);
-		} else {
-			offset = gradient_noise(vec2f(px) + 0.5 + vec2f(2.083, 4.867) * post.eye.w);
-		}
-	}
-	var position = start + step * offset;
-	var last = position.z - ssr_device_depth(position.xy);
-	var hit = false;
-	for (var i = 0.0; i < steps; i += 4.0) {
-		var diff: array<f32, 4>;
-		var found = -1;
-		for (var k = 0; k < 4; k++) {
-			let tap = position + step * f32(k + 1);
-			diff[k] = tap.z - ssr_device_depth(tap.xy);
-			// a hit lies behind the depth buffer's surface by less than two steps' depth
-			if (found < 0 && abs(diff[k] + tolerance) < tolerance) {
-				found = k;
-			}
-		}
-		if (found >= 0) {
-			let before = select(diff[max(found - 1, 0)], last, found == 0);
-			let after = diff[found];
-			position += step * (f32(found) + clamp(before / (before - after), 0.0, 1.0));
-			hit = true;
-			break;
-		}
-		position += step * 4.0;
-		last = diff[3];
-	}
+	let march = ssr_march_ray(start, end, steps, ssr.size.xy, vec2f(px) + 0.5);
+	let position = march.position;
 
 	// fade towards the screen's edges, for surfaces seen head-on (their rays turn back off the screen) and, for
 	// all but the glossiest, between 90 and 100 m
 	let jitter_uv = vec2f(-post.jitter.x, post.jitter.y) * 0.5;
 	var hit_motion = vec2f(0.0);
 	var source = uv + jitter_uv;
-	if (hit) {
-		let edge = min(1.0 - max(position.x, position.y), min(position.x, position.y));
-		let on_screen = clamp(select(edge / ssr.fade.x, 1.0, edge > ssr.fade.x), 0.0, 1.0);
-		let mirror = 1.0 - clamp(abs(dot(s.normal, v)) * ssr.fade.y + ssr.fade.z, 0.0, 1.0);
+	if (march.hit) {
 		let far = select(clamp((100.0 - eye) * 0.1, 0.0, 1.0), 1.0, s.roughness < 0.1);
-		out.fade = vec4f(on_screen * mirror * far);
+		out.fade = vec4f(ssr_fade(position.xy, s.normal, v, ssr.fade.x, ssr.fade.y, ssr.fade.z) * far);
 		hit_motion = motion_at(position.xy);
 		source = position.xy + jitter_uv - hit_motion;
 	}
