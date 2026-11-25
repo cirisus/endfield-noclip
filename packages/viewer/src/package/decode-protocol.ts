@@ -29,8 +29,8 @@ export type DecodeRequest =
 	| (RequestBase & { kind: 'surface' })
 	| (RequestBase & { kind: 'splat' })
 	| (RequestBase & { kind: 'layer' })
-	/** without `rowKinds`, the rows are tier 0 HLOD rows */
-	| (RequestBase & { kind: 'instances'; rowKinds?: RowKinds })
+	/** without `rowKinds`, the rows are tier 0 HLOD rows; `foliage: true` decodes a `.fol` cluster block */
+	| (RequestBase & { kind: 'instances'; rowKinds?: RowKinds; foliage?: true })
 	| (RequestBase & { kind: 'geometry' })
 	| (RequestBase & { kind: 'texture' })
 	| (RequestBase & { kind: 'irradiance' });

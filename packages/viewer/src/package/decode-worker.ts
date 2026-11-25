@@ -1,4 +1,5 @@
 import { BlobCodec } from '@endfield-noclip/package-format/blobs';
+import { decodeFoliageBlock } from '@endfield-noclip/package-format/foliage';
 import {
 	decodeGeometryBlob,
 	GEOMETRY_VERTEX_FORMATS,
@@ -19,6 +20,7 @@ import {
 
 import { MeshoptDecoder } from 'meshoptimizer/decoder';
 
+import { buildFoliageRows } from '../content/foliage-rows.ts';
 import { buildInstanceRows } from '../content/instance-rows.ts';
 import { buildRowBounds } from '../streaming/row-groups.ts';
 
@@ -417,8 +419,17 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 			return { response: { id: request.id, kind: request.kind, data }, transfer: [data] };
 		}
 		case 'instances': {
-			const block = decodeInstanceBlock(raw, chainIndex);
-			const built = buildInstanceRows(block, request.rowKinds ?? []);
+			let built: ReturnType<typeof buildInstanceRows>;
+			let rowFlags: Uint8Array | undefined;
+			if (request.foliage) {
+				const expanded = buildFoliageRows(decodeFoliageBlock(raw, chainIndex));
+				built = expanded.built;
+				rowFlags = expanded.rowFlags;
+			} else {
+				const block = decodeInstanceBlock(raw, chainIndex);
+				built = buildInstanceRows(block, request.rowKinds ?? []);
+				rowFlags = block.rowFlags;
+			}
 			const bounds = buildRowBounds(
 				{
 					rowsF32: new Float32Array(built.rows.buffer),
@@ -427,7 +438,7 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 					spins: built.spins,
 					rides: built.rides,
 				},
-				block.rowFlags,
+				rowFlags,
 			);
 			const transfer: Transferable[] = [
 				bounds.groups.buffer,

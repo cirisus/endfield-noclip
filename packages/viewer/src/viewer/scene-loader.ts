@@ -1,3 +1,5 @@
+import { BlobKind } from '@endfield-noclip/package-format/blobs';
+
 import { markBillboardRows, markClothRows } from '../content/instance-rows.ts';
 import { instanceRowKinds } from '../content/row-kinds.ts';
 import type { EnvironmentScene } from '../environment/blend.ts';
@@ -106,7 +108,10 @@ export const openScene = (pkg: ViewerPackage, deps: SceneDeps): LoadedScene => {
 				release: () => {},
 			},
 			instances: {
-				job: (blob, stored) => ({ kind: 'instances', ...stored, rowKinds: rowKinds.get(blob) ?? [] }),
+				job: (blob, stored) =>
+					pkg.blobs[blob].kind === BlobKind.Foliage
+						? { kind: 'instances', ...stored, foliage: true }
+						: { kind: 'instances', ...stored, rowKinds: rowKinds.get(blob) ?? [] },
 				upload: (_blob, decoded) => {
 					// the decode worker doesn't hold the chains or cloth table
 					markBillboardRows(decoded, pkg.chains);
