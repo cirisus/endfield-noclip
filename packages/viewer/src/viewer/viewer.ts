@@ -6,7 +6,7 @@ import { KeyedEventEmitter } from '@mary-ext/simple-event-emitter';
 
 import { compareStrings } from '../compare.ts';
 import { ROW_BYTES, ROW_WORDS } from '../content/instance-rows.ts';
-import type { AppliedVolume } from '../environment/blend.ts';
+import { type AppliedVolume, sameApplied } from '../environment/blend.ts';
 import { windClockRate } from '../environment/environment.ts';
 import { type GfxDevice, createGfxDevice } from '../gfx/device.ts';
 import { DecodePool } from '../package/decode-pool.ts';
@@ -79,8 +79,9 @@ export class Viewer {
 	#lastTime = 0;
 	#lastStats = 0;
 	#statsKey = '';
-	/** what the panels show of the blended environment, so a re-blend notifies only when that changes */
-	#environmentKey = '';
+	/** what the panels last saw of the blended environment, so a re-blend notifies only when that changes */
+	#lastEnvironmentName: string | null = null;
+	#lastAppliedVolumes: readonly AppliedVolume[] = [];
 	#lastDraws = 0;
 	#loadGeneration = 0;
 	#dirty = true;
@@ -381,12 +382,11 @@ export class Viewer {
 		this.#dirty = true;
 		// the look changes on most frames while the camera moves through a volume's fade, and the panels that
 		// don't show it (the scene conditions panel takes over 100 ms) mustn't re-render with it
-		let key = look.environment.name ?? '';
-		for (const { id, phase, factor } of this.#environment.applied) {
-			key += '|' + id + ':' + phase + ':' + Math.round(factor * 100);
-		}
-		if (key !== this.#environmentKey) {
-			this.#environmentKey = key;
+		const name = look.environment.name;
+		const applied = this.#environment.applied;
+		if (name !== this.#lastEnvironmentName || !sameApplied(this.#lastAppliedVolumes, applied)) {
+			this.#lastEnvironmentName = name;
+			this.#lastAppliedVolumes = applied;
 			this.environmentRevision++;
 			this.#notify('environment');
 		}

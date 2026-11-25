@@ -28,8 +28,6 @@ export interface AppliedVolume {
 export interface BlendPlan {
 	/** the volumes that apply, in order */
 	applied: AppliedVolume[];
-	/** changes whenever the blended profile would (volumes and rounded factors) */
-	key: string;
 	/** the base phase, whose every section the blend starts from, inactive ones included */
 	base: EnvironmentPhaseInfo;
 	/** the level's post profile */
@@ -38,6 +36,27 @@ export interface BlendPlan {
 	phases: EnvironmentPhaseInfo[];
 	schema: EnvironmentSchema;
 }
+
+/**
+ * compares two applied-volume lists at 1% factor resolution without allocating strings
+ *
+ * @param a first list
+ * @param b second list
+ * @returns whether both lists have the same volumes, phases, and rounded factors in order
+ */
+export const sameApplied = (a: readonly AppliedVolume[], b: readonly AppliedVolume[]): boolean => {
+	if (a.length !== b.length) {
+		return false;
+	}
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x.id !== y.id || x.phase !== y.phase || Math.round(x.factor * 100) !== Math.round(y.factor * 100)) {
+			return false;
+		}
+	}
+	return true;
+};
 
 /** what the blend may use */
 interface BlendOptions {
@@ -238,7 +257,6 @@ export const planBlend = (
 	const post = environment.post === null ? null : (table.posts[environment.post] ?? null);
 	return {
 		applied,
-		key: applied.map(({ name, phase, factor }) => `${name}/${phase}@${factor.toFixed(2)}`).join('|'),
 		base,
 		post,
 		phases,
@@ -463,8 +481,8 @@ const lerpValue = (
 	if (typeof a === 'number' && typeof b === 'number') {
 		return lerp(a, b);
 	}
-	if (isNumbers(a) && isNumbers(b) && a.length === b.length) {
-		return b.map((value, i) => lerp(a[i], value));
+	if (Array.isArray(a) && Array.isArray(b) && a.length === b.length && isNumbers(a) && isNumbers(b)) {
+		return Array.from({ length: b.length }, (_, i) => lerp(a[i], b[i]));
 	}
 	return switchValue(a, b, t);
 };

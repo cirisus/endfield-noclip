@@ -8,6 +8,7 @@ import {
 	EnvironmentFades,
 	type EnvironmentScene,
 	planBlend,
+	sameApplied,
 } from '../environment/blend.ts';
 import { type CelestialLook, celestialLook } from '../environment/celestial-look.ts';
 import { deriveEnvironment } from '../environment/derive.ts';
@@ -76,8 +77,8 @@ export class EnvironmentState {
 	#volumes = true;
 	#pinnedPhase: number | null = null;
 	#loaded: readonly boolean[] = [];
-	/** the last plan's key; `null` forces a new look */
-	#key: string | null = null;
+	/** whether {@link look} matches {@link applied} for the current base; `false` forces a re-blend */
+	#valid = false;
 
 	/**
 	 * sets the environment the volumes blend over, keeping the fades, which follow the camera rather than the
@@ -87,7 +88,7 @@ export class EnvironmentState {
 	 */
 	setBase(base: LevelEnvironment | null): void {
 		this.#base = base;
-		this.#key = null;
+		this.#valid = false;
 	}
 
 	/**
@@ -126,12 +127,13 @@ export class EnvironmentState {
 						{ volumes: input.volumes, pinnedPhase: input.pinnedPhase, loaded: input.loaded },
 						{ fades: this.fades, dt: input.dt },
 					);
-		const key = plan?.key ?? '';
-		this.applied = plan?.applied ?? [];
-		if (key === this.#key) {
+		const applied = plan?.applied ?? [];
+		const unchanged = this.#valid && sameApplied(this.applied, applied);
+		this.applied = applied;
+		if (unchanged) {
 			return null;
 		}
-		this.#key = key;
+		this.#valid = true;
 		this.look = lookOf(plan === null ? null : applyBlend(plan));
 		return this.look;
 	}
