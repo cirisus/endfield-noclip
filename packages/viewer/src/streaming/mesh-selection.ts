@@ -226,6 +226,23 @@ interface CulledGroup {
 	layer: number;
 }
 
+/** minimum squared relative screen size a shadow-only caster must exceed for `layer` */
+const minShadowLayerSquared = (layer: number): number =>
+	layer === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3];
+
+/** whether a camera-relative sphere overlaps the sun-caster frustum or any local-light caster sphere */
+const inCasterVolume = (
+	casterPlanes: Float64Array,
+	casterFloats: number,
+	lightCasters: Float64Array,
+	x: number,
+	y: number,
+	z: number,
+	radius: number,
+): boolean =>
+	(casterFloats > 0 && sphereInPlanes(casterPlanes, casterFloats, x, y, z, radius)) ||
+	sphereTouchesSpheres(lightCasters, x, y, z, radius);
+
 /** selects LODs and buckets instances */
 export class MeshSelector {
 	readonly selection: MeshSelection = {
@@ -264,7 +281,7 @@ export class MeshSelector {
 	 * found in. residency and the shown slots hold for the frame, and a chain that's still streaming is asked
 	 * once per row or segment
 	 */
-	readonly #standIns: (StandIn[] | undefined)[] = [];
+	readonly #standIns: (StandIn[] | undefined)[];
 	/** the block being selected's origin relative to the eye, for {@link #selectRows} */
 	#ox = 0;
 	#oy = 0;
@@ -310,6 +327,7 @@ export class MeshSelector {
 		this.#ready = new Uint8Array(count);
 		this.#wanted = new Float64Array(count);
 		this.#reaches = new Float64Array(init.chains.length).fill(Number.NaN);
+		this.#standIns = Array.from({ length: init.chains.length });
 	}
 
 	/**
@@ -425,13 +443,7 @@ export class MeshSelector {
 				}
 				const radius = groups[at + GroupFloat.radius];
 				const inView = sphereInPlanes(planes, planeFloats, gx, gy, gz, radius);
-				if (
-					!inView &&
-					!(
-						(casterFloats > 0 && sphereInPlanes(casterPlanes, casterFloats, gx, gy, gz, radius)) ||
-						sphereTouchesSpheres(lightCasters, gx, gy, gz, radius)
-					)
-				) {
+				if (!inView && !inCasterVolume(casterPlanes, casterFloats, lightCasters, gx, gy, gz, radius)) {
 					continue;
 				}
 				const layer =
@@ -444,11 +456,7 @@ export class MeshSelector {
 					}
 					// upper bound on any row's squared relative size: 2 · rowRadius · pixelFactor / (nearest · height)
 					const maxRelative = (2 * rowPixels) / viewportHeight;
-					if (
-						radius !== Infinity &&
-						maxRelative * maxRelative <=
-							(layer === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3])
-					) {
+					if (radius !== Infinity && maxRelative * maxRelative <= minShadowLayerSquared(layer)) {
 						continue;
 					}
 				}
@@ -628,10 +636,7 @@ export class MeshSelector {
 					: (2 * segments[at + SegmentFloat.maxSize] * pixelFactor) / (nearest * viewportHeight);
 			const smallest = (2 * segments[at + SegmentFloat.minSize] * pixelFactor) / (far * viewportHeight);
 			const high = largest * largest * BAND_SLACK;
-			if (
-				castOnly &&
-				high <= (segmentLayer === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3])
-			) {
+			if (castOnly && high <= minShadowLayerSquared(segmentLayer)) {
 				continue;
 			}
 			const low = (smallest * smallest) / BAND_SLACK;
@@ -961,12 +966,7 @@ export class MeshSelector {
 				}
 				let castOnly = false;
 				if (!inside && !sphereInPlanes(planes, planeFloats, x, y, z, radius)) {
-					if (
-						!(
-							(casterFloats > 0 && sphereInPlanes(casterPlanes, casterFloats, x, y, z, radius)) ||
-							sphereTouchesSpheres(lightCasters, x, y, z, radius)
-						)
-					) {
+					if (!inCasterVolume(casterPlanes, casterFloats, lightCasters, x, y, z, radius)) {
 						continue;
 					}
 					castOnly = true;
@@ -978,10 +978,7 @@ export class MeshSelector {
 				// Unity's LODGroup metric: the object's size relative to the screen height
 				const relative = (2 * cull[i * CULL_FLOATS + 1] * pixelFactor) / (distance * viewportHeight);
 				const relativeSquared = relative * relative;
-				if (
-					castOnly &&
-					relativeSquared <= (group === 0 ? SHADOW_LAYER_MIN_SQUARED[0] : SHADOW_LAYER_MIN_SQUARED[3])
-				) {
+				if (castOnly && relativeSquared <= minShadowLayerSquared(group)) {
 					continue;
 				}
 				let squared = relativeSquared;

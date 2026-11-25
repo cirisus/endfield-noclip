@@ -170,6 +170,10 @@ export class StreamManager {
 	#working = 0;
 	/** raw bytes of the blobs being decoded */
 	#decodingBytes = 0;
+	/** raw bytes of decoded blobs waiting in {@link #uploads} */
+	#uploadingBytes = 0;
+	/** reusable scratch for sorting ready-to-decode blobs in {@link #startDecodes} */
+	readonly #decodeQueue: ContentItem[] = [];
 	#frame = 0;
 	/**
 	 * the budget is full of content still in use: unpinned fetches and uploads pause until something falls out
@@ -386,6 +390,8 @@ export class StreamManager {
 			this.#pool.release(fetched.bytes);
 		}
 		this.#fetched.clear();
+		this.#uploads.length = 0;
+		this.#uploadingBytes = 0;
 		for (const item of this.#items) {
 			if (item !== undefined && item.resident !== null) {
 				releaseResident(this.#handlers, item.resident.kind, item.blob, item.resident);
@@ -630,40 +636,49 @@ export class StreamManager {
 		this.stats.decoding++;
 	}
 
-	/**
-	 * hands fetched blobs to the free decode slots, most wanted first, dropping the ones nobody wants any more.
-	 * the waiting line is short ({@link MAX_UNDECODED}), so a scan per slot is cheaper than keeping it sorted
-	 */
+	/** hands fetched blobs to the free decode slots, most wanted first, dropping the ones nobody wants any more */
 	#startDecodes(): void {
 		const fetched = this.#fetched;
+		if (fetched.size === 0 || this.#pool.free <= 0) {
+			return;
+		}
 		// decoded blobs wait for the frames' upload budget; past the backlog the workers would only fill memory
-		let waiting = 0;
-		for (const item of this.#uploads) {
-			waiting += this.#package.blobs[item.blob].rawLength;
+		if (this.#uploadingBytes + this.#decodingBytes >= DECODED_BACKLOG_BYTES) {
+			return;
 		}
-		while (fetched.size > 0 && this.#pool.free > 0 && waiting + this.#decodingBytes < DECODED_BACKLOG_BYTES) {
-			let best: ContentItem | null = null;
-			for (const [item, bytes] of fetched) {
-				// while saturated, unpinned content would only be dropped once decoded
-				if (!item.pinned && (item.wantedFrame < this.#frame - STALE_FRAMES || this.#saturated)) {
-					this.#pool.release(bytes.bytes);
-					fetched.delete(item);
-					item.state = 'idle';
-					this.stats.decoding--;
-				} else if (best === null || item.priority > best.priority) {
-					best = item;
-				}
+		const ready = this.#decodeQueue;
+		ready.length = 0;
+		for (const [item, bytes] of fetched) {
+			// while saturated, unpinned content would only be dropped once decoded
+			if (!item.pinned && (item.wantedFrame < this.#frame - STALE_FRAMES || this.#saturated)) {
+				this.#pool.release(bytes.bytes);
+				fetched.delete(item);
+				item.state = 'idle';
+				this.stats.decoding--;
+			} else {
+				ready.push(item);
 			}
-			if (best === null) {
-				return;
+		}
+		if (ready.length === 0) {
+			return;
+		}
+		if (ready.length > 1) {
+			ready.sort((a, b) => b.priority - a.priority);
+		}
+		for (let i = 0; i < ready.length; i++) {
+			if (this.#pool.free <= 0 || this.#uploadingBytes + this.#decodingBytes >= DECODED_BACKLOG_BYTES) {
+				break;
 			}
-			const data = fetched.get(best);
-			fetched.delete(best);
+			const item = ready[i];
+			const data = fetched.get(item);
+			if (data === undefined) {
+				continue;
+			}
+			fetched.delete(item);
 			this.stats.decoding--;
-			if (data !== undefined) {
-				this.#decode(best, data);
-			}
+			this.#decode(item, data);
 		}
+		ready.length = 0;
 	}
 
 	#decode(item: ContentItem, fetched: FetchedBytes): void {
@@ -692,6 +707,7 @@ export class StreamManager {
 				item.decoded = decoded;
 				item.state = 'uploading';
 				this.#uploads.push(item);
+				this.#uploadingBytes += record.rawLength;
 			})
 			.catch((err: unknown) => {
 				// the decodes still queued when the stream was destroyed are cancelled
@@ -732,12 +748,14 @@ export class StreamManager {
 			}
 			const decoded = item.decoded;
 			if (decoded === null) {
+				this.#uploadingBytes -= this.#package.blobs[item.blob].rawLength;
 				continue;
 			}
 			// content nobody wants any more isn't worth the space, nor is anything unpinned while saturated
 			if (!item.pinned && (item.wantedFrame < this.#frame - STALE_FRAMES || this.#saturated)) {
 				item.decoded = null;
 				item.state = 'idle';
+				this.#uploadingBytes -= this.#package.blobs[item.blob].rawLength;
 				continue;
 			}
 			let resident = this.#tryUpload(item, decoded);
@@ -749,6 +767,7 @@ export class StreamManager {
 				continue;
 			}
 			item.decoded = null;
+			this.#uploadingBytes -= this.#package.blobs[item.blob].rawLength;
 			item.resident = resident;
 			item.state = 'ready';
 			this.#readyFlags[item.blob] = 1;
@@ -786,7 +805,7 @@ export class StreamManager {
 	#evictForSpace(item: ContentItem): boolean {
 		const candidates: ContentItem[] = [];
 		for (const other of this.#evictable) {
-			if (other.kind === item.kind && other.usedFrame < this.#frame && other.priority <= item.priority) {
+			if (other.kind === item.kind && other.usedFrame < this.#frame) {
 				candidates.push(other);
 			}
 		}

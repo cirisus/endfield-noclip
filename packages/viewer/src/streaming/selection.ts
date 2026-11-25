@@ -206,6 +206,47 @@ const NEAR_BOOST = FOCUS_BOOST * 8;
 /** priority multiplier for content outside the frustum (prefetch around the camera) */
 const OFFSCREEN_PRIORITY = 0.1;
 
+/**
+ * updates an active fade entry (reversing if direction flipped, or starting a fade in/out when eligible) and
+ * returns the encoded 8-bit fade code (`0` = opaque, `-1` = hidden and not fading)
+ */
+const stepFade = (
+	fades: Map<number, FadeState>,
+	key: number,
+	shown: boolean,
+	options: {
+		wasShown: boolean;
+		canStartIn: boolean;
+		canStartOut: boolean;
+		jumped: boolean;
+		fadeStep: number;
+	},
+): number => {
+	let state = fades.get(key);
+	if (shown) {
+		if (state !== undefined && !state.toShown) {
+			state.toShown = true;
+			state.progress = Math.max(options.fadeStep, 1 - state.progress);
+		} else if (state === undefined && !options.jumped && !options.wasShown && options.canStartIn) {
+			if (options.fadeStep < 1) {
+				state = { toShown: true, progress: options.fadeStep };
+				fades.set(key, state);
+			}
+		}
+	} else if (state === undefined) {
+		if (!options.jumped && options.wasShown && options.canStartOut && options.fadeStep < 1) {
+			state = { toShown: false, progress: options.fadeStep };
+			fades.set(key, state);
+		} else {
+			return -1;
+		}
+	}
+	if (state === undefined) {
+		return 0;
+	}
+	return state.toShown ? encodeFadeIn(state.progress) : encodeFadeOut(1 - state.progress);
+};
+
 /** the traversal for one package */
 export class Selector {
 	readonly selection: Selection = { patches: [], instances: [], visited: 0, fading: false };
@@ -375,19 +416,15 @@ export class Selector {
 		const wasShown = this.#conditionalFrame[node.index] === this.#frame - 1;
 		const slack = wasShown ? UNREFINE_SLACK : 0;
 		const within = distance < options.detailDistance + slack;
-		let fadeState = this.#conditionalFades.get(node.index);
-		if (!within && fadeState === undefined) {
-			if (!this.#jumped && wasShown && node.conditional.length > 0) {
-				fadeState = { toShown: false, progress: this.#fadeStep };
-				if (fadeState.progress < 1) {
-					this.#conditionalFades.set(node.index, fadeState);
-				} else {
-					fadeState = undefined;
-				}
-			}
-		}
+		const fade = stepFade(this.#conditionalFades, node.index, within, {
+			wasShown,
+			canStartIn: node.conditional.length > 0 && distance > options.detailDistance - 32,
+			canStartOut: node.conditional.length > 0,
+			jumped: this.#jumped,
+			fadeStep: this.#fadeStep,
+		});
 		// keep descending past the ring only while a descendant may still be fading out
-		if (!within && fadeState === undefined) {
+		if (fade < 0) {
 			if (
 				this.#conditionalFades.size === 0 ||
 				distance >= options.detailDistance + UNREFINE_SLACK + JUMP_DISTANCE
@@ -411,30 +448,7 @@ export class Selector {
 		}
 		if (within) {
 			this.#conditionalFrame[node.index] = this.#frame;
-			if (fadeState !== undefined && !fadeState.toShown) {
-				fadeState.toShown = true;
-				fadeState.progress = Math.max(this.#fadeStep, 1 - fadeState.progress);
-			} else if (
-				fadeState === undefined &&
-				!this.#jumped &&
-				!wasShown &&
-				node.conditional.length > 0 &&
-				distance > options.detailDistance - 32
-			) {
-				fadeState = { toShown: true, progress: this.#fadeStep };
-				if (fadeState.progress < 1) {
-					this.#conditionalFades.set(node.index, fadeState);
-				} else {
-					fadeState = undefined;
-				}
-			}
 		}
-		const fade =
-			fadeState === undefined
-				? 0
-				: fadeState.toShown
-					? encodeFadeIn(fadeState.progress)
-					: encodeFadeOut(1 - fadeState.progress);
 		for (const ref of node.conditional) {
 			if (!this.#shows(ref)) {
 				continue;
@@ -474,38 +488,19 @@ export class Selector {
 			const mx = wasShown ? reachUnloadMargin(r.maxX - r.minX) : 0;
 			const mz = wasShown ? reachUnloadMargin(r.maxZ - r.minZ) : 0;
 			const inside = ex >= r.minX - mx && ex <= r.maxX + mx && ez >= r.minZ - mz && ez <= r.maxZ + mz;
-			let fadeState = this.#reachedFades.get(i);
 			if (inside) {
 				this.#reachedFrame[i] = this.#frame;
-				if (fadeState !== undefined && !fadeState.toShown) {
-					fadeState.toShown = true;
-					fadeState.progress = Math.max(this.#fadeStep, 1 - fadeState.progress);
-				} else if (fadeState === undefined && !this.#jumped && !wasShown) {
-					fadeState = { toShown: true, progress: this.#fadeStep };
-					if (fadeState.progress < 1) {
-						this.#reachedFades.set(i, fadeState);
-					} else {
-						fadeState = undefined;
-					}
-				}
-			} else if (fadeState === undefined) {
-				if (!this.#jumped && wasShown) {
-					fadeState = { toShown: false, progress: this.#fadeStep };
-					if (fadeState.progress < 1) {
-						this.#reachedFades.set(i, fadeState);
-					} else {
-						continue;
-					}
-				} else {
-					continue;
-				}
 			}
-			const fade =
-				fadeState === undefined
-					? 0
-					: fadeState.toShown
-						? encodeFadeIn(fadeState.progress)
-						: encodeFadeOut(1 - fadeState.progress);
+			const fade = stepFade(this.#reachedFades, i, inside, {
+				wasShown,
+				canStartIn: true,
+				canStartOut: true,
+				jumped: this.#jumped,
+				fadeStep: this.#fadeStep,
+			});
+			if (fade < 0) {
+				continue;
+			}
 			const refs = entry.refs;
 			for (let j = 0; j < refs.length; j++) {
 				const { node, ref } = refs[j];
