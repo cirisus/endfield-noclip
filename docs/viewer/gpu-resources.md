@@ -9,12 +9,13 @@ textures (without them, BC textures don't stream and materials use untextured lo
 
 fragment-stage bindings vs WebGPU defaults:
 
-| pipeline | sampled textures (16) | samplers (16) | storage buffers (8) |
-| -------- | --------------------- | ------------- | ------------------- |
-| mesh     | 14                    | 9             | 4                   |
-| terrain  | 12                    | 7             | 4                   |
-| effects  | 19                    | 15            | 4                   |
-| water    | 15                    | 7             | 3                   |
+| pipeline         | sampled textures (16) | samplers (16) | storage buffers (8) |
+| ---------------- | --------------------- | ------------- | ------------------- |
+| mesh (G-buffer)  | 10                    | 5             | 2                   |
+| mesh transparent | 18                    | 9             | 4                   |
+| terrain          | 6                     | 2             | 2                   |
+| effects          | 19                    | 15            | 4                   |
+| water            | 15                    | 7             | 3                   |
 
 ## buffers and pools
 
@@ -37,14 +38,18 @@ fragment-stage bindings vs WebGPU defaults:
   per frame and bound via dynamic offsets (main frame block plus per-shadow-layer and local-light
   shadow tile copies).
 - **bind layouts**:
-  - **group 0** (frame): uniforms, shadow map, reflection cubemap, irradiance clipmaps, shadow ramp,
-    local lights (records, bins, shadow atlas), cloud shadow. shared by every family and volumetric
-    fog; bound once per pass. unstreamed textures use 1×1 placeholders.
+  - **group 0** (`frameCore` vs `frame`): G-buffer, depth, shadow, decal, foam, and screen-effect
+    passes bind `frameCore` (the `Frame` uniform buffer only — zero textures, eliminating shadow
+    placeholders). lighting passes (deferred lighting, volumetric fog, water, transparent meshes,
+    lit effects) bind `frame` (uniforms plus shadow map, reflection cubemap, irradiance clipmaps,
+    shadow ramp, local lights, cloud shadow, and reflection probes; unstreamed textures use 1×1
+    placeholders).
   - **group 1**: per family.
   - **group 2** (meshes): per-draw parameters (dequantization, flags, UV transforms, look-table
-    slot), immutable look table, and fog inputs.
-  - **group 3** (meshes): material textures (vertex stage also samples 2 slots for
-    [vertex offset](materials.md#vertex-offset)).
+    slot + extra mesh flags in the high 16 bits), immutable look table, and fog inputs.
+  - **group 3** (meshes): 9 material texture slots + 4 samplers (vertex stage also samples 2 slots
+    for [vertex offset](materials.md#vertex-offset)); effects keep 7 texture slots + 7 samplers plus
+    scene inputs.
 
 ## pipelines and uploads
 

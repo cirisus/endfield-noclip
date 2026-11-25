@@ -148,8 +148,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   [viewer](viewer/materials.md#emission)):
   - missing: `_EMISSIVE_ANIM_SWEEP` moving band (`_EMISSIVE_NOMAP` emits nothing), Fresnel term,
     emissive breathing/cycle, `EntityRenderHelper` targets, and runtime script overrides.
-  - flicker and `_EmissiveSpeed` scroll (Dijiang shaft cargo rings) draw still; pulse stops on
-    parallax-glow/layer looks.
+  - flicker and `_EmissiveSpeed` scroll (Dijiang shaft cargo rings) draw still.
   - albedo tint applies after tri-channel mask and detail blends (game tints before them).
 - **glass** ([game-data](game-data/materials.md#glass)): no refraction, Fresnel opacity, planar
   reflections, or subsurface scattering; premultiplied glass inferred from blend state; shadow
@@ -169,11 +168,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
     `Hidden/HGRP/LitEffectBlend` draws as Lit without `_ObjectBlend*` soft depth blend.
   - `_PARALLAX_MAP_WORLDSPACE` (Hongshan great tree and plinths, unverified in game) omits
     `_ParallaxSignControl` (unused on map02).
-  - missing: tri-channel mask on MRO materials with emissive/mask-layer maps (drawn banner emblem
-    unverified in game), switch-texture G/B, `_UseMaskRUVSetAndTilingScale`, non-world-space
-    parallax separate mask (`_UseParallaxMask`), global highlight, PBR/deform parallax variants,
-    matcaps (campfire crystals lack sheen), mask layers on emissive-mapped materials or with
-    noise/parallax, top-layer `_BaseHeightMap` (read as grey), and `_TERRAIN_BLEND` fade.
+  - missing: switch-texture G/B, `_UseMaskRUVSetAndTilingScale`, non-world-space parallax separate
+    mask (`_UseParallaxMask`), global highlight, PBR/deform parallax variants, matcaps (campfire
+    crystals lack sheen), mask layers with noise/parallax, top-layer `_BaseHeightMap` (read as
+    grey), and `_TERRAIN_BLEND` fade.
 - **ignored surface keywords** (listed in `debug/assets.json` and striped by the
   [gaps view](viewer/materials.md#gaps), which excludes effects, terrain, water, and per-entity
   gaps): on map02, `_MACRO_NORMAL_MAP` (~90 materials), `_SUBSURFACE*`, `_FAKE*` (glints, cracks,
@@ -602,8 +600,6 @@ entries once resolved or ruled out.
   lists unused `_NORMAL_MAP` for foliage shaders.
 - `extractor/src/pack/tables/water.ts` `volumeSurface`: hardcodes `meshNormals: false` where
   `surfaceEntry` gives `true` for proxy surfaces (equivalent on flat polygons).
-- `viewer/src/render/meshes/surfaces/surface.wgsl`: `Look.detail2.z` doubles as detail overlay scale
-  and transparent premultiplied flag (safe only while mutually exclusive).
 - `viewer/src/looks/effects/effect-look.ts`: `EffectRow` entries are out of offset order.
 - `extractor/src/game/interactives/template-data.ts`: `state` lookup falls back saved → config →
   temporary, whereas [interactives](game-data/interactives.md) describes `saveProperties` alone.

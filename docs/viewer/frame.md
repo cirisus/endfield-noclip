@@ -96,9 +96,9 @@ for pass details.
   standalone vertex streams (positions quantized to animation box; normals/tangents rotated by
   blended matrix, matching Unity). prepass, shading, and shadow pipelines need no skinning variants;
   all instances share the viewer clock's frame. running `skin` redraws the sharp shadow layers.
-- **post.** `composite` adds [SSR](lighting.md#screen-space-reflections), then applies AO, sky,
-  atmosphere fog, and height fog (`heightFog`/`atmosphereFog` only affect `composite`). water draws
-  over a scene copy for refraction/reflection ([water](water.md)).
+- **post.** `composite` adds sky, atmosphere fog, height fog, volumetric fog, and drift fog over
+  `lit` (`heightFog`/`atmosphereFog` only affect `composite`; AO and SSR apply earlier in
+  `deferred lighting`). water draws over a scene copy for refraction/reflection ([water](water.md)).
 - **debug views** (`albedo`, `normals`, `roughness`, `ambient`, `gaps` for surface-keyword gaps,
   `clouds` for raw cloud panorama). show the main pass directly: disables shadows, local lights,
   cloud shadows, exposure, tonemapping, fog, AO, reflections, bloom, light shafts, lens flare, and

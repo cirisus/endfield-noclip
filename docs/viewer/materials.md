@@ -3,19 +3,14 @@
 viewer implementation of [game-data/materials.md](../game-data/materials.md); full gaps in
 [status.md](../status.md).
 
-the mesh shader has 7 texture slots (the frame bind group uses the rest of WebGPU's 16), so rare
-feature combinations share slots or look parameters and conflict when combined:
+the mesh shader has 9 texture slots (slots 0–6 shared with scene effects, plus dedicated `TriMask`
+and `OverlayMask` slots at 7 and 8) and dedicated tail rows in `Look` for emissive pulse/breathing
+and sway. only features sharing the parallax slots still conflict when combined:
 
-| feature                                 | skipped / conflicts when                                     |
-| --------------------------------------- | ------------------------------------------------------------ |
-| `_TRI_CHANNEL_MASK`                     | emissive map or mask layer's mask map occupies emissive slot |
-| `_PARALLAX_MAP_WORLDSPACE`              | MRO map or tri-channel mask holds the mask slot              |
-| `_EMISSIVE_ANIM` pulse                  | parallax glow or layer present                               |
-| `_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`  | mask layer on emissive-mapped material                       |
-| `FlowGlow` (glowing foliage)            | parallax slots hold anything else                            |
-| `vertexOffset`                          | parallax glow or layer present                               |
-| `HGRP/Foliage/Trunk` (`_FOLIAGE_TRUNK`) | sway on Lit trunk                                            |
-| swaying cloth / pendulum                | Lit trunk holds rows                                         |
+| feature                      | skipped / conflicts when       |
+| ---------------------------- | ------------------------------ |
+| `FlowGlow` (glowing foliage) | parallax slots hold anything   |
+| `vertexOffset`               | parallax glow or layer present |
 
 **animated materials**: materials with [motion](../package-format.md#materials) rebuild only their
 parameters at each loop step (textures, queue, and flags stay fixed), advancing in lockstep with
@@ -25,9 +20,9 @@ skin animation (e.g. Qingbo's waterwheels) and moving only while frames render.
 
 - post exposure for [emission](../game-data/materials.md#emission) is
   `autoExposure * viewerExposure`; `_IgnorePostExposure` divides out both.
-- `_EMISSIVE_ANIM` pulse runs on the animation clock (only while frames render; skipped if parallax
-  glow or layer is present). `_EnableEmissiveAnimFlicker` draws steady; `_EmissiveSpeed` scroll is
-  unread.
+- `_EMISSIVE_ANIM` pulse runs on the animation clock (only while frames render) in dedicated `Look`
+  tail rows, so it coexists with parallax glow, layer blend, and transparent Fresnel.
+  `_EnableEmissiveAnimFlicker` draws steady; `_EmissiveSpeed` scroll is unread.
 - `_EMISSIVE_ANIM_SWEEP` omits the moving band: the packer scales each emission colour by
   `1 − alpha` (steady value outside the band). `_EMISSIVE_NOMAP` emits nothing.
 - static scenery per-draw emission is taken as zero (uses `_EmissiveColor`). prefab
@@ -39,19 +34,20 @@ skin animation (e.g. Qingbo's waterwheels) and moving only while frames render.
 `HGRP/LitEffect` draws as Lit (without dissolve or disturb), and `Hidden/HGRP/LitEffectBlend` draws
 as Lit (without `_ObjectBlend*` soft depth blending).
 
-- **`_TRI_CHANNEL_MASK`**: uses the MRO slot, or the emissive slot on MRO-layout materials (e.g.
-  Sword Vault Dale's UV1 banners) with the base-colour sampler; skipped if an emissive map or mask
-  layer uses that slot. only switch-texture R blends (no slots for G/B).
+- **`_TRI_CHANNEL_MASK`**: binds in its dedicated `TriMask` slot (slot 7), coexisting with `_MROMap`
+  and `_EmissiveMap`. only switch-texture R blends (no slots for G/B).
   `_UseMaskRUVSetAndTilingScale` is unread.
 - **`_PARALLAX_MAP`**: [pulse](../game-data/materials.md#lit-layers) runs while frames render
   ([performance](performance.md); `continuous` keeps it running); player brightening uses the camera
   as the player. without a noise map, only the pattern binds and the march reads height 0.
-  `_PARALLAX_MAP_WORLDSPACE` omits `_ParallaxSignControl` (unused on map02). omitted:
-  non-world-space `_UseParallaxMask` (no slot) and native `_VFXParams2` global highlight.
-- **`_MATCAP`**: omitted (no free slot; campfire crystals lack sheen).
-- **`_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`**: mask layer is skipped on emissive-mapped materials. UV
-  set 2 falls back to UV0; missing UV1 falls back to UV0 (matching game). `_BaseHeightMap` has no
-  slot and reads 0.5. omitted: `_LAYERBLEND_NOISEBLEND` and `_LAYERBLEND_MASK_PARALLAX_PBR`.
+  `_PARALLAX_MAP_WORLDSPACE` binds `_ParallaxMaskMap` in the dedicated `OverlayMask` slot (slot 8)
+  and omits `_ParallaxSignControl` (unused on map02). omitted: non-world-space `_UseParallaxMask`
+  and native `_VFXParams2` global highlight.
+- **`_MATCAP`**: omitted (campfire crystals lack sheen).
+- **`_LAYERBLEND_TOP` / `_LAYERBLEND_MASK`**: binds `_LayerBlendMaskMap` in the dedicated
+  `OverlayMask` slot (slot 8), coexisting with `_EmissiveMap`. UV set 2 falls back to UV0; missing
+  UV1 falls back to UV0 (matching game). `_BaseHeightMap` has no slot and reads 0.5. omitted:
+  `_LAYERBLEND_NOISEBLEND` and `_LAYERBLEND_MASK_PARALLAX_PBR`.
 
 ## foliage
 
@@ -80,8 +76,8 @@ cutout-depth, and shadow passes.
   environment; pauses when idle). `_DisableAnimateVert` is 0; no motion vectors (previous offset
   omitted).
 - pendulums use exact sin/cos instead of Taylor series (within 10⁻³); the packer grows bounds by
-  turn reach on all axes. pendulums with gravity, custom anchor, or no swing (none on map02), and
-  sways on Lit trunks, stay still and record a gap.
+  turn reach on all axes. pendulums with gravity, custom anchor, or no swing (none on map02) stay
+  still and record a gap.
 - **cloth simulation** ([game-data](../game-data/materials.md#cloth-simulation)): `ClothSimulator`
   runs `cloth-sim.wgsl` (compute port of `ClothSingleDispatchCS`) once per frame at fixed
   `dt = 0.023333333 s` (up to 2 substeps) over all cloths in the package's `.clth` blob using
@@ -207,8 +203,7 @@ missing features in view (nearest first). inspect programmatically via `viewer.g
 gaps come from two sources:
 
 - **package [`gaps`](../package-format.md#materials)**: unread keywords and skipped property cases.
-- **viewer look conflicts**: slot/row collisions (tri-channel mask, mask layer, emission pulse,
-  vertex offset).
+- **viewer look conflicts**: slot collisions (`vertexOffset` alongside parallax glow or layer).
 
 not tracked by `gaps`: misread properties, effect materials (marked unsupported instead), terrain,
 water, dropped content, runtime per-draw values, and [cloth simulation](#swaying-cloth).
