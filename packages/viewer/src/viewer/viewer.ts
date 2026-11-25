@@ -2,6 +2,8 @@ import type { LevelInfo, PackageManifest } from '@endfield-noclip/package-format
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 import type { WaterSurfaceEntry } from '@endfield-noclip/package-format/water';
 
+import { KeyedEventEmitter } from '@mary-ext/simple-event-emitter';
+
 import { compareStrings } from '../compare.ts';
 import { ROW_BYTES, ROW_WORDS } from '../content/instance-rows.ts';
 import type { AppliedVolume } from '../environment/blend.ts';
@@ -14,7 +16,7 @@ import { frameSettings } from '../render/frame/frame-graph.ts';
 import { SETTLE_FRAMES } from '../render/post/temporal-aa.ts';
 import { revealRadii } from '../scene-states/fire-seed.ts';
 import { volumesForLevel } from '../scene-states/listing.ts';
-import { type GroupsConsumer, SceneState } from '../scene-states/scene-state.ts';
+import { SceneState } from '../scene-states/scene-state.ts';
 import { WaterLevels, type WaterVolumeState } from '../scene-states/water-levels.ts';
 import { Camera } from '../scene/camera.ts';
 import { cellIdAt, levelCellIds, levelPose, levelsByCell, overviewPose } from '../scene/level-pose.ts';
@@ -30,6 +32,19 @@ import { Traversal } from './traversal.ts';
 
 /** the irradiance volume of a package without one */
 const EMPTY_IRRADIANCE = { keys: new Uint32Array(), blobs: new Uint32Array(), groups: new Uint32Array() };
+
+/** what a {@link Viewer.subscribe} listener watches */
+export type ViewerTopic = 'state' | 'environment' | 'stats';
+
+/** option categories dirtied by {@link Viewer.setOptions} and flushed once at the start of the frame */
+const OptionDirty = {
+	None: 0,
+	Targets: 1 << 0,
+	Antialiasing: 1 << 1,
+	Visibility: 1 << 2,
+	Budget: 1 << 3,
+	Shadows: 1 << 4,
+} as const;
 
 /** the running viewer */
 export class Viewer {
@@ -52,12 +67,13 @@ export class Viewer {
 	readonly #waterLevels = new WaterLevels();
 	/** the package's scene controls and the visibility groups they show */
 	readonly #sceneState: SceneState;
-	/** what shows content by visibility group, besides the loaded package's selector */
-	readonly #groupsConsumers: readonly GroupsConsumer[];
+	/** unsubscribes the loaded scene's selector from {@link #sceneState} on unload */
+	#unsubscribeSelector: (() => void) | null = null;
 	/** the current level's environment, blended at the camera */
 	readonly #environment = new EnvironmentState();
 	readonly #times = new FrameTimes();
-	readonly #listeners = new Set<() => void>();
+	readonly #events = new KeyedEventEmitter<Record<ViewerTopic, []>>();
+	#dirtyOptions: number = OptionDirty.None;
 	#raf = 0;
 	#frame = 0;
 	#lastTime = 0;
@@ -127,9 +143,17 @@ export class Viewer {
 		this.#renderer = renderer;
 		this.#traversal = new Traversal(renderer);
 		this.#pool = new DecodePool(Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) >> 1)));
-		this.#groupsConsumers = [renderer.water, renderer.lights, renderer.irradiance, renderer.reflectionProbes];
-		this.#sceneState = new SceneState(this.#waterLevels, this.options);
-		this.#sceneState.setPackage(null, this.#groupsConsumers);
+		this.#sceneState = new SceneState(this.options);
+		this.#sceneState.subscribe('values', (values) => this.#waterLevels.follow(values));
+		for (const consumer of [
+			renderer.water,
+			renderer.lights,
+			renderer.irradiance,
+			renderer.reflectionProbes,
+		]) {
+			this.#sceneState.subscribe('groups', (shown) => consumer.setGroupsShown(shown));
+		}
+		this.#sceneState.setPackage(null);
 		this.controls = new NoclipControls(this.camera, canvas);
 		this.stats = emptyStats(gfx);
 	}
@@ -193,7 +217,10 @@ export class Viewer {
 			budgetBytes: this.options.budgetMiB * 2 ** 20,
 		});
 		this.scene = scene;
-		this.#sceneState.setPackage(manifest.states, [scene.selector, ...this.#groupsConsumers]);
+		this.#unsubscribeSelector = this.#sceneState.subscribe('groups', (shown) =>
+			scene.selector.setGroupsShown(shown),
+		);
+		this.#sceneState.setPackage(manifest.states);
 		const showable = manifest.levels.filter((level) => level.instances > 0);
 		const level = showable.find((candidate) => candidate.id === initialLevel) ?? showable[0] ?? null;
 		this.#level = level;
@@ -247,7 +274,9 @@ export class Viewer {
 		renderer.bindings.setReflection(null, 1);
 		renderer.bindings.set('shadowRamp', null);
 		this.scene = null;
-		this.#sceneState.setPackage(null, this.#groupsConsumers);
+		this.#unsubscribeSelector?.();
+		this.#unsubscribeSelector = null;
+		this.#sceneState.setPackage(null);
 		this.options.environmentPin = null;
 		this.#environment.fades.reset();
 		renderer.setIrradiance(EMPTY_IRRADIANCE, []);
@@ -359,7 +388,7 @@ export class Viewer {
 		if (key !== this.#environmentKey) {
 			this.#environmentKey = key;
 			this.environmentRevision++;
-			this.#notify();
+			this.#notify('environment');
 		}
 	}
 
@@ -603,43 +632,67 @@ export class Viewer {
 
 	/** @param patch options to change */
 	setOptions(patch: Partial<ViewerOptions>): void {
-		const { post, targets } = this.#renderer;
 		Object.assign(this.options, patch);
-		targets.renderScale = Math.min(1, Math.max(0.25, this.options.renderScale));
-		post.setAntialiasing(this.options.antialiasing);
-		if (patch.debugView !== undefined || patch.antialiasing !== undefined) {
-			post.resetAntialiasing();
+		let dirty = this.#dirtyOptions | OptionDirty.Shadows;
+		if (patch.renderScale !== undefined) {
+			dirty |= OptionDirty.Targets;
+		}
+		if (patch.antialiasing !== undefined || patch.debugView !== undefined) {
+			dirty |= OptionDirty.Antialiasing;
 		}
 		if (patch.streamAreas !== undefined) {
-			this.#updateVisibility();
+			dirty |= OptionDirty.Visibility;
 		}
-		if (this.scene !== null) {
-			this.scene.stream.options.budgetBytes = this.options.budgetMiB * 2 ** 20;
+		if (patch.budgetMiB !== undefined) {
+			dirty |= OptionDirty.Budget;
 		}
-		this.#renderer.frame.shadowLayers.invalidate();
+		this.#dirtyOptions = dirty;
 		this.#dirty = true;
 		this.#emitState();
 	}
 
+	/** flushes coalesced {@link setOptions} side effects once before the frame updates */
+	#flushOptionChanges(): void {
+		const dirty = this.#dirtyOptions;
+		if (dirty === OptionDirty.None) {
+			return;
+		}
+		this.#dirtyOptions = OptionDirty.None;
+		const { post, targets, frame } = this.#renderer;
+		if ((dirty & OptionDirty.Targets) !== 0) {
+			targets.renderScale = Math.min(1, Math.max(0.25, this.options.renderScale));
+		}
+		if ((dirty & OptionDirty.Antialiasing) !== 0) {
+			post.setAntialiasing(this.options.antialiasing);
+			post.resetAntialiasing();
+		}
+		if ((dirty & OptionDirty.Visibility) !== 0) {
+			this.#updateVisibility();
+		}
+		if ((dirty & OptionDirty.Budget) !== 0 && this.scene !== null) {
+			this.scene.stream.options.budgetBytes = this.options.budgetMiB * 2 ** 20;
+		}
+		if ((dirty & OptionDirty.Shadows) !== 0) {
+			frame.shadowLayers.invalidate();
+		}
+	}
+
 	/**
-	 * @param listener called when {@link stateRevision}, {@link statsRevision} or {@link environmentRevision}
-	 *   change (stats at most about four times a second)
+	 * @param topic which revision stream to watch
+	 * @param listener called when that topic's revision changes (stats at most about four times a second)
 	 * @returns unsubscribe
 	 */
-	subscribe(listener: () => void): () => void {
-		this.#listeners.add(listener);
-		return () => this.#listeners.delete(listener);
+	subscribe(topic: ViewerTopic, listener: () => void): () => void {
+		return this.#events.subscribe(topic, listener);
 	}
 
 	#emitState(): void {
 		this.stateRevision++;
-		this.#notify();
+		this.#notify('state');
 	}
 
-	#notify(): void {
-		for (const listener of this.#listeners) {
-			listener();
-		}
+	#notify(topic: ViewerTopic): void {
+		this.#events.emit(topic);
 	}
 
 	/** refreshes {@link stats}, notifying subscribers only if something changed */
@@ -668,7 +721,7 @@ export class Viewer {
 		this.#statsKey = key;
 		this.stats = stats;
 		this.statsRevision++;
-		this.#notify();
+		this.#notify('stats');
 	}
 
 	// #endregion
@@ -680,6 +733,7 @@ export class Viewer {
 		const dt = this.#lastTime === 0 ? 1 / 60 : Math.min(0.1, (time - this.#lastTime) / 1000);
 		this.#lastTime = time;
 		this.#times.begin();
+		this.#flushOptionChanges();
 		const renderer = this.#renderer;
 		const traversal = this.#traversal;
 

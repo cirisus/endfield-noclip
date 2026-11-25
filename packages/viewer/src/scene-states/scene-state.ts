@@ -8,17 +8,13 @@ import type { StatesInfo } from '@endfield-noclip/package-format/states';
 import { areasShownIn, zonesAround, zonesAt } from '@endfield-noclip/package-format/stream-areas';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
-/** something that shows content by visibility group */
-export interface GroupsConsumer {
-	/** @param shown per visibility group, whether it shows */
-	setGroupsShown(shown: readonly boolean[]): void;
-}
+import { KeyedEventEmitter } from '@mary-ext/simple-event-emitter';
 
-/** what follows the resolved scene values beyond the visibility groups */
-export interface ValuesConsumer {
-	/** @param values every control's value, by index */
-	follow(values: readonly number[]): void;
-}
+/** events emitted by {@link SceneState} when resolved values or visibility groups change */
+export type SceneStateEvents = {
+	values: [values: readonly number[]];
+	groups: [shown: readonly boolean[]];
+};
 
 /**
  * @param a an array
@@ -31,7 +27,7 @@ const sameResults = (a: readonly boolean[], b: readonly boolean[]): boolean =>
 /**
  * the scene controls of the loaded package: the user's picks, the values they resolve to with the camera's
  * stream areas and camera controls, the conditional sets those satisfy, and the visibility groups shown,
- * which go to every consumer
+ * which are emitted to subscribers
  */
 export class SceneState {
 	/** values the user picked, by control index */
@@ -49,18 +45,26 @@ export class SceneState {
 	/** what the camera's trigger tests remember of its path, as of {@link #areasEye} */
 	#triggers: TriggerMemory = NO_TRIGGER_MEMORY;
 	#states: StatesInfo | null = null;
-	/** the package's consumers of the shown groups, the selector among them */
-	#groups: readonly GroupsConsumer[] = [];
-	readonly #followers: ValuesConsumer;
+	readonly #events = new KeyedEventEmitter<SceneStateEvents>();
 	readonly #options: { readonly streamAreas: boolean };
 
-	/**
-	 * @param values follows the resolved values (the water levels)
-	 * @param options read at each evaluation: whether stream areas follow the camera
-	 */
-	constructor(values: ValuesConsumer, options: { readonly streamAreas: boolean }) {
-		this.#followers = values;
+	/** @param options read at each evaluation: whether stream areas follow the camera */
+	constructor(options: { readonly streamAreas: boolean }) {
 		this.#options = options;
+	}
+
+	/**
+	 * subscribes to resolved scene value or visibility group updates
+	 *
+	 * @param event `'values'` or `'groups'`
+	 * @param listener called on each evaluation
+	 * @returns unsubscribe
+	 */
+	subscribe<K extends keyof SceneStateEvents>(
+		event: K,
+		listener: (...args: SceneStateEvents[K]) => void,
+	): () => void {
+		return this.#events.subscribe(event, listener);
 	}
 
 	/** @returns the values the user picked, by control index; other controls follow their default or formula */
@@ -90,11 +94,9 @@ export class SceneState {
 	 * switches to a package's controls and drops the picks; call {@link evaluate} next
 	 *
 	 * @param states the package's controls, `null` without a package (which also clears the values)
-	 * @param groups what shows content by the package's visibility groups
 	 */
-	setPackage(states: StatesInfo | null, groups: readonly GroupsConsumer[]): void {
+	setPackage(states: StatesInfo | null): void {
 		this.#states = states;
-		this.#groups = groups;
 		this.#picks = new Map();
 		this.#triggers = NO_TRIGGER_MEMORY;
 		if (states === null) {
@@ -145,25 +147,12 @@ export class SceneState {
 	 * @param eye the camera's position, which stands in for the player
 	 */
 	evaluate(eye: Vec3): void {
-		const states = this.#states;
-		this.#visibleAreas = this.#streamAreasAt(eye);
+		const visible = this.#streamAreasAt(eye);
 		this.#areasEye = [...eye];
-		// camera controls follow the camera unless pinned, so the camera's values go under the picks. stepping the
-		// trigger memory again at the eye it last saw crosses nothing, so this is safe after `follow`
-		const camera = cameraValues(states?.controls ?? [], eye, this.#visibleAreas, this.#triggers);
-		this.#camera = camera.values;
+		// camera controls follow the camera unless pinned, so the camera's values go under the picks
+		const camera = cameraValues(this.#states?.controls ?? [], eye, visible, this.#triggers);
 		this.#triggers = camera.memory;
-		const values = states === null ? [] : resolveSceneValues(states, this.#picks, this.#camera);
-		this.#values = values;
-		this.#followers.follow(values);
-		const results = states === null ? [] : conditionResults(states, values);
-		if (!sameResults(results, this.#results)) {
-			this.#results = results;
-		}
-		const shown = states === null ? [] : groupsShown(states, this.#results);
-		for (const consumer of this.#groups) {
-			consumer.setGroupsShown(shown);
-		}
+		this.#applyResolved(visible, camera.values);
 	}
 
 	/**
@@ -191,8 +180,24 @@ export class SceneState {
 		if (same && sameCamera) {
 			return false;
 		}
-		this.evaluate(eye);
+		this.#applyResolved(visible, camera.values);
 		return true;
+	}
+
+	/** resolves scene values, conditions, and visibility groups from already-sampled areas and camera controls */
+	#applyResolved(visible: ReadonlySet<number> | null, camera: ReadonlyMap<number, number>): void {
+		const states = this.#states;
+		this.#visibleAreas = visible;
+		this.#camera = camera;
+		const values = states === null ? [] : resolveSceneValues(states, this.#picks, this.#camera);
+		this.#values = values;
+		this.#events.emit('values', values);
+		const results = states === null ? [] : conditionResults(states, values);
+		if (!sameResults(results, this.#results)) {
+			this.#results = results;
+		}
+		const shown = states === null ? [] : groupsShown(states, this.#results);
+		this.#events.emit('groups', shown);
 	}
 
 	/** @returns the stream areas to show at the eye, or `null` for every area */

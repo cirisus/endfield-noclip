@@ -1,6 +1,9 @@
-import { useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 import type { Viewer } from '../viewer/viewer.ts';
+
+const NOOP = (): void => {};
+const NOOP_SUBSCRIBE = (): (() => void) => NOOP;
 
 /**
  * re-renders the caller when the package, the options or the shown level change.
@@ -9,10 +12,8 @@ import type { Viewer } from '../viewer/viewer.ts';
  * @returns the viewer's state revision (only useful as a dependency)
  */
 export const useViewerState = (viewer: Viewer): number => {
-	return useSyncExternalStore(
-		(listener) => viewer.subscribe(listener),
-		() => viewer.stateRevision,
-	);
+	const subscribe = useCallback((listener: () => void) => viewer.subscribe('state', listener), [viewer]);
+	return useSyncExternalStore(subscribe, () => viewer.stateRevision);
 };
 
 /**
@@ -22,10 +23,11 @@ export const useViewerState = (viewer: Viewer): number => {
  * @returns the viewer's environment revision (only useful as a dependency)
  */
 export const useViewerEnvironment = (viewer: Viewer): number => {
-	return useSyncExternalStore(
-		(listener) => viewer.subscribe(listener),
-		() => viewer.environmentRevision,
+	const subscribe = useCallback(
+		(listener: () => void) => viewer.subscribe('environment', listener),
+		[viewer],
 	);
+	return useSyncExternalStore(subscribe, () => viewer.environmentRevision);
 };
 
 /**
@@ -35,10 +37,8 @@ export const useViewerEnvironment = (viewer: Viewer): number => {
  * @returns the viewer's stats revision (only useful as a dependency)
  */
 export const useViewerStats = (viewer: Viewer): number => {
-	return useSyncExternalStore(
-		(listener) => viewer.subscribe(listener),
-		() => viewer.statsRevision,
-	);
+	const subscribe = useCallback((listener: () => void) => viewer.subscribe('stats', listener), [viewer]);
+	return useSyncExternalStore(subscribe, () => viewer.statsRevision);
 };
 
 /** the size of the cells {@link useCameraCell} tells apart, in metres */
@@ -53,8 +53,11 @@ const CAMERA_CELL = 25;
  * @returns the camera's cell, as a key (only useful as a dependency); empty while not enabled
  */
 export const useCameraCell = (viewer: Viewer, enabled: boolean): string => {
-	return useSyncExternalStore(
-		(listener) => (enabled ? viewer.subscribe(listener) : () => {}),
-		() => (enabled ? viewer.camera.position.map((value) => Math.floor(value / CAMERA_CELL)).join() : ''),
+	const subscribe = useCallback(
+		(listener: () => void) => (enabled ? viewer.subscribe('stats', listener) : NOOP_SUBSCRIBE()),
+		[viewer, enabled],
+	);
+	return useSyncExternalStore(subscribe, () =>
+		enabled ? viewer.camera.position.map((value) => Math.floor(value / CAMERA_CELL)).join() : '',
 	);
 };
