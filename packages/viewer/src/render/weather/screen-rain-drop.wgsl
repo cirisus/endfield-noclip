@@ -11,7 +11,7 @@ struct ScreenDropParams {
 	// (shadingSize, noiseLevel, centroidFadeMin, centroidFadeMax)
 	params: vec4f,
 	// (0, activeCount, edgeSharpness, 0)
-	meta: vec4f,
+	edge: vec4f,
 	// noise texture ST
 	noise_st: vec4f,
 	// per-drop (ndcX, ndcY, lifeAlpha, size)
@@ -44,7 +44,8 @@ const QUAD_VERTS = array<vec2f, 6>(
 @vertex
 fn vs_screen_drop(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -> DropOut {
 	let drop = drop_data.drops[iid];
-	let corner = QUAD_VERTS[vid];
+	var quad = QUAD_VERTS;
+	let corner = quad[vid];
 	let aspect = frame.render_size.x / max(frame.render_size.y, 1.0);
 	let ndc = drop.xy + vec2f(corner.x, corner.y * aspect) * drop.w;
 	let suv = vec2f(ndc.x * 0.5 + 0.5, (ndc.y * 0.5 + 0.5) / max(aspect, 0.01));
@@ -81,7 +82,7 @@ fn fs_screen_drop(in: DropOut) -> @location(0) vec4f {
 	let fade_lo = drop_data.params.z;
 	let fade_hi = max(drop_data.params.w, fade_lo + 1e-4);
 	let edge_mask = smoothstep(fade_lo, fade_hi, length(in.screen_uv - vec2f(0.5)));
-	let sharp = min(drop_data.meta.z, 0.99);
+	let sharp = min(drop_data.edge.z, 0.99);
 	let drop_mask = 1.0 - smoothstep(radius * sharp, radius, length(in.uv - vec2f(0.5)));
 	let alpha = saturate(edge_mask * drop_mask * drop_data.color.a * saturate(in.life_alpha) * noise * exposed);
 	if (alpha <= 0.0005) {

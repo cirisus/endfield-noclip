@@ -53,12 +53,12 @@ const srgbToLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
+const randRange = (lo: number, hi: number): number => lo + Math.random() * Math.max(0, hi - lo);
+
 /**
  * writes a 3×3 orientation matrix that rotates `(0, 1, 0)` onto `normalize(-dir)` and scales local X/Z by
  * `radius` and Y by `height` into 3 vec4f slots at `out[offset..offset + 12]`
  */
-const randRange = (lo: number, hi: number): number => lo + Math.random() * Math.max(0, hi - lo);
-
 const writeCylinderBasis = (
 	out: Float32Array,
 	offset: number,
