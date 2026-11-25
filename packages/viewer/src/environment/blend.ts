@@ -410,6 +410,10 @@ const lerpSection = (
 			// the section is optional, and a profile without it is dry
 			return lerpRain(a ?? {}, b, t, schema);
 		}
+		case 'snow': {
+			// the section is optional, and a profile without it has no snow
+			return lerpSnow(a ?? {}, b, t, schema);
+		}
 		case 'heightFog':
 		case 'volumetricFog': {
 			return lerpFlowNoise(a, b, t, schema);
@@ -584,18 +588,86 @@ const lerpCloud = (
 	return out;
 };
 
-/** wetness fields the game's rain lerp takes from the side with wetness on, when only one has it */
+/** falling-rain fields the game's `HGRainConfig.Lerp` takes from the enabled side when only one enables rain */
+const FALLING_RAIN_FIELDS = [
+	'speed',
+	'streakLength',
+	'horizontalRainAngle',
+	'horizontalRainLevel',
+	'sceneEffectRainJitterLevel',
+	'sceneEffectRainWidthScale',
+	'sceneEffectRainLightingPercent',
+	'rainCenterBias',
+	'middleRainLayerSpeedDiffMultiplier',
+	'middleRainAlphaMultiplier',
+	'middleHorizontalRainAngle',
+	'middleHorizontalRainLevel',
+	'middleRainLightingPercent',
+	'farRainLayerSpeedDiffMultiplier',
+	'farRainAlphaMultiplier',
+	'farRainHorizontalRainAngle',
+	'farRainHorizontalRainLevel',
+	'rainWaveVerticalSpeed',
+	'rainWaveHorizontalSpeed',
+	'rainWaveBottomFadeFactor',
+	'screenDropMaxCountLim',
+	'screenDropMinMaxLifeTime',
+	'screenDropMinMaxSize',
+	'screenDropCentroidFadeParam',
+	'screenDropFlowPercent',
+	'screenDropMinMaxSpeed',
+	'screenDropJitterSpeedScale',
+	'screenRainDropEdgeSharpness',
+	'rainSplashSpeed',
+	'rainSplashMinMaxSize',
+	'rainSplashLightingPercent',
+	'rainDirection',
+	'middleRainDirection',
+	'farRainDirection',
+];
+
+/** wetness fields the game's `HGRainConfig.Lerp` takes from the side with wetness on, when only one has it */
 const WETNESS_FIELDS = [
+	'enableWetnessAffectSSR',
 	'wetnessBasePorosity',
 	'wetnessPorosityFactor',
 	'baseWetnessLevel',
 	'verticalWetnessScalar',
+	'verticalFlowSpeed',
+	'verticalFlowNormalStrength',
+	'verticalFlowSurfaceThreshold',
+	'verticalFlowPorosityBias',
+	'rippleFrequency',
+	'rippleNormalStrength',
+	'rippleWaveSpeed',
+	'rippleWaveNormalStrength',
 	'farSceneWetnessDistanceFactor',
 	'farSceneWetnessValue',
 	'rippleRoughnessMaskThreshold',
+	'wetnessProceduralForWater',
 ];
 
-/** the rain lerp's wetness: with wetness on one side only, it fades in from dry with that side's settings */
+/** scales a 4-channel colour from `[0, 0, 0, 0]` by `weight` */
+const fadeColor = (value: unknown, weight: number): unknown =>
+	isNumbers(value) && value.length === 4 ? value.map((c) => c * weight) : value;
+
+/** normalized lerp of two 3D direction vectors (approximates Unity's `Vector3.Slerp`) */
+const slerpDirection = (a: unknown, b: unknown, t: number): unknown => {
+	if (!isNumbers(a) || !isNumbers(b) || a.length !== 3 || b.length !== 3) {
+		return switchValue(a, b, t);
+	}
+	const x = a[0] + (b[0] - a[0]) * t;
+	const y = a[1] + (b[1] - a[1]) * t;
+	const z = a[2] + (b[2] - a[2]) * t;
+	const len = Math.hypot(x, y, z);
+	return len > 1e-6 ? [x / len, y / len, z / len] : b;
+};
+
+/**
+ * the game's `HGRainConfig.Lerp`: falling rain and wetness blend independently. when only one side enables
+ * falling rain, its settings stay and intensity, wave alpha, splash count/alpha, and colours fade from 0.
+ * when only one side enables wetness, its settings stay and `wetness` fades from 0
+ */
 const lerpRain = (
 	a: Record<string, unknown>,
 	b: Record<string, unknown>,
@@ -603,15 +675,85 @@ const lerpRain = (
 	schema: BlendSchema,
 ): Record<string, unknown> => {
 	const out = lerpObject(a, b, t, schema);
-	const aOn = a.enableWetness === true;
-	const bOn = b.enableWetness === true;
-	if (aOn !== bOn) {
-		const { side, weight } = oneSided(a, b, aOn, t);
+	const rainA = a.enable === true;
+	const rainB = b.enable === true;
+	if (rainA !== rainB) {
+		const { side, weight } = oneSided(a, b, rainA, t);
+		for (const key of FALLING_RAIN_FIELDS) {
+			if (key in side) {
+				out[key] = side[key];
+			}
+		}
+		out.enable = true;
+		out.intensity = number(side.intensity) * weight;
+		if ('color' in side) {
+			out.color = fadeColor(side.color, weight);
+		}
+		if ('screenDropColor' in side) {
+			out.screenDropColor = fadeColor(side.screenDropColor, weight);
+		}
+		if ('rainWaveAlpha' in side) {
+			out.rainWaveAlpha = number(side.rainWaveAlpha) * weight;
+		}
+		if ('rainSplashCount' in side) {
+			out.rainSplashCount = Math.round(number(side.rainSplashCount) * weight);
+		}
+		if ('rainSplashAlpha' in side) {
+			out.rainSplashAlpha = number(side.rainSplashAlpha) * weight;
+		}
+	} else if (rainA && rainB) {
+		out.enable = true;
+		for (const key of ['rainDirection', 'middleRainDirection', 'farRainDirection']) {
+			if (key in a && key in b) {
+				out[key] = slerpDirection(a[key], b[key], t);
+			}
+		}
+	} else {
+		out.enable = false;
+	}
+	const wetA = a.enableWetness === true;
+	const wetB = b.enableWetness === true;
+	if (wetA !== wetB) {
+		const { side, weight } = oneSided(a, b, wetA, t);
 		for (const key of WETNESS_FIELDS) {
-			out[key] = side[key];
+			if (key in side) {
+				out[key] = side[key];
+			}
 		}
 		out.enableWetness = true;
 		out.wetness = number(side.wetness) * weight;
+	}
+	return out;
+};
+
+/**
+ * the game's `HGSnowConfig.Lerp`: when only one side enables snow, its settings stay and `intensity` and
+ * `color` fade from 0; when both enable snow, `snowDirection` slerps
+ */
+const lerpSnow = (
+	a: Record<string, unknown>,
+	b: Record<string, unknown>,
+	t: number,
+	schema: BlendSchema,
+): Record<string, unknown> => {
+	const snowA = a.enable === true;
+	const snowB = b.enable === true;
+	if (!snowA && !snowB) {
+		return { ...a, ...b, enable: false };
+	}
+	if (snowA !== snowB) {
+		const { side, weight } = oneSided(a, b, snowA, t);
+		return {
+			...side,
+			enable: true,
+			intensity: number(side.intensity) * weight,
+			color: fadeColor(side.color, weight),
+		};
+	}
+	const out = lerpObject(a, b, t, schema);
+	out.enable = true;
+	if ('snowDirection' in a && 'snowDirection' in b) {
+		out.snowDirection = slerpDirection(a.snowDirection, b.snowDirection, t);
 	}
 	return out;
 };

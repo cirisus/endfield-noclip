@@ -31,6 +31,7 @@ export const ENVIRONMENT_SECTIONS = [
 	'celestialConfig',
 	'starConfig',
 	'rainConfig',
+	'snowConfig',
 	'lensFlareConfig',
 ] as const;
 

@@ -29,6 +29,7 @@ export interface EnvironmentProfile {
 	celestial: CelestialConfig;
 	star: StarConfig;
 	rain?: RainConfig;
+	snow?: SnowConfig;
 	lensFlare?: LensFlareConfig;
 	/** the level's global post-processing volume, or `null` if it has none */
 	post: PostProfile | null;
@@ -69,6 +70,59 @@ export interface EnvironmentTable {
 	volumes: EnvironmentVolumeInfo[];
 	/** the 3D noise the height fog's flow noise samples (one channel), or `null` if the install lacks it */
 	flowNoise: TextureRef;
+	/** render-pipeline weather presetting parameters and textures, or `null` if absent */
+	weather?: WeatherAssets | null;
+}
+
+/** `RainCommonPreSettingParam`: render-pipeline defaults and textures for rain and wetness */
+export interface RainPresetting {
+	farRainDistance: number;
+	middleRainDistance: number;
+	rainWaveDistance: number;
+	maxRainHeight: number;
+	farRainMaxUVFlowSpeed: number;
+	farRainTex0ST: Vec4;
+	farRainTex1ST: Vec4;
+	sceneEffectRainMaxUVFlowSpeed: number;
+	sceneEffectRainRange: number;
+	sceneEffectRainTex: TextureRef;
+	sceneEffectRainTexST: Vec4;
+	rainWaveTex: TextureRef;
+	rainWaveTexST: Vec4;
+	rainWaveNoiseST: Vec4;
+	rainWaveNoiseFlowSpeedMultiplier: number;
+	verticalFlowTexture: TextureRef;
+	verticalFlowTextureST: Vec4;
+	rippleTexture: TextureRef;
+	rippleRowColumnCount: number;
+	rippleTextureST: Vec2;
+	rainSplashTexture: TextureRef;
+	rainSplashTextureRowColumnCount: number;
+	rainSplashRange: number;
+	rainSplashYBias: number;
+	rainOcclusionMapRange: number;
+	rainOcclusionMapHeight: number;
+	rainOcclusionSampleNormalBias: number;
+	rainOcclusionSampleDepthBias: number;
+	rainOcclusionSampleNoise: TextureRef;
+	rainOcclusionSampleNoiseScale: number;
+	rainOcclusionSampleHorizontalJitterLevel: number;
+	rainOcclusionSampleVerticalJitterLevel: number;
+}
+
+/** `SnowCommonPreSettingParam`: render-pipeline defaults and textures for falling snow */
+export interface SnowPresetting {
+	snowflakeTex: TextureRef;
+	snowflakeTexST: Vec4;
+	maxSnowHeight: number;
+	snowMaxUVFlowSpeed: number;
+	snowRange: number;
+}
+
+/** render-pipeline weather presettings packed from `HGRainPresettingAsset` and `HGSnowPresettingAsset` */
+export interface WeatherAssets {
+	rain: RainPresetting | null;
+	snow: SnowPresetting | null;
 }
 
 /** per section, the distinct values phases hold */
@@ -605,13 +659,39 @@ export interface ShadowConfig {
 
 /**
  * `HGRainConfig`: falling rain and the wetness it leaves. `enable` turns the rain on; the wetness fields
- * apply apart from it, whenever `enableWetness` is set. only the fields the viewer reads are listed; the
- * section holds the rest of the game's (streaks, splashes, screen drops, ripples) under their own names
+ * apply apart from it, whenever `enableWetness` is set
  */
 export interface RainConfig {
 	enable: boolean;
 	/** 0–100 */
 	intensity: number;
+	speed?: number;
+	color?: Color;
+	streakLength?: number;
+	horizontalRainAngle?: number;
+	horizontalRainLevel?: number;
+	sceneEffectRainJitterLevel?: number;
+	sceneEffectRainWidthScale?: number;
+	sceneEffectRainLightingPercent?: number;
+	rainCenterBias?: number;
+	middleRainLayerSpeedDiffMultiplier?: number;
+	middleRainAlphaMultiplier?: number;
+	middleHorizontalRainAngle?: number;
+	middleHorizontalRainLevel?: number;
+	middleRainLightingPercent?: number;
+	farRainLayerSpeedDiffMultiplier?: number;
+	farRainAlphaMultiplier?: number;
+	farRainHorizontalRainAngle?: number;
+	farRainHorizontalRainLevel?: number;
+	rainWaveVerticalSpeed?: number;
+	rainWaveHorizontalSpeed?: number;
+	rainWaveAlpha?: number;
+	rainWaveBottomFadeFactor?: number;
+	rainSplashCount?: number;
+	rainSplashSpeed?: number;
+	rainSplashAlpha?: number;
+	rainSplashMinMaxSize?: Vec2;
+	rainSplashLightingPercent?: number;
 	enableWetness: boolean;
 	enableWetnessAffectSSR: boolean;
 	/** 0–1, how wet surfaces get */
@@ -623,11 +703,42 @@ export interface RainConfig {
 	baseWetnessLevel: number;
 	/** the wetness of vertical surfaces, against 1 for those facing up */
 	verticalWetnessScalar: number;
+	verticalFlowSpeed?: number;
+	verticalFlowNormalStrength?: number;
+	verticalFlowSurfaceThreshold?: number;
+	verticalFlowPorosityBias?: number;
+	rippleFrequency?: number;
+	rippleNormalStrength?: number;
+	rippleWaveSpeed?: number;
+	rippleWaveNormalStrength?: number;
 	/** where wetness fades into the far value, in multiples of the rain occlusion range */
 	farSceneWetnessDistanceFactor: number;
 	farSceneWetnessValue: number;
 	/** above 0, the high-quality wetness lays standing water on flat ground near the camera */
 	rippleRoughnessMaskThreshold: number;
+	wetnessProceduralForWater?: number;
+	rainDirection?: Vec3;
+	middleRainDirection?: Vec3;
+	farRainDirection?: Vec3;
+}
+
+/** `HGSnowConfig`: falling snow */
+export interface SnowConfig {
+	enable: boolean;
+	/** 0–100 */
+	intensity: number;
+	speed: Vec2;
+	color: Color;
+	snowSizeRange: Vec2;
+	horizontalSnowAngle: number;
+	horizontalSnowLevel: number;
+	snowTrailLength: number;
+	snowJitterLevel: number;
+	snowSpeedNoiseLevel: number;
+	snowSpeedNoiseFreq: number;
+	snowLightingPercent: number;
+	snowCollisionFadeTimeScale: number;
+	snowDirection: Vec3;
 }
 
 /**

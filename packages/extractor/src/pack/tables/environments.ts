@@ -10,6 +10,8 @@ import { type LensFlareDataSRP, readLensFlareData } from '@endfield-noclip/forma
 import { ShaderPropertyFlags, ShaderPropertyType } from '@endfield-noclip/formats/unity/material';
 import type { PlainKinds, PlainObject } from '@endfield-noclip/formats/unity/plain-object';
 import { UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
+import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
+import { isObject, numberField, pptrField } from '@endfield-noclip/formats/unity/values';
 import type {
 	BlendSchema,
 	CelestialConfig,
@@ -22,11 +24,14 @@ import type {
 	EnvironmentTable,
 	EnvironmentVolumeInfo,
 	PostProfile,
+	RainPresetting,
 	RayPlanetMaterial,
 	SkyPlanetMaterial,
+	SnowPresetting,
+	WeatherAssets,
 } from '@endfield-noclip/package-format/environment';
 import type { LevelEnvironment } from '@endfield-noclip/package-format/manifest';
-import type { Color, Vec3, Vec4 } from '@endfield-noclip/package-format/values';
+import type { Color, Vec2, Vec3, Vec4 } from '@endfield-noclip/package-format/values';
 
 import { compareNumbers, compareStrings } from '../../compare.ts';
 import type { Context } from '../../context.ts';
@@ -96,6 +101,7 @@ const SECTION_KEYS = {
 	celestialConfig: 'celestial',
 	starConfig: 'star',
 	rainConfig: 'rain',
+	snowConfig: 'snow',
 	lensFlareConfig: 'lensFlare',
 } as const satisfies Record<EnvironmentSectionName, keyof EnvironmentProfile>;
 
@@ -144,6 +150,8 @@ export interface EnvironmentPlan {
 	textures: LocatedObject[];
 	/** index into {@link textures} of the height fog's flow noise, or `null` if the install lacks it */
 	flowNoise: number | null;
+	/** render-pipeline weather presettings, with texture refs still indexing {@link textures} */
+	weather: WeatherAssets | null;
 	debug: LevelEnvironmentDebug[];
 	/** what was left out, deduplicated */
 	problems: EnvironmentProblem[];
@@ -171,6 +179,10 @@ interface PendingPhase {
 const FLOW_NOISE_PATH =
 	'Packages/com.hg.render-pipelines/Runtime/RenderPipelineResources/Texture/HeightFogFlowNoise.asset';
 
+/** the render pipeline asset whose bundle also holds `HGRainPresettingAsset` and `HGSnowPresettingAsset` */
+const RENDER_PIPELINE_ASSET_PATH =
+	'Assets/Beyond/InitialAssets/Settings/RenderPipeline/HGRenderPipelineAsset.asset';
+
 /** @returns the flow noise texture, or why the install doesn't have it where expected */
 const findFlowNoise = async (
 	context: Pick<Context, 'world'>,
@@ -185,6 +197,155 @@ const findFlowNoise = async (
 	} catch (error) {
 		return errorText(error);
 	}
+};
+
+const readVec2 = (raw: unknown): Vec2 => {
+	if (!isObject(raw)) {
+		return [0, 0];
+	}
+	return [numberField(raw, 'x'), numberField(raw, 'y')];
+};
+
+const readVec4 = (raw: unknown): Vec4 => {
+	if (!isObject(raw)) {
+		return [0, 0, 0, 0];
+	}
+	return [numberField(raw, 'x'), numberField(raw, 'y'), numberField(raw, 'z'), numberField(raw, 'w')];
+};
+
+/**
+ * loads `HGRainPresettingAsset` and `HGSnowPresettingAsset` from the render pipeline's bundle and queues
+ * their textures into `textures`
+ */
+const findWeatherAssets = async (
+	context: Pick<Context, 'world'>,
+	resolver: AssetResolver,
+	textures: LocatedObject[],
+	textureIndex: Map<string, number>,
+	report: ReportProblem,
+): Promise<WeatherAssets | null> => {
+	const [hash] = await context.world.hashesOf(RENDER_PIPELINE_ASSET_PATH);
+	if (hash === undefined) {
+		report({ kind: 'resource', path: RENDER_PIPELINE_ASSET_PATH, reason: 'no path hash' });
+		return null;
+	}
+	let rpRef: ObjectRef;
+	try {
+		rpRef = await resolver.findUnique({ hash, path: RENDER_PIPELINE_ASSET_PATH }, UnityClass.MonoBehaviour);
+	} catch (error) {
+		report({ kind: 'resource', path: RENDER_PIPELINE_ASSET_PATH, reason: errorText(error) });
+		return null;
+	}
+	let rainRef: ObjectRef | null = null;
+	let snowRef: ObjectRef | null = null;
+	for (const info of rpRef.file.file.objects) {
+		if (info.classId !== UnityClass.MonoBehaviour) {
+			continue;
+		}
+		// oxlint-disable-next-line no-await-in-loop -- peeks MonoBehaviour names in one small bundle
+		const name = await rpRef.file.peekName(info);
+		if (name === 'HGRainPresettingAsset') {
+			rainRef = { bundleIndex: rpRef.bundleIndex, file: rpRef.file, info };
+		} else if (name === 'HGSnowPresettingAsset') {
+			snowRef = { bundleIndex: rpRef.bundleIndex, file: rpRef.file, info };
+		}
+		if (rainRef !== null && snowRef !== null) {
+			break;
+		}
+	}
+	const resolveTex = async (
+		owner: ObjectRef,
+		container: TypeTreeObject,
+		field: string,
+	): Promise<number | null> => {
+		const pptr = pptrField(container, field);
+		if (pptr.pathId === 0n) {
+			return null;
+		}
+		try {
+			const resolved = await resolver.resolve(owner, pptr);
+			if (resolved === null) {
+				return null;
+			}
+			const located = locatedObject(resolved);
+			return textureIndex.getOrInsertComputed(located.key, () => textures.push(located) - 1);
+		} catch (error) {
+			report({ kind: 'resource', path: `${RENDER_PIPELINE_ASSET_PATH}#${field}`, reason: errorText(error) });
+			return null;
+		}
+	};
+	let rain: RainPresetting | null = null;
+	if (rainRef !== null) {
+		const obj = await resolver.read(rainRef);
+		const p = obj.rainCommonPreSettingParam;
+		if (isObject(p)) {
+			const [
+				sceneEffectRainTex,
+				rainWaveTex,
+				verticalFlowTexture,
+				rippleTexture,
+				rainSplashTexture,
+				rainOcclusionSampleNoise,
+			] = await Promise.all([
+				resolveTex(rainRef, p, 'sceneEffectRainTex'),
+				resolveTex(rainRef, p, 'rainWaveTex'),
+				resolveTex(rainRef, p, 'verticalFlowTexture'),
+				resolveTex(rainRef, p, 'rippleTexture'),
+				resolveTex(rainRef, p, 'rainSplashTexture'),
+				resolveTex(rainRef, p, 'rainOcclusionSampleNoise'),
+			]);
+			rain = {
+				farRainDistance: numberField(p, 'farRainDistance'),
+				middleRainDistance: numberField(p, 'middleRainDistance'),
+				rainWaveDistance: numberField(p, 'rainWaveDistance'),
+				maxRainHeight: numberField(p, 'maxRainHeight'),
+				farRainMaxUVFlowSpeed: numberField(p, 'farRainMaxUVFlowSpeed'),
+				farRainTex0ST: readVec4(p.farRainTex0_ST),
+				farRainTex1ST: readVec4(p.farRainTex1_ST),
+				sceneEffectRainMaxUVFlowSpeed: numberField(p, 'sceneEffectRainMaxUVFlowSpeed'),
+				sceneEffectRainRange: numberField(p, 'sceneEffectRainRange'),
+				sceneEffectRainTex,
+				sceneEffectRainTexST: readVec4(p.sceneEffectRainTex_ST),
+				rainWaveTex,
+				rainWaveTexST: readVec4(p.rainWaveTex_ST),
+				rainWaveNoiseST: readVec4(p.rainWaveNoise_ST),
+				rainWaveNoiseFlowSpeedMultiplier: numberField(p, 'rainWaveNoiseFlowSpeedMultiplier'),
+				verticalFlowTexture,
+				verticalFlowTextureST: readVec4(p.verticalFlowTexture_ST),
+				rippleTexture,
+				rippleRowColumnCount: numberField(p, 'rippleRowColumnCount'),
+				rippleTextureST: readVec2(p.rippleTexture_ST),
+				rainSplashTexture,
+				rainSplashTextureRowColumnCount: numberField(p, 'rainSplashTextureRowColumnCount'),
+				rainSplashRange: numberField(p, 'rainSplashRange'),
+				rainSplashYBias: numberField(p, 'rainSplashYBias'),
+				rainOcclusionMapRange: numberField(p, 'rainOcclusionMapRange'),
+				rainOcclusionMapHeight: numberField(p, 'rainOcclusionMapHeight'),
+				rainOcclusionSampleNormalBias: numberField(p, 'rainOcclusionSampleNormalBias'),
+				rainOcclusionSampleDepthBias: numberField(p, 'rainOcclusionSampleDepthBias'),
+				rainOcclusionSampleNoise,
+				rainOcclusionSampleNoiseScale: numberField(p, 'rainOcclusionSampleNoiseScale'),
+				rainOcclusionSampleHorizontalJitterLevel: numberField(p, 'rainOcclusionSampleHorizontalJitterLevel'),
+				rainOcclusionSampleVerticalJitterLevel: numberField(p, 'rainOcclusionSampleVerticalJitterLevel'),
+			};
+		}
+	}
+	let snow: SnowPresetting | null = null;
+	if (snowRef !== null) {
+		const obj = await resolver.read(snowRef);
+		const p = obj.snowCommonPreSettingParam;
+		if (isObject(p)) {
+			const snowflakeTex = await resolveTex(snowRef, p, 'snowflakeTex');
+			snow = {
+				snowflakeTex,
+				snowflakeTexST: readVec4(p.snowflakeTex_ST),
+				maxSnowHeight: numberField(p, 'maxSnowHeight'),
+				snowMaxUVFlowSpeed: numberField(p, 'snowMaxUVFlowSpeed'),
+				snowRange: numberField(p, 'snowRange'),
+			};
+		}
+	}
+	return rain === null && snow === null ? null : { rain, snow };
 };
 
 /** records an environment problem */
@@ -217,6 +378,7 @@ export const planEnvironments = async (
 		volumeOwners: [],
 		textures: [],
 		flowNoise: null,
+		weather: null,
 		debug: [],
 		problems: [],
 		schema: mapSchemaSections(),
@@ -282,12 +444,15 @@ export const planEnvironments = async (
 				plan.problems.push(problem);
 			}
 		};
+		const textureIndex = new Map<string, number>();
 		const flowNoise = await findFlowNoise(context, resolver);
 		if (typeof flowNoise === 'string') {
 			report({ kind: 'resource', path: FLOW_NOISE_PATH, reason: flowNoise });
 		} else {
-			plan.flowNoise = plan.textures.push(locatedObject(flowNoise)) - 1;
+			const located = locatedObject(flowNoise);
+			plan.flowNoise = textureIndex.getOrInsertComputed(located.key, () => plan.textures.push(located) - 1);
 		}
+		plan.weather = await findWeatherAssets(context, resolver, plan.textures, textureIndex, report);
 
 		// levels mostly share phases and profiles, so loads are cached; they run for all levels at once
 		const phase = scenePhaseLoader(resolver, pathOf, volumes.environment);
@@ -343,7 +508,6 @@ export const planEnvironments = async (
 				}
 			}
 		}
-		const textureIndex = new Map<string, number>();
 		const phaseIndex = new Map<string, number>();
 		const volumeIndex = new Map<EnvironmentVolume, number>();
 		for (const [i, { tag, sceneStates, condition, volume }] of volumes.environment.entries()) {
@@ -988,6 +1152,32 @@ export const finishEnvironments = (
 		}
 		return { name: phase.name, active: phase.active, sections: indices };
 	});
+	const mapTexture = (index: number | null): number | null =>
+		index === null ? null : (textureIds[index] ?? null);
+	const weather: WeatherAssets | null =
+		plan.weather === null
+			? null
+			: {
+					rain:
+						plan.weather.rain === null
+							? null
+							: {
+									...plan.weather.rain,
+									sceneEffectRainTex: mapTexture(plan.weather.rain.sceneEffectRainTex),
+									rainWaveTex: mapTexture(plan.weather.rain.rainWaveTex),
+									verticalFlowTexture: mapTexture(plan.weather.rain.verticalFlowTexture),
+									rippleTexture: mapTexture(plan.weather.rain.rippleTexture),
+									rainSplashTexture: mapTexture(plan.weather.rain.rainSplashTexture),
+									rainOcclusionSampleNoise: mapTexture(plan.weather.rain.rainOcclusionSampleNoise),
+								},
+					snow:
+						plan.weather.snow === null
+							? null
+							: {
+									...plan.weather.snow,
+									snowflakeTex: mapTexture(plan.weather.snow.snowflakeTex),
+								},
+				};
 	return {
 		posts: plan.posts,
 		schema: plan.schema,
@@ -997,7 +1187,8 @@ export const finishEnvironments = (
 		) as unknown as EnvironmentSectionPools,
 		phases,
 		volumes: plan.volumes,
-		flowNoise: plan.flowNoise === null ? null : (textureIds[plan.flowNoise] ?? null),
+		flowNoise: mapTexture(plan.flowNoise),
+		weather,
 	};
 };
 

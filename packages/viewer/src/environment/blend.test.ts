@@ -460,3 +460,62 @@ it('keeps integer fields whole', () => {
 	);
 	assert.equal(cloud.rotation, 13);
 });
+
+it('fades one-sided falling rain from zero while keeping the enabled side’s settings', () => {
+	const dry = {
+		enable: false,
+		intensity: 80,
+		speed: 1,
+		color: [1, 1, 1, 1],
+		rainWaveAlpha: 0.5,
+		rainSplashCount: 400,
+		rainSplashAlpha: 0.4,
+		enableWetness: false,
+		wetness: 0,
+	};
+	const rainy = {
+		enable: true,
+		intensity: 100,
+		speed: 6,
+		color: [0.8, 0.8, 0.8, 0.4],
+		rainWaveAlpha: 1,
+		rainSplashCount: 1000,
+		rainSplashAlpha: 0.8,
+		enableWetness: true,
+		wetness: 0.8,
+	};
+	// blend factor = 5 / 20 = 0.25
+	const { rain } = blendSections({ rain: dry }, { rain: rainy }, ['rain'], 5);
+	assert.equal(rain?.enable, true);
+	assert.equal(rain?.intensity, 25);
+	assert.equal(rain?.speed, 6);
+	assert.deepEqual(rain?.color, [0.2, 0.2, 0.2, 0.1]);
+	assert.equal(rain?.rainWaveAlpha, 0.25);
+	assert.equal(rain?.rainSplashCount, 250);
+	assert.equal(rain?.rainSplashAlpha, 0.2);
+	assert.equal(rain?.enableWetness, true);
+	assert.equal(rain?.wetness, 0.2);
+});
+
+it('fades one-sided snow from zero while keeping the enabled side’s settings', () => {
+	const clear = {
+		enable: false,
+		intensity: 40,
+		speed: [1, 2],
+		color: [1, 1, 1, 1],
+		snowDirection: [0, -1, 0],
+	};
+	const snowy = {
+		enable: true,
+		intensity: 60,
+		speed: [2, 4],
+		color: [0.8, 0.8, 1, 0.8],
+		snowDirection: [0.6, -0.8, 0],
+	};
+	const { snow } = blendSections({ snow: clear }, { snow: snowy }, ['snow'], 5);
+	assert.equal(snow?.enable, true);
+	assert.equal(snow?.intensity, 15);
+	assert.deepEqual(snow?.speed, [2, 4]);
+	assert.deepEqual(snow?.color, [0.2, 0.2, 0.25, 0.2]);
+	assert.deepEqual(snow?.snowDirection, [0.6, -0.8, 0]);
+});
