@@ -571,13 +571,12 @@ export class WaterRenderer {
 	 * @param encoder this frame's encoder
 	 * @param context what the pass reads
 	 */
-	encodeDepth(encoder: GPUCommandEncoder, context: WaterContext): void {
+	encodeDepth(encoder: GPUCommandEncoder, context: WaterContext): number {
 		const pass = WaterRenderer.#beginDepthPass(encoder, context.scene.waterDepth);
 		const group = this.active ? this.#bindGroup(context, this.#noWaterDepthView) : null;
-		if (group !== null) {
-			this.#drawSurfaces(pass, DEPTH_KEY, group, context);
-		}
+		const draws = group !== null ? this.#drawSurfaces(pass, DEPTH_KEY, group, context) : 0;
 		pass.end();
+		return draws;
 	}
 
 	/**
@@ -623,9 +622,9 @@ export class WaterRenderer {
 	 * @param target the composited HDR scene, drawn over
 	 * @param context what the pass reads
 	 */
-	encode(encoder: GPUCommandEncoder, target: GPUTextureView, context: WaterContext): void {
+	encode(encoder: GPUCommandEncoder, target: GPUTextureView, context: WaterContext): number {
 		if (!this.active) {
-			return;
+			return 0;
 		}
 		if (this.#sectorAtlas !== null && this.#pendingSectorCopies.length > 0) {
 			const { texture, tileWidth, tileHeight } = this.#sectorAtlas;
@@ -643,14 +642,15 @@ export class WaterRenderer {
 		this.#device.queue.writeBuffer(this.#params, 0, this.#paramData);
 		const group = this.#bindGroup(context, context.scene.waterDepth);
 		if (group === null) {
-			return;
+			return 0;
 		}
 		const pass = encoder.beginRenderPass({
 			label: 'water',
 			colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }],
 		});
-		this.#drawSurfaces(pass, SHADE_KEY, group, context);
+		const draws = this.#drawSurfaces(pass, SHADE_KEY, group, context);
 		pass.end();
+		return draws;
 	}
 
 	/** the foam targets at the main pass's size, made again when the scene textures change */
@@ -674,12 +674,13 @@ export class WaterRenderer {
 		pipelinePrefix: string,
 		group: GPUBindGroup,
 		context: WaterContext,
-	): void {
+	): number {
 		pass.setBindGroup(0, context.frame.group, [context.frame.offset]);
 		pass.setBindGroup(1, context.sky);
 		pass.setBindGroup(2, group);
 		pass.setBindGroup(3, context.postUniforms);
 		let boundFormat: PositionFormat | null = null;
+		let draws = 0;
 		for (const { geometry, slot } of this.#draws) {
 			if (geometry.positionFormat !== boundFormat) {
 				const pipeline = this.#pipelines.get(`${pipelinePrefix}/${geometry.positionFormat}`);
@@ -696,8 +697,10 @@ export class WaterRenderer {
 			pass.setIndexBuffer(geometry.indices.buffer, geometry.indices.format);
 			for (const submesh of geometry.submeshes) {
 				pass.drawIndexed(submesh.indexCount, 1, submesh.firstIndex, submesh.baseVertex, slot);
+				draws++;
 			}
 		}
+		return draws;
 	}
 
 	/** @returns bytes of the water buffers and foam/sector targets */

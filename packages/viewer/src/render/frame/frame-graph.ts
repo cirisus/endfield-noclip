@@ -12,17 +12,22 @@ import type { IrradianceVolume } from '../lighting/irradiance-volume.ts';
 import type { LightShadows } from '../lighting/light-shadows.ts';
 import type { ClothSimulator } from '../meshes/cloth-simulator.ts';
 import type { MeshRenderer } from '../meshes/mesh-renderer.ts';
+import { CAMERA_HISTORY_FLOATS } from '../post/camera-history.ts';
 import type { PostProcess } from '../post/post-process.ts';
 import { type PostSettings, effectiveSettings } from '../post/settings.ts';
 import { SHADOW_LAYERS, type ShadowMap } from '../shadows/shadow-map.ts';
 import type { VolumetricFog } from '../sky/volumetric-fog.ts';
 import type { TerrainRenderer } from '../terrain/terrain-renderer.ts';
-import type { WaterRenderer } from '../water/water-renderer.ts';
+import type { WaterContext, WaterRenderer } from '../water/water-renderer.ts';
 import type { VerticalOcclusionMap } from '../weather/vertical-occlusion.ts';
 import type { WeatherRenderer } from '../weather/weather-renderer.ts';
 
 import type { DebugView } from './debug-views.ts';
 import type { RenderTargets } from './render-targets.ts';
+import type { SceneComposer } from './scene-composer.ts';
+
+/** scratch camera history for water reflections, reused across frames */
+const waterReprojection = new Float32Array(CAMERA_HISTORY_FLOATS);
 
 /** a frame group and its uniforms' dynamic offset */
 export interface FrameGroup {
@@ -135,6 +140,7 @@ export interface FrameSystems {
 	fog: VolumetricFog;
 	water: WaterRenderer;
 	weather: WeatherRenderer;
+	composer: SceneComposer;
 	post: PostProcess;
 }
 
@@ -278,7 +284,7 @@ export const encodeFrame = (
 	context: FrameContext,
 	systems: FrameSystems,
 ): number => {
-	const { targets, meshes, post, water } = systems;
+	const { targets, meshes, composer, post, water } = systems;
 	const { camera, width, height, outputWidth, outputHeight, settings } = context;
 	const sceneCore = settings.scene ? context.frameCore : null;
 	const sceneFrame = settings.scene ? context.frame : null;
@@ -437,29 +443,61 @@ export const encodeFrame = (
 		}
 		pass.end();
 	}
-	const composited = post.encodeComposite(encoder, {
-		scene,
-		camera,
+	const composited = composer.ensureTarget(scene, width, height);
+	const { resized, historyViews } = post.ensureSized(scene, {
+		composited: composited.view,
 		width,
 		height,
 		outputWidth,
 		outputHeight,
-		settings: settings.post,
+	});
+	if (resized) {
+		composer.resizePasses(scene, { width, height, target: composited.view, historyViews });
+	}
+	composer.encodePreDeferred(encoder, {
+		camera,
+		width,
+		height,
 		time: context.time,
 		frame: context.index,
+		jitter: post.jitter,
+		exposure: post.exposure(settings.post),
+		settings: settings.post,
 		froxels,
-		water,
-		frameGroup: context.frame,
+		previousScene: post.previousIndex,
 	});
+	let waterContext: WaterContext | null = null;
+	if (settings.lit && water.active) {
+		const reflectionScene = post.previousScene(waterReprojection, camera.position);
+		waterContext = {
+			scene,
+			background: scene.lit,
+			reflectionScene,
+			reprojection: waterReprojection,
+			frame: context.frame,
+			postUniforms: composer.skyLayoutGroups.uniforms,
+			sky: composer.skyLayoutGroups.sky,
+			version: composited.version,
+			width,
+			height,
+			foam: false,
+		};
+	}
+	if (waterContext !== null) {
+		draws += water.encodeDepth(encoder, waterContext);
+	} else {
+		water.clearDepth(encoder, scene);
+	}
+	composer.encodeDeferredAndComposite(encoder, context.frame);
 	/** a pass over the composited scene, testing the main pass's depth */
 	const over = (label: string): GPURenderPassDescriptor => ({
 		label,
-		colorAttachments: [{ view: composited.target, loadOp: 'load', storeOp: 'store' }],
+		colorAttachments: [{ view: composited.view, loadOp: 'load', storeOp: 'store' }],
 		depthStencilAttachment: targets.readOnlyDepthAttachment(),
 	});
 	// the water and effects that refract read a copy of the composited scene
-	if (composited.water !== null) {
-		post.copyComposite(encoder, scene);
+	if (waterContext !== null) {
+		composer.copyComposite(encoder, scene);
 		const foam = sceneCore !== null && meshes.has('waterFoam');
 		if (foam) {
 			// the foam boxes project onto the water's own depth and are depth-tested against it, as the game tests
@@ -470,7 +508,7 @@ export const encodeFrame = (
 					label: 'water foam',
 					colorAttachments: [
 						{
-							view: water.foamTarget(composited.water),
+							view: water.foamTarget(waterContext),
 							clearValue: [0, 0, 0, 1],
 							loadOp: 'clear',
 							storeOp: 'store',
@@ -483,13 +521,13 @@ export const encodeFrame = (
 			draws += meshes.encodeEffectPass('waterFoam', pass, { ...scene, depth: scene.waterDepth });
 			pass.end();
 		}
-		water.encode(encoder, composited.target, { ...composited.water, foam });
+		draws += water.encode(encoder, composited.view, { ...waterContext, foam });
 	}
 	if (sceneFrame !== null && sceneCore !== null) {
 		// as the game, glass and effects after the water, far to near over the scene, each fogging itself
 		if (meshes.has('transparent')) {
 			if (meshes.transparentReadsBackground) {
-				post.copyComposite(encoder, scene);
+				composer.copyComposite(encoder, scene);
 			}
 			const writesDepth = meshes.transparentWritesDepth;
 			const depth = writesDepth ? targets.copyDepth(encoder) : scene.depth;
@@ -497,7 +535,7 @@ export const encodeFrame = (
 				encoder,
 				{
 					label: 'transparent',
-					colorAttachments: [{ view: composited.target, loadOp: 'load', storeOp: 'store' }],
+					colorAttachments: [{ view: composited.view, loadOp: 'load', storeOp: 'store' }],
 					depthStencilAttachment: writesDepth
 						? targets.writableTransparentDepthAttachment()
 						: targets.transparentDepthAttachment(),
@@ -522,14 +560,14 @@ export const encodeFrame = (
 		if (opaqueRefract || meshes.has('refract')) {
 			// refraction samples the scene as the multiplies left it; as the game's distortion pass, both lists
 			// sample the one copy
-			post.copyComposite(encoder, scene);
+			composer.copyComposite(encoder, scene);
 			const inputs = { ...scene, background: scene.lit };
 			if (opaqueRefract) {
 				const pass = beginPass(
 					encoder,
 					{
 						label: 'effect refract opaque',
-						colorAttachments: [{ view: composited.target, loadOp: 'load', storeOp: 'store' }],
+						colorAttachments: [{ view: composited.view, loadOp: 'load', storeOp: 'store' }],
 						depthStencilAttachment: targets.writableDepthAttachment(),
 					},
 					sceneCore,
@@ -549,7 +587,7 @@ export const encodeFrame = (
 			pass.end();
 		}
 	}
-	post.encodeAfterScene(encoder, {
+	post.encode(encoder, {
 		swapchain: targets.swapchainView(),
 		camera,
 		width,

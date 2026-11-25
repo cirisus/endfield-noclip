@@ -1,285 +1,96 @@
-import type { RainConfig, RainPresetting } from '@endfield-noclip/package-format/environment';
-
-import type { CelestialLook, CelestialTextureSlot } from '../../environment/celestial-look.ts';
 import type { Environment } from '../../environment/environment.ts';
 import type { LensFlareLook } from '../../environment/lens-flare-look.ts';
-import { createUniformBuffer } from '../../gfx/buffers.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
-import { LINEAR_CLAMP, sampler as sharedSampler } from '../../gfx/samplers.ts';
-import { TextureSet } from '../../gfx/texture-set.ts';
 import type { Camera } from '../../scene/camera.ts';
 import type { StreamedTexture } from '../../streaming/texture-requests.ts';
-import { type SceneTextures, HDR_FORMAT } from '../frame/render-targets.ts';
-import { DeferredLighting } from '../lighting/deferred-lighting.ts';
-import { AtmosphereLuts, SkyBinding } from '../sky/atmosphere-luts.ts';
-import { CelestialLayer } from '../sky/celestial.ts';
-import type { VolumetricFog } from '../sky/volumetric-fog.ts';
-import type { TextureBinding } from '../textures/texture-store.ts';
-import type { WaterContext, WaterRenderer } from '../water/water-renderer.ts';
-import type { VerticalOcclusionMap } from '../weather/vertical-occlusion.ts';
+import type { SceneTextures } from '../frame/render-targets.ts';
 
-import { AmbientOcclusion } from './ambient-occlusion.ts';
 import { AutoExposure } from './auto-exposure.ts';
 import { Bloom } from './bloom.ts';
-import { CAMERA_HISTORY_FLOATS } from './camera-history.ts';
-import { Composite } from './composite.ts';
 import { LensFlares } from './lens-flare.ts';
 import { LightShafts } from './light-shafts.ts';
-import { POST_BYTES, writeEnvironmentUniforms, writeFrameUniforms } from './post-uniforms.ts';
-import { ScreenSpaceReflections } from './screen-space-reflections.ts';
 import { type PostSettings, effectiveSettings, postExposure } from './settings.ts';
 import { TemporalAA } from './temporal-aa.ts';
 import { Tonemap } from './tonemap.ts';
 
-/** the targets sized with the scene textures */
+/** the post-scene views sized with the scene textures */
 interface Sized {
-	/** the scene textures' version the targets were made for */
 	version: number;
-	/** the composited scene at the render size, which the temporal resolve reads */
-	scene: GPUTexture;
-	sceneView: GPUTextureView;
-	/** views of the temporal histories, the antialiased scene at the output size */
 	historyViews: [GPUTextureView, GPUTextureView];
 }
 
-/** what {@link PostProcess.encodeComposite} leaves for the passes over the composited scene */
-export interface CompositedScene {
-	/** the composited HDR scene, which those passes draw over */
-	target: GPUTextureView;
-	/** what the water pass reads, `null` when no water draws this frame */
-	water: WaterContext | null;
-}
-
 /**
- * owns the post chain's shared uniforms and sampler, and runs its passes in order: {@link encodeComposite},
- * then the caller's passes over the composited scene, then {@link encodeAfterScene}
+ * post-scene rendering chain: light shafts, lens flare, temporal antialiasing, auto exposure, bloom, and
+ * tonemapping to the swapchain
  */
 export class PostProcess {
-	/**
-	 * explicit layouts of the post uniforms and of the sky's reads (the sky-view LUT, its sampler and the
-	 * volumetric fog, at their atmosphere.wgsl and sky.wgsl bindings), for passes that also bind the main
-	 * pass's frame group and so can't use `auto` layouts
-	 */
-	readonly skyLayouts: { uniforms: GPUBindGroupLayout; sky: GPUBindGroupLayout };
-	/**
-	 * what transparent draws fog themselves with (fog.wgsl): the post uniforms, written once a frame by
-	 * {@link encodeComposite}, the volumetric fog and the bilinear clamping sampler
-	 */
-	readonly fogInputs: { uniforms: GPUBuffer; froxels: GPUTextureView; sampler: GPUSampler };
-	#device: GPUDevice;
-	#uniforms: GPUBuffer;
-	#data = new Float32Array(POST_BYTES / 4);
-	#luts: AtmosphereLuts;
-	#ao: AmbientOcclusion;
-	#reflections: ScreenSpaceReflections;
-	/** the nebula, planets and clouds the composite draws on the sky */
-	#celestial: CelestialLayer;
-	#deferred: DeferredLighting;
-	#composite: Composite;
 	#lightShafts: LightShafts;
 	#lensFlares: LensFlares;
 	#taa: TemporalAA;
-	#waterReprojection = new Float32Array(CAMERA_HISTORY_FLOATS);
 	#autoExposure: AutoExposure;
 	#bloom: Bloom;
 	#tonemap: Tonemap;
-	/** the composited scene */
-	#targets: TextureSet;
 	#sized: Sized | null = null;
 	#environment: Environment;
-	/** the volumetric fog the composite and water passes add in front */
-	#fog: VolumetricFog;
-	/** groups for {@link skyLayouts} */
-	#skyLayoutGroups: { uniforms: GPUBindGroup; sky: GPUBindGroup };
 
 	/**
 	 * @param device the device
 	 * @param pipelines the pipeline cache, which compiles the auto exposure's histogram pass
-	 * @param swapchainFormat the canvas format the final pass writes
-	 * @param environment the environment to start with
-	 * @param fog the volumetric fog, which the caller encodes before {@link encodeComposite}
-	 * @param frameLayout group 0 (`frame`) bind group layout
-	 * @param verticalOcclusion the top-down vertical occlusion depth map for rain wetness
+	 * @param options swapchain format, shared `Post` uniform buffer, clamping sampler, and starting environment
 	 */
 	constructor(
 		device: GPUDevice,
 		pipelines: PipelineCache,
-		swapchainFormat: GPUTextureFormat,
-		environment: Environment,
-		fog: VolumetricFog,
-		frameLayout: GPUBindGroupLayout,
-		verticalOcclusion: VerticalOcclusionMap,
+		options: {
+			swapchainFormat: GPUTextureFormat;
+			postUniforms: GPUBuffer;
+			sampler: GPUSampler;
+			environment: Environment;
+		},
 	) {
-		this.#device = device;
-		this.#fog = fog;
-		this.#targets = new TextureSet(device);
-		this.#uniforms = createUniformBuffer(device, 'post uniforms', POST_BYTES);
-		const sampler = sharedSampler(device, LINEAR_CLAMP);
-		const postUniforms = this.#uniforms;
-		this.fogInputs = { uniforms: postUniforms, froxels: fog.view, sampler };
+		const { swapchainFormat, postUniforms, sampler, environment } = options;
 		this.#autoExposure = new AutoExposure(device, pipelines);
-		this.#luts = new AtmosphereLuts(device, postUniforms, sampler);
-		this.#ao = new AmbientOcclusion(device, postUniforms);
-		this.#reflections = new ScreenSpaceReflections(device, postUniforms);
-		this.#celestial = new CelestialLayer(device, { postUniforms, sampler });
-		this.#composite = new Composite(device, {
-			postUniforms,
-			sampler,
-			skyView: this.#luts.skyView,
-			froxels: fog.view,
-		});
 		this.#lightShafts = new LightShafts(device, postUniforms);
 		this.#lensFlares = new LensFlares(device);
 		this.#taa = new TemporalAA(device, postUniforms);
 		this.#bloom = new Bloom(device, postUniforms, sampler);
 		this.#tonemap = new Tonemap(device, postUniforms, sampler, swapchainFormat);
 		this.#environment = environment;
-		writeEnvironmentUniforms(this.#data, environment);
-
-		{
-			const fragment = GPUShaderStage.FRAGMENT;
-			const texture = (binding: number, viewDimension: GPUTextureViewDimension): GPUBindGroupLayoutEntry => ({
-				binding,
-				visibility: fragment,
-				texture: { sampleType: 'float', viewDimension },
-			});
-			const uniforms = device.createBindGroupLayout({
-				label: 'post uniforms',
-				entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | fragment, buffer: { type: 'uniform' } }],
-			});
-			const sky = device.createBindGroupLayout({
-				label: 'sky reads',
-				entries: [
-					texture(SkyBinding.skyView, '2d'),
-					{ binding: SkyBinding.sampler, visibility: fragment, sampler: { type: 'filtering' } },
-					texture(SkyBinding.froxels, '3d'),
-				],
-			});
-			this.skyLayouts = { uniforms, sky };
-			this.#skyLayoutGroups = {
-				uniforms: device.createBindGroup({
-					layout: uniforms,
-					entries: [{ binding: 0, resource: { buffer: postUniforms } }],
-				}),
-				sky: device.createBindGroup({
-					layout: sky,
-					entries: [
-						{ binding: SkyBinding.skyView, resource: this.#luts.skyView },
-						{ binding: SkyBinding.sampler, resource: sampler },
-						{ binding: SkyBinding.froxels, resource: fog.view },
-					],
-				}),
-			};
-			this.#deferred = new DeferredLighting(
-				device,
-				{ frame: frameLayout, postUniforms: uniforms },
-				postUniforms,
-				verticalOcclusion,
-			);
-		}
 	}
 
-	/** @returns bytes of the targets the chain holds */
+	/** @returns bytes of the post chain's render targets */
 	get bytes(): number {
-		// the composited scene, and each pass's own targets
-		return (
-			this.#targets.bytes +
-			this.#ao.bytes +
-			this.#bloom.bytes +
-			this.#taa.bytes +
-			this.#reflections.bytes +
-			this.#lightShafts.bytes
-		);
+		return this.#bloom.bytes + this.#taa.bytes + this.#lightShafts.bytes;
 	}
 
 	/**
-	 * binds the sky's textures as they stream in; what isn't resident yet doesn't draw.
+	 * binds lens flare textures as they stream in
 	 *
-	 * @param textures the cloud panorama and the height fog's flow noise (`null` for none), each celestial
-	 *   slot's binding, and each lens flare image's streamed texture by texture-table id
+	 * @param lookup returns each lens flare image's streamed texture by texture-table id
 	 */
-	setSkyTextures(textures: {
-		cloud: TextureBinding | null;
-		flowNoise: TextureBinding | null;
-		celestial: (slot: CelestialTextureSlot) => TextureBinding | null;
-		lensFlare: (texture: number) => StreamedTexture | null;
-	}): void {
-		this.#celestial.setCloud(textures.cloud);
-		this.#composite.setFlowNoise(textures.flowNoise);
-		this.#celestial.setTextures(textures.celestial);
-		this.#lensFlares.setTextures(textures.lensFlare);
+	setLensFlareTextures(lookup: (texture: number) => StreamedTexture | null): void {
+		this.#lensFlares.setTextures(lookup);
+	}
+
+	/** unbinds lens flare textures before the store that holds them is destroyed */
+	clearTextures(): void {
+		this.#lensFlares.setTextures(() => null);
 	}
 
 	/**
-	 * binds the rain wetness textures (3D jitter noise, ripple flipbook, wall vertical flow) as they stream in
-	 *
-	 * @param textures the wetness textures, `null` when not resident
-	 */
-	setWetnessTextures(textures: {
-		noise: TextureBinding | null;
-		ripple: TextureBinding | null;
-		flow: TextureBinding | null;
-	}): void {
-		this.#deferred.setWetnessTextures(textures);
-	}
-
-	/**
-	 * uploads this frame's high-quality rain wetness uniforms
-	 *
-	 * @param rain the blended rain config, or `null` when dry
-	 * @param presetting the package's rain presetting asset, or `null` when absent
-	 * @param occlusion the vertical occlusion map as fitted for this frame
-	 * @param time the viewer's animation clock, s
-	 */
-	updateWetness(
-		rain: RainConfig | null,
-		presetting: RainPresetting | null,
-		occlusion: VerticalOcclusionMap,
-		time: number,
-	): void {
-		this.#deferred.updateWetness(rain, presetting, occlusion, time);
-	}
-
-	/** unbinds the sky's textures, before the store that holds them is destroyed */
-	clearSkyTextures(): void {
-		this.setSkyTextures({ cloud: null, flowNoise: null, celestial: () => null, lensFlare: () => null });
-		this.setWetnessTextures({ noise: null, ripple: null, flow: null });
-	}
-
-	/**
-	 * @param settings the settings in effect
-	 * @returns whether the composite draws drifting fog, which changes from frame to frame
-	 */
-	#drifts(settings: PostSettings): boolean {
-		return (
-			settings.flowNoise &&
-			settings.heightFog &&
-			this.#environment.heightFog.flowNoise !== null &&
-			this.#composite.hasFlowNoise
-		);
-	}
-
-	/**
-	 * sets the environment; the atmosphere LUTs are rebuilt on the next frame.
+	 * updates the post-processing environment settings and sun lens flare look
 	 *
 	 * @param environment the shown level's environment
-	 * @param looks what the environment draws beyond the atmosphere, and its sun's lens flare (`null`: none)
+	 * @param lensFlare the sun's lens flare (`null`: none)
 	 */
-	setEnvironment(
-		environment: Environment,
-		looks: { celestial: CelestialLook; lensFlare: LensFlareLook | null },
-	): void {
+	setEnvironment(environment: Environment, lensFlare: LensFlareLook | null): void {
 		this.#environment = environment;
-		this.#luts.invalidate();
-		writeEnvironmentUniforms(this.#data, environment);
-		this.#celestial.setLook(looks.celestial);
-		this.#lensFlares.setLook(looks.lensFlare);
+		this.#lensFlares.setLook(lensFlare);
 	}
 
-	/** drops the temporal histories (antialiasing, reflections) after a cut to somewhere else */
+	/** drops the temporal antialiasing history after a camera cut */
 	reset(): void {
 		this.#taa.reset();
-		this.#reflections.reset();
 	}
 
 	/** @param enabled whether the temporal antialiasing jitters and accumulates; off passes the frame through */
@@ -305,9 +116,30 @@ export class PostProcess {
 		return this.#taa.nextJitter(width, height, outputHeight);
 	}
 
+	/** @returns this frame's current jitter in NDC */
+	get jitter(): readonly [x: number, y: number] {
+		return this.#taa.jitter;
+	}
+
 	/** @returns this frame's place in the jitter cycle, from 1; 0 with antialiasing off */
 	get jitterPhase(): number {
 		return this.#taa.phase;
+	}
+
+	/** @returns index of the previous resolved history texture (0 or 1) */
+	get previousIndex(): number {
+		return this.#taa.previousIndex;
+	}
+
+	/**
+	 * writes the previous frame's camera reprojection for water reflections and returns its resolved scene view
+	 *
+	 * @param out destination for the camera history floats
+	 * @param eye current camera world position
+	 * @returns the previous resolved HDR scene view, or `null` when unavailable
+	 */
+	previousScene(out: Float32Array, eye: readonly [number, number, number]): GPUTextureView | null {
+		return this.#taa.previous(out, eye);
 	}
 
 	/** jumps the auto exposure straight to its next reading (a new package or level) */
@@ -346,29 +178,30 @@ export class PostProcess {
 		this.#autoExposure.afterSubmit();
 	}
 
-	#ensureSized(
+	/**
+	 * resizes TAA, light shafts, lens flares, bloom, and tonemap targets when `scene.version` changes
+	 *
+	 * @param scene the main pass's textures
+	 * @param input composited target view and render/output sizes
+	 * @returns whether a resize occurred, plus the TAA history views for SSR
+	 */
+	ensureSized(
 		scene: SceneTextures,
-		size: { width: number; height: number; outputWidth: number; outputHeight: number },
-	): Sized {
-		const { width, height, outputWidth, outputHeight } = size;
+		input: {
+			composited: GPUTextureView;
+			width: number;
+			height: number;
+			outputWidth: number;
+			outputHeight: number;
+		},
+	): { resized: boolean; historyViews: [GPUTextureView, GPUTextureView] } {
 		const current = this.#sized;
 		if (current !== null && current.version === scene.version) {
-			return current;
+			return { resized: false, historyViews: current.historyViews };
 		}
-		this.#targets.destroy();
-		const sceneTexture = this.#targets.create({
-			label: 'hdr scene',
-			size: [width, height],
-			format: HDR_FORMAT,
-			usage:
-				GPUTextureUsage.RENDER_ATTACHMENT |
-				GPUTextureUsage.TEXTURE_BINDING |
-				GPUTextureUsage.COPY_SRC |
-				GPUTextureUsage.COPY_DST,
-		});
-		const sceneView = sceneTexture.createView();
+		const { composited, width, height, outputWidth, outputHeight } = input;
 		this.#taa.resize({
-			scene: sceneView,
+			scene: composited,
 			depth: scene.depth,
 			velocity: scene.velocity,
 			width,
@@ -381,150 +214,22 @@ export class PostProcess {
 			histories[0].createView(),
 			histories[1].createView(),
 		];
-		this.#ao.resize({ depth: scene.depth, gbufferB: scene.gbufferB, width, height });
-		this.#reflections.resize({ scene, previousScenes: historyViews, width, height });
-		this.#celestial.resize({ depth: scene.depth, target: scene.lit });
-		this.#deferred.resize({
-			scene,
-			ao: this.#ao.output,
-			reflections: this.#reflections.output.createView(),
-		});
-		this.#composite.resize({ scene, target: sceneView });
-		this.#lightShafts.resize({ scene, composited: sceneView, width, height });
-		this.#lensFlares.resize({ scene, composited: sceneView });
+		this.#lightShafts.resize({ scene, composited, width, height });
+		this.#lensFlares.resize({ scene, composited });
 		this.#bloom.resize({ histories, outputWidth, outputHeight });
 		this.#tonemap.resize({ histories, bloom: this.#bloom.result });
-		const sized: Sized = {
-			version: scene.version,
-			scene: sceneTexture,
-			sceneView,
-			historyViews,
-		};
-		this.#sized = sized;
-		return sized;
+		this.#sized = { version: scene.version, historyViews };
+		return { resized: true, historyViews };
 	}
 
 	/**
-	 * encodes the chain from the main pass's outputs through the composite: the atmosphere LUTs, AO,
-	 * reflections, the celestial layers and the water's depth. the caller then draws what goes over the
-	 * composited scene (the water, the transparent pass, screen effects) and finishes with
-	 * {@link encodeAfterScene}.
-	 *
-	 * @param encoder this frame's encoder, after the main pass
-	 * @param input the main pass's textures, the camera (unjittered), the render and output sizes and settings
-	 * @returns the composited scene, and what the water pass reads when water draws this frame
-	 */
-	encodeComposite(
-		encoder: GPUCommandEncoder,
-		input: {
-			scene: SceneTextures;
-			camera: Camera;
-			width: number;
-			height: number;
-			outputWidth: number;
-			outputHeight: number;
-			settings: PostSettings;
-			/** the viewer's animation time, s, which the flow noise, water and clouds move by */
-			time: number;
-			frame: number;
-			/** whether the volumetric fog was encoded this frame */
-			froxels: boolean;
-			/** drawn over the composite when it has surfaces */
-			water: WaterRenderer;
-			/** the main pass's frame group and its uniforms' offset, which the water pass lights with */
-			frameGroup: { group: GPUBindGroup; offset: number };
-		},
-	): CompositedScene {
-		const { scene, camera, width, height, outputWidth, outputHeight } = input;
-		const settings = effectiveSettings(input.settings);
-		const environment = this.#environment;
-		const sized = this.#ensureSized(scene, { width, height, outputWidth, outputHeight });
-		writeFrameUniforms(this.#data, {
-			camera,
-			width,
-			height,
-			time: input.time,
-			frame: input.frame,
-			jitter: this.#taa.jitter,
-			settings,
-			exposure: postExposure(settings, this.#autoExposure),
-			environment,
-			froxels: input.froxels && settings.heightFog ? this.#fog.sampling : null,
-			flowNoise: this.#drifts(settings) ? environment.heightFog.flowNoise : null,
-			cloud: this.#celestial.hasCloud,
-		});
-		this.#device.queue.writeBuffer(this.#uniforms, 0, this.#data);
-		this.#luts.encode(encoder, settings.sky);
-		if (settings.ao && environment.post.ao !== null) {
-			this.#ao.encode(encoder);
-		}
-		// with reflections off this still clears what composite reads
-		this.#reflections.encode(encoder, {
-			camera,
-			look: environment.post.ssr,
-			enabled: settings.reflections,
-			previousScene: this.#taa.previousIndex,
-		});
-		this.#celestial.encode(encoder, {
-			eye: camera.position,
-			sun: environment.sunDirection,
-			sunIlluminance: environment.sunIlluminance,
-		});
-		const water = input.water;
-		let waterContext: WaterContext | null = null;
-		if (settings.debugView === 'lit' && water.active) {
-			const reflectionScene = this.#taa.previous(this.#waterReprojection, camera.position);
-			waterContext = {
-				scene,
-				background: scene.lit,
-				reflectionScene,
-				reprojection: this.#waterReprojection,
-				frame: input.frameGroup,
-				postUniforms: this.#skyLayoutGroups.uniforms,
-				sky: this.#skyLayoutGroups.sky,
-				version: sized.version,
-				width,
-				height,
-				foam: false,
-			};
-		}
-		if (waterContext !== null) {
-			water.encodeDepth(encoder, waterContext);
-		} else {
-			water.clearDepth(encoder, scene);
-		}
-		this.#deferred.encode(encoder, input.frameGroup);
-		this.#composite.encode(encoder);
-		return { target: sized.sceneView, water: waterContext };
-	}
-
-	/**
-	 * copies the composited scene into `scene.litTexture`, which nothing reads after compositing, for the
-	 * passes over it that refract it (the water, refracting effects)
-	 *
-	 * @param encoder this frame's encoder, after {@link encodeComposite}
-	 * @param scene the main pass's textures
-	 */
-	copyComposite(encoder: GPUCommandEncoder, scene: SceneTextures): void {
-		const sized = this.#sized;
-		if (sized === null) {
-			return;
-		}
-		encoder.copyTextureToTexture({ texture: sized.scene }, { texture: scene.litTexture }, [
-			sized.scene.width,
-			sized.scene.height,
-		]);
-	}
-
-	/**
-	 * encodes the rest of the chain over the composited scene, to the swapchain: light shafts, lens flare,
-	 * temporal antialiasing, auto exposure, bloom and tonemapping
+	 * encodes the post-scene passes to the swapchain: light shafts, lens flare, temporal antialiasing, auto
+	 * exposure, bloom, and tonemapping
 	 *
 	 * @param encoder this frame's encoder, after the passes over the composited scene
-	 * @param input the swapchain, the camera (unjittered), the render and output sizes and settings, as given
-	 *   to {@link encodeComposite}
+	 * @param input swapchain view, camera, render and output sizes, and settings
 	 */
-	encodeAfterScene(
+	encode(
 		encoder: GPUCommandEncoder,
 		input: {
 			swapchain: GPUTextureView;
@@ -562,18 +267,11 @@ export class PostProcess {
 		this.#tonemap.encode(encoder, { swapchain, history: resolved });
 	}
 
-	/** frees the chain's GPU resources */
+	/** frees the post chain's GPU resources */
 	destroy(): void {
-		this.#targets.destroy();
-		this.#luts.destroy();
-		this.#ao.destroy();
 		this.#bloom.destroy();
-		this.#uniforms.destroy();
-		this.#celestial.destroy();
-		this.#deferred.destroy();
 		this.#autoExposure.destroy();
 		this.#taa.destroy();
-		this.#reflections.destroy();
 		this.#lightShafts.destroy();
 		this.#lensFlares.destroy();
 	}

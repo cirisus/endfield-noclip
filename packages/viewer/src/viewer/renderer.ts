@@ -22,6 +22,7 @@ import {
 	writeFrameUniforms,
 } from '../render/frame/frame-uniform-writer.ts';
 import { RenderTargets } from '../render/frame/render-targets.ts';
+import { SceneComposer } from '../render/frame/scene-composer.ts';
 import { InstanceRenderer } from '../render/instances/instance-renderer.ts';
 import { IrradianceVolume } from '../render/lighting/irradiance-volume.ts';
 import { type LocalLightFrame, LocalLights } from '../render/lighting/local-lights.ts';
@@ -94,6 +95,7 @@ export class Renderer {
 	readonly instances: InstanceRenderer;
 	readonly meshes: MeshRenderer;
 	readonly fog: VolumetricFog;
+	readonly composer: SceneComposer;
 	readonly post: PostProcess;
 	readonly water: WaterRenderer;
 	readonly weather: WeatherRenderer;
@@ -139,7 +141,7 @@ export class Renderer {
 		this.shadows = new ShadowMap(device, { depthClipControl: gfx.features.depthClipControl });
 		this.verticalOcclusion = new VerticalOcclusionMap(device);
 		this.irradiance = new IrradianceVolume(device, this.pipelines);
-		this.lights = new LocalLights(device);
+		this.lights = new LocalLights(device, this.pipelines);
 		this.reflectionProbes = new ReflectionProbes(device, { bc: gfx.features.textureCompressionBc });
 		this.bindings = new FrameBindings(device, {
 			coreLayout: this.#layouts.frameCore,
@@ -166,28 +168,36 @@ export class Renderer {
 		}));
 		this.fog = new VolumetricFog(device, this.pipelines, layouts.frame);
 		this.fog.setEnvironment(look.environment, near);
-		this.post = new PostProcess(
+		this.composer = new SceneComposer(
 			device,
 			this.pipelines,
-			gfx.presentationFormat,
 			look.environment,
 			this.fog,
 			layouts.frame,
 			this.verticalOcclusion,
 		);
+		this.post = new PostProcess(device, this.pipelines, {
+			swapchainFormat: gfx.presentationFormat,
+			postUniforms: this.composer.uniforms,
+			sampler: this.composer.sampler,
+			environment: look.environment,
+		});
 		this.meshes = new MeshRenderer(device, layouts, this.pipelines, {
 			instances: this.instances,
 			format,
 			shadow: this.shadows,
-			fog: this.post.fogInputs,
+			fog: this.composer.fogInputs,
 			features: gfx.features,
 		});
-		this.water = new WaterRenderer(device, this.pipelines, { frame: layouts.frame, ...this.post.skyLayouts });
+		this.water = new WaterRenderer(device, this.pipelines, {
+			frame: layouts.frame,
+			...this.composer.skyLayouts,
+		});
 		this.weather = new WeatherRenderer(
 			device,
 			layouts.frame,
 			format.depth,
-			this.post.fogInputs,
+			this.composer.fogInputs,
 			this.verticalOcclusion,
 		);
 		this.frame = {
@@ -204,6 +214,7 @@ export class Renderer {
 			fog: this.fog,
 			water: this.water,
 			weather: this.weather,
+			composer: this.composer,
 			post: this.post,
 		};
 		this.pools = [
@@ -216,6 +227,7 @@ export class Renderer {
 			this.lights.shadows,
 			this.water,
 			this.targets,
+			this.composer,
 			this.post,
 			this.fog,
 			this.shadows,
@@ -225,6 +237,7 @@ export class Renderer {
 			this.#ring,
 		];
 		this.#histories = [
+			this.composer,
 			this.post,
 			this.fog,
 			this.meshes,
@@ -234,6 +247,7 @@ export class Renderer {
 		];
 		this.#owned = [
 			this.post,
+			this.composer,
 			this.fog,
 			this.lights,
 			this.reflectionProbes,
@@ -277,7 +291,8 @@ export class Renderer {
 	 * @param near the camera's near plane, m
 	 */
 	setEnvironment(look: EnvironmentLook, near: number): void {
-		this.post.setEnvironment(look.environment, look);
+		this.composer.setEnvironment(look.environment, look.celestial);
+		this.post.setEnvironment(look.environment, look.lensFlare);
 		this.fog.setEnvironment(look.environment, near);
 	}
 
@@ -379,7 +394,7 @@ export class Renderer {
 			block.f32.set(this.verticalOcclusion.render, FrameOffsets.viewProj);
 			verticalOcclusionOffset = block.offset;
 		}
-		this.post.updateWetness(look.rain, input.weather?.rain ?? null, this.verticalOcclusion, input.time);
+		this.composer.updateWetness(look.rain, input.weather?.rain ?? null, this.verticalOcclusion, input.time);
 		this.weather.update({
 			rain: look.rain,
 			snow: look.snow,

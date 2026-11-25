@@ -187,7 +187,12 @@ export class Traversal {
 				snow: input.look.snow,
 				weather: options.weather,
 			},
-			{ post: renderer.post, bindings: renderer.bindings, weather: renderer.weather },
+			{
+				composer: renderer.composer,
+				post: renderer.post,
+				bindings: renderer.bindings,
+				weather: renderer.weather,
+			},
 		);
 		const windNoiseId = scene.pkg.cloth?.windNoiseTexture ?? null;
 		const windNoise =

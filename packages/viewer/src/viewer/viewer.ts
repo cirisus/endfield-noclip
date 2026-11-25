@@ -270,7 +270,8 @@ export class Viewer {
 		this.scene?.textures.destroy();
 		renderer.meshes.releaseMaterials();
 		// the destroyed store's sky and weather textures
-		renderer.post.clearSkyTextures();
+		renderer.composer.clearTextures();
+		renderer.post.clearTextures();
 		renderer.weather.clearTextures();
 		renderer.bindings.setReflection(null, 1);
 		renderer.bindings.set('shadowRamp', null);

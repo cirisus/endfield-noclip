@@ -3,6 +3,7 @@ import type { RainConfig, SnowConfig, WeatherAssets } from '@endfield-noclip/pac
 import { type CelestialLook, celestialTextures } from '../environment/celestial-look.ts';
 import type { Environment } from '../environment/environment.ts';
 import type { FrameBindings, FrameTextureSlot } from '../render/frame/frame-bindings.ts';
+import type { SceneComposer } from '../render/frame/scene-composer.ts';
 import type { PostProcess } from '../render/post/post-process.ts';
 import type { TextureStore } from '../render/textures/texture-store.ts';
 import type { WeatherRenderer } from '../render/weather/weather-renderer.ts';
@@ -52,7 +53,7 @@ export const updateSkyTextures = (
 		snow: SnowConfig | null;
 		weather: boolean;
 	},
-	targets: { post: PostProcess; bindings: FrameBindings; weather: WeatherRenderer },
+	targets: { composer: SceneComposer; post: PostProcess; bindings: FrameBindings; weather: WeatherRenderer },
 ): void => {
 	const { stream, textures } = source;
 	const { environment, rain, snow } = look;
@@ -64,16 +65,16 @@ export const updateSkyTextures = (
 	const flowNoise =
 		environment.heightFog.flowNoise === null || !look.flowNoise ? null : whole(source.flowNoise, '3d');
 	const celestialIds = celestialTextures(look.celestial);
-	targets.post.setSkyTextures({
+	targets.composer.setSkyTextures({
 		cloud: cloud?.binding ?? null,
 		flowNoise: flowNoise?.binding ?? null,
 		celestial: (slot) => whole(celestialIds[slot], '2d')?.binding ?? null,
-		lensFlare: (id) => whole(id, '2d'),
 	});
+	targets.post.setLensFlareTextures((id) => whole(id, '2d'));
 
 	const wetnessActive = rain !== null && rain.enableWetness && rain.wetness > 0;
 	const rainWetAssets = wetnessActive ? (source.weather?.rain ?? null) : null;
-	targets.post.setWetnessTextures({
+	targets.composer.setWetnessTextures({
 		noise:
 			rainWetAssets === null ? null : (whole(rainWetAssets.rainOcclusionSampleNoise, '3d')?.binding ?? null),
 		ripple: rainWetAssets === null ? null : (whole(rainWetAssets.rippleTexture, '2d')?.binding ?? null),

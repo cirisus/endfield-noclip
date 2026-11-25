@@ -1,6 +1,7 @@
 import type { RainConfig, RainPresetting } from '@endfield-noclip/package-format/environment';
 
 import { createUniformBuffer } from '../../gfx/buffers.ts';
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { placeholder } from '../../gfx/placeholders.ts';
 import { LINEAR_CLAMP, LINEAR_REPEAT, sampler } from '../../gfx/samplers.ts';
 import { FRAME_WGSL } from '../frame/frame-uniforms.ts';
@@ -15,13 +16,15 @@ import deferredLightingWgsl from './deferred-lighting.wgsl?raw';
 const RAIN_WETNESS_BYTES = 128;
 const RAIN_WETNESS_FLOATS = RAIN_WETNESS_BYTES / 4;
 
+const PIPELINE_KEY = 'deferred lighting';
+
 /**
  * deferred lighting pass (deferred-lighting.wgsl): unpacks the G-buffer and writes lit HDR radiance into
  * `scene.lit` with `loadOp: 'load'`, leaving the celestial pass's sky pixels intact
  */
 export class DeferredLighting {
 	#device: GPUDevice;
-	#pipeline: GPURenderPipeline;
+	#pipelines: PipelineCache;
 	#postGroup: GPUBindGroup;
 	#inputsLayout: GPUBindGroupLayout;
 	#wetnessLayout: GPUBindGroupLayout;
@@ -41,17 +44,20 @@ export class DeferredLighting {
 
 	/**
 	 * @param device the device
+	 * @param pipelines the pipeline cache
 	 * @param layouts group 0 (`frame`) and group 1 (`post` uniforms) layouts
 	 * @param postUniforms the post chain's `Post` uniforms buffer
 	 * @param verticalOcclusion the top-down vertical occlusion depth map for rain sheltering
 	 */
 	constructor(
 		device: GPUDevice,
+		pipelines: PipelineCache,
 		layouts: { frame: GPUBindGroupLayout; postUniforms: GPUBindGroupLayout },
 		postUniforms: GPUBuffer,
 		verticalOcclusion: VerticalOcclusionMap,
 	) {
 		this.#device = device;
+		this.#pipelines = pipelines;
 		this.#verticalOcclusion = verticalOcclusion;
 		this.#sampler = sampler(device, LINEAR_CLAMP);
 		this.#repeatSampler = sampler(device, LINEAR_REPEAT);
@@ -92,11 +98,11 @@ export class DeferredLighting {
 				{ binding: 6, visibility: frag, sampler: { type: 'filtering' } },
 			],
 		});
-		const module = device.createShaderModule({
-			label: 'deferred lighting',
-			code: [FRAME_WGSL, postCommonSource(1, 0), deferredLightingWgsl].join('\n'),
-		});
-		this.#pipeline = device.createRenderPipeline({
+		const module = pipelines.module(
+			'deferred lighting',
+			[FRAME_WGSL, postCommonSource(1, 0), deferredLightingWgsl].join('\n'),
+		);
+		void pipelines.prepare(PIPELINE_KEY, () => ({
 			label: 'deferred lighting',
 			layout: device.createPipelineLayout({
 				label: 'deferred lighting',
@@ -105,7 +111,7 @@ export class DeferredLighting {
 			vertex: { module, entryPoint: 'vs_fullscreen' },
 			fragment: { module, entryPoint: 'fs_deferred_lighting', targets: [{ format: HDR_FORMAT }] },
 			primitive: { topology: 'triangle-list' },
-		});
+		}));
 		this.#postGroup = device.createBindGroup({
 			label: 'deferred lighting post',
 			layout: layouts.postUniforms,
@@ -260,11 +266,15 @@ export class DeferredLighting {
 		if (sized === null) {
 			throw new Error('deferred lighting used before resize()');
 		}
+		const pipeline = this.#pipelines.get(PIPELINE_KEY);
+		if (pipeline === undefined) {
+			return;
+		}
 		const pass = encoder.beginRenderPass({
 			label: 'deferred lighting',
 			colorAttachments: [{ view: sized.target, loadOp: 'load', storeOp: 'store' }],
 		});
-		pass.setPipeline(this.#pipeline);
+		pass.setPipeline(pipeline);
 		pass.setBindGroup(0, frameGroup.group, [frameGroup.offset]);
 		pass.setBindGroup(1, this.#postGroup);
 		pass.setBindGroup(2, sized.inputs);

@@ -1,6 +1,7 @@
 import { type LightEntry, LightKind } from '@endfield-noclip/package-format/lights';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { dot } from '../../math/vec3.ts';
 import type { Camera, Plane } from '../../scene/camera.ts';
 import { wgslConst } from '../shaders/wgsl-const.ts';
@@ -80,10 +81,13 @@ export class LocalLights {
 	 */
 	readonly #view = new Float64Array(9).fill(Number.NaN);
 
-	/** @param device the device */
-	constructor(device: GPUDevice) {
+	/**
+	 * @param device the device
+	 * @param pipelines the pipeline cache
+	 */
+	constructor(device: GPUDevice, pipelines: PipelineCache) {
 		this.#device = device;
-		this.shadows = new LightShadows(device);
+		this.shadows = new LightShadows(device, pipelines);
 		this.lightBuffer = device.createBuffer({
 			label: 'local lights',
 			size: this.#lightData.byteLength,

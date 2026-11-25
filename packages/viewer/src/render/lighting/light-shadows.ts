@@ -1,18 +1,25 @@
+import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
 import { SHADOW_FORMAT } from '../shadows/shadow-map.ts';
 
 import clearSource from './light-shadow-clear.wgsl?raw';
 import { ATLAS_SIZE, ShadowTiles } from './shadow-tiles.ts';
+
+const CLEAR_KEY = 'light shadow clear';
 
 /** the local lights' shadow atlas, with the tiles {@link ShadowTiles} hands out, and the pass that draws one */
 export class LightShadows extends ShadowTiles {
 	readonly texture: GPUTexture;
 	/** the atlas, sampled and drawn into */
 	readonly view: GPUTextureView;
-	readonly #clear: GPURenderPipeline;
+	readonly #pipelines: PipelineCache;
 
-	/** @param device the device */
-	constructor(device: GPUDevice) {
+	/**
+	 * @param device the device
+	 * @param pipelines the pipeline cache
+	 */
+	constructor(device: GPUDevice, pipelines: PipelineCache) {
 		super();
+		this.#pipelines = pipelines;
 		this.texture = device.createTexture({
 			label: 'local light shadows',
 			size: [ATLAS_SIZE, ATLAS_SIZE],
@@ -20,14 +27,14 @@ export class LightShadows extends ShadowTiles {
 			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 		});
 		this.view = this.texture.createView();
-		const module = device.createShaderModule({ label: 'light shadow clear', code: clearSource });
-		this.#clear = device.createRenderPipeline({
+		const module = pipelines.module('light shadow clear', clearSource);
+		void pipelines.prepare(CLEAR_KEY, () => ({
 			label: 'light shadow clear',
 			layout: 'auto',
 			vertex: { module, entryPoint: 'vs_clear' },
 			fragment: { module, entryPoint: 'fs_clear', targets: [] },
 			depthStencil: { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'always' },
-		});
+		}));
 	}
 
 	/** @returns bytes of the atlas */
@@ -49,7 +56,8 @@ export class LightShadows extends ShadowTiles {
 		draw: (pass: GPURenderPassEncoder) => number,
 	): number {
 		const request = this.request;
-		if (request === null) {
+		const clear = this.#pipelines.get(CLEAR_KEY);
+		if (request === null || clear === undefined) {
 			return 0;
 		}
 		const pass = encoder.beginRenderPass({
@@ -60,7 +68,7 @@ export class LightShadows extends ShadowTiles {
 		const { x, y, size } = request;
 		pass.setViewport(x, y, size, size, 0, 1);
 		pass.setScissorRect(x, y, size, size);
-		pass.setPipeline(this.#clear);
+		pass.setPipeline(clear);
 		pass.draw(3);
 		bind(pass);
 		const draws = draw(pass);
