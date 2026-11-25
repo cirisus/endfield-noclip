@@ -268,6 +268,7 @@ const buildFoliageBlock = (group: FoliageGroup, origin: Vec3, chainHashes: BigUi
 			center,
 			halfExtents,
 			rendererHalfSize: cluster.rendererHalfSize,
+			sparsity: cluster.sparsity,
 		});
 		firstInstance += count;
 	}

@@ -30,6 +30,8 @@ export interface FoliageCluster {
 	halfExtents: Vec3;
 	/** half-size of the foliage renderer for screen-size/sparsity culling */
 	rendererHalfSize: number;
+	/** optional grass density multiplier (`GrassRendererInfo.sparsity`); defaults to 1 when omitted */
+	sparsity?: number;
 }
 
 /**
@@ -345,7 +347,8 @@ const TAG_HEAD = fourcc('HEAD');
 const TAG_PLTT = fourcc('PLTT');
 const TAG_CLST = fourcc('CLST');
 const TAG_INST = fourcc('INST');
-const KNOWN_TAGS = new Set([TAG_HEAD, TAG_PLTT, TAG_CLST, TAG_INST]);
+const TAG_SPST = fourcc('SPST');
+const KNOWN_TAGS = new Set([TAG_HEAD, TAG_PLTT, TAG_CLST, TAG_INST, TAG_SPST]);
 
 const HEAD_SIZE = 20;
 const CLST_SIZE = 40;
@@ -390,6 +393,15 @@ export const encodeFoliageBlock = (block: FoliageBlock): Uint8Array => {
 		cv.setFloat32(at + 36, c.rendererHalfSize, true);
 	}
 
+	const hasSparsity = block.clusters.some((c) => c.sparsity !== undefined && c.sparsity !== 1);
+	const spst = hasSparsity ? new Uint8Array(block.clusters.length * 4) : null;
+	if (spst !== null) {
+		const sv = viewOf(spst);
+		for (const [i, c] of block.clusters.entries()) {
+			sv.setFloat32(i * 4, c.sparsity ?? 1, true);
+		}
+	}
+
 	const sections: ContainerSectionInput[] = [
 		{ tag: TAG_HEAD, required: true, data: head, count: 1, stride: HEAD_SIZE },
 		...(block.palette !== undefined && block.palette.length > 0
@@ -411,6 +423,9 @@ export const encodeFoliageBlock = (block: FoliageBlock): Uint8Array => {
 			count: instanceCount,
 			stride: FOLIAGE_INSTANCE_BYTES,
 		},
+		...(spst !== null
+			? [{ tag: TAG_SPST, required: false, data: spst, count: block.clusters.length, stride: 4 }]
+			: []),
 	];
 	return encodeContainer({ magic: MAGIC, majorVersion: MAJOR_VERSION, sections });
 };
@@ -474,6 +489,15 @@ export const decodeFoliageBlock = (
 		}
 	}
 
+	const spstSec = container.sections.get(TAG_SPST);
+	if (spstSec !== undefined) {
+		checkStride(spstSec, 4, 'SPST');
+		if (spstSec.count !== clusterCount) {
+			throw new PackageFormatError('foliage block SPST count disagrees with HEAD');
+		}
+	}
+	const sv = spstSec !== undefined ? viewOf(spstSec.data) : null;
+
 	const cv = viewOf(clstSec.data);
 	const clusters: FoliageCluster[] = [];
 	for (let i = 0; i < clstSec.count; i++) {
@@ -491,6 +515,7 @@ export const decodeFoliageBlock = (
 		if (firstInstance + count > instanceCount) {
 			throw new PackageFormatError(`foliage cluster ${i} runs past INST`);
 		}
+		const sparsity = sv !== null ? sv.getFloat32(i * 4, true) : undefined;
 		clusters.push({
 			chain,
 			firstInstance,
@@ -498,6 +523,7 @@ export const decodeFoliageBlock = (
 			center: [cv.getFloat32(at + 12, true), cv.getFloat32(at + 16, true), cv.getFloat32(at + 20, true)],
 			halfExtents: [cv.getFloat32(at + 24, true), cv.getFloat32(at + 28, true), cv.getFloat32(at + 32, true)],
 			rendererHalfSize: cv.getFloat32(at + 36, true),
+			...(sparsity !== undefined ? { sparsity } : {}),
 		});
 	}
 

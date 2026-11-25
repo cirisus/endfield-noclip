@@ -281,6 +281,7 @@ export class InstanceRenderer {
 			spins: decoded.spins,
 			floaters: decoded.floaters,
 			rides: decoded.rides,
+			foliageClusters: decoded.foliageClusters ?? null,
 		};
 	}
 

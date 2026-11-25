@@ -80,6 +80,8 @@ export interface MeshView {
 	viewportHeight: number;
 	/** cull instances smaller than this, px */
 	minPixels: number;
+	/** progressive grass foliage density multiplier in [0, 1]; defaults to 1 */
+	foliageDensity?: number;
 	/** mip levels coarser than needed to stream material textures at (0 for full detail; each halves their size) */
 	textureBias: number;
 	/** select draws of materials in the unsupported look; off skips them as if their chains lacked them */
@@ -404,31 +406,21 @@ export class MeshSelector {
 		});
 		const reachScale = pixelFactor / viewportHeight;
 		const filter = slotFilterKey(view);
+		const foliageDensity = view.foliageDensity ?? 1;
+		const sparsityU32 = new Uint32Array(1);
+		const sparsityF32 = new Float32Array(sparsityU32.buffer);
 
-		for (const { item, first, count, fade } of ranges) {
-			const instances = item.resident;
-			if (instances?.kind !== 'instances') {
-				continue;
-			}
-			this.#fade = fade;
-			const ox = (this.#ox = instances.origin[0] - eye[0]);
-			const oy = (this.#oy = instances.origin[1] - eye[1]);
-			const oz = (this.#oz = instances.origin[2] - eye[2]);
-			const block = this.#blockOf(instances);
-			if (block.filter !== filter) {
-				block.slots = block.allSlots.map((slots) => slots.filter((slot) => !slotHidden(slot, view)));
-				// effect distance bands, particles and the queues drawn in order stay on the CPU
-				block.gpuRuns = Uint8Array.from(block.slots, (slots, r) =>
-					slots.length > 0 && block.origins[r] === null && slots.every((slot) => slot.gpuCullable) ? 1 : 0,
-				);
-				block.runCasts = Uint8Array.from(block.slots, (slots) =>
-					slots.some((slot) => slot.castsShadows) ? 1 : 0,
-				);
-				block.filter = filter;
-			}
+		const selectSpan = (
+			instances: ResidentInstances,
+			block: SelectedBlock,
+			ox: number,
+			oy: number,
+			oz: number,
+			spanFirst: number,
+			spanEnd: number,
+		): void => {
 			const groups = block.groups;
-			const end = first + count;
-			for (let g = Math.floor(first / GROUP_ROWS); g * GROUP_ROWS < end; g++) {
+			for (let g = Math.floor(spanFirst / GROUP_ROWS); g * GROUP_ROWS < spanEnd; g++) {
 				// each of #selectRows' rejections, tested on the group's bounds: a group that fails one holds no row
 				// that passes it
 				const at = g * GROUP_FLOATS;
@@ -462,8 +454,8 @@ export class MeshSelector {
 				}
 				// every row of a group wholly in view is in view too
 				const inside = inView && sphereInsidePlanes(planes, planeFloats, gx, gy, gz, radius);
-				const rowFirst = Math.max(first, g * GROUP_ROWS);
-				const rowEnd = Math.min(end, (g + 1) * GROUP_ROWS);
+				const rowFirst = Math.max(spanFirst, g * GROUP_ROWS);
+				const rowEnd = Math.min(spanEnd, (g + 1) * GROUP_ROWS);
 				// a group holding moving rows has no bounds to pick its LODs by
 				if (view.gpuCulling && radius !== Infinity) {
 					const group = this.#group;
@@ -476,6 +468,53 @@ export class MeshSelector {
 				} else {
 					this.#selectRows(instances, rowFirst, rowEnd, { inside, block });
 				}
+			}
+		};
+
+		for (const { item, first, count, fade } of ranges) {
+			const instances = item.resident;
+			if (instances?.kind !== 'instances') {
+				continue;
+			}
+			const foliageClusters = instances.foliageClusters ?? null;
+			if (foliageClusters !== null && foliageDensity <= 0) {
+				continue;
+			}
+			this.#fade = fade;
+			const ox = (this.#ox = instances.origin[0] - eye[0]);
+			const oy = (this.#oy = instances.origin[1] - eye[1]);
+			const oz = (this.#oz = instances.origin[2] - eye[2]);
+			const block = this.#blockOf(instances);
+			if (block.filter !== filter) {
+				block.slots = block.allSlots.map((slots) => slots.filter((slot) => !slotHidden(slot, view)));
+				// effect distance bands, particles and the queues drawn in order stay on the CPU
+				block.gpuRuns = Uint8Array.from(block.slots, (slots, r) =>
+					slots.length > 0 && block.origins[r] === null && slots.every((slot) => slot.gpuCullable) ? 1 : 0,
+				);
+				block.runCasts = Uint8Array.from(block.slots, (slots) =>
+					slots.some((slot) => slot.castsShadows) ? 1 : 0,
+				);
+				block.filter = filter;
+			}
+			const end = first + count;
+			if (foliageClusters !== null && foliageDensity < 1) {
+				for (let c = 0; c < foliageClusters.length; c += 3) {
+					const cFirst = foliageClusters[c];
+					const cCount = foliageClusters[c + 1];
+					if (cFirst >= end || cFirst + cCount <= first) {
+						continue;
+					}
+					sparsityU32[0] = foliageClusters[c + 2];
+					const keepRatio = Math.min(1, Math.max(0.01, sparsityF32[0] * foliageDensity));
+					const keep = Math.min(cCount, Math.ceil(cCount * keepRatio));
+					const spanFirst = Math.max(first, cFirst);
+					const spanEnd = Math.min(end, cFirst + keep);
+					if (spanFirst < spanEnd) {
+						selectSpan(instances, block, ox, oy, oz, spanFirst, spanEnd);
+					}
+				}
+			} else {
+				selectSpan(instances, block, ox, oy, oz, first, end);
 			}
 		}
 

@@ -49,6 +49,8 @@ export interface ViewerOptions {
 	 * game's rings. 160 is the game's at its high scene detail on PC (256 at very high, 96 at its lowest)
 	 */
 	detailDistance: number;
+	/** progressive grass foliage density multiplier in [0, 1] (`0` hides grass clusters, `1` draws full density) */
+	foliageDensity: number;
 	/** terrain sample spacing target, px */
 	terrainPixels: number;
 	/** boxes smaller than this on screen are culled, px */
@@ -123,6 +125,7 @@ export const DEFAULT_OPTIONS: ViewerOptions = {
 	occlusionCulling: true,
 	mipFeedback: true,
 	detailDistance: 160,
+	foliageDensity: 1,
 	terrainPixels: 3,
 	minBoxPixels: 1.5,
 	outlineMetres: 60,

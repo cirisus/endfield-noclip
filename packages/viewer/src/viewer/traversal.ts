@@ -152,6 +152,7 @@ export class Traversal {
 				pixelFactor: view.pixelFactor,
 				viewportHeight: targets.outputHeight,
 				minPixels: options.minBoxPixels,
+				foliageDensity: options.foliageDensity,
 				textureBias: options.textureBias + this.textureReduction.levels,
 				unsupportedMaterials: options.unsupportedMaterials,
 				missingContent: options.missingContent,

@@ -270,6 +270,11 @@ export interface InstanceRows {
 	rides: RowRides | null;
 	/** the block's GPU-simulated cloth rows and their cloth table indices, or `null` when none */
 	cloths: RowCloths | null;
+	/**
+	 * for `.fol` grass blocks: packed `(firstRow, count, float32Bits(sparsity))` triples per cluster for
+	 * progressive density thinning; `null` for `.inst` blocks
+	 */
+	foliageClusters?: Uint32Array<ArrayBuffer> | null;
 }
 
 /** a block's GPU-simulated cloth rows */

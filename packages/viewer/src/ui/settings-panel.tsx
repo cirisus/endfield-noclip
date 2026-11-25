@@ -253,6 +253,15 @@ export const SettingsPanel = ({ viewer }: { viewer: Viewer }) => {
 			/>
 			<Slider
 				viewer={viewer}
+				name="foliageDensity"
+				label="foliage density"
+				min={0}
+				max={1}
+				step={0.05}
+				unit="×"
+			/>
+			<Slider
+				viewer={viewer}
 				name="terrainPixels"
 				label="terrain error"
 				min={0.5}

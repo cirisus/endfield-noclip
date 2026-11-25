@@ -34,6 +34,8 @@ export interface CollectedFoliageCluster {
 	chain: number;
 	bounds: Aabb;
 	rendererHalfSize: number;
+	/** grass density multiplier (`GrassRendererInfo.sparsity`) */
+	sparsity: number;
 	/** packed column-major 4×4 matrices, 16 floats per instance */
 	instances: Float32Array;
 }

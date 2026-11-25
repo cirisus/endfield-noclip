@@ -464,6 +464,9 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 			if (built.cloths !== null) {
 				transfer.push(built.cloths.rows.buffer, built.cloths.values.buffer);
 			}
+			if (built.foliageClusters != null) {
+				transfer.push(built.foliageClusters.buffer);
+			}
 			if (built.rides !== null) {
 				transfer.push(
 					built.rides.rows.buffer,

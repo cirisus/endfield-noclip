@@ -72,6 +72,8 @@ export interface ResidentInstances {
 	floaters: RowFloaters | null;
 	/** the rows riding paths, which move {@link rowsF32} in place by the clock; `null` when none does */
 	rides: RowRides | null;
+	/** packed `(firstRow, count, float32Bits(sparsity))` triples for `.fol` grass blocks, or `null` */
+	foliageClusters?: Uint32Array<ArrayBuffer> | null;
 }
 
 /** GPU residency of a geometry */

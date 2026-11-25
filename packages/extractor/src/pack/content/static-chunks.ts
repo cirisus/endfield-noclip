@@ -90,6 +90,7 @@ type CachedPlacement =
 			chain: number;
 			bounds: Aabb;
 			rendererHalfSize: number;
+			sparsity: number;
 			instances: Float32Array;
 			visibility: Visibility | null;
 			stateGated: boolean;
@@ -150,6 +151,7 @@ interface StaticRows {
 		chain: number;
 		bounds: Aabb;
 		rendererHalfSize: number;
+		sparsity: number;
 		entityId: number;
 		instances: Float32Array;
 	}[];
@@ -269,6 +271,7 @@ const replayStaticChunks = (content: PackContent, memo: StaticChunksMemo): Stati
 							chain: item.chain,
 							bounds: item.bounds,
 							rendererHalfSize: item.rendererHalfSize,
+							sparsity: item.sparsity,
 							instances: item.instances,
 						},
 						visibility: item.visibility,
@@ -477,6 +480,7 @@ export const collectStaticChunks = async (
 							chain: cluster.chain,
 							bounds: cluster.bounds,
 							rendererHalfSize: cluster.rendererHalfSize,
+							sparsity: cluster.sparsity,
 							instances: cluster.instances,
 						},
 						visibility,
@@ -499,6 +503,7 @@ export const collectStaticChunks = async (
 						chain: cluster.chain,
 						bounds: cluster.bounds,
 						rendererHalfSize: cluster.rendererHalfSize,
+						sparsity: cluster.sparsity,
 						instances: cluster.instances,
 						visibility,
 						stateGated,
@@ -703,11 +708,18 @@ export const collectStaticChunks = async (
 						}
 					}
 					if ((isGrass || record) && cluster.instanceCount > 0) {
+						let sparsity = 0;
+						for (const draw of cluster.renderer.draws) {
+							if (draw.sparsity !== undefined && draw.sparsity > sparsity) {
+								sparsity = draw.sparsity;
+							}
+						}
 						foliageClusters.push({
 							grass: isGrass,
 							chain,
 							bounds: cluster.bounds,
 							rendererHalfSize: cluster.rendererHalfSize,
+							sparsity: sparsity > 0 ? sparsity : 1,
 							entityId: foliage.id,
 							instances: cluster.instances.subarray(0, cluster.instanceCount * 16),
 						});

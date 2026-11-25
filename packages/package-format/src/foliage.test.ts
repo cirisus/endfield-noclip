@@ -30,6 +30,7 @@ describe('FoliageBlock (EFFL)', () => {
 					center: [1, 2, 3],
 					halfExtents: [8, 4, 8],
 					rendererHalfSize: 0.75,
+					sparsity: 1.5,
 				},
 				{
 					chain: 1,
@@ -38,6 +39,7 @@ describe('FoliageBlock (EFFL)', () => {
 					center: [-4, 1, 5],
 					halfExtents: [2, 2, 2],
 					rendererHalfSize: 0.5,
+					sparsity: 0.5,
 				},
 			],
 			instances,
