@@ -74,7 +74,7 @@ fn vs_splash(in: SplashIn) -> SplashOut {
 		out.position = vec4f(0.0, 0.0, 2.0, 1.0);
 		return out;
 	}
-	let raw_depth = textureSampleLevel(vertical_occlusion, vertical_occlusion_raw, occ_uv, 0.0);
+	let raw_depth = textureSampleLevel(vertical_occlusion, vertical_occlusion_raw, occ_uv, 0);
 	if (raw_depth >= 0.9999) {
 		out.position = vec4f(0.0, 0.0, 2.0, 1.0);
 		return out;

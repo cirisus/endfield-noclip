@@ -83,7 +83,7 @@ fn vs_snow(in: SnowIn) -> SnowOut {
 	);
 	var surface_rel_y = flake_rel.y - 100.0;
 	if (weather.occ_metrics.w > 0.5 && all(occ_uv > vec2f(0.0)) && all(occ_uv < vec2f(1.0))) {
-		let raw_depth = textureSampleLevel(vertical_occlusion, vertical_occlusion_raw, occ_uv, 0.0);
+		let raw_depth = textureSampleLevel(vertical_occlusion, vertical_occlusion_raw, occ_uv, 0);
 		if (raw_depth < 0.9999) {
 			surface_rel_y = weather.occ_origin.y - raw_depth * weather.occ_metrics.y;
 		}

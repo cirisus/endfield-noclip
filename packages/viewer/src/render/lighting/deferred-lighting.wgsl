@@ -43,7 +43,7 @@ struct RainWetness {
 
 // high-quality rain wetness matching HGRP/DeferredLighting: top-down vertical occlusion with 3D jitter,
 // biplanar vertical runoff on steep walls, and standing-water ripples + wind waves on flat surfaces
-fn apply_rain_wetness(s_in: Surface, rel: vec3f, surface_porosity: f32) -> Surface {
+fn apply_rain_wetness(s_in: Surface, rel: vec3f, geo_n: vec3f, surface_porosity: f32) -> Surface {
 	let p0 = frame.wetness[0];
 	if (p0.x <= 0.0) {
 		return s_in;
@@ -87,7 +87,6 @@ fn apply_rain_wetness(s_in: Surface, rel: vec3f, surface_porosity: f32) -> Surfa
 	let coverage = mix(near_cov, p1.y, smoothstep(p0.w, max(p1.x * p0.w, p0.w + 1e-4), d));
 
 	// geometric flatness from screen-space position derivatives (for flooded normal-map dips and wall runoff)
-	let geo_n = cross(dpdxFine(rel), dpdyFine(rel));
 	let geo_up = saturate((geo_n * inverseSqrt(max(1e-38, dot(geo_n, geo_n)))).y);
 	let slope_a = rain_wet.flow_params.z * 0.3;
 	let slope_b = slope_a + 0.686;
@@ -145,13 +144,17 @@ fn apply_rain_wetness(s_in: Surface, rel: vec3f, surface_porosity: f32) -> Surfa
 		let flow_amt =
 			mix(0.1, streak * 0.7 + 0.3, step(pow(saturate(1.0 - streak), 5.0), f_z)) *
 			f_z * rain_wet.flow_params.y * 0.33 * (p0.x * open * step(0.045, surface_porosity) * dist_fade);
-		let fn_z = max(0.00048828125, sqrt(1.0 - saturate(dot(f_xy, f_xy))));
-		let fn_xy = f_xy * (smoothstep(0.0, 0.1, flow_amt) * rain_wet.flow_params.y);
-		let fn_z_blend = mix(mix(0.0, -0.2, smoothstep(1.5, 3.0, rain_wet.flow_params.y)), fn_z, flow_amt);
-		let fn_ts = normalize(vec3f(fn_xy, fn_z_blend));
-		let fn_ws = t_vec * fn_ts.x + b_vec * fn_ts.y + n * fn_ts.z;
-		flow_normal = normalize(mix(n, fn_ws, flow_amt));
-		flow_wet = flow_amt * rain_wet.flow_params.y * 0.33;
+		if (flow_amt > 0.0005) {
+			let fn_z = max(0.00048828125, sqrt(1.0 - saturate(dot(f_xy, f_xy))));
+			let fn_xy = f_xy * (smoothstep(0.0, 0.1, flow_amt) * rain_wet.flow_params.y);
+			let fn_z_blend = mix(mix(0.0, -0.2, smoothstep(1.5, 3.0, rain_wet.flow_params.y)), fn_z, flow_amt);
+			let fn_raw = vec3f(fn_xy, fn_z_blend);
+			let fn_ts = fn_raw * inverseSqrt(max(1e-20, dot(fn_raw, fn_raw)));
+			let fn_ws = t_vec * fn_ts.x + b_vec * fn_ts.y + n * fn_ts.z;
+			let mixed_n = mix(n, fn_ws, saturate(flow_amt));
+			flow_normal = mixed_n * inverseSqrt(max(1e-20, dot(mixed_n, mixed_n)));
+			flow_wet = flow_amt * rain_wet.flow_params.y * 0.33;
+		}
 	}
 
 	// standing water: 4×4 raindrop ripple flipbook + orthogonal wind waves on flat surfaces
@@ -231,6 +234,10 @@ fn multi_bounce_rgb(ao: f32, albedo: vec3f) -> vec3f {
 fn fs_deferred_lighting(in: FullscreenOut) -> @location(0) vec4f {
 	let px = vec2i(in.position.xy);
 	let depth = textureLoad(gb_depth, px, 0);
+	let ray = view_ray(in.uv);
+	let rel = ray * view_depth(max(depth, 1e-6));
+	// derivatives must be evaluated in uniform control flow, before the sky discard / unlit early return
+	let geo_n = cross(dpdxFine(rel), dpdyFine(rel));
 	if (depth <= 0.0) {
 		// keep the celestial pass's sky pixels untouched
 		discard;
@@ -244,11 +251,9 @@ fn fs_deferred_lighting(in: FullscreenOut) -> @location(0) vec4f {
 		return vec4f(em.rgb, 1.0);
 	}
 
-	let ray = view_ray(in.uv);
-	let rel = ray * view_depth(depth);
 	var s = unpacked.surface;
 	// rain wetness and wetness decals apply once per pixel before lighting, matching HGRP/DeferredLighting
-	s = apply_rain_wetness(s, rel, unpacked.porosity);
+	s = apply_rain_wetness(s, rel, geo_n, unpacked.porosity);
 	let w = textureLoad(wetness_texture, px, 0).r;
 	if (w > 0.0) {
 		let porosity = unpacked.porosity;
