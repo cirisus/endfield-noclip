@@ -173,11 +173,13 @@ export const loadCabins = async (
 			});
 		}
 	}
-	const fieldLevels = cabins.some((cabin) => cabin.boxes.size > 0)
-		? await readPlantingFieldLevels(vfs)
-		: new Map<number, number>();
+	const hasBoxes = cabins.some((cabin) => cabin.boxes.size > 0);
+	const fieldLevels = hasBoxes ? await readPlantingFieldLevels(vfs) : new Map<number, number>();
 	// oxlint-disable-next-line unicorn/no-array-sort -- sorts a fresh copy
 	const levels = [...new Set(fieldLevels.values())].sort(compareNumbers);
+	if (hasBoxes && levels.length === 0) {
+		throw new FormatError('planting field levels table is empty');
+	}
 	const area = (cabin: Cabin) => (cabin.max[0] - cabin.min[0]) * (cabin.max[1] - cabin.min[1]);
 	cabins.sort((a, b) => area(b) - area(a));
 	if (cabins.length === 0) {
@@ -221,7 +223,7 @@ export const loadCabins = async (
 					position: slot.position,
 					values: levels.map((value) => ({ value, label: `Level ${value}` })),
 					default: levels[0],
-					assumption: 'level 1, before the player upgrades it',
+					assumption: `level ${levels[0]}, before the player upgrades it`,
 				}),
 			);
 		}

@@ -10,7 +10,10 @@ import { VAT_KEYWORDS, vatKeyword, vatOf } from './vat-animation.ts';
 /** keywords every surface reads: the alpha test and both emission sources */
 const SURFACE_KEYWORDS = ['_ALPHATEST_ON', '_EMISSIVE_MAP', '_EMISSIVE_MASK'];
 
-/** Lit's own layers, which `HGRP/LitEffect` shares */
+/**
+ * Lit's own layers, which `HGRP/LitEffect` shares. `_EMISSIVE_ANIM_SWEEP` is intentionally omitted so
+ * `surfaceGaps` flags the undrawn sweep band even though `describeLit` reads its steady emission share
+ */
 const LIT_KEYWORDS = [
 	...SURFACE_KEYWORDS,
 	'_TWO_BASEMAP',

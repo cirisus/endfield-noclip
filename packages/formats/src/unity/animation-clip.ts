@@ -546,6 +546,9 @@ const readAclMotion = (clip: TypeTreeObject, acl: TypeTreeObject): ClipMotion =>
 	const paths: number[] = [];
 	const bindings: { path: number; attribute: number; track: number; constant: number[] | null }[] = [];
 	for (const [index, binding] of genericBindings(clip).entries()) {
+		if (numberField(binding, 'isPPtrCurve') !== 0) {
+			continue;
+		}
 		const transform = numberField(binding, 'typeID') === UnityClass.Transform;
 		const attribute = numberField(binding, 'attribute');
 		let constant: number[] | null = null;
@@ -688,6 +691,9 @@ export const readClipActivity = (clip: TypeTreeObject): Map<number, boolean> => 
 		} else {
 			at++;
 		}
+	}
+	if (at !== deltas.length) {
+		throw new FormatError(`AnimationClip has ${deltas.length} values for ${at} bound`);
 	}
 	return activity;
 };
