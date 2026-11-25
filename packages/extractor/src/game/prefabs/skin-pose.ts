@@ -5,13 +5,22 @@ import {
 	transformBounds,
 } from '@endfield-noclip/formats/unity/transform';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
-import { arrayField, asPPtr, isObject, numberField, type Aabb } from '@endfield-noclip/formats/unity/values';
+import {
+	arrayField,
+	asPPtr,
+	isObject,
+	numberField,
+	objectField,
+	vector3Field,
+	vector4Field,
+	type Aabb,
+} from '@endfield-noclip/formats/unity/values';
 import type { ParticleEmitterMotion } from '@endfield-noclip/package-format/particles';
 
 import { objectKey, type AssetResolver, type ObjectRef } from '../assets/assets.ts';
 import type { LocalTransform } from '../effects/particle-mesh.ts';
 
-import { type ClipPaths, posedLocal } from './pose-paths.ts';
+import { type ClipBinding, type ClipPaths, posedLocal } from './pose-paths.ts';
 import type { PrefabPose, SkinMotion } from './prefab.ts';
 
 // a prefab's skinned renderers in their authored pose, and its Transforms posed again at each frame of a
@@ -28,8 +37,8 @@ export interface PosedNode {
 	parent: string | null;
 	/** the local transform as saved */
 	saved: LocalTransform;
-	/** the GameObject's {@link ClipPaths} */
-	below: ClipPaths;
+	/** the Transform's clip bindings ({@link ClipBinding}) */
+	below: readonly ClipBinding[];
 }
 
 /** a skinned renderer posed by {@link poseSkin} */
@@ -55,6 +64,83 @@ const boxBounds = (min: readonly number[], max: readonly number[]): Aabb => ({
 });
 
 /**
+ * expands an optimized Animator's Avatar skeleton (`m_HasTransformHierarchy == false`) into virtual bone
+ * transforms and {@link PosedNode}s under the Animator's Transform, so skinned meshes with empty `m_Bones`
+ * can pose and animate through the same path as Transform-hierarchy skeletons
+ *
+ * @param avatar the Avatar object's fields
+ * @param animator the Animator GameObject's Transform key and its {@link ClipPaths}
+ * @param pose the prefab pose, `null` for the saved rest pose
+ * @param transforms prefab-space Transform matrices, updated with each virtual bone
+ * @param nodes walk nodes, appended with each virtual bone in parent-before-child order
+ * @returns by bone CRC32 hash (`m_ID`), the virtual bone's key in `transforms`, or `null` if the Avatar lacks
+ *   a usable skeleton
+ */
+export const placeAvatarBones = (
+	avatar: TypeTreeObject,
+	animator: { transformKey: string; paths: ClipPaths },
+	pose: PrefabPose | null,
+	transforms: Map<string, Float32Array>,
+	nodes: PosedNode[],
+): Map<number, string> | null => {
+	const rootMatrix = transforms.get(animator.transformKey);
+	const constant = avatar.m_Avatar;
+	if (rootMatrix === undefined || !isObject(constant)) {
+		return null;
+	}
+	const skeleton = objectField(objectField(constant, 'm_AvatarSkeleton'), 'data');
+	const skeletonNodes = arrayField(skeleton, 'm_Node');
+	const ids = arrayField(skeleton, 'm_ID');
+	const defaultX = arrayField(objectField(objectField(constant, 'm_DefaultPose'), 'data'), 'm_X');
+	const bindX = arrayField(objectField(objectField(constant, 'm_AvatarSkeletonPose'), 'data'), 'm_X');
+	const poseX = defaultX.length === skeletonNodes.length ? defaultX : bindX;
+	if (
+		skeletonNodes.length === 0 ||
+		ids.length !== skeletonNodes.length ||
+		poseX.length !== skeletonNodes.length
+	) {
+		return null;
+	}
+	const clipTransforms = (pose?.clips ?? []).map((clip) => clip.transforms);
+	const byHash = new Map<number, string>();
+	for (let i = 0; i < skeletonNodes.length; i++) {
+		const entry = skeletonNodes[i];
+		const id = ids[i];
+		const x = poseX[i];
+		if (!isObject(entry) || typeof id !== 'number' || !isObject(x)) {
+			return null;
+		}
+		const parentId = numberField(entry, 'm_ParentId');
+		if (parentId >= i) {
+			return null;
+		}
+		const key = `${animator.transformKey}#avatar:${i}`;
+		const parentKey = parentId < 0 ? animator.transformKey : `${animator.transformKey}#avatar:${parentId}`;
+		const parentMatrix = transforms.get(parentKey);
+		if (parentMatrix === undefined) {
+			return null;
+		}
+		const saved: LocalTransform = {
+			position: vector3Field(x, 't'),
+			rotation: vector4Field(x, 'q'),
+			scale: vector3Field(x, 's'),
+		};
+		// clips bound to this Animator have path '' on it; skip id 0 on the skeleton root, which is the Animator itself
+		const below: ClipBinding[] = animator.paths.map((path) =>
+			path === '' && (parentId >= 0 || id !== 0) ? id : null,
+		);
+		nodes.push({ key, parent: parentKey, saved, below });
+		const local = posedLocal(saved, clipTransforms, below);
+		transforms.set(
+			key,
+			multiplyMatrices(parentMatrix, trsMatrix(local.position, local.rotation, local.scale)),
+		);
+		byHash.set(id >>> 0, key);
+	}
+	return byHash;
+};
+
+/**
  * bakes a skinned renderer's authored pose: each bone's prefab-space matrix times its bind pose
  *
  * @param resolver bundle reader
@@ -62,30 +148,56 @@ const boxBounds = (min: readonly number[], max: readonly number[]): Aabb => ({
  * @param mesh its mesh's fields
  * @param meshBounds the mesh's own bounds
  * @param transforms every Transform's prefab-space matrix, by key
+ * @param avatarBones bone keys by CRC32 hash from an enclosing optimized Animator's Avatar, or `null`
  * @returns the bone matrices, the bounds every weighted position lies in, and per bone its Transform's key
  *   and bind pose; or why the skeleton can't be posed
  */
 export const poseSkin = async (
-	resolver: AssetResolver,
+	resolver: Pick<AssetResolver, 'resolve'>,
 	renderer: { ref: ObjectRef; data: TypeTreeObject },
 	mesh: TypeTreeObject,
 	meshBounds: Aabb,
 	transforms: ReadonlyMap<string, Float32Array>,
+	avatarBones: ReadonlyMap<number, string> | null,
 ): Promise<PosedSkin | { reason: string }> => {
 	const bones = arrayField(renderer.data, 'm_Bones');
 	const bindPoses = arrayField(mesh, 'm_BindPose');
-	if (bones.length !== bindPoses.length || bones.length === 0) {
+	if (bindPoses.length === 0) {
 		return { reason: 'invalid skeleton' };
 	}
-	const skin: Float32Array[] = [];
 	const boneKeys: string[] = [];
+	if (bones.length > 0) {
+		if (bones.length !== bindPoses.length) {
+			return { reason: 'invalid skeleton' };
+		}
+		for (const pointer of bones) {
+			// oxlint-disable-next-line no-await-in-loop -- bones are few and their reads cached
+			const bone = await resolver.resolve(renderer.ref, asPPtr(pointer));
+			if (bone === null) {
+				return { reason: 'unresolved bone' };
+			}
+			boneKeys.push(objectKey(bone));
+		}
+	} else {
+		// optimized Game Objects (`m_HasTransformHierarchy == false`): bones live in the Avatar and match m_BoneNameHashes
+		const hashes = arrayField(mesh, 'm_BoneNameHashes');
+		if (avatarBones === null || hashes.length !== bindPoses.length) {
+			return { reason: 'invalid skeleton' };
+		}
+		for (const hash of hashes) {
+			const boneKey = typeof hash === 'number' ? avatarBones.get(hash >>> 0) : undefined;
+			if (boneKey === undefined) {
+				return { reason: 'unresolved bone' };
+			}
+			boneKeys.push(boneKey);
+		}
+	}
+	const skin: Float32Array[] = [];
 	const binds: Float32Array[] = [];
 	const min = [Infinity, Infinity, Infinity];
 	const max = [-Infinity, -Infinity, -Infinity];
-	for (const [i, pointer] of bones.entries()) {
-		// oxlint-disable-next-line no-await-in-loop -- bones are few and their reads cached
-		const bone = await resolver.resolve(renderer.ref, asPPtr(pointer));
-		const boneMatrix = bone && transforms.get(objectKey(bone));
+	for (const [i, boneKey] of boneKeys.entries()) {
+		const boneMatrix = transforms.get(boneKey);
 		const bind = bindPoses[i];
 		if (!boneMatrix || !isObject(bind)) {
 			return { reason: 'unresolved bone' };
@@ -95,7 +207,6 @@ export const poseSkin = async (
 		);
 		const posed = multiplyMatrices(boneMatrix, bindMatrix);
 		skin.push(posed);
-		boneKeys.push(objectKey(bone));
 		binds.push(bindMatrix);
 		const transformed = transformBounds(meshBounds, posed);
 		for (let axis = 0; axis < 3; axis++) {

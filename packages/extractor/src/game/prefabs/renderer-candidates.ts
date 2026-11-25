@@ -65,13 +65,14 @@ const candidateOf = (
 	state: RendererNode,
 	fields: Omit<
 		RendererCandidate,
-		'name' | 'posedMaterials' | 'playedMaterials' | 'distances' | 'proxyLevels'
+		'name' | 'posedMaterials' | 'playedMaterials' | 'avatarBones' | 'distances' | 'proxyLevels'
 	>,
 ): RendererCandidate => ({
 	...fields,
 	name: node.name,
 	posedMaterials: state.posedMaterials,
 	playedMaterials: state.playedMaterials,
+	avatarBones: state.avatarBones,
 	distances: state.distances,
 	proxyLevels: state.proxyLevels,
 });
@@ -462,6 +463,7 @@ const collectSplineMovers: NodeStep = async (walk, node, state) => {
 				decal: null,
 				posedMaterials: [],
 				playedMaterials: [],
+				avatarBones: null,
 				distances: state.distances,
 				proxyLevels: state.proxyLevels,
 			});

@@ -13,6 +13,12 @@ import type { PoseClip } from './prefab.ts';
 export type ClipPaths = readonly (string | null)[];
 
 /**
+ * per pose clip, how a Transform is keyed in that clip: its `/`-joined path below the Animator, a pre-hashed
+ * CRC32 binding key (for Avatar skeleton bones without GameObjects), or `null` outside the Animator
+ */
+export type ClipBinding = string | number | null;
+
+/**
  * @param clips the pose's clips
  * @param above the parent's paths; empty on the root
  * @param node the GameObject
@@ -43,12 +49,13 @@ export const bindingKey = (path: string): number => crc32(path) >>> 0;
 export const posedLocal = (
 	local: LocalTransform,
 	transforms: readonly ReadonlyMap<number, readonly ClipTransformValue[]>[],
-	paths: ClipPaths,
+	paths: readonly ClipBinding[],
 ): LocalTransform => {
 	const posed = { ...local };
 	for (const [i, values] of transforms.entries()) {
 		const path = paths[i] ?? null;
-		for (const value of path === null ? [] : (values.get(bindingKey(path)) ?? [])) {
+		const key = typeof path === 'number' ? path : path === null ? null : bindingKey(path);
+		for (const value of key === null ? [] : (values.get(key) ?? [])) {
 			switch (value.kind) {
 				case 'position': {
 					posed.position = value.value;

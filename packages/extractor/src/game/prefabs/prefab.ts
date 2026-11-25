@@ -335,7 +335,14 @@ const assembleRenderer = async (
 	} else if (candidate.ref.info.classId === UnityClass.SkinnedMeshRenderer) {
 		// a skinned mesh the reader can't pose stands in unposed, at its renderer, rather than failing the prefab
 		const meshBounds = bounds;
-		const posed = await poseSkin(resolver, candidate, mesh, meshBounds, walk.transforms);
+		const posed = await poseSkin(
+			resolver,
+			candidate,
+			mesh,
+			meshBounds,
+			walk.transforms,
+			candidate.avatarBones,
+		);
 		if ('reason' in posed) {
 			unsupported = posed.reason;
 		} else {

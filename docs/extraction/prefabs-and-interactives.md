@@ -18,7 +18,10 @@ Transforms. cross-node passes (followers, force fields) settle after the full hi
   span). distance bands override LODGroup thresholds when both exist.
 - **skinned renderers**: bounds are the union of mesh bounds across all bones. renderers bake to
   their authored pose ([skin pose](../extraction.md#asset-classes)) unless a
-  [looping clip](#looping-clips) animates their bones.
+  [looping clip](#looping-clips) animates their bones. optimized skeletons
+  (`Animator.m_HasTransformHierarchy == false`, empty `m_Bones`) expand from the enclosing
+  Animator's `Avatar` skeleton (`m_AvatarSkeleton` + `m_DefaultPose` / `m_AvatarSkeletonPose`) and
+  match `Mesh.m_BoneNameHashes`, so static poses and looping clips run through the same path.
 - **decal projectors**: draw the shared decal cube inside the GameObject's box; they skip clip,
   skin, and billboard paths and stay at their saved placement.
 - **locked looks**: a root `UnlockEffectConfigMono` that swaps models draws its locked model for

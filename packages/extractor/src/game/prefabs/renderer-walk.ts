@@ -43,7 +43,7 @@ import { bindingKey, type ClipPaths, clipPaths, posedLocal } from './pose-paths.
 import type { PlacedPrefabNode, PrefabComponent, PrefabNode, PrefabVisitor } from './prefab-walk.ts';
 import type { DistanceBands, EffectLodSource, PrefabPose, SizeRange } from './prefab.ts';
 import { CANDIDATE_SOURCES } from './renderer-candidates.ts';
-import type { PosedNode } from './skin-pose.ts';
+import { placeAvatarBones, type PosedNode } from './skin-pose.ts';
 
 // the walk behind `readPrefabRenderers`. at each GameObject, in order: whether it's switched off
 // ({@link switchedOff}), its components ({@link COMPONENT_READERS}), its local transform, then once placed
@@ -72,6 +72,8 @@ export interface RendererCandidate {
 	posedMaterials: readonly ClipMaterialValue[];
 	/** the pose's looping clips that keep changing the renderer's material values */
 	playedMaterials: readonly PlayedMaterials[];
+	/** virtual bone keys by CRC32 hash from an enclosing optimized Animator's Avatar, or `null` */
+	avatarBones: ReadonlyMap<number, string> | null;
 	distances: DistanceBands | null;
 	proxyLevels: number | null;
 }
@@ -251,6 +253,8 @@ export interface RendererScope {
 	paths: ClipPaths;
 	/** the Animators at or above it: what their clips never show, and its path below each */
 	scopes: readonly AnimatorScope[];
+	/** bone keys by CRC32 hash from the nearest optimized Animator's Avatar, `null` when none */
+	avatarBones: ReadonlyMap<number, string> | null;
 	/** the distances it shows at, `null` for any */
 	distances: DistanceBands | null;
 	/** the LOD proxy levels it shows at, as a mask; `null` for any */
@@ -285,6 +289,7 @@ export const ABOVE_ROOT: RendererScope = {
 	billboard: null,
 	paths: [],
 	scopes: [],
+	avatarBones: null,
 	distances: null,
 	proxyLevels: null,
 };
@@ -679,6 +684,7 @@ const enterNode = async (
 		billboard: parent.billboard,
 		paths,
 		scopes,
+		avatarBones: parent.avatarBones,
 		distances: parent.distances,
 		proxyLevels: parent.proxyLevels,
 		local: node.saved,
@@ -766,7 +772,32 @@ const placeBillboard: NodeStep = async (_, node, state) => {
 	}
 };
 
+/** an optimized Animator (`m_HasTransformHierarchy == false`): expands its Avatar skeleton into virtual bones */
+const placeAvatarSkeleton: NodeStep = async (walk, node, state) => {
+	for (const component of node.ofClass(UnityClass.Animator)) {
+		const data = await component.read();
+		if (data.m_HasTransformHierarchy !== false) {
+			continue;
+		}
+		const avatarRef = await walk.resolver.resolve(component.ref, pptrField(data, 'm_Avatar'));
+		if (avatarRef === null || avatarRef.info.classId !== UnityClass.Avatar) {
+			continue;
+		}
+		const bones = placeAvatarBones(
+			await walk.resolver.read(avatarRef),
+			{ transformKey: node.transformKey, paths: state.paths },
+			walk.pose,
+			walk.transforms,
+			walk.nodes,
+		);
+		if (bones !== null) {
+			state.avatarBones = bones;
+		}
+	}
+};
+
 const PLACEMENT_STEPS: readonly NodeStep[] = [
+	placeAvatarSkeleton,
 	recordFollower,
 	placeForceFields,
 	placeDistances,
