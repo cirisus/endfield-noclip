@@ -1,5 +1,6 @@
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import { LINEAR_CLAMP, sampler } from '../../gfx/samplers.ts';
 import { cross, dot, normalize } from '../../math/vec3.ts';
 import { type Camera, type Plane, sweepPlanes } from '../../scene/camera.ts';
 import type { CasterVolume } from '../../streaming/selection.ts';
@@ -158,19 +159,8 @@ export class ShadowMap {
 		this.views = Array.from({ length: SHADOW_LAYERS }, (_, i) =>
 			this.texture.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }),
 		);
-		this.sampler = device.createSampler({
-			label: 'shadow comparison',
-			compare: 'less-equal',
-			magFilter: 'linear',
-			minFilter: 'linear',
-			addressModeU: 'clamp-to-edge',
-			addressModeV: 'clamp-to-edge',
-		});
-		this.gatherSampler = device.createSampler({
-			label: 'shadow gather',
-			addressModeU: 'clamp-to-edge',
-			addressModeV: 'clamp-to-edge',
-		});
+		this.sampler = sampler(device, { ...LINEAR_CLAMP, compare: 'less-equal' });
+		this.gatherSampler = sampler(device, {});
 		this.layers = Array.from({ length: SHADOW_LAYERS }, () => ({
 			render: new Float32Array(16),
 			sample: new Float32Array(16),

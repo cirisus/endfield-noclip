@@ -42,6 +42,7 @@ export class AutoExposure {
 	#snap = true;
 	/** whether new histograms may move the target; see {@link update} */
 	#metering = true;
+	#destroyed = false;
 
 	/**
 	 * @param device the device
@@ -134,7 +135,7 @@ export class AutoExposure {
 	/** starts reading back the histogram {@link encode} recorded; call after submitting */
 	afterSubmit(): void {
 		const pending = this.#pending;
-		if (pending === null) {
+		if (pending === null || this.#destroyed) {
 			return;
 		}
 		this.#pending = null;
@@ -142,13 +143,24 @@ export class AutoExposure {
 		buffer
 			.mapAsync(GPUMapMode.READ)
 			.then(() => {
+				if (this.#destroyed) {
+					buffer.unmap();
+					buffer.destroy();
+					return;
+				}
 				const words = new Uint32Array(buffer.getMappedRange());
 				const bins = Array.from(words, (w) => w / WEIGHT_SCALE);
 				buffer.unmap();
 				this.#idle.push(buffer);
 				this.#metered = meteredExposure(bins, settings);
 			})
-			.catch(() => {});
+			.catch(() => {
+				if (this.#destroyed) {
+					buffer.destroy();
+				} else if (buffer.mapState === 'unmapped') {
+					this.#idle.push(buffer);
+				}
+			});
 	}
 
 	/**
@@ -187,11 +199,14 @@ export class AutoExposure {
 
 	/** frees the GPU resources */
 	destroy(): void {
+		this.#destroyed = true;
 		this.#uniforms.destroy();
 		this.#bins.destroy();
 		for (const buffer of this.#idle) {
 			buffer.destroy();
 		}
+		this.#idle.length = 0;
 		this.#pending?.buffer.destroy();
+		this.#pending = null;
 	}
 }

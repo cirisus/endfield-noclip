@@ -1,6 +1,6 @@
 const READBACK_BUFFERS = 4;
 /** passes timed per frame at most; later ones run untimed */
-const MAX_PASSES = 48;
+const MAX_PASSES = 64;
 /** weight of the newest frame in the smoothed times */
 const SMOOTHING = 0.1;
 /** resolved bytes per pass: begin and end timestamps */
@@ -12,7 +12,7 @@ interface Readback {
 	labels: string[];
 }
 
-/** times each pass of a frame; inert when `timestamp-query` isn't available */
+/** times each render and compute pass of a frame; inert when `timestamp-query` isn't available */
 export class GpuProfiler {
 	/**
 	 * smoothed GPU time from the first timed pass's start to the last one's end, ms, or `null` before the first
@@ -31,6 +31,7 @@ export class GpuProfiler {
 	#idle: GPUBuffer[] = [];
 	#labels: string[] = [];
 	#pending: Readback | null = null;
+	#destroyed = false;
 
 	/**
 	 * @param device the device
@@ -62,26 +63,35 @@ export class GpuProfiler {
 
 	/**
 	 * @param encoder the frame's encoder
-	 * @returns the encoder, timing each render pass begun through it while a readback buffer is free; call
-	 *   {@link resolve} on it after the last pass
+	 * @returns the encoder, timing each render and compute pass begun through it while a readback buffer is
+	 *   free; call {@link resolve} on it after the last pass
 	 */
 	instrument(encoder: GPUCommandEncoder): GPUCommandEncoder {
 		const querySet = this.#querySet;
 		this.#labels = [];
-		if (querySet === null || this.#idle.length === 0) {
+		if (this.#destroyed || querySet === null || this.#idle.length === 0) {
 			return encoder;
 		}
 		const labels = this.#labels;
-		const beginRenderPass = (descriptor: GPURenderPassDescriptor): GPURenderPassEncoder => {
+		const nextWrites = (label: string | undefined): GPURenderPassTimestampWrites | null => {
 			if (labels.length >= MAX_PASSES) {
-				return encoder.beginRenderPass(descriptor);
+				return null;
 			}
 			const index = labels.length * 2;
-			labels.push(descriptor.label ?? 'unlabelled');
-			return encoder.beginRenderPass({
-				...descriptor,
-				timestampWrites: { querySet, beginningOfPassWriteIndex: index, endOfPassWriteIndex: index + 1 },
-			});
+			labels.push(label ?? 'unlabelled');
+			return { querySet, beginningOfPassWriteIndex: index, endOfPassWriteIndex: index + 1 };
+		};
+		const beginRenderPass = (descriptor: GPURenderPassDescriptor): GPURenderPassEncoder => {
+			const timestampWrites = nextWrites(descriptor.label);
+			return timestampWrites === null
+				? encoder.beginRenderPass(descriptor)
+				: encoder.beginRenderPass({ ...descriptor, timestampWrites });
+		};
+		const beginComputePass = (descriptor?: GPUComputePassDescriptor): GPUComputePassEncoder => {
+			const timestampWrites = nextWrites(descriptor?.label);
+			return timestampWrites === null
+				? encoder.beginComputePass(descriptor)
+				: encoder.beginComputePass({ ...descriptor, timestampWrites });
 		};
 		// encoder methods must be called on the encoder itself; a frame looks them up dozens of times, so each
 		// is bound once
@@ -90,6 +100,9 @@ export class GpuProfiler {
 			get(target, property) {
 				if (property === 'beginRenderPass') {
 					return beginRenderPass;
+				}
+				if (property === 'beginComputePass') {
+					return beginComputePass;
 				}
 				const value: unknown = Reflect.get(target, property);
 				if (typeof value !== 'function') {
@@ -130,6 +143,11 @@ export class GpuProfiler {
 		buffer
 			.mapAsync(GPUMapMode.READ)
 			.then(() => {
+				if (this.#destroyed) {
+					buffer.unmap();
+					buffer.destroy();
+					return;
+				}
 				const times = new BigUint64Array(buffer.getMappedRange(), 0, labels.length * 2);
 				const frame = new Map<string, number>();
 				let first = times[0];
@@ -164,6 +182,25 @@ export class GpuProfiler {
 				const previous = this.milliseconds;
 				this.milliseconds = previous === null ? total : previous + (total - previous) * SMOOTHING;
 			})
-			.catch(() => {});
+			.catch(() => {
+				if (this.#destroyed) {
+					buffer.destroy();
+				} else if (buffer.mapState === 'unmapped') {
+					this.#idle.push(buffer);
+				}
+			});
+	}
+
+	/** frees the query set and readback buffers */
+	destroy(): void {
+		this.#destroyed = true;
+		this.#querySet?.destroy();
+		this.#resolve?.destroy();
+		for (const buffer of this.#idle) {
+			buffer.destroy();
+		}
+		this.#idle.length = 0;
+		this.#pending?.buffer.destroy();
+		this.#pending = null;
 	}
 }

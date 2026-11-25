@@ -700,6 +700,18 @@ export class WaterRenderer {
 		}
 	}
 
+	/** @returns bytes of the water buffers and foam/sector targets */
+	get bytes(): number {
+		let atlasBytes = 0;
+		if (this.#sectorAtlas !== null) {
+			const tex = this.#sectorAtlas.texture;
+			atlasBytes = tex.width * tex.height * (tex.format === 'rgba8unorm' ? 4 : 1);
+		}
+		return (
+			this.#foam.bytes + this.#surfaces.size + (this.#configs?.size ?? 0) + this.#params.size + atlasBytes
+		);
+	}
+
 	/** frees the buffers */
 	destroy(): void {
 		this.#surfaces.destroy();

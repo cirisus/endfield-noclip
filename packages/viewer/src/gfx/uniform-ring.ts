@@ -65,6 +65,11 @@ export class UniformRing {
 		};
 	}
 
+	/** @returns bytes of the rotating uniform buffer */
+	get bytes(): number {
+		return this.buffer.size;
+	}
+
 	/** uploads staged allocations; call after filling their views and before submitting draws */
 	flush(): void {
 		if (this.#cursor > 0) {
@@ -76,5 +81,10 @@ export class UniformRing {
 				this.#cursor,
 			);
 		}
+	}
+
+	/** frees the GPU buffer */
+	destroy(): void {
+		this.buffer.destroy();
 	}
 }

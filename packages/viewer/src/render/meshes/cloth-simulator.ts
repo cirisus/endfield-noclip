@@ -3,6 +3,7 @@ import type { ClothDataBlob } from '@endfield-noclip/package-format/cloth';
 import type { Environment } from '../../environment/environment.ts';
 import { createBufferWithData } from '../../gfx/buffers.ts';
 import type { PipelineCache } from '../../gfx/pipeline-cache.ts';
+import { LINEAR_REPEAT, sampler } from '../../gfx/samplers.ts';
 
 import clothSimWgsl from './cloth-sim.wgsl?raw';
 
@@ -83,13 +84,7 @@ export class ClothSimulator {
 			size: UNIFORM_BYTES,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		});
-		this.#sampler = device.createSampler({
-			label: 'cloth wind noise',
-			addressModeU: 'repeat',
-			addressModeV: 'repeat',
-			magFilter: 'linear',
-			minFilter: 'linear',
-		});
+		this.#sampler = sampler(device, LINEAR_REPEAT);
 		this.#fallbackNoise = device.createTexture({
 			label: 'cloth fallback wind noise',
 			size: [1, 1],
@@ -129,6 +124,20 @@ export class ClothSimulator {
 	/** whether a scene's cloth simulation data is loaded */
 	get active(): boolean {
 		return this.#clothCount > 0 && this.#bindGroup !== null;
+	}
+
+	/** @returns bytes of the cloth simulation GPU buffers */
+	get bytes(): number {
+		return (
+			this.#uniforms.size +
+			this.#dummySkeletons.size +
+			(this.#meta?.size ?? 0) +
+			(this.#batches?.size ?? 0) +
+			(this.#cache?.size ?? 0) +
+			(this.#nodes?.size ?? 0) +
+			(this.#skeletons?.size ?? 0) +
+			(this.#prevSkeletons?.size ?? 0)
+		);
 	}
 
 	/**

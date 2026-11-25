@@ -96,6 +96,11 @@ export class LocalLights {
 		});
 	}
 
+	/** @returns bytes of the light and bin buffers (excluding {@link shadows}) */
+	get bytes(): number {
+		return this.lightBuffer.size + this.binBuffer.size;
+	}
+
 	/** @param lights the package's lights, or none */
 	setLights(lights: readonly LightEntry[]): void {
 		this.#entries = lights;

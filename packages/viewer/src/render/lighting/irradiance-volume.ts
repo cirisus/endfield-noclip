@@ -492,6 +492,20 @@ export class IrradianceVolume {
 		]);
 	}
 
+	/** @returns bytes of the cell buffer, windows, regions, and 3D clipmap textures */
+	get bytes(): number {
+		const clipmapBytes = this.#placeholder
+			? 24
+			: SIZE[0] * SIZE[1] * (SLAB * SPACING.length + SIZE[2]) * (8 + 12);
+		return (
+			this.#buffer.bytes +
+			this.#windows.size +
+			this.#regionBuffer.size +
+			clipmapBytes +
+			this.#levels.length * UPDATE_WORDS * 4
+		);
+	}
+
 	/** frees the GPU resources */
 	destroy(): void {
 		this.#buffer.destroy();

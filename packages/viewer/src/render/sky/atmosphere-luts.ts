@@ -97,6 +97,11 @@ export class AtmosphereLuts {
 		};
 	}
 
+	/** @returns bytes of the atmosphere LUT textures */
+	get bytes(): number {
+		return (256 * 64 + 32 * 32 + 192 * 108) * 8;
+	}
+
 	/** rebuilds the LUTs on the next {@link encode}, after the atmosphere changed */
 	invalidate(): void {
 		this.#ready = false;

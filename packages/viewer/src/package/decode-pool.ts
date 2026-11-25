@@ -88,7 +88,10 @@ export class DecodePool {
 				name: `decode-${i}`,
 			});
 			worker.addEventListener('message', (event: MessageEvent<DecodeResponse>) => this.#settle(event.data));
-			worker.addEventListener('error', (event) => console.error('decode worker:', event.message));
+			worker.addEventListener('error', (event) => {
+				console.error('decode worker:', event.message);
+				this.#failWorker(i, new Error(event.message || 'decode worker error'));
+			});
 			this.#workers.push(worker);
 			this.#busy.push(0);
 		}
@@ -228,6 +231,21 @@ export class DecodePool {
 			}
 		}
 		this.#queue = kept;
+	}
+
+	#failWorker(worker: number, error: Error): void {
+		const failed: Pending[] = [];
+		for (const [id, job] of this.#jobs) {
+			if (job.worker === worker) {
+				this.#jobs.delete(id);
+				failed.push(job);
+			}
+		}
+		this.#busy[worker] = 0;
+		for (const job of failed) {
+			job.reject(error);
+		}
+		this.#post();
 	}
 
 	#settle(response: DecodeResponse): void {

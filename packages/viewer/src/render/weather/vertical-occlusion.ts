@@ -1,5 +1,6 @@
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
+import { LINEAR_CLAMP, sampler } from '../../gfx/samplers.ts';
 import { SHADOW_FORMAT } from '../shadows/shadow-map.ts';
 
 /** vertical occlusion map edge, texels (PC desktop setting: 512²) */
@@ -100,21 +101,8 @@ export class VerticalOcclusionMap {
 			usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 		});
 		this.view = this.texture.createView();
-		this.compareSampler = device.createSampler({
-			label: 'vertical occlusion compare',
-			compare: 'less-equal',
-			magFilter: 'linear',
-			minFilter: 'linear',
-			addressModeU: 'clamp-to-edge',
-			addressModeV: 'clamp-to-edge',
-		});
-		this.rawSampler = device.createSampler({
-			label: 'vertical occlusion raw',
-			magFilter: 'nearest',
-			minFilter: 'nearest',
-			addressModeU: 'clamp-to-edge',
-			addressModeV: 'clamp-to-edge',
-		});
+		this.compareSampler = sampler(device, { ...LINEAR_CLAMP, compare: 'less-equal' });
+		this.rawSampler = sampler(device, {});
 	}
 
 	/** @returns bytes of the vertical occlusion depth texture */

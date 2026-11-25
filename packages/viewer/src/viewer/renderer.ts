@@ -210,14 +210,19 @@ export class Renderer {
 			this.terrain,
 			this.instances,
 			this.meshes,
+			this.cloth,
+			this.irradiance,
+			this.lights,
+			this.lights.shadows,
+			this.water,
 			this.targets,
 			this.post,
 			this.fog,
 			this.shadows,
-			this.lights.shadows,
 			this.verticalOcclusion,
 			this.weather,
 			this.reflectionProbes,
+			this.#ring,
 		];
 		this.#histories = [
 			this.post,
@@ -242,6 +247,8 @@ export class Renderer {
 			this.verticalOcclusion,
 			this.shadows,
 			this.targets,
+			this.#ring,
+			this.profiler,
 		];
 	}
 
