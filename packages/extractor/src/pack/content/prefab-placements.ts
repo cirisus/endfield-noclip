@@ -403,6 +403,14 @@ const placeRenderer = (
 		return;
 	}
 	const entityId = content.nextSyntheticId(owner.tag);
+	let lodGroup: [number, number, number, number] | undefined;
+	if (renderer.distances === null && renderer.lodGroup != null) {
+		const center = transformPoint(rootMatrix, renderer.lodGroup.center);
+		const scale = Math.max(...axisLengths(rootMatrix));
+		if (scale > 0) {
+			lodGroup = [center[0], center[1], center[2], renderer.lodGroup.size * scale];
+		}
+	}
 	content.addStructure(
 		{
 			chain: content.chains.intern(draws, {
@@ -417,6 +425,7 @@ const placeRenderer = (
 			entityId,
 			floatsOn,
 			ride,
+			...(lodGroup !== undefined ? { lodGroup } : {}),
 			...(renderer.decal === null ? {} : { decalPlacement: decalPlacement(renderer.decal) }),
 		},
 		{ ...owner, name: renderer.name },

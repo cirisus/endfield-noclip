@@ -11,6 +11,7 @@ import {
 	type Chain,
 	ChainFlags,
 	type InstanceBlock,
+	LOD_GROUP_FLOATS,
 	pathOffset,
 	type RowPath,
 	SPIN_FLOATS,
@@ -352,6 +353,15 @@ export const buildInstanceRows = (block: InstanceBlock, kinds: RowKinds): Instan
 		const fz = f32[at + 18];
 		cull[i * CULL_FLOATS] = Math.sqrt(fx * fx + fy * fy + fz * fz);
 		cull[i * CULL_FLOATS + 1] = Math.max(fx, fy, fz);
+	}
+	if (block.lodGroups !== undefined && block.lodGroups.rows.length > 0) {
+		const { rows: lodRows, values: lodValues } = block.lodGroups;
+		for (let k = 0; k < lodRows.length; k++) {
+			const refSize = lodValues[k * LOD_GROUP_FLOATS + 3];
+			if (refSize > 0) {
+				cull[lodRows[k] * CULL_FLOATS + 1] = refSize * 0.5;
+			}
+		}
 	}
 	const { rows: decalRows, values } = block.decals;
 	if (decalRows.length >= 2 ** (32 - BLOCK_SLOT_BITS)) {

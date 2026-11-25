@@ -31,6 +31,8 @@ export interface InstanceInput {
 	ride?: RowPath;
 	/** `u32` cloth hash (InitChunkData component 60) for GPU-simulated cloth entities; absent on other rows */
 	clothHash?: number;
+	/** prefab `LODGroup` reference sphere `[refCenter.x, refCenter.y, refCenter.z, refSize]` in world space */
+	lodGroup?: readonly [number, number, number, number];
 }
 
 /**
@@ -60,6 +62,8 @@ export class InstanceBlockBuilder {
 	readonly #rides = new Map<number, RowPath>();
 	/** by insertion index, the simulated cloth rows' cloth hashes */
 	readonly #cloths = new Map<number, number>();
+	/** by insertion index, prefab LODGroup reference spheres */
+	readonly #lodGroups = new Map<number, readonly [number, number, number, number]>();
 
 	/** number of rows */
 	get length(): number {
@@ -127,6 +131,9 @@ export class InstanceBlockBuilder {
 		if (row.clothHash !== undefined) {
 			this.#cloths.set(this.#chains.length - 1, row.clothHash);
 		}
+		if (row.lodGroup !== undefined) {
+			this.#lodGroups.set(this.#chains.length - 1, row.lodGroup);
+		}
 		return this.#chains.length - 1;
 	}
 
@@ -179,6 +186,8 @@ export class InstanceBlockBuilder {
 		const motionValues: number[] = [];
 		const assemblyRows: number[] = [];
 		const assemblyIndices: number[] = [];
+		const lodGroupRows: number[] = [];
+		const lodGroupValues: number[] = [];
 		/** the block's paths, in the order its rows first ride them */
 		const paths = new Map<RowPath, number>();
 		let decals = 0;
@@ -254,6 +263,16 @@ export class InstanceBlockBuilder {
 				clothRows.push(out);
 				clothIndices.push(clothIndex);
 			}
+			const lodGroup = this.#lodGroups.get(i);
+			if (lodGroup !== undefined) {
+				lodGroupRows.push(out);
+				lodGroupValues.push(
+					lodGroup[0] - origin[0],
+					lodGroup[1] - origin[1],
+					lodGroup[2] - origin[2],
+					lodGroup[3],
+				);
+			}
 		}
 		return {
 			block: {
@@ -270,6 +289,14 @@ export class InstanceBlockBuilder {
 				paths: [...paths.keys()],
 				...(motionRows.length > 0
 					? { motions: { rows: Uint32Array.from(motionRows), values: Uint32Array.from(motionValues) } }
+					: {}),
+				...(lodGroupRows.length > 0
+					? {
+							lodGroups: {
+								rows: Uint32Array.from(lodGroupRows),
+								values: Float32Array.from(lodGroupValues),
+							},
+						}
 					: {}),
 				...(assemblyRows.length > 0
 					? {

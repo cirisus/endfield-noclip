@@ -12,6 +12,7 @@ import {
 	numberField,
 	objectField,
 	pptrField,
+	vector3Field,
 } from '@endfield-noclip/formats/unity/values';
 import { ChainFlags } from '@endfield-noclip/package-format/instances';
 import { ParticleRenderMode } from '@endfield-noclip/package-format/particles';
@@ -84,6 +85,28 @@ const collectLodSizes: NodeStep = async (walk, node) => {
 		if (data === null) {
 			continue;
 		}
+		// read LODGroup reference sphere (m_LocalReferencePoint + m_Size) transformed into prefab-root space
+		let lodRef: { center: [number, number, number]; size: number } | null = null;
+		const rawSize = typeof data.m_Size === 'number' ? data.m_Size : 0;
+		if (rawSize > 0) {
+			const localCenter = isObject(data.m_LocalReferencePoint)
+				? vector3Field(data, 'm_LocalReferencePoint')
+				: ([0, 0, 0] as [number, number, number]);
+			const m = node.matrix;
+			const center: [number, number, number] = [
+				m[0] * localCenter[0] + m[4] * localCenter[1] + m[8] * localCenter[2] + m[12],
+				m[1] * localCenter[0] + m[5] * localCenter[1] + m[9] * localCenter[2] + m[13],
+				m[2] * localCenter[0] + m[6] * localCenter[1] + m[10] * localCenter[2] + m[14],
+			];
+			const scale = Math.max(
+				Math.hypot(m[0], m[1], m[2]),
+				Math.hypot(m[4], m[5], m[6]),
+				Math.hypot(m[8], m[9], m[10]),
+			);
+			if (scale > 0) {
+				lodRef = { center, size: rawSize * scale };
+			}
+		}
 		// LOD i shows while the screen-relative height is in (its threshold, the previous LOD's]
 		let upper = Infinity;
 		for (const [lod, value] of arrayField(data, 'm_LODs').entries()) {
@@ -97,13 +120,17 @@ const collectLodSizes: NodeStep = async (walk, node) => {
 				}
 				const ref = await walk.resolver.resolve(group.ref, pptrField(renderer, 'renderer'));
 				if (ref !== null) {
-					const ranges = walk.lodSizes.getOrInsertComputed(objectKey(ref), () => []);
+					const rKey = objectKey(ref);
+					const ranges = walk.lodSizes.getOrInsertComputed(rKey, () => []);
 					// a renderer in consecutive LODs shows across all of them
 					const last = ranges.at(-1);
 					if (last !== undefined && last.min === upper) {
 						last.min = threshold;
 					} else {
 						ranges.push({ lod, min: threshold, max: upper });
+					}
+					if (lodRef !== null && !walk.lodGroups.has(rKey)) {
+						walk.lodGroups.set(rKey, lodRef);
 					}
 				}
 			}

@@ -108,6 +108,8 @@ export interface PrefabRenderer {
 	 * measured on the LODGroup's own size in the game
 	 */
 	sizes: readonly SizeRange[] | null;
+	/** owning enabled LODGroup's reference sphere in prefab-root space, or `null` */
+	lodGroup?: { center: [number, number, number]; size: number } | null;
 }
 
 /** a span of screen-relative heights (Unity's LODGroup metric) a LODGroup shows a renderer at */
@@ -387,6 +389,7 @@ const assembleRenderer = async (
 		distances: candidate.distances,
 		proxyLevels: candidate.proxyLevels,
 		sizes: walk.lodSizes.get(key)?.map(({ lod, min, max }) => ({ lod, min, max })) ?? null,
+		lodGroup: walk.lodGroups.get(key) ?? null,
 		submeshes: arrayField(mesh, 'm_SubMeshes').length,
 		// Unity's ShadowCastingMode: 3 ShadowsOnly, 4 ShadowsOnlyTwoSided
 		shadowOnly: candidate.decal === null && numberField(candidate.data, 'm_CastShadows') >= 3,

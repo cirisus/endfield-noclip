@@ -140,6 +140,8 @@ export interface RendererWalk {
 	rendererTransforms: Map<string, string>;
 	/** by renderer, the screen-relative heights an enabled LODGroup shows it at */
 	lodSizes: Map<string, SizeRange[]>;
+	/** by renderer, the owning enabled LODGroup's reference sphere in prefab-root space */
+	lodGroups: Map<string, { center: [number, number, number]; size: number }>;
 	/** GameObjects a view-state controller switches on to play an effect */
 	played: Set<string>;
 	/** GameObjects an EffectSetting's LOD table switches */
@@ -207,6 +209,7 @@ export const createRendererWalk = (
 	candidateTransforms: new Map(),
 	rendererTransforms: new Map(),
 	lodSizes: new Map(),
+	lodGroups: new Map(),
 	played: new Set(),
 	lodSwitched: new Set(),
 	lockModels: new Map(),
