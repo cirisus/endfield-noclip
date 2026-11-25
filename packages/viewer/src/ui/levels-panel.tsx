@@ -10,6 +10,8 @@ export const LevelsPanel = ({ viewer }: { viewer: Viewer }) => {
 		return null;
 	}
 	const here = viewer.currentLevel?.id;
+	const places = viewer.manifest?.places ?? [];
+	const currentPlaces = here === undefined ? [] : places.filter((place) => place.level === here);
 	return (
 		<section className="panel levels" aria-label="levels">
 			<header>
@@ -37,6 +39,25 @@ export const LevelsPanel = ({ viewer }: { viewer: Viewer }) => {
 					);
 				})}
 			</ul>
+			{currentPlaces.length > 0 ? (
+				<details className="places">
+					<summary>places ({currentPlaces.length})</summary>
+					<ul>
+						{currentPlaces.map((place) => (
+							<li key={place.name}>
+								<button
+									type="button"
+									className="entry-name"
+									title={`fly to ${place.name}`}
+									onClick={() => viewer.flyToPoint(place.position, Math.max(25, Math.min(80, place.radius)))}
+								>
+									{place.name}
+								</button>
+							</li>
+						))}
+					</ul>
+				</details>
+			) : null}
 		</section>
 	);
 };

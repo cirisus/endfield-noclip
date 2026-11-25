@@ -1,4 +1,5 @@
 import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
+import type { PlaceInfo } from '@endfield-noclip/package-format/manifest';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
 import type { StructureModel } from '../dynamic/dynamic-structures.ts';
@@ -106,13 +107,15 @@ export const loadInteractiveFacilities = async (
 	standIns: InteractiveStandIn[];
 	/** every placed row's template and position, by logic id */
 	placements: Map<string, { template: string; position: Vec3 }>;
+	/** resolved named places across the scene's levels */
+	places: PlaceInfo[];
 }> => {
 	// the order below is the order models, controls and diagnostics are emitted in, which downstream ids
 	// follow: keep it when adding a kind
 	const [sources, prefabs] = await Promise.all([FacilitySources.open(context), PrefabHashes.open(context)]);
 	const interactives = await loadInteractiveTable(sources);
 	// placements first, so only the templates they use are read
-	const { placed, createdControls, levelDataPaths } = await collectPlacements(sources, {
+	const { placed, createdControls, levelDataPaths, places } = await collectPlacements(sources, {
 		scene,
 		level,
 		partition,
@@ -258,5 +261,6 @@ export const loadInteractiveFacilities = async (
 		placements: new Map(
 			placed.map(({ row }) => [row.id.toString(), { template: row.template, position: row.position }]),
 		),
+		places,
 	};
 };

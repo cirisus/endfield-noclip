@@ -28,11 +28,25 @@ export interface InteractiveParam {
 	values: { bits: bigint; text: string | null }[];
 }
 
+/** a named place from a HUD region-toast function area (`SceneToastUIData`) */
+export interface LevelPlace {
+	/** localization key for the place's display name (`subTitle.key`) */
+	subTitleKey: string;
+	/** axis-aligned box center in world space */
+	center: [number, number, number];
+	/** approximate bounding radius of the area box in metres */
+	radius: number;
+	/** toast priority (1 for named sub-areas, 0 for level-wide fallback) */
+	priority: number;
+}
+
 /** the interactives and function-area summary read from a decoded LevelData */
 export interface LevelDataInteractives {
 	interactives: LevelInteractive[];
 	/** function areas that hide entities by type (`HideEntityByTypeParams`) */
 	hideByTypeAreas: number;
+	/** named places from region-toast function areas (`SceneToastUIData`) */
+	places?: LevelPlace[];
 }
 
 const HIDE_BY_TYPE_AREA = 'Beyond_Gameplay_LevelFunctionAreaData_HideEntityByTypeParamsForMemoryPack';
@@ -138,17 +152,59 @@ export const readLevelDataInteractives = (levelData: MemoryPackValue): LevelData
 		}
 	}
 	let hideByTypeAreas = 0;
+	const places: LevelPlace[] = [];
 	if (data.functionArea !== null && data.functionArea !== undefined) {
 		const area = asMemoryPackObject(data.functionArea, 'function area');
+		const ranges = Array.isArray(area.ranges) ? area.ranges : [];
 		if (Array.isArray(area.specificDatas)) {
-			for (const entry of area.specificDatas) {
-				if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
-					if (entry.$type === HIDE_BY_TYPE_AREA) {
-						hideByTypeAreas++;
+			for (const [i, entry] of area.specificDatas.entries()) {
+				if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+					continue;
+				}
+				const obj = entry as Record<string, MemoryPackValue>;
+				if (obj.$type === HIDE_BY_TYPE_AREA) {
+					hideByTypeAreas++;
+				} else if (obj.$type === 'Beyond_Gameplay_LevelFunctionAreaData_SceneToastUIDataForMemoryPack') {
+					const priority = typeof obj.priority === 'number' ? obj.priority : 0;
+					const subTitle = obj.subTitle;
+					const subTitleKey =
+						subTitle !== null &&
+						typeof subTitle === 'object' &&
+						!Array.isArray(subTitle) &&
+						typeof subTitle.key === 'string'
+							? subTitle.key
+							: '';
+					const range = ranges[i];
+					if (
+						priority >= 1 &&
+						subTitleKey.length > 0 &&
+						range !== null &&
+						typeof range === 'object' &&
+						!Array.isArray(range)
+					) {
+						const c = range.m_center;
+						const s = range.m_size;
+						if (
+							Array.isArray(c) &&
+							c.length >= 3 &&
+							typeof c[0] === 'number' &&
+							typeof c[1] === 'number' &&
+							typeof c[2] === 'number'
+						) {
+							const sx = Array.isArray(s) && typeof s[0] === 'number' ? s[0] : 40;
+							const sy = Array.isArray(s) && typeof s[1] === 'number' ? s[1] : 20;
+							const sz = Array.isArray(s) && typeof s[2] === 'number' ? s[2] : 40;
+							places.push({
+								subTitleKey,
+								center: [c[0], c[1], c[2]],
+								radius: Math.hypot(sx, sy, sz) * 0.5,
+								priority,
+							});
+						}
 					}
 				}
 			}
 		}
 	}
-	return { interactives, hideByTypeAreas };
+	return { interactives, hideByTypeAreas, ...(places.length > 0 ? { places } : {}) };
 };

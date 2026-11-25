@@ -453,6 +453,7 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 				},
 				irradianceRegions,
 				fireSeed,
+				...(entities.places.length > 0 ? { places: entities.places } : {}),
 			},
 			members,
 		);

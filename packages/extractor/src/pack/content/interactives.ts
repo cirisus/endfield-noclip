@@ -1,4 +1,5 @@
 import { multiplyMatrices, trsMatrix, unityEulerQuaternion } from '@endfield-noclip/formats/unity/transform';
+import type { PlaceInfo } from '@endfield-noclip/package-format/manifest';
 import type { ControlDriver } from '@endfield-noclip/package-format/states';
 import type { Vec3 } from '@endfield-noclip/package-format/values';
 
@@ -72,6 +73,8 @@ export interface SceneInteractives {
 	waterDrivers: ReadonlyMap<string, ControlDriver[]>;
 	/** every placed interactive's template and position, by logic id */
 	placements: ReadonlyMap<string, { template: string; position: Vec3 }>;
+	/** resolved named places across the scene's levels */
+	places: PlaceInfo[];
 	/**
 	 * the player's fire seed, whose control is registered: its control's id and the reveal radii per level;
 	 * `null` when no level script of the scene sets it
@@ -349,6 +352,7 @@ export const collectInteractives = async (
 		scriptWater,
 		waterDrivers,
 		placements: facilities.placements,
+		places: facilities.places,
 		fireSeed,
 		unsupported: facilities.unsupported,
 	};

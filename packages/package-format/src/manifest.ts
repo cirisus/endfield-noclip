@@ -101,6 +101,20 @@ export interface PackageManifest {
 	irradianceRegions: IrradianceRegionInfo[];
 	/** the player's fire seed, or `null` when no level script of the scene sets it */
 	fireSeed: FireSeedInfo | null;
+	/** named places (HUD region toasts) for jumping to landmarks inside levels */
+	places?: PlaceInfo[];
+}
+
+/** a named landmark/area inside a level, from LevelData `SceneToastUIData` */
+export interface PlaceInfo {
+	/** owning level id, e.g. `map02_lv002` */
+	level: string;
+	/** English display name, e.g. `Fangxing Avenue` */
+	name: string;
+	/** world centre of the place volume */
+	position: [x: number, y: number, z: number];
+	/** approximate bounding radius, metres */
+	radius: number;
 }
 
 /**

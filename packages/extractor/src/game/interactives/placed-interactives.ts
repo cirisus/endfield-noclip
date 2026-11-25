@@ -7,7 +7,9 @@ import { InteractiveUnlockType, readLevelLocks } from '@endfield-noclip/formats/
 import type { LevelPartition } from '@endfield-noclip/formats/endfield/level-partition';
 import { type LevelSpline, readLevelSplines } from '@endfield-noclip/formats/endfield/level-splines';
 import type { MemoryPackValue } from '@endfield-noclip/formats/endfield/memory-pack';
+import type { PlaceInfo } from '@endfield-noclip/package-format/manifest';
 
+import { compareNatural, compareStrings } from '../../compare.ts';
 import { formatErrorOnly } from '../../errors.ts';
 import { type DraftControl, sceneControl, switchValues } from '../state/scene-control.ts';
 
@@ -32,6 +34,8 @@ export interface Placements {
 	createdControls: Map<string, DraftControl>;
 	/** by level id, its LevelData files */
 	levelDataPaths: Map<string, string[]>;
+	/** resolved named places across the scene's levels */
+	places: PlaceInfo[];
 }
 
 /** only the LevelData fields interactive placement reads */
@@ -60,6 +64,7 @@ export const collectPlacements = async (
 	const levelDataPaths = new Map<string, string[]>();
 	const seen = new Set<bigint>();
 	const later: PlacedInteractive[] = [];
+	const rawPlaces: { level: string; key: string; position: [number, number, number]; radius: number }[] = [];
 	for (const config of (await world.levelConfigs()).values()) {
 		if (config.mapId !== scene || (level !== null && config.id !== level)) {
 			continue;
@@ -91,6 +96,16 @@ export const collectPlacements = async (
 					`${decoded.hideByTypeAreas} function areas that hide entities by type aren't applied`,
 				);
 			}
+			if (decoded.places !== undefined) {
+				for (const place of decoded.places) {
+					rawPlaces.push({
+						level: config.id,
+						key: place.subTitleKey,
+						position: place.center,
+						radius: place.radius,
+					});
+				}
+			}
 			for (const row of decoded.interactives) {
 				if (row.createState !== 0) {
 					later.push({ path, levelId: config.id, levelTag, row, created: `created:${config.id}` });
@@ -121,7 +136,32 @@ export const collectPlacements = async (
 			}),
 		);
 	}
-	return { placed, createdControls, levelDataPaths };
+	const places: PlaceInfo[] = [];
+	if (rawPlaces.length > 0) {
+		const text = await world.text();
+		const seenPlaces = new Set<string>();
+		for (const raw of rawPlaces) {
+			const name = text(raw.key)
+				?.replaceAll(/<[^>]+>/g, '')
+				.trim();
+			if (name === undefined || name.length === 0) {
+				continue;
+			}
+			const dedupe = `${raw.level}\0${name}`;
+			if (seenPlaces.has(dedupe)) {
+				continue;
+			}
+			seenPlaces.add(dedupe);
+			places.push({
+				level: raw.level,
+				name,
+				position: raw.position,
+				radius: Math.round(raw.radius),
+			});
+		}
+		places.sort((a, b) => compareStrings(a.level, b.level) || compareNatural(a.name, b.name));
+	}
+	return { placed, createdControls, levelDataPaths, places };
 };
 
 /** the MemoryPack wrapper of LevelData */
