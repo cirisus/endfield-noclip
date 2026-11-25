@@ -53,13 +53,14 @@ fragment-stage bindings vs WebGPU defaults:
 
 ## pipelines and uploads
 
-- **pipeline cache**: caches shader modules and pipelines asynchronously once per session (including
-  deferred lighting, shadow-tile clear, weather, and lens flare passes). mesh and effect shaders
-  split into per-family `GPUShaderModule`s so depth/shadow, G-buffer, decal, foam, and screen-effect
-  passes do not compile lighting code. mesh pipelines compile lazily on first seen
-  `(phase, cull, positionFormat, uvFormat, stencil)` — pre-warming only the 6 hottest back-culled
-  `unorm16x4`/`unorm16x2` Lit/depth/shadow pipelines at startup and collapsing UV-format variants on
-  position-only phases. draws skip while compiling and trigger a redraw when ready.
+- **pipeline cache**: caches every shader module and render/compute pipeline asynchronously once per
+  session (including fullscreen post/sky passes, deferred lighting, shadow-tile clear, weather, and
+  lens flares). mesh and effect shaders split into per-family `GPUShaderModule`s so depth/shadow,
+  G-buffer, decal, foam, and screen-effect passes do not compile lighting code. mesh pipelines
+  compile lazily on first seen `(phase, cull, positionFormat, uvFormat, stencil)` — pre-warming only
+  the 6 hottest back-culled `unorm16x4`/`unorm16x2` Lit/depth/shadow pipelines at startup and
+  collapsing UV-format variants on position-only phases. draws skip while compiling and trigger a
+  redraw when ready.
 - **staged writes**: streamed uploads ≥ 128 KiB copy from a `mappedAtCreation` staging buffer
   instead of `queue.writeBuffer` / `queue.writeTexture`. Chrome's queue writes stall the main thread
   (~2 ms/MiB idle, 15–30 ms/MiB while streaming), vs ~0.1 ms for a staged copy. texture levels use
