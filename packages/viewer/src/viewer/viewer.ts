@@ -241,8 +241,9 @@ export class Viewer {
 		this.scene?.particles.destroy();
 		this.scene?.textures.destroy();
 		renderer.meshes.releaseMaterials();
-		// the destroyed store's sky textures
+		// the destroyed store's sky and weather textures
 		renderer.post.clearSkyTextures();
+		renderer.weather.clearTextures();
 		renderer.bindings.setReflection(null, 1);
 		renderer.bindings.set('shadowRamp', null);
 		this.scene = null;
@@ -697,6 +698,17 @@ export class Viewer {
 		// pipeline variants compile on first use (stencil effects), and draw once ready
 		const compiled = renderer.pipelines.size !== this.#seenPipelines;
 		this.#seenPipelines = renderer.pipelines.size;
+		const look = this.#environment.look;
+		const weatherAnimated =
+			options.weather &&
+			((look.rain !== null &&
+				((look.rain.enable && look.rain.intensity > 0) ||
+					(look.rain.enableWetness &&
+						look.rain.wetness > 0 &&
+						((look.rain.rippleNormalStrength ?? 0) > 0 ||
+							(look.rain.rippleWaveNormalStrength ?? 0) > 0 ||
+							(look.rain.verticalFlowNormalStrength ?? 0) > 0)))) ||
+				(look.snow !== null && look.snow.enable && look.snow.intensity > 0));
 		const changed =
 			this.#dirty ||
 			moved ||
@@ -704,7 +716,7 @@ export class Viewer {
 			resized ||
 			options.continuous ||
 			compiled ||
-			(options.animate && (traversal.fadingShown || renderer.cloth.active)) ||
+			(options.animate && (traversal.fadingShown || renderer.cloth.active || weatherAnimated)) ||
 			(scene !== null && scene.stream.version !== traversal.seenVersion) ||
 			// a local light's shadow tile waits for its casters to be selected and drawn
 			renderer.lights.shadows.pending;
@@ -722,7 +734,6 @@ export class Viewer {
 		const settings = frameSettings(options, scene !== null, postSettings(options, scene !== null));
 		const adapting = renderer.post.adaptExposure(settings.post, dt, { metering: changed || settling });
 		const render = changed || settling || adapting;
-		const look = this.#environment.look;
 		if (render && options.animate) {
 			this.#time += dt;
 			this.#windClock += windClockRate(look.environment.wind) * dt;

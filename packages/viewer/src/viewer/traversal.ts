@@ -179,8 +179,15 @@ export class Traversal {
 				flowNoise: scene.pkg.environment.flowNoise,
 				weather: scene.pkg.environment.weather ?? null,
 			},
-			{ environment, celestial, flowNoise: options.flowNoise, rain: input.look.rain },
-			{ post: renderer.post, bindings: renderer.bindings },
+			{
+				environment,
+				celestial,
+				flowNoise: options.flowNoise,
+				rain: input.look.rain,
+				snow: input.look.snow,
+				weather: options.weather,
+			},
+			{ post: renderer.post, bindings: renderer.bindings, weather: renderer.weather },
 		);
 		const windNoiseId = scene.pkg.cloth?.windNoiseTexture ?? null;
 		const windNoise =

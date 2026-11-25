@@ -35,6 +35,7 @@ import { VolumetricFog } from '../render/sky/volumetric-fog.ts';
 import { TerrainRenderer } from '../render/terrain/terrain-renderer.ts';
 import { WaterRenderer } from '../render/water/water-renderer.ts';
 import { VerticalOcclusionMap } from '../render/weather/vertical-occlusion.ts';
+import { WeatherRenderer } from '../render/weather/weather-renderer.ts';
 import type { Camera } from '../scene/camera.ts';
 
 import type { EnvironmentLook } from './environment-state.ts';
@@ -95,6 +96,7 @@ export class Renderer {
 	readonly fog: VolumetricFog;
 	readonly post: PostProcess;
 	readonly water: WaterRenderer;
+	readonly weather: WeatherRenderer;
 	/** the systems whose passes a frame encodes */
 	readonly frame: FrameSystems;
 	/** the systems whose GPU pools and targets the stats sum */
@@ -181,6 +183,13 @@ export class Renderer {
 			features: gfx.features,
 		});
 		this.water = new WaterRenderer(device, this.pipelines, { frame: layouts.frame, ...this.post.skyLayouts });
+		this.weather = new WeatherRenderer(
+			device,
+			layouts.frame,
+			format.depth,
+			this.post.fogInputs,
+			this.verticalOcclusion,
+		);
 		this.frame = {
 			targets: this.targets,
 			irradiance: this.irradiance,
@@ -194,6 +203,7 @@ export class Renderer {
 			meshes: this.meshes,
 			fog: this.fog,
 			water: this.water,
+			weather: this.weather,
 			post: this.post,
 		};
 		this.pools = [
@@ -206,9 +216,17 @@ export class Renderer {
 			this.shadows,
 			this.lights.shadows,
 			this.verticalOcclusion,
+			this.weather,
 			this.reflectionProbes,
 		];
-		this.#histories = [this.post, this.fog, this.meshes, this.verticalOcclusion, this.#frameHistory];
+		this.#histories = [
+			this.post,
+			this.fog,
+			this.meshes,
+			this.verticalOcclusion,
+			this.weather,
+			this.#frameHistory,
+		];
 		this.#owned = [
 			this.post,
 			this.fog,
@@ -216,6 +234,7 @@ export class Renderer {
 			this.reflectionProbes,
 			this.irradiance,
 			this.water,
+			this.weather,
 			this.meshes,
 			this.cloth,
 			this.instances,
@@ -334,8 +353,7 @@ export class Renderer {
 			lightShadowOffset = block.offset;
 		}
 		const weatherNeedsOcclusion =
-			settings.scene &&
-			settings.lit &&
+			settings.weather &&
 			((look.rain !== null &&
 				((look.rain.enableWetness && look.rain.wetness > 0) ||
 					(look.rain.enable && look.rain.intensity > 0))) ||
@@ -355,6 +373,13 @@ export class Renderer {
 			verticalOcclusionOffset = block.offset;
 		}
 		this.post.updateWetness(look.rain, input.weather?.rain ?? null, this.verticalOcclusion, input.time);
+		this.weather.update({
+			rain: look.rain,
+			snow: look.snow,
+			assets: input.weather,
+			dt: input.dt,
+			enabled: settings.weather,
+		});
 		ring.flush();
 		times.span('uniforms');
 

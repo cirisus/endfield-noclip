@@ -78,6 +78,8 @@ export interface ViewerOptions {
 	cloudShadows: boolean;
 	/** sway how much fog surfaces get with the environment's drifting 3D noise, where it has one */
 	flowNoise: boolean;
+	/** draw falling rain, rain splashes, falling snow, and vertical occlusion sheltering */
+	weather: boolean;
 	/** play animation (effects, particles, water, clouds, flow noise) on rendered frames; disabling freezes it */
 	animate: boolean;
 	water: boolean;
@@ -138,6 +140,7 @@ export const DEFAULT_OPTIONS: ViewerOptions = {
 	shadows: true,
 	cloudShadows: true,
 	flowNoise: true,
+	weather: true,
 	animate: true,
 	water: true,
 	waterLevelRate: 1,

@@ -19,6 +19,7 @@ import type { VolumetricFog } from '../sky/volumetric-fog.ts';
 import type { TerrainRenderer } from '../terrain/terrain-renderer.ts';
 import type { WaterRenderer } from '../water/water-renderer.ts';
 import type { VerticalOcclusionMap } from '../weather/vertical-occlusion.ts';
+import type { WeatherRenderer } from '../weather/weather-renderer.ts';
 
 import type { DebugView } from './debug-views.ts';
 import type { RenderTargets } from './render-targets.ts';
@@ -41,6 +42,8 @@ export interface FrameSettings {
 	localLights: boolean;
 	/** the volumetric fog is computed */
 	volumetricFog: boolean;
+	/** falling rain, splashes, snow, and weather vertical occlusion are enabled */
+	weather: boolean;
 	terrain: boolean;
 	wireframe: boolean;
 	/** rows in view hidden behind last frame's depth skip the main pass (`occlusionCulling`) */
@@ -61,6 +64,7 @@ export const frameSettings = (
 		shadows: boolean;
 		localLights: boolean;
 		heightFog: boolean;
+		weather: boolean;
 		terrain: boolean;
 		wireframe: boolean;
 		occlusionCulling: boolean;
@@ -75,6 +79,7 @@ export const frameSettings = (
 		shadows: scene && lit && options.shadows,
 		localLights: scene && lit && options.localLights,
 		volumetricFog: scene && lit && options.heightFog,
+		weather: scene && lit && options.weather,
 		terrain: options.terrain,
 		wireframe: options.wireframe,
 		occlusionCulling: options.occlusionCulling,
@@ -129,6 +134,7 @@ export interface FrameSystems {
 	meshes: MeshRenderer;
 	fog: VolumetricFog;
 	water: WaterRenderer;
+	weather: WeatherRenderer;
 	post: PostProcess;
 }
 
@@ -536,6 +542,11 @@ export const encodeFrame = (
 				draws += meshes.encodeEffectPass('refract', pass, inputs);
 				pass.end();
 			}
+		}
+		if (settings.weather && systems.weather.active) {
+			const pass = beginPass(encoder, over('weather'), sceneFrame);
+			draws += systems.weather.encode(pass, scene);
+			pass.end();
 		}
 	}
 	post.encodeAfterScene(encoder, {

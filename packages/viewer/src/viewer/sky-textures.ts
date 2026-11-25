@@ -1,10 +1,11 @@
-import type { RainConfig, WeatherAssets } from '@endfield-noclip/package-format/environment';
+import type { RainConfig, SnowConfig, WeatherAssets } from '@endfield-noclip/package-format/environment';
 
 import { type CelestialLook, celestialTextures } from '../environment/celestial-look.ts';
 import type { Environment } from '../environment/environment.ts';
 import type { FrameBindings, FrameTextureSlot } from '../render/frame/frame-bindings.ts';
 import type { PostProcess } from '../render/post/post-process.ts';
 import type { TextureStore } from '../render/textures/texture-store.ts';
+import type { WeatherRenderer } from '../render/weather/weather-renderer.ts';
 import {
 	type StreamedTexture,
 	type TextureKind,
@@ -28,12 +29,12 @@ const FRAME_TEXTURES: readonly FrameTexture[] = [
 ];
 
 /**
- * streams the environment's sky and wetness textures whole (cloud panorama, flow noise, celestial layers,
- * lens flare images, reflection cubemap, shadow ramp, cloud shadow, and rain wetness textures) and binds them
- * as they arrive. call once per traversal.
+ * streams the environment's sky and weather textures whole (cloud panorama, flow noise, celestial layers,
+ * lens flare images, reflection cubemap, shadow ramp, cloud shadow, rain wetness, falling rain/splash/wave,
+ * and snow textures) and binds them as they arrive. call once per traversal.
  *
  * @param source the loaded package's stream and texture store, its flow noise texture, and its weather assets
- * @param look the environment shown, its celestial layers, whether drifting fog is on, and the rain config
+ * @param look the environment shown, its celestial layers, whether drifting fog is on, and rain/snow configs
  * @param targets where the textures bind
  */
 export const updateSkyTextures = (
@@ -43,11 +44,18 @@ export const updateSkyTextures = (
 		flowNoise: number | null;
 		weather: WeatherAssets | null;
 	},
-	look: { environment: Environment; celestial: CelestialLook; flowNoise: boolean; rain: RainConfig | null },
-	targets: { post: PostProcess; bindings: FrameBindings },
+	look: {
+		environment: Environment;
+		celestial: CelestialLook;
+		flowNoise: boolean;
+		rain: RainConfig | null;
+		snow: SnowConfig | null;
+		weather: boolean;
+	},
+	targets: { post: PostProcess; bindings: FrameBindings; weather: WeatherRenderer },
 ): void => {
 	const { stream, textures } = source;
-	const { environment, rain } = look;
+	const { environment, rain, snow } = look;
 	const whole = (id: number | null, kind: TextureKind): StreamedTexture | null =>
 		streamWholeTexture({ stream, textures, id, kind, priority: SKY_PRIORITY });
 
@@ -64,11 +72,23 @@ export const updateSkyTextures = (
 	});
 
 	const wetnessActive = rain !== null && rain.enableWetness && rain.wetness > 0;
-	const rainAssets = wetnessActive ? (source.weather?.rain ?? null) : null;
+	const rainWetAssets = wetnessActive ? (source.weather?.rain ?? null) : null;
 	targets.post.setWetnessTextures({
-		noise: rainAssets === null ? null : (whole(rainAssets.rainOcclusionSampleNoise, '3d')?.binding ?? null),
-		ripple: rainAssets === null ? null : (whole(rainAssets.rippleTexture, '2d')?.binding ?? null),
-		flow: rainAssets === null ? null : (whole(rainAssets.verticalFlowTexture, '2d')?.binding ?? null),
+		noise:
+			rainWetAssets === null ? null : (whole(rainWetAssets.rainOcclusionSampleNoise, '3d')?.binding ?? null),
+		ripple: rainWetAssets === null ? null : (whole(rainWetAssets.rippleTexture, '2d')?.binding ?? null),
+		flow: rainWetAssets === null ? null : (whole(rainWetAssets.verticalFlowTexture, '2d')?.binding ?? null),
+	});
+
+	const fallingRain = look.weather && rain !== null && rain.enable && rain.intensity > 0;
+	const fallingSnow = look.weather && snow !== null && snow.enable && snow.intensity > 0;
+	const rainFxAssets = fallingRain ? (source.weather?.rain ?? null) : null;
+	const snowFxAssets = fallingSnow ? (source.weather?.snow ?? null) : null;
+	targets.weather.setTextures({
+		rain: rainFxAssets === null ? null : (whole(rainFxAssets.sceneEffectRainTex, '2d')?.binding ?? null),
+		wave: rainFxAssets === null ? null : (whole(rainFxAssets.rainWaveTex, '2d')?.binding ?? null),
+		splash: rainFxAssets === null ? null : (whole(rainFxAssets.rainSplashTexture, '2d')?.binding ?? null),
+		snow: snowFxAssets === null ? null : (whole(snowFxAssets.snowflakeTex, '2d')?.binding ?? null),
 	});
 
 	const reflection = whole(environment.reflection, 'cube');
