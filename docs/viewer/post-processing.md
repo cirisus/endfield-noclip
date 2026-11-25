@@ -10,15 +10,15 @@ effects.
 
 ## ambient occlusion
 
-follows [game GTAO](../game-data/post-processing.md#ambient-occlusion) (high tier), with reach
-capped at 48 half-res pixels and falloff radius shrunk to match. when `custom` is set, it reads the
-volume's `radius * radiusMultiplier`, falloff range, distribution power, and thin-occluder
-compensation. composite applies AO to diffuse ambient only (not specular;
-[ambient](lighting.md#ambient)).
+follows [game GTAO](../game-data/post-processing.md#ambient-occlusion) (high tier), reading G-buffer
+world normals (falling back to depth-derived normals on unlit surfaces), with reach capped at 48
+half-res pixels and falloff radius shrunk to match. when `custom` is set, it reads the volume's
+`radius * radiusMultiplier`, falloff range, distribution power, and thin-occluder compensation.
+deferred lighting applies `min(GTAO, materialAO)` to both diffuse (per-channel multi-bounce) and
+specular (Lagarde) ambient ([ambient](lighting.md#ambient)).
 
-divergences: marches half-res depth without mips, derives normals from depth, and uses one
-depth-aware blur during upsample (instead of depth mips, GBuffer normals, temporal filtering, and
-two spatial passes).
+divergences: marches half-res depth without mips and uses one depth-aware blur during upsample
+(instead of depth mips, temporal filtering, and two spatial passes).
 
 ## light shafts
 

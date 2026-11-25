@@ -71,8 +71,8 @@ sets it).
   L1 SH scaled by `sky.skyDirectIntensity * light.indirectDiffuseFactor`.
 - **irradiance sampling**: blends clipmap levels near edges with validity fill-in and vertical
   correction, without jitter or forward-shifted centres.
-- **occlusion**: multi-bounce AO uses albedo luminance rather than per-channel fits. specular
-  occlusion uses material occlusion only (no GTAO).
+- **occlusion**: deferred lighting applies Jimenez's per-channel multi-bounce AO to diffuse ambient
+  and Lagarde's specular occlusion to specular ambient using `min(GTAO, materialAO)`.
 - **specular**: Karis analytic split-sum BRDF scaled by `light.indirectSpecularFactor`. surfaces and
   water blend the nearest 32 frustum-visible local reflection probes front-to-back in
   importance-then-distance order with box/sphere falloff, optional box projection, and per-probe
@@ -91,7 +91,7 @@ fade and applies each full-resolution pixel's environment BRDF and sky reflectio
 - reprojects with depth and previous camera instead of motion vectors (scenery is static).
 - needs no rain-wetness variant because surfaces already carry wet roughness
   ([wetness](../game-data/environment.md#wetness)); only ripple normals are missing.
-- relit decals supply their output surface ([decals](materials.md#decals)); reflection-only effects
+- runs on G-buffer B directly (after decals have already blended into it); reflection-only effects
   do not write march inputs. off-screen rays keep the sky reflection.
 
 ## irradiance volume

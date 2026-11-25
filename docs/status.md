@@ -38,8 +38,7 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 
 - **ambient** ([viewer](viewer/lighting.md#ambient), [open](game-data/lighting.md#open)):
   - verified against an in-game shot only at Jingyu's cave arch.
-  - missing: lookup jitter, forward-shifted clipmap centres, per-channel AO multi-bounce (uses
-    luminance), GTAO specular occlusion, and prefab-placed reflection probes
+  - missing: lookup jitter, forward-shifted clipmap centres, and prefab-placed reflection probes
     (`p_lightingdeco_*_reflectionprobe`; none in Yinglung Pass).
   - specular ambient falls back to the ambient probe until the sky cubemap streams in; local
     reflection probes evaluate up to 32 frustum-visible probes per frame (without screen-tile
@@ -79,9 +78,8 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
 - **screen-space reflections** ([viewer](viewer/lighting.md#screen-space-reflections)):
   - rain-wetness ripple normals not drawn; reflection-only effects listed under
     [effects and particles](#effects-and-particles).
-- **ambient occlusion** ([viewer](viewer/post-processing.md#ambient-occlusion)): depth-derived
-  normals, single depth-aware blur (vs temporal + two spatial filters), no depth mips, reach capped
-  at 48 half-res pixels.
+- **ambient occlusion** ([viewer](viewer/post-processing.md#ambient-occlusion)): single depth-aware
+  blur (vs temporal + two spatial filters), no depth mips, reach capped at 48 half-res pixels.
 - **auto exposure** ([viewer](viewer/post-processing.md#auto-exposure)): can differ from in-game
   shots where undrawn characters or effects contribute.
 - **post passes** ([viewer](viewer/post-processing.md)):
@@ -208,13 +206,10 @@ only `map01` and `map02` are tested. other scenes listed by `scene list` are unv
   - unsupported: `HGRP/DecalLit` footprint/UV-noise/arc variants, placements without colour/UV,
     non-box prefab `HGDecalProjector`s, and `HGRP/DecalUnlit`. terrain decals (InitChunkData
     component 28) are unpacked.
-  - divergences: overlaps ignore `_DrawOrder`; no-albedo and wetness decals relight from estimated
-    dielectric colour, keep prior AO/metallic, add emission, and pass only the last decal to SSR
-    (overlaid non-writing decals assume AO 1, metallic 0); prefab projectors ignore
+  - divergences: overlaps ignore `_DrawOrder`; prefab projectors ignore
     `m_LODScreenSizeMin`/`m_SortOrderOffset` and do not follow looping-clip Transforms.
   - wetness decals (Qingbo's big waterwheel) use Lit default porosity (ignoring `_PorosityFactor*`,
-    `_DisableVerticalFlow`), double-wet on overlap, ignore the global wetness gate, and expose
-    roughness to SSR (unchecked).
+    `_DisableVerticalFlow`) and ignore the global wetness gate.
   - unverified in game: sludge erosion/wetness variants (Yinglung Pass puddles), water-flow wet
     rock, and wetness decals.
 - **terrain** ([viewer](viewer/terrain.md), [streaming](viewer/streaming.md#terrain-selection)):
@@ -607,10 +602,8 @@ entries once resolved or ruled out.
   lists unused `_NORMAL_MAP` for foliage shaders.
 - `extractor/src/pack/tables/water.ts` `volumeSurface`: hardcodes `meshNormals: false` where
   `surfaceEntry` gives `true` for proxy surfaces (equivalent on flat polygons).
-- `viewer/src/render/meshes/effect.wgsl` `fx_soft_body`: divides by frame count without guarding
-  against 0.
-- `viewer/src/render/meshes/mesh.wgsl`: `Look.detail2.z` doubles as detail overlay scale and
-  transparent premultiplied flag (safe only while mutually exclusive).
+- `viewer/src/render/meshes/surfaces/surface.wgsl`: `Look.detail2.z` doubles as detail overlay scale
+  and transparent premultiplied flag (safe only while mutually exclusive).
 - `viewer/src/looks/effects/effect-look.ts`: `EffectRow` entries are out of offset order.
 - `extractor/src/game/interactives/template-data.ts`: `state` lookup falls back saved → config →
   temporary, whereas [interactives](game-data/interactives.md) describes `saveProperties` alone.
@@ -635,8 +628,8 @@ entries once resolved or ruled out.
   `isMemoryPackObject`; `expect`/`count`/`list`/`bool` redefined 3× in `interactive-model.ts`;
   `present(VertexAttribute.BlendIndices)` called twice in `decodeMesh`; `stream-area.test.ts` has
   its own FlatBuffer writer; `level-config.test.ts` holds a string pool test.
-- **viewer**: `fx_smoothstep` (`effect.wgsl`) vs `hermite` (`mesh.wgsl`); reflection march
-  duplicated in `water/ssr-trace.wgsl` and `fs_march` (`post/ssr.wgsl`).
+- **viewer**: reflection march duplicated in `water/ssr-trace.wgsl` and `fs_march`
+  (`post/ssr.wgsl`).
 
 ### CLI candidates
 

@@ -1,7 +1,8 @@
 # the render frame
 
-each frame encodes one command buffer. the post chain splits around composited-scene passes:
-composite → lit decals, water, transparent, screen effects → post-scene passes.
+each frame encodes one command buffer. the frame splits around deferred lighting and compositing:
+G-buffer → decals & wetness mask → AO/SSR/celestial → deferred lighting → composite → water,
+transparent, screen effects → post-scene passes.
 
 | #   | pass                                                                      | when                                                                                                                                                                                 |
 | --- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -11,17 +12,18 @@ composite → lit decals, water, transparent, screen effects → post-scene pass
 | 2   | `shadow layer 0–3`                                                        | `shadows` on, package loaded, `debugView` `lit`. layers 0–2: casters/fit changed or `skin` ran. layer 3: fit moved to another grid cell, or casters changed and drawn ≥ 8 frames ago |
 | 2b  | `local light shadow`                                                      | `shadows` and `localLights` on, and a [shadow tile](lighting.md#local-light-shadows) waits (1 tile/frame)                                                                            |
 | 3   | `volumetric fog` (compute)                                                | `heightFog` on, package loaded, `lit`, environment volumetric fog on                                                                                                                 |
-| 4   | `main`                                                                    | always (empty without a package)                                                                                                                                                     |
-| 4a  | `mip feedback` (compute)                                                  | package loaded, feedback target supported, readback buffer free ([mip feedback](streaming.md#mip-feedback))                                                                          |
-| 4b  | `decal relight`                                                           | package loaded                                                                                                                                                                       |
+| 4   | `main` (G-buffer)                                                         | always (empty without a package)                                                                                                                                                     |
+| 4a  | `mip feedback` (compute)                                                  | package loaded, readback buffer free ([mip feedback](streaming.md#mip-feedback))                                                                                                     |
+| 4b  | `lit decals`                                                              | `HGRP/DecalLit` boxes drawn; copies G-buffer A/B first and blends directly into the G-buffer ([decals](materials.md#decals))                                                         |
+| 4c  | `wetness decals`                                                          | always clears wetness mask (`rg8unorm`), draws `HGRP/WetnessDecal` boxes with `max` blend when present                                                                               |
 | 5   | `transmittance lut`, `multiple scattering lut`                            | once per environment                                                                                                                                                                 |
 | 6   | `sky view lut`                                                            | `sky` on                                                                                                                                                                             |
 | 7   | `ao depth`, `gtao`, `gtao blur`                                           | `ao` on, `lit`, environment has AO settings                                                                                                                                          |
 | 8   | `ssr march`, `ssr temporal`, `ssr downsample` ×n, `ssr resolve`           | `reflections` on, `lit`, environment has reflection settings; else `ssr off` clears output                                                                                           |
-| 9   | `celestial`                                                               | always (no-op if `sky` off or nothing beyond atmosphere)                                                                                                                             |
+| 9   | `celestial`                                                               | always (clears `lit` and draws sky layers on `depth == 0`)                                                                                                                           |
 | 9b  | `water depth`                                                             | always (draws nearest water depth when `water` will run, else clears)                                                                                                                |
-| 10  | `composite`                                                               | always                                                                                                                                                                               |
-| 10b | `lit decals`                                                              | overlay lit decals drawn ([decals](materials.md#decals))                                                                                                                             |
+| 10  | `deferred lighting`                                                       | always (shades G-buffer surfaces into `lit` with `loadOp: 'load'`, leaving sky pixels intact)                                                                                        |
+| 10b | `composite`                                                               | always (adds sky radiance, atmosphere fog, height fog, volumetric fog, and drift fog over `lit`)                                                                                     |
 | 11  | scene copy, `water foam`, `water`                                         | `water` on, `lit`, visible water surfaces; `water foam` only when foam effects drawn                                                                                                 |
 | 11a | `transparent`                                                             | glass or effects drawn                                                                                                                                                               |
 | 11b | `effect multiply`, scene copy + `effect refract opaque`, `effect refract` | multiply or refract effects drawn ([effects](effects.md#over-the-composited-scene))                                                                                                  |
@@ -41,19 +43,27 @@ for pass details.
   `depth32float-stencil8` when supported (clear 0, used only by effect
   [portals](effects.md#portals); post reads depth aspect only). all rendering is camera-relative:
   instance block origins rebase to the eye in f64 on the CPU each frame.
-- **main pass.** 1 sample/pixel into 4 targets (32 B/sample, WebGPU default): radiance
-  (`rgba16float`), ambient (`rgba16float`), sky reflection (`rgba16float`), and packed
-  normal/roughness/hit-weight (`rg32uint`). where `maxColorAttachmentBytesPerSample ≥ 36`, a 5th
-  `r32uint` target holds [mip feedback](streaming.md#mip-feedback). depth is stored for post. draw
-  order: opaque mesh depth → alpha-tested cut-out depth → terrain → opaque meshes (depth-equal) →
-  alpha-tested meshes (depth-equal) → non-depth-writing alpha-tested overlays (`_ZWRITE_OFF` mesh
-  decals, `greater-equal`) → opaque [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only
-  portal masks → instance boxes → box outlines (> `outlineMetres`) → terrain wireframe.
-- **decal relight pass.** normal/roughness/occlusion-only lit decals add lighting delta to radiance
-  using depth, packed surface, and ambient ([decals](materials.md#decals)).
-- **lit decal pass.** albedo-writing lit decals draw over the composited scene (no depth test,
-  reading main-pass depth) before water so water covers riverbed decals
+- **main pass (G-buffer).** 1 sample/pixel into 5 targets (36 B/sample WebGPU colour attachment
+  budget): HDR emission (`rgba16float`), G-buffer A (`rgb10a2unorm`: metallic/AO/porosity or
+  foliage/subsurface terms + 2-bit shading model), G-buffer B (`rgb10a2unorm`: 10+10-bit octahedral
+  world normal, roughness, valid/decal-reject flags), G-buffer C (`rgba8unorm-srgb`: albedo +
+  foliage AO/subsurface amount), and [mip feedback](streaming.md#mip-feedback) (`r32uint`). depth is
+  stored for decals, AO, SSR, deferred lighting, and post. draw order: opaque mesh depth →
+  alpha-tested cut-out depth → terrain → opaque meshes (depth-equal) → alpha-tested meshes
+  (depth-equal) → non-depth-writing alpha-tested overlays (`_ZWRITE_OFF` mesh decals,
+  `greater-equal`) → opaque [effects](effects.md#vfxbasev2-and-vfxdecal) → stencil-only portal masks
+  → instance boxes → box outlines (> `outlineMetres`) → terrain wireframe.
+- **decals & wetness.** `lit decals` blends `HGRP/DecalLit` boxes directly into the G-buffer before
+  AO, SSR, and deferred lighting (reading copies of G-buffer A/B for normal/roughness/PBR blending
+  and using hardware premultiplied-over blending on G-buffer C). `wetness decals` writes
+  `HGRP/WetnessDecal` boxes with `max` blending into a `rg8unorm` wetness mask
   ([decals](materials.md#decals)).
+- **deferred lighting & composite.** `deferred lighting` unpacks the G-buffer once per pixel,
+  applies rain wetness and the wetness mask with per-material porosity, evaluates sun, shadows,
+  local lights, irradiance volume, local reflection probes, per-channel multi-bounce GTAO, Lagarde
+  GTAO specular occlusion, and SSR blending into `lit` (`rgba16float`, preserving `celestial` sky
+  pixels). `composite` adds sky radiance and fog over `lit`, after which `lit` is reused as the
+  scene copy for water and refracting effects.
 - **transparent pass.** matches the game's
   [transparent draw order](../game-data/materials.md#transparent-draw-order) and
   [blending](../game-data/effects.md#blending): glass and alpha-blended effects draw after water,

@@ -136,29 +136,22 @@ plume behind Dijiang's deck, dim through the pane).
 
 ## decals
 
-without a GBuffer, [decals](../game-data/materials.md#decals) draw back-face cubes without depth
-test in a dedicated pass after composite and before water and the [transparent pass](frame.md) so
-bed decals stay under water.
+[decals](../game-data/materials.md#decals) draw back-face cubes without depth test directly into the
+G-buffer after the main pass and before AO, SSR, and deferred lighting:
 
 - **shared look & placement**: placements share one material look and draw the VFXDecal cube with
   per-placement colour and UV transform. `_DrawOrder` is unread (no set overlap order).
-- **laid-over decals**: read main-pass normal/roughness where masks keep them (unwritten occlusion =
-  1, metallic = 0), shade normally, and blend by alpha.
-- **stencil emulation**: a flag bit in the main pass's packed surface replaces the stencil bit for
-  looks writing `_StencilRef` with bit 32; lit decals skip those pixels, and VFXDecal boxes with
-  read mask 32 test it (other read masks are unsupported).
-- **relight pass**: handles decals that write no albedo, `_BLEND_WETNESS`, and `HGRP/WetnessDecal`:
-  - estimates surface albedo as dielectric from main-pass diffuse ambient divided by ambient light
-    at its normal (keeping emission, AO, metallic as drawn).
-  - lights the surface before and after applying the decal, adding the radiance delta (times alpha,
-    or whole for `_BLEND_WETNESS` / `WetnessDecal`) and updating the sky reflection target.
-  - writes the blended normal, roughness, and reflection weight to a decal surface target read by
-    [SSR](lighting.md#screen-space-reflections) (last overlapping decal wins), preventing
-    near-mirror water-flow decals (`_WaterRoughness * B ≈ 0.01`) from reflecting bright sky where
-    SSR hits rock.
-  - emissive relit decals add `emission * alpha` on top of existing emission.
-  - `HGRP/WetnessDecal` has no wetness mask, so overlapping boxes wet twice and porosity uses Lit
-    defaults.
+- **G-buffer blending**: `HGRP/DecalLit` reads main-pass depth plus copies of G-buffer A and B,
+  blends normal/roughness/metallic/occlusion in 3D/linear space while leaving unwritten channels
+  untouched, adds emission, and hardware-blends albedo (and `_BLEND_WETNESS` darkening) into
+  G-buffer C via premultiplied-over blending. SSR and deferred lighting automatically see the
+  updated G-buffer surface.
+- **stencil emulation**: a flag bit in G-buffer B replaces the stencil bit for looks writing
+  `_StencilRef` with bit 32; lit decals and wetness decals skip those pixels, and VFXDecal boxes
+  with read mask 32 test it (other read masks are unsupported).
+- **wetness decals**: `HGRP/WetnessDecal` writes into a `rg8unorm` wetness mask using `max` blending
+  (matching the game's `WetnessDecal` pass, so overlapping boxes never double-wet), and deferred
+  lighting applies wetness once per pixel using G-buffer A's porosity.
 - **unsupported**: keywords beyond `_COMPLETE_PBR`, `_NORMAL_ANGLE_BLEND`, `_BLEND_WATER_FLOW`,
   `_BLEND_EMISSIVE`, `_BLEND_SLUDGE_EROSION`, `_BLEND_WETNESS` (footprints, UV noise, arcs); sludge
   without texture or combined with water flow/emission; wetness with another blend keyword or
