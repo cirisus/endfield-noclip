@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import type { UnityBundle } from '@endfield-noclip/formats/hg/bundle';
-import type { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
+import { bytesSource, UnityBundle } from '@endfield-noclip/formats/hg/bundle';
+import { BundleManifest } from '@endfield-noclip/formats/hg/bundle-manifest';
 import { type ObjectInfo, UnityClass } from '@endfield-noclip/formats/unity/serialized-file';
 import type { TypeTreeObject } from '@endfield-noclip/formats/unity/type-tree';
 
@@ -38,9 +38,40 @@ const container = (path: string, asset: TypeTreeObject, preloads: TypeTreeObject
 	m_PreloadTable: preloads,
 });
 
+const emptyBundle = () =>
+	new UnityBundle(
+		{
+			header: {
+				size: 0,
+				flags: 0,
+				encFlags: 0,
+				compressedBlocksInfoSize: 0,
+				uncompressedBlocksInfoSize: 0,
+				blocksInfoOffset: 0,
+				dataOffset: 0,
+			},
+			blocks: [],
+			nodes: [],
+		},
+		bytesSource(new Uint8Array()),
+		new Uint8Array(),
+	);
+
+const emptyManifest = () => {
+	const bytes = new Uint8Array(188);
+	const view = new DataView(bytes.buffer);
+	view.setUint32(0, 0xff11ff11, true);
+	view.setUint32(8, 0xf1f2f3f4, true);
+	view.setUint32(12, 68, true);
+	view.setUint32(156, 4, true);
+	view.setUint32(164, 4, true);
+	view.setUint32(172, 4, true);
+	return new BundleManifest(bytes, { brotliDecompress: (data) => data });
+};
+
 const file = (name: string, objects: ObjectInfo[], values: Map<bigint, TypeTreeObject>) => {
 	const result = new BundleAssetFile(
-		{} as UnityBundle,
+		emptyBundle(),
 		{ path: name, offset: 0, size: 0, flags: 4 },
 		{
 			header: { version: 22, metadataSize: 0, fileSize: 0, dataOffset: 0, littleEndian: true },
@@ -70,7 +101,7 @@ const resolver = (files: BundleAssetFile[]) => {
 		vfsKey: new Uint8Array(32),
 		bundle: { sbox: new Uint8Array(256), key: new Uint8Array(16), iv: new Uint8Array(16), chainXor: 0n },
 	};
-	const result = new AssetResolver({ vfs: new Vfs('', keys.vfsKey), keys }, {} as BundleManifest);
+	const result = new AssetResolver({ vfs: new Vfs('', keys.vfsKey), keys }, emptyManifest());
 	result.assetFiles = async () => files;
 	result.bundleOfCab = async () => 0;
 	return result;
@@ -119,7 +150,7 @@ test("PPtrs into Unity's built-in files resolve through the built-in lookup, and
 	const asked: string[] = [];
 	const assets = new AssetResolver(
 		{ vfs: new Vfs('', keys.vfsKey), keys },
-		{} as BundleManifest,
+		emptyManifest(),
 		async (_, path, pathId) => {
 			asked.push(`${path}:${pathId}`);
 			return pathId === 10210n ? copyRef : null;
@@ -155,7 +186,6 @@ test('sub-asset lookups skip preloads into other bundles without opening them', 
 		]),
 	);
 	owner.file.externals.push({ guid: new Uint8Array(16), type: 0, pathName: 'archive:/CAB-dep/CAB-dep' });
-	Object.assign(owner.bundle, { node: () => undefined });
 	const assets = resolver([owner]);
 	assets.bundleOfCab = () => assert.fail('opened a dependency bundle');
 	const refs = await assets.findInBundle(0, 'model.fbx##mesh', UnityClass.Mesh);

@@ -41,10 +41,7 @@ export interface EmissiveOverride {
 }
 
 /** @returns breathing parameters when both frequency and intensity are positive, else `null` */
-const breathingOf = (
-	frequency: number,
-	intensity: number,
-): { frequency: number; intensity: number } | null =>
+const breathingOf = (frequency: number, intensity: number): { frequency: number; intensity: number } | null =>
 	frequency > 0 && intensity > 0 ? { frequency, intensity: Math.min(Math.max(intensity, 0), 1) } : null;
 
 /**

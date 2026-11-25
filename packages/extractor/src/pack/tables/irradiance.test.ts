@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { IRRADIANCE_INDEX_MAGIC } from '@endfield-noclip/formats/hg/irradiance';
 
 import { Vfs, type VfsFile } from '../../hg/vfs.ts';
-import type { BlobStore } from '../store/blob-store.ts';
+import { BlobDir } from '../store/blob-file.ts';
+import { BlobStore } from '../store/blob-store.ts';
 
 import { packIrradiance, sceneStateBakeCondition } from './irradiance.ts';
 
@@ -50,11 +51,16 @@ const vfsWithLengths = (lengths: Map<string, number>) => {
 };
 
 const packOutsideRegion = (lengths: Map<string, number>) =>
-	packIrradiance(vfsWithLengths(lengths), {} as BlobStore, null, {
-		scene: 'synthetic',
-		includes: () => false,
-		groupOf: () => 0,
-	});
+	packIrradiance(
+		vfsWithLengths(lengths),
+		new BlobStore(new BlobDir(''), { zstdLevel: 1, archiveCap: 0, core: '', memo: null }),
+		null,
+		{
+			scene: 'synthetic',
+			includes: () => false,
+			groupOf: () => 0,
+		},
+	);
 
 test('irradiance validates scene-state payloads even when packing no cells', async () => {
 	await assert.rejects(packOutsideRegion(new Map([['iv_0_0.bytes', 16]])), /iv_123_0.bytes/);

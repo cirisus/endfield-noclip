@@ -13,11 +13,10 @@
 	},
 	"devDependencies": {
 		"@mary-ext/oxlint-rules": "^0.1.2",
-		"@types/node": "^26.6.5",
+		"@types/node": "^26.6.6",
 		"bumpp": "^12.3.0",
-		"oxfmt": "^0.74.0",
-		"oxlint": "^1.89.0",
-		"oxlint-tsgolint": "^7.0.2004",
-		"typescript": "^7.0.2"
+		"oxfmt": "^0.80.0",
+		"oxlint": "^1.95.0",
+		"tsrs": "7.1.0-beta.tsrs5"
 	}
 }

@@ -175,10 +175,7 @@ export const materialVat = (material: MaterialValues, shader: ShaderEntry): VatA
  * @param shader its shader's entry
  * @returns its vertex offset, or `null` without one
  */
-export const materialVertexOffset = (
-	material: MaterialValues,
-	shader: ShaderEntry,
-): LitVertexOffset | null =>
+export const materialVertexOffset = (material: MaterialValues, shader: ShaderEntry): LitVertexOffset | null =>
 	shader.name === 'HGRP/Lit' && material.blend !== 'additive'
 		? vertexOffsetOf(readerOf(material, shader))
 		: null;
