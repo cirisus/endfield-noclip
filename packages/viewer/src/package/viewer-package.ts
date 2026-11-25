@@ -1,3 +1,4 @@
+import { type AssembliesTable, decodeAssembliesTable } from '@endfield-noclip/package-format/assemblies';
 import { decodeBlobTable, type BlobRecord } from '@endfield-noclip/package-format/blob-table';
 import { BlobCodec } from '@endfield-noclip/package-format/blobs';
 import {
@@ -72,6 +73,8 @@ export interface ViewerPackage {
 	irradiance: IrradianceTable;
 	/** GPU cloth simulation table, or `null` when the package has no simulated cloth */
 	cloth: ClothTable | null;
+	/** moving/stateful prefab assemblies table, or `null` when absent */
+	assemblies: AssembliesTable | null;
 	/** reads and decodes the scene's `.clth` simulation blob, or `null` when absent */
 	readClothData(): Promise<ClothDataBlob | null>;
 	/**
@@ -153,6 +156,7 @@ export const openViewerPackage = async (
 		environment,
 		irradiance,
 		cloth,
+		assemblies,
 	] = await Promise.all([
 		member(CORE_PATHS.tree).then(decodeTree),
 		member(CORE_PATHS.blobs).then(decodeBlobTable),
@@ -177,6 +181,9 @@ export const openViewerPackage = async (
 		member(CORE_PATHS.irradiance).then(decodeIrradianceTable),
 		optionalMember(CORE_PATHS.cloth).then((bytes): ClothTable | null =>
 			bytes === null ? null : decodeClothTable(bytes),
+		),
+		optionalMember(CORE_PATHS.assemblies).then((bytes): AssembliesTable | null =>
+			bytes === null ? null : decodeAssembliesTable(bytes),
 		),
 	]);
 	const particles = luts === null ? rawParticles : resolveParticleLuts(rawParticles, luts);
@@ -222,6 +229,7 @@ export const openViewerPackage = async (
 		environment,
 		irradiance,
 		cloth,
+		assemblies,
 		async readClothData() {
 			if (cloth === null || cloth.blob === null) {
 				return null;

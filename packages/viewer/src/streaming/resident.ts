@@ -1,4 +1,6 @@
-import type { RowFloaters, RowRides, RowSpins } from '../content/instance-rows.ts';
+import type { AnimationBlob } from '@endfield-noclip/package-format/animation';
+
+import type { RowFloaters, RowMotions, RowRides, RowSpins } from '../content/instance-rows.ts';
 import type { RangeAllocation } from '../gfx/range-allocator.ts';
 import type { UvTransform } from '../package/decode-protocol.ts';
 import type {
@@ -72,6 +74,8 @@ export interface ResidentInstances {
 	floaters: RowFloaters | null;
 	/** the rows riding paths, which move {@link rowsF32} in place by the clock; `null` when none does */
 	rides: RowRides | null;
+	/** `.anim` clip bindings from `MOTN`, or `null` when none */
+	motions?: RowMotions | null;
 	/** packed `(firstRow, count, float32Bits(sparsity))` triples for `.fol` grass blocks, or `null` */
 	foliageClusters?: Uint32Array<ArrayBuffer> | null;
 }
@@ -126,6 +130,14 @@ export interface ResidentIrradiance {
 	alloc: RangeAllocation;
 }
 
+/** CPU residency of a decoded `.anim` clip */
+export interface ResidentAnimation {
+	kind: 'animation';
+	/** approximate decoded bytes */
+	bytes: number;
+	clip: AnimationBlob;
+}
+
 /** what a ready blob holds on the GPU */
 export type Resident =
 	| ResidentHeights
@@ -135,4 +147,5 @@ export type Resident =
 	| ResidentInstances
 	| ResidentGeometry
 	| ResidentTexture
-	| ResidentIrradiance;
+	| ResidentIrradiance
+	| ResidentAnimation;

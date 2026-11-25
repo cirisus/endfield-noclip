@@ -1,3 +1,4 @@
+import type { AnimationBlob } from '@endfield-noclip/package-format/animation';
 import type { BlobCodec } from '@endfield-noclip/package-format/blobs';
 
 import type { InstanceRows, RowKinds } from '../content/instance-rows.ts';
@@ -33,7 +34,8 @@ export type DecodeRequest =
 	| (RequestBase & { kind: 'instances'; rowKinds?: RowKinds; foliage?: true })
 	| (RequestBase & { kind: 'geometry' })
 	| (RequestBase & { kind: 'texture' })
-	| (RequestBase & { kind: 'irradiance' });
+	| (RequestBase & { kind: 'irradiance' })
+	| (RequestBase & { kind: 'animation' });
 
 /** a decoded height page */
 export interface DecodedHeights {
@@ -161,6 +163,13 @@ export interface DecodedIrradiance {
 	data: ArrayBuffer;
 }
 
+/** a decoded `.anim` clip */
+export interface DecodedAnimation {
+	id: number;
+	kind: 'animation';
+	clip: AnimationBlob;
+}
+
 /** a successfully decoded blob */
 export type Decoded =
 	| DecodedHeights
@@ -170,7 +179,8 @@ export type Decoded =
 	| DecodedInstances
 	| DecodedGeometry
 	| DecodedTexture
-	| DecodedIrradiance;
+	| DecodedIrradiance
+	| DecodedAnimation;
 
 /**
  * a message to a worker. a worker handles them in order: a buffer arrives before the requests that read it,

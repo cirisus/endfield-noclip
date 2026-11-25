@@ -5,6 +5,7 @@
  * @module
  */
 
+import { AnimationFlags, AnimationKind, type AnimationBlob } from '@endfield-noclip/package-format/animation';
 import type { ClothTable } from '@endfield-noclip/package-format/cloth';
 import {
 	type Chain,
@@ -268,6 +269,8 @@ export interface InstanceRows {
 	floaters: RowFloaters | null;
 	/** the block's rows riding paths, or `null` when none does */
 	rides: RowRides | null;
+	/** `.anim` clip bindings from `MOTN`, or `null` when none */
+	motions?: RowMotions | null;
 	/** the block's GPU-simulated cloth rows and their cloth table indices, or `null` when none */
 	cloths: RowCloths | null;
 	/**
@@ -275,6 +278,18 @@ export interface InstanceRows {
 	 * progressive density thinning; `null` for `.inst` blocks
 	 */
 	foliageClusters?: Uint32Array<ArrayBuffer> | null;
+}
+
+/** a block's `.anim` motion clip bindings (`MOTN`) */
+export interface RowMotions {
+	/** the rows, ascending */
+	rows: Uint32Array<ArrayBuffer>;
+	/** per row: `[animBlob, float32Bits(phaseOffset)]` */
+	values: Uint32Array<ArrayBuffer>;
+	/** per row: base translation (3) and bounds centre (3) at t = 0 */
+	base: Float32Array<ArrayBuffer>;
+	/** (first, end) pairs of row ranges that hold every motion row */
+	runs: Uint32Array<ArrayBuffer>;
 }
 
 /** a block's GPU-simulated cloth rows */
@@ -392,6 +407,24 @@ export const buildInstanceRows = (block: InstanceBlock, kinds: RowKinds): Instan
 			paths: block.paths.map(({ frameRate, offsets }) => ({ frameRate, offsets: new Float32Array(offsets) })),
 		};
 	}
+	let motions: RowMotions | null = null;
+	if (block.motions !== undefined && block.motions.rows.length > 0) {
+		const motionRows = new Uint32Array(block.motions.rows);
+		const base = new Float32Array(motionRows.length * RIDE_BASE_FLOATS);
+		for (let s = 0; s < motionRows.length; s++) {
+			const at = motionRows[s] * ROW_WORDS;
+			base.set(
+				[f32[at + 3], f32[at + 7], f32[at + 11], f32[at + 12], f32[at + 13], f32[at + 14]],
+				s * RIDE_BASE_FLOATS,
+			);
+		}
+		motions = {
+			rows: motionRows,
+			values: new Uint32Array(block.motions.values),
+			base,
+			runs: movingRuns(motionRows),
+		};
+	}
 	return {
 		count,
 		origin: block.origin,
@@ -405,6 +438,7 @@ export const buildInstanceRows = (block: InstanceBlock, kinds: RowKinds): Instan
 				? null
 				: { rows: new Uint32Array(block.floaters.rows), volumes: new Uint32Array(block.floaters.values) },
 		rides,
+		motions,
 		cloths:
 			block.cloths !== undefined && block.cloths.rows.length > 0
 				? { rows: new Uint32Array(block.cloths.rows), values: new Uint32Array(block.cloths.values) }
@@ -470,6 +504,50 @@ export const rideRows = (rows: Float32Array, rides: RowRides, time: number): voi
 /** {@link turnRows}' rotation matrix and pivot, kept so turning allocates nothing */
 const ROTATION = new Float64Array(9);
 const PIVOT = new Float64Array(3);
+
+const motionPhaseU32 = new Uint32Array(1);
+const motionPhaseF32 = new Float32Array(motionPhaseU32.buffer);
+const motionOffset: [x: number, y: number, z: number] = [0, 0, 0];
+
+/**
+ * advances rows bound to `.anim` clips (`MOTN`), returning whether any row was updated
+ *
+ * @param rows the block's rows as f32; updated in place
+ * @param motions the block's `MOTN` bindings
+ * @param time animation clock, s
+ * @param clipOf returns a resident {@link AnimationBlob} by blob id, or `null` while streaming
+ * @returns whether at least one row was animated by a resident clip
+ */
+export const animateMotionRows = (
+	rows: Float32Array,
+	motions: RowMotions,
+	time: number,
+	clipOf: (blob: number) => AnimationBlob | null,
+): boolean => {
+	const { rows: motionRows, values, base } = motions;
+	let updated = false;
+	for (let s = 0; s < motionRows.length; s++) {
+		const clip = clipOf(values[s * 2]);
+		if (clip === null || clip.kind !== AnimationKind.Transform) {
+			continue;
+		}
+		if ((clip.flags & AnimationFlags.TranslationOnly) === 0 || clip.frameCount === 0) {
+			continue;
+		}
+		motionPhaseU32[0] = values[s * 2 + 1];
+		pathOffset({ frameRate: clip.frameRate, offsets: clip.frames }, time + motionPhaseF32[0], motionOffset);
+		const b = s * RIDE_BASE_FLOATS;
+		const at = motionRows[s] * ROW_WORDS;
+		rows[at + 3] = base[b] + motionOffset[0];
+		rows[at + 7] = base[b + 1] + motionOffset[1];
+		rows[at + 11] = base[b + 2] + motionOffset[2];
+		rows[at + 12] = base[b + 3] + motionOffset[0];
+		rows[at + 13] = base[b + 4] + motionOffset[1];
+		rows[at + 14] = base[b + 5] + motionOffset[2];
+		updated = true;
+	}
+	return updated;
+};
 
 /**
  * turns a block's spinning rows to where they are at `time`: each row's transform and bounds centre are its

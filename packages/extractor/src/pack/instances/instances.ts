@@ -66,6 +66,32 @@ export class InstanceBlockBuilder {
 		return this.#chains.length;
 	}
 
+	/** @returns riding paths referenced by rows in this block */
+	ridePaths(): Iterable<RowPath> {
+		return this.#rides.values();
+	}
+
+	/** @returns moving (riding or spinning) entity descriptors in this block */
+	movingEntities(): { entityId: number; ride: RowPath | null }[] {
+		const seen = new Set<number>();
+		const out: { entityId: number; ride: RowPath | null }[] = [];
+		for (const [index, ride] of this.#rides) {
+			const entityId = this.#entityIds[index];
+			if (!seen.has(entityId)) {
+				seen.add(entityId);
+				out.push({ entityId, ride });
+			}
+		}
+		for (const index of this.#spins.keys()) {
+			const entityId = this.#entityIds[index];
+			if (!seen.has(entityId)) {
+				seen.add(entityId);
+				out.push({ entityId, ride: null });
+			}
+		}
+		return out;
+	}
+
 	/**
 	 * appends a row
 	 *
@@ -119,6 +145,8 @@ export class InstanceBlockBuilder {
 		chainHashes: BigUint64Array,
 		volumes: ReadonlyMap<string, number>,
 		cloths: ReadonlyMap<number, number> = new Map(),
+		motions: ReadonlyMap<RowPath, number> = new Map(),
+		assemblyNodes: ReadonlyMap<number, number> = new Map(),
 	): { block: InstanceBlock; order: Uint32Array } {
 		const count = this.#chains.length;
 		const hashOf = (i: number): bigint => chainHashes[this.#chains[i]];
@@ -147,6 +175,10 @@ export class InstanceBlockBuilder {
 		const ridePaths: number[] = [];
 		const clothRows: number[] = [];
 		const clothIndices: number[] = [];
+		const motionRows: number[] = [];
+		const motionValues: number[] = [];
+		const assemblyRows: number[] = [];
+		const assemblyIndices: number[] = [];
 		/** the block's paths, in the order its rows first ride them */
 		const paths = new Map<RowPath, number>();
 		let decals = 0;
@@ -204,6 +236,17 @@ export class InstanceBlockBuilder {
 			if (ride !== undefined) {
 				rideRows.push(out);
 				ridePaths.push(paths.getOrInsertComputed(ride, () => paths.size));
+				const animBlob = motions.get(ride);
+				if (animBlob !== undefined) {
+					motionRows.push(out);
+					motionValues.push(animBlob, 0);
+					rowFlags[out] |= RowFlags.HasMotion;
+				}
+			}
+			const assemblyNode = assemblyNodes.get(this.#entityIds[i]);
+			if (assemblyNode !== undefined) {
+				assemblyRows.push(out);
+				assemblyIndices.push(assemblyNode);
 			}
 			const clothHash = this.#cloths.get(i);
 			const clothIndex = clothHash === undefined ? undefined : cloths.get(clothHash);
@@ -225,6 +268,17 @@ export class InstanceBlockBuilder {
 				floaters: { rows: Uint32Array.from(floaterRows), values: Uint32Array.from(floaterVolumes) },
 				rides: { rows: Uint32Array.from(rideRows), values: Uint32Array.from(ridePaths) },
 				paths: [...paths.keys()],
+				...(motionRows.length > 0
+					? { motions: { rows: Uint32Array.from(motionRows), values: Uint32Array.from(motionValues) } }
+					: {}),
+				...(assemblyRows.length > 0
+					? {
+							assemblyNodes: {
+								rows: Uint32Array.from(assemblyRows),
+								values: Uint32Array.from(assemblyIndices),
+							},
+						}
+					: {}),
 				...(clothRows.length > 0
 					? { cloths: { rows: Uint32Array.from(clothRows), values: Uint32Array.from(clothIndices) } }
 					: {}),

@@ -1,4 +1,4 @@
-import { rideRows, ROW_BYTES, ROW_WORDS, turnRows } from '../content/instance-rows.ts';
+import { animateMotionRows, rideRows, ROW_BYTES, ROW_WORDS, turnRows } from '../content/instance-rows.ts';
 import type { FrameSettings } from '../render/frame/frame-graph.ts';
 import { offscreenCasters } from '../render/shadows/shadow-map.ts';
 import type { Camera, Plane } from '../scene/camera.ts';
@@ -140,7 +140,7 @@ export class Traversal {
 		this.visited = selection.visited;
 		this.fadingShown = selection.fading;
 		// spinning and riding rows move before instances are culled and listed by where they are
-		this.movingShown = this.#moveRows(selection.instances, input.time);
+		this.movingShown = this.#moveRows(selection.instances, stream, input.time);
 		times.span('tree');
 		// per-instance LOD selection also requests geometry, so it runs before the stream update; it groups
 		// instances by the shadow layers they reach, as fitted for this frame
@@ -283,11 +283,19 @@ export class Traversal {
 	 * @param time the animation clock, s
 	 * @returns whether any selected block has spinning or riding rows
 	 */
-	#moveRows(ranges: readonly InstanceRange[], time: number): boolean {
+	#moveRows(ranges: readonly InstanceRange[], stream: LoadedScene['stream'], time: number): boolean {
 		let shown = false;
+		const clipOf = (blob: number) => {
+			stream.want(blob, 1e6);
+			const resident = stream.get(blob)?.resident;
+			return resident?.kind === 'animation' ? resident.clip : null;
+		};
 		for (const { item } of ranges) {
 			const resident = item.resident;
-			if (resident?.kind !== 'instances' || (resident.spins === null && resident.rides === null)) {
+			if (
+				resident?.kind !== 'instances' ||
+				(resident.spins === null && resident.rides === null && resident.motions == null)
+			) {
 				continue;
 			}
 			shown = true;
@@ -299,7 +307,9 @@ export class Traversal {
 				turnRows(resident.rowsF32, resident.spins, time);
 				this.#writeRuns(resident, resident.spins.runs);
 			}
-			if (resident.rides !== null) {
+			if (resident.motions != null && animateMotionRows(resident.rowsF32, resident.motions, time, clipOf)) {
+				this.#writeRuns(resident, resident.motions.runs);
+			} else if (resident.rides !== null) {
 				rideRows(resident.rowsF32, resident.rides, time);
 				this.#writeRuns(resident, resident.rides.runs);
 			}

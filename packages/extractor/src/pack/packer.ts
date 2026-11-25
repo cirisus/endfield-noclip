@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { encodeAssembliesTable } from '@endfield-noclip/package-format/assemblies';
 import { encodeClothTable } from '@endfield-noclip/package-format/cloth';
 import { encodeGeometryTable } from '@endfield-noclip/package-format/geometry-table';
 import { encodeChains } from '@endfield-noclip/package-format/instances';
@@ -418,6 +419,9 @@ export const packScene = async (context: Context, options: PackOptions): Promise
 			},
 			...(clothTable.cloths.length > 0
 				? [{ path: CORE_PATHS.cloth, data: binaryTable(encodeClothTable(clothTable)) }]
+				: []),
+			...(instances.assemblies.assemblies.length > 0
+				? [{ path: CORE_PATHS.assemblies, data: binaryTable(encodeAssembliesTable(instances.assemblies)) }]
 				: []),
 		];
 		const written = await writePackage(

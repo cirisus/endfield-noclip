@@ -1,3 +1,9 @@
+import {
+	AnimationFlags,
+	AnimationKind,
+	encodeAnimationBlob,
+} from '@endfield-noclip/package-format/animation';
+import type { AssembliesTable, AssemblyInfo, AssemblyNode } from '@endfield-noclip/package-format/assemblies';
 import { BlobKind } from '@endfield-noclip/package-format/blobs';
 import {
 	encodeFoliageBlock,
@@ -6,7 +12,7 @@ import {
 	type FoliageCluster,
 	packFoliageInstance,
 } from '@endfield-noclip/package-format/foliage';
-import { encodeInstanceBlock } from '@endfield-noclip/package-format/instances';
+import { encodeInstanceBlock, type RowPath } from '@endfield-noclip/package-format/instances';
 import { CORE_ARCHIVE } from '@endfield-noclip/package-format/manifest';
 import { tileFootprint } from '@endfield-noclip/package-format/tiles';
 import { ContentKind, type ContentRef, type TreeInfo } from '@endfield-noclip/package-format/tree';
@@ -52,7 +58,13 @@ export const packInstances = async (
 		volumes: ReadonlyMap<string, number>;
 		cloths: ReadonlyMap<number, number>;
 	},
-): Promise<{ rows: InstanceCounts; global: ContentRef[]; hlodClusters: number; tierCounts: number[] }> => {
+): Promise<{
+	rows: InstanceCounts;
+	global: ContentRef[];
+	hlodClusters: number;
+	tierCounts: number[];
+	assemblies: AssembliesTable;
+}> => {
 	const { store, layout, builder, debugLog } = output;
 	const rows = {
 		detail: countRows(collector.detail.values()),
@@ -63,12 +75,106 @@ export const packInstances = async (
 		rows.detail += group.instanceCount;
 	}
 
+	// encode unique riding paths as `.anim` blobs (`AnimationKind.Transform`, `TranslationOnly`) and build the
+	// scene's `tables/assemblies.bin.zst` for moving entities
+	const uniquePaths: RowPath[] = [];
+	const seenPaths = new Set<RowPath>();
+	const noteGroupPaths = (group: Group): void => {
+		for (const path of group.rows.ridePaths()) {
+			if (!seenPaths.has(path)) {
+				seenPaths.add(path);
+				uniquePaths.push(path);
+			}
+		}
+	};
+	for (const group of collector.detail.values()) {
+		noteGroupPaths(group);
+	}
+	for (const group of collector.hlod.values()) {
+		noteGroupPaths(group);
+	}
+	for (const group of collector.global.values()) {
+		noteGroupPaths(group);
+	}
+	const motionBlobs = new Map<RowPath, number>();
+	if (uniquePaths.length > 0) {
+		const animBlobIds = await store.putMany(
+			uniquePaths.map((path) => {
+				const frameCount = path.offsets.length / 3;
+				const duration = path.frameRate > 0 ? frameCount / path.frameRate : 0;
+				return {
+					raw: encodeAnimationBlob({
+						kind: AnimationKind.Transform,
+						flags: AnimationFlags.Loop | AnimationFlags.TranslationOnly,
+						duration,
+						frameRate: path.frameRate,
+						frameCount,
+						frames: path.offsets,
+					}),
+					options: compressedBlob(BlobKind.Animation, CORE_ARCHIVE, null),
+				};
+			}),
+		);
+		for (const [i, path] of uniquePaths.entries()) {
+			motionBlobs.set(path, animBlobIds[i]);
+		}
+	}
+
+	const assemblyList: AssemblyInfo[] = [];
+	const assemblyNodeList: AssemblyNode[] = [];
+	const assemblyNodeByEntity = new Map<number, number>();
+	const IDENTITY_3X4: AssemblyNode['localTransform'] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+	const recordAssemblies = (visibility: number, group: Group): void => {
+		for (const { entityId, ride } of group.rows.movingEntities()) {
+			if (assemblyNodeByEntity.has(entityId)) {
+				continue;
+			}
+			const nodeIndex = assemblyNodeList.length;
+			assemblyNodeByEntity.set(entityId, nodeIndex);
+			assemblyNodeList.push({
+				parent: -1,
+				animBlob: ride === null ? null : (motionBlobs.get(ride) ?? null),
+				localTransform: IDENTITY_3X4,
+			});
+			assemblyList.push({
+				firstNode: nodeIndex,
+				nodeCount: 1,
+				flags: 0,
+				group: visibility,
+				firstState: 0,
+				stateCount: 0,
+				defaultState: 0,
+			});
+		}
+	};
+	for (const group of collector.detail.values()) {
+		recordAssemblies(group.visibility, group);
+	}
+	for (const [visibility, group] of collector.hlod) {
+		recordAssemblies(visibility, group);
+	}
+	for (const [visibility, group] of collector.global) {
+		recordAssemblies(visibility, group);
+	}
+	const assemblies: AssembliesTable = {
+		assemblies: assemblyList,
+		nodes: assemblyNodeList,
+		states: [],
+	};
+
 	const detailGroups = [...collector.detail.values()];
 	detailGroups.sort((a, b) => a.key.z - b.key.z || a.key.x - b.key.x || a.visibility - b.visibility);
 	for (let start = 0; start < detailGroups.length; start += BLOB_BATCH) {
 		const encoded = detailGroups.slice(start, start + BLOB_BATCH).map((group) => {
 			const { minX, minZ } = tileFootprint(grid, group.key);
-			const { block, order } = group.rows.toBlock([minX, 0, minZ], chainHashes, volumes, cloths);
+			const { block, order } = group.rows.toBlock(
+				[minX, 0, minZ],
+				chainHashes,
+				volumes,
+				cloths,
+				motionBlobs,
+				assemblyNodeByEntity,
+			);
 			return { group, block, order };
 		});
 		// oxlint-disable-next-line no-await-in-loop -- batches bound memory and keep blob order stable
@@ -138,6 +244,8 @@ export const packInstances = async (
 				chainHashes,
 				volumes,
 				cloths,
+				motionBlobs,
+				assemblyNodeByEntity,
 			);
 			return { visibility, group, block, order };
 		});
@@ -190,7 +298,7 @@ export const packInstances = async (
 		count: group.rows.length,
 		reach: null,
 	}));
-	return { rows, global, hlodClusters, tierCounts };
+	return { rows, global, hlodClusters, tierCounts, assemblies };
 };
 
 /** encodes one tile's collected grass clusters into a {@link FoliageBlock} with a local chain palette */

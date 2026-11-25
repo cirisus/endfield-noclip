@@ -1,3 +1,4 @@
+import { AnimationKind, decodeAnimationBlob } from '@endfield-noclip/package-format/animation';
 import { BlobCodec } from '@endfield-noclip/package-format/blobs';
 import { decodeFoliageBlock } from '@endfield-noclip/package-format/foliage';
 import {
@@ -464,6 +465,14 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 			if (built.cloths !== null) {
 				transfer.push(built.cloths.rows.buffer, built.cloths.values.buffer);
 			}
+			if (built.motions != null) {
+				transfer.push(
+					built.motions.rows.buffer,
+					built.motions.values.buffer,
+					built.motions.base.buffer,
+					built.motions.runs.buffer,
+				);
+			}
 			if (built.foliageClusters != null) {
 				transfer.push(built.foliageClusters.buffer);
 			}
@@ -483,6 +492,36 @@ const handle = (request: DecodeRequest): { response: DecodeResponse; transfer: T
 		}
 		case 'geometry': {
 			return decodeGeometry(request.id, raw);
+		}
+		case 'animation': {
+			const clip = decodeAnimationBlob(raw);
+			const transfer: Transferable[] = [];
+			switch (clip.kind) {
+				case AnimationKind.Skin: {
+					const copy = new Float32Array(clip.matrices);
+					clip.matrices = copy;
+					transfer.push(copy.buffer);
+					break;
+				}
+				case AnimationKind.Transform: {
+					const copy = new Float32Array(clip.frames);
+					clip.frames = copy;
+					transfer.push(copy.buffer);
+					break;
+				}
+				case AnimationKind.Material: {
+					for (const track of clip.tracks) {
+						const copy = new Float32Array(track.samples);
+						track.samples = copy;
+						transfer.push(copy.buffer);
+					}
+					break;
+				}
+				default: {
+					break;
+				}
+			}
+			return { response: { id: request.id, kind: 'animation', clip }, transfer };
 		}
 	}
 };

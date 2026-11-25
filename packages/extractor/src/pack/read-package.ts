@@ -2,6 +2,7 @@ import { type FileHandle, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
 
+import { type AssembliesTable, decodeAssembliesTable } from '@endfield-noclip/package-format/assemblies';
 import { decodeBlobTable, type BlobRecord } from '@endfield-noclip/package-format/blob-table';
 import { BlobCodec, BlobKind } from '@endfield-noclip/package-format/blobs';
 import type { EnvironmentTable } from '@endfield-noclip/package-format/environment';
@@ -358,6 +359,14 @@ export class PackedPackage implements AsyncDisposable {
 			(this.#chainHashes ??= this.chains().then(chainHashMap)),
 		]);
 		return decodeInstanceBlock(raw, chainHashes);
+	}
+
+	/** @returns decoded `tables/assemblies.bin.zst`, or `null` when absent */
+	async assemblies(): Promise<AssembliesTable | null> {
+		if (this.#core.get(CORE_PATHS.assemblies) === undefined) {
+			return null;
+		}
+		return decodeAssembliesTable(await readCoreMember(this.#core, CORE_PATHS.assemblies));
 	}
 
 	/** closes the core archive handle */

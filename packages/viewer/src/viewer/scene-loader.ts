@@ -1,3 +1,4 @@
+import { AnimationKind, type AnimationBlob } from '@endfield-noclip/package-format/animation';
 import { BlobKind } from '@endfield-noclip/package-format/blobs';
 
 import { markBillboardRows, markClothRows } from '../content/instance-rows.ts';
@@ -140,6 +141,14 @@ export const openScene = (pkg: ViewerPackage, deps: SceneDeps): LoadedScene => {
 				upload: (_blob, decoded) => irradiance.upload(decoded),
 				release: (_blob, resident) => irradiance.release(resident),
 			},
+			animation: {
+				upload: (_blob, decoded) => ({
+					kind: 'animation',
+					bytes: animationClipBytes(decoded.clip),
+					clip: decoded.clip,
+				}),
+				release: () => {},
+			},
 		},
 		{ budgetBytes: deps.budgetBytes, maxRequests: 32, uploadBytesPerFrame: 24 * 2 ** 20 },
 	);
@@ -187,4 +196,25 @@ export const openScene = (pkg: ViewerPackage, deps: SceneDeps): LoadedScene => {
 			instances: level.instances,
 		})),
 	};
+};
+
+const animationClipBytes = (clip: AnimationBlob): number => {
+	switch (clip.kind) {
+		case AnimationKind.Skin: {
+			return clip.matrices.byteLength;
+		}
+		case AnimationKind.Transform: {
+			return clip.frames.byteLength;
+		}
+		case AnimationKind.Material: {
+			let bytes = 0;
+			for (const track of clip.tracks) {
+				bytes += track.samples.byteLength;
+			}
+			return bytes;
+		}
+		default: {
+			return 64;
+		}
+	}
 };
